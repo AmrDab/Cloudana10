@@ -9,11 +9,18 @@ const networks = {
   }
 };
 
-// Only add cyprus1 network if environment variables are set
-if (process.env.BASE_SEPOLIA_RPC_URL && process.env.PRIVATE_KEY && process.env.CHAIN_ID) {
+// Only add base_sepolia network if environment variables are set
+if (process.env.BASE_SEPOLIA_RPC_URL && process.env.DEPLOYER_PRIVATE_KEY && process.env.CHAIN_ID) {
+  // Only deployer needs a private key (for signing transactions)
+  // Validator and treasury admin are just addresses, not signers
+  const accounts = [process.env.DEPLOYER_PRIVATE_KEY.trim()];
+  
+  console.log("✓ Deployer account configured for base_sepolia network");
+  console.log("ℹ️  Note: Validator and treasury admin addresses should be set in .env as VALIDATOR_ADDRESS and TREASURY_ADMIN_ADDRESS");
+  
   networks.base_sepolia = {
     url: process.env.BASE_SEPOLIA_RPC_URL,
-    accounts: [process.env.PRIVATE_KEY],
+    accounts: accounts,
     chainId: Number(process.env.CHAIN_ID),
   };
 }

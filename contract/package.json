@@ -3,11 +3,13 @@
   "version": "1.0.0",
   "scripts": {
     "compile": "npx hardhat compile",
-    "deploy": "node script/deploy.js",
-    "test": "node script/test.js"
+    "deploy": "node script/01_deploy.js",
+    "test": "node test/cloudana.test.js"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.1.0"
+    "@openzeppelin/contracts": "^5.1.0",
+    "merkletreejs": "^0.3.11",
+    "keccak256": "^1.0.6"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.1.0",
