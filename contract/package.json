@@ -4,7 +4,7 @@
   "scripts": {
     "compile": "npx hardhat compile",
     "deploy": "node script/01_deploy.js",
-    "test": "node test/cloudana.test.js"
+    "test": "npx hardhat test --network hardhat"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.1.0",

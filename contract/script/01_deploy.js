@@ -365,6 +365,14 @@ async function main() {
   const VALIDATOR_ROLE_JOB = await jobEscrow.VALIDATOR_ROLE();
   const RELAYER_ROLE = await gasBank.RELAYER_ROLE();
   const RELAYER_ROLE_JOB = await jobEscrow.RELAYER_ROLE();
+
+  // JobEscrow.completeJob() calls ProviderRegistry.addReward(), which requires ProviderRegistry.VALIDATOR_ROLE
+  await sendTx(`ProviderRegistry.grantRole(VALIDATOR_ROLE, JobEscrow)`, (nonce) =>
+    providerRegistry.connect(deployer).grantRole(VALIDATOR_ROLE, jobEscrowAddress, { nonce })
+  , {
+    postCheckLabel: `providerRegistry.hasRole(VALIDATOR_ROLE, JobEscrow)`,
+    postCheck: async () => await providerRegistry.hasRole(VALIDATOR_ROLE, jobEscrowAddress),
+  });
   
   for (const validatorAddr of validatorAddresses) {
     await sendTx(`MerkleRewardsPoUW.grantRole(SETTLER_ROLE, ${validatorAddr})`, (nonce) =>

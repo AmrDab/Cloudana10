@@ -50,6 +50,9 @@ describe("Cloudana DePIN System", function () {
       await token.getAddress(),
       await emissionController.getAddress()
     );
+
+    // Wire circular dependency (matches production deploy flow)
+    await emissionController.setMerkleRewards(await merkleRewards.getAddress());
     
     // Deploy ProviderRegistry
     const ProviderRegistry = await ethers.getContractFactory("ProviderRegistry");
@@ -70,15 +73,23 @@ describe("Cloudana DePIN System", function () {
     const MINTER_ROLE = await token.MINTER_ROLE();
     await token.grantRole(MINTER_ROLE, await emissionController.getAddress());
     await token.grantRole(MINTER_ROLE, await merkleRewards.getAddress());
+    // Allow deployer to mint in tests for setup convenience
+    await token.grantRole(MINTER_ROLE, deployer.address);
     
     const SETTLER_ROLE = await merkleRewards.SETTLER_ROLE();
     await merkleRewards.grantRole(SETTLER_ROLE, validator.address);
     
     const VALIDATOR_ROLE = await providerRegistry.VALIDATOR_ROLE();
     await providerRegistry.grantRole(VALIDATOR_ROLE, validator.address);
+    // JobEscrow calls ProviderRegistry.addReward() during completeJob()
+    await providerRegistry.grantRole(VALIDATOR_ROLE, await jobEscrow.getAddress());
     
     const VALIDATOR_ROLE_JOB = await jobEscrow.VALIDATOR_ROLE();
     await jobEscrow.grantRole(VALIDATOR_ROLE_JOB, validator.address);
+
+    // GasBank relayer role (withdrawForRelay requires caller to have RELAYER_ROLE)
+    const RELAYER_ROLE = await gasBank.RELAYER_ROLE();
+    await gasBank.grantRole(RELAYER_ROLE, validator.address);
     
     return {
       deployer,
@@ -113,18 +124,18 @@ describe("Cloudana DePIN System", function () {
     });
     
     it("Should allow minter to mint tokens", async function () {
-      const { token, emissionController, user } = await loadFixture(deployCloudanaFixture);
+      const { token, user } = await loadFixture(deployCloudanaFixture);
       const amount = ethers.parseEther("1000");
-      await token.connect(emissionController).mint(user.address, amount);
+      await token.mint(user.address, amount);
       expect(await token.balanceOf(user.address)).to.equal(amount);
     });
     
     it("Should not allow minting above cap", async function () {
-      const { token, emissionController, TEMPORARY_CAP } = await loadFixture(deployCloudanaFixture);
+      const { token, TEMPORARY_CAP } = await loadFixture(deployCloudanaFixture);
       const amount = TEMPORARY_CAP + 1n;
       await expect(
-        token.connect(emissionController).mint(emissionController.address, amount)
-      ).to.be.revertedWithCustomError(token, "ERC20ExceededCap");
+        token.mint(await token.getAddress(), amount)
+      ).to.be.revertedWith("CLDToken: Cap exceeded");
     });
   });
   
@@ -222,12 +233,9 @@ describe("Cloudana DePIN System", function () {
       await token.connect(user).approve(await jobEscrow.getAddress(), jobDeposit);
       
       // Create job
-      const tx = await jobEscrow.connect(user).createJob(provider.address, jobDeposit);
-      const receipt = await tx.wait();
-      const jobCreatedEvent = receipt.logs.find(
-        (log) => log.topics[0] === ethers.id("JobCreated(address,address,address,uint256)")
-      );
-      const jobId = "0x" + jobCreatedEvent.topics[1].slice(26);
+      await jobEscrow.connect(user).createJob(provider.address, jobDeposit);
+      const userJobs = await jobEscrow.getUserJobs(user.address);
+      const jobId = userJobs[0];
       
       // Complete job
       const rewardAmount = ethers.parseEther("8");
