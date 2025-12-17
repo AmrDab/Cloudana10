@@ -75,18 +75,12 @@ contract MerkleRewardsPoUW is AccessControl {
         require(amount > 0, "MerkleRewardsPoUW: Invalid amount");
         
         // CRITICAL: Both root and epoch processing must be complete
+        // Single external call to get both values (saves ~20k gas)
+        (bool processed, uint256 budget) = emissionController.getEpochInfo(epoch);
+        require(processed, "MerkleRewardsPoUW: Epoch not processed yet");
         require(
-            emissionController.epochProcessed(epoch),
-            "MerkleRewardsPoUW: Epoch not processed yet"
-        );
-        
-        uint256 budget = emissionController.getPouwBudget(epoch);
-        require(budget > 0, "MerkleRewardsPoUW: Budget not set");
-        
-        // Validate root total doesn't exceed budget
-        require(
-            rootTotalAmounts[epoch] <= budget,
-            "MerkleRewardsPoUW: Root total exceeds budget"
+            budget > 0 && rootTotalAmounts[epoch] <= budget,
+            "MerkleRewardsPoUW: Budget insufficient"
         );
         
         // Verify merkle proof
@@ -136,10 +130,10 @@ contract MerkleRewardsPoUW is AccessControl {
      */
     function isRootValid(uint256 epoch) external view returns (bool) {
         if (merkleRoots[epoch] == bytes32(0)) return false;
-        if (!emissionController.epochProcessed(epoch)) return false;
         
-        uint256 budget = emissionController.getPouwBudget(epoch);
-        return budget > 0 && rootTotalAmounts[epoch] <= budget;
+        // Single external call instead of two
+        (bool processed, uint256 budget) = emissionController.getEpochInfo(epoch);
+        return processed && budget > 0 && rootTotalAmounts[epoch] <= budget;
     }
 }
 

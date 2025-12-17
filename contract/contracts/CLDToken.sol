@@ -81,6 +81,28 @@ contract CLDToken is ERC20, ERC20Capped, AccessControl {
     }
     
     /**
+     * @dev Batch mint tokens to multiple addresses (gas optimized)
+     * @param recipients Array of recipient addresses
+     * @param amounts Array of amounts to mint (must match recipients length)
+     */
+    function batchMint(address[] calldata recipients, uint256[] calldata amounts) 
+        external onlyRole(MINTER_ROLE) 
+    {
+        require(recipients.length == amounts.length, "CLDToken: Array length mismatch");
+        
+        uint256 totalAmount = 0;
+        for (uint256 i = 0; i < amounts.length; i++) {
+            totalAmount += amounts[i];
+        }
+        
+        require(totalSupply() + totalAmount <= cap(), "CLDToken: Cap exceeded");
+        
+        for (uint256 i = 0; i < recipients.length; i++) {
+            _mint(recipients[i], amounts[i]);
+        }
+    }
+    
+    /**
      * @dev Override _update to enforce cap
      */
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Capped) {

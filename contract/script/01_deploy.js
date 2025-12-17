@@ -1,4 +1,5 @@
 const hre = require("hardhat");
+const { getCreateAddress } = require("ethers");
 
 /**
  * Main deployment script for Cloudana DePIN system
@@ -68,113 +69,294 @@ async function main() {
   // Constants
   const TEMPORARY_CAP = hre.ethers.parseEther("64000000"); // 64M CLD
   const EPOCH_DURATION = 300; // 5 minutes for MVP (testnet)
-  
+
+  // Nonce + delay config
+  const DEPLOYMENT_DELAY_MS = Number(process.env.DEPLOYMENT_DELAY_MS || "3000");
+  const DEPLOY_CONFIRMATIONS = Number(process.env.DEPLOY_CONFIRMATIONS || "1");
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const nonceLatest = await hre.ethers.provider.getTransactionCount(deployer.address, "latest");
+  const noncePending = await hre.ethers.provider.getTransactionCount(deployer.address, "pending");
+  console.log(`Deployer nonce latest: ${nonceLatest}, pending: ${noncePending}`);
+  if (noncePending !== nonceLatest) {
+    console.log("⚠️  Pending transactions detected for deployer. If you previously ran this script, wait for pending txs to mine or use a fresh deployer.");
+  }
+  let nextNonce = noncePending;
+
+  function isAlreadyKnownError(e) {
+    const msg = (e && (e.message || e.toString && e.toString())) || "";
+    return /already known|known transaction/i.test(msg);
+  }
+
+  function isNonceTooLowError(e) {
+    const msg = (e && (e.message || e.toString && e.toString())) || "";
+    return /nonce too low/i.test(msg);
+  }
+
+  function normalizeAddr(addr) {
+    try {
+      return hre.ethers.getAddress(addr);
+    } catch {
+      return (addr || "").toLowerCase();
+    }
+  }
+
+  function sameAddr(a, b) {
+    return normalizeAddr(a) === normalizeAddr(b);
+  }
+
+  async function syncNextNonce(reason) {
+    const chainPending = await hre.ethers.provider.getTransactionCount(deployer.address, "pending");
+    if (chainPending > nextNonce) {
+      console.log(`ℹ️  Nonce drift detected (${reason}): local ${nextNonce} -> chain pending ${chainPending}`);
+      nextNonce = chainPending;
+    }
+    return nextNonce;
+  }
+
+  async function allocateNonce(reason) {
+    await syncNextNonce(reason);
+    return nextNonce++;
+  }
+
+  async function waitForNonceMined(nonce, { pollMs = 2000, timeoutMs = 10 * 60 * 1000 } = {}) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const latest = await hre.ethers.provider.getTransactionCount(deployer.address, "latest");
+      if (latest > nonce) return true;
+      await sleep(pollMs);
+    }
+    return false;
+  }
+
+  async function waitForPostCheck(postCheck, { pollMs = 2000, timeoutMs = 5 * 60 * 1000 } = {}) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const ok = await postCheck();
+        if (ok) return true;
+      } catch {
+        // ignore transient RPC errors while waiting
+      }
+      await sleep(pollMs);
+    }
+    return false;
+  }
+
+  async function waitForContractCode(address, { pollMs = 2000, timeoutMs = 10 * 60 * 1000 } = {}) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const code = await hre.ethers.provider.getCode(address);
+      if (code && code !== "0x") return true;
+      await sleep(pollMs);
+    }
+    return false;
+  }
+
+  async function deployContract(contractName, factory, constructorArgs = []) {
+    const maxAttempts = Number(process.env.NONCE_RETRY_ATTEMPTS || "3");
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const nonce = await allocateNonce(`${contractName} deploy`);
+      const expectedAddress = getCreateAddress({ from: deployer.address, nonce });
+      console.log(`\nDeploying ${contractName} (nonce ${nonce})...`);
+      try {
+        const contract = await factory.connect(deployer).deploy(...constructorArgs, { nonce });
+        const tx = contract.deploymentTransaction();
+        if (tx) {
+          console.log(`${contractName} deploy tx sent: ${tx.hash}`);
+          await sleep(DEPLOYMENT_DELAY_MS);
+          const receipt = await tx.wait(DEPLOY_CONFIRMATIONS);
+          console.log(`${contractName} deploy tx mined in block: ${receipt.blockNumber}`);
+        }
+        await contract.waitForDeployment();
+        const address = await contract.getAddress();
+        console.log(`${contractName} deployed to: ${address}`);
+        return { contract, address };
+      } catch (e) {
+        lastErr = e;
+        if (isNonceTooLowError(e)) {
+          console.log(`⚠️  ${contractName} nonce too low on attempt ${attempt}/${maxAttempts}. Resyncing and retrying...`);
+          await syncNextNonce(`${contractName} nonce-too-low`);
+          continue;
+        }
+        if (isAlreadyKnownError(e)) {
+          console.log(
+            `⚠️  ${contractName} deploy tx is already known by the RPC node. ` +
+              `Waiting for contract code at expected address: ${expectedAddress}`
+          );
+          const ok = await waitForContractCode(expectedAddress);
+          if (!ok) {
+            throw new Error(
+              `${contractName} deploy tx was "already known", but contract code did not appear at ${expectedAddress} within timeout. ` +
+                `This usually means the tx is stuck/dropped or nonce management is out of sync.`
+            );
+          }
+          console.log(`${contractName} detected deployed at: ${expectedAddress}`);
+          const contract = factory.attach(expectedAddress).connect(deployer);
+          return { contract, address: expectedAddress };
+        }
+        throw e;
+      }
+    }
+    throw lastErr;
+  }
+
+  async function sendTx(label, fn) {
+    const maxAttempts = Number(process.env.NONCE_RETRY_ATTEMPTS || "3");
+    const opts = arguments.length >= 3 ? arguments[2] : {};
+    const postCheck = opts && typeof opts.postCheck === "function" ? opts.postCheck : null;
+    const postCheckLabel = (opts && opts.postCheckLabel) || "postCheck";
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const nonce = await allocateNonce(label);
+      try {
+        const tx = await fn(nonce);
+        console.log(`${label} tx sent: ${tx.hash} (nonce ${nonce})`);
+        await sleep(DEPLOYMENT_DELAY_MS);
+        const receipt = await tx.wait(DEPLOY_CONFIRMATIONS);
+        console.log(`${label} tx mined in block: ${receipt.blockNumber}`);
+        if (postCheck) {
+          const ok = await waitForPostCheck(postCheck, {
+            pollMs: Number(process.env.POSTCHECK_POLL_MS || "2000"),
+            timeoutMs: Number(process.env.POSTCHECK_TIMEOUT_MS || String(5 * 60 * 1000)),
+          });
+          if (!ok) {
+            throw new Error(`${label}: ${postCheckLabel} did not pass after tx mined`);
+          }
+        }
+        return receipt;
+      } catch (e) {
+        lastErr = e;
+        if (isNonceTooLowError(e)) {
+          console.log(`⚠️  ${label} nonce too low on attempt ${attempt}/${maxAttempts}. Resyncing and retrying...`);
+          await syncNextNonce(`${label} nonce-too-low`);
+          continue;
+        }
+        if (isAlreadyKnownError(e)) {
+          console.log(`⚠️  ${label} tx already known by RPC (nonce ${nonce}). Waiting for nonce to be mined...`);
+          const mined = await waitForNonceMined(nonce, {
+            pollMs: Number(process.env.NONCE_WAIT_POLL_MS || "2000"),
+            timeoutMs: Number(process.env.NONCE_WAIT_TIMEOUT_MS || String(10 * 60 * 1000)),
+          });
+          if (!mined) {
+            throw new Error(`${label}: tx was "already known" but nonce ${nonce} did not mine within timeout`);
+          }
+          if (postCheck) {
+            const ok = await waitForPostCheck(postCheck, {
+              pollMs: Number(process.env.POSTCHECK_POLL_MS || "2000"),
+              timeoutMs: Number(process.env.POSTCHECK_TIMEOUT_MS || String(5 * 60 * 1000)),
+            });
+            if (!ok) {
+              throw new Error(`${label}: ${postCheckLabel} did not pass after waiting for nonce ${nonce} to mine`);
+            }
+          }
+          console.log(`${label} confirmed (nonce ${nonce} mined).`);
+          return;
+        }
+        throw e;
+      }
+    }
+    throw lastErr;
+  }
+
   // 1. Deploy CLDToken
-  console.log("\n1. Deploying CLDToken...");
   const CLDToken = await hre.ethers.getContractFactory("CLDToken");
-  const token = await CLDToken.connect(deployer).deploy(
-    "Cloudana",
-    "CLD",
-    TEMPORARY_CAP
+  const { contract: token, address: tokenAddress } = await deployContract(
+    "CLDToken",
+    CLDToken,
+    ["Cloudana", "CLD", TEMPORARY_CAP]
   );
-  await token.waitForDeployment();
-  const tokenAddress = await token.getAddress();
-  console.log("CLDToken deployed to:", tokenAddress);
-  
+
   // 2. Deploy Config
-  console.log("\n2. Deploying Config...");
   const Config = await hre.ethers.getContractFactory("Config");
-  const config = await Config.connect(deployer).deploy();
-  await config.waitForDeployment();
-  const configAddress = await config.getAddress();
-  console.log("Config deployed to:", configAddress);
-  
+  const { contract: config, address: configAddress } = await deployContract("Config", Config, []);
+
   // 3. Deploy MockCapOracle
-  console.log("\n3. Deploying MockCapOracle...");
   const MockCapOracle = await hre.ethers.getContractFactory("MockCapOracle");
-  const oracle = await MockCapOracle.connect(deployer).deploy(tokenAddress);
-  await oracle.waitForDeployment();
-  const oracleAddress = await oracle.getAddress();
-  console.log("MockCapOracle deployed to:", oracleAddress);
-  
+  const { contract: oracle, address: oracleAddress } = await deployContract("MockCapOracle", MockCapOracle, [tokenAddress]);
+
   // 4. Deploy Treasury
-  console.log("\n4. Deploying Treasury...");
   const Treasury = await hre.ethers.getContractFactory("Treasury");
-  const treasury = await Treasury.connect(deployer).deploy(tokenAddress);
-  await treasury.waitForDeployment();
-  const treasuryAddress = await treasury.getAddress();
-  console.log("Treasury deployed to:", treasuryAddress);
-  
+  const { contract: treasury, address: treasuryAddress } = await deployContract("Treasury", Treasury, [tokenAddress]);
+
   // 5. Deploy GasBank
-  console.log("\n5. Deploying GasBank...");
   const GasBank = await hre.ethers.getContractFactory("GasBank");
-  const gasBank = await GasBank.connect(deployer).deploy(configAddress);
-  await gasBank.waitForDeployment();
-  const gasBankAddress = await gasBank.getAddress();
-  console.log("GasBank deployed to:", gasBankAddress);
-  
+  const { contract: gasBank, address: gasBankAddress } = await deployContract("GasBank", GasBank, [configAddress]);
+
   // 6. Deploy EmissionController
-  console.log("\n6. Deploying EmissionController...");
   const EmissionController = await hre.ethers.getContractFactory("EmissionController");
-  const emissionController = await EmissionController.connect(deployer).deploy(
-    tokenAddress,
-    treasuryAddress,
-    hre.ethers.ZeroAddress, // MerkleRewards will be set later
-    EPOCH_DURATION
+  const { contract: emissionController, address: emissionControllerAddress } = await deployContract(
+    "EmissionController",
+    EmissionController,
+    [tokenAddress, treasuryAddress, hre.ethers.ZeroAddress, EPOCH_DURATION] // MerkleRewards set later
   );
-  await emissionController.waitForDeployment();
-  const emissionControllerAddress = await emissionController.getAddress();
-  console.log("EmissionController deployed to:", emissionControllerAddress);
-  
+
   // 7. Deploy MerkleRewardsPoUW
-  console.log("\n7. Deploying MerkleRewardsPoUW...");
   const MerkleRewardsPoUW = await hre.ethers.getContractFactory("MerkleRewardsPoUW");
-  const merkleRewards = await MerkleRewardsPoUW.connect(deployer).deploy(
-    tokenAddress,
-    emissionControllerAddress
+  const { contract: merkleRewards, address: merkleRewardsAddress } = await deployContract(
+    "MerkleRewardsPoUW",
+    MerkleRewardsPoUW,
+    [tokenAddress, emissionControllerAddress]
   );
-  await merkleRewards.waitForDeployment();
-  const merkleRewardsAddress = await merkleRewards.getAddress();
-  console.log("MerkleRewardsPoUW deployed to:", merkleRewardsAddress);
-  
-  // Update EmissionController with MerkleRewards address
+
+  // 7a. Update EmissionController with MerkleRewards address
   console.log("\n7a. Setting MerkleRewards address in EmissionController...");
-  const setMerkleRewardsTx = await emissionController.connect(deployer).setMerkleRewards(merkleRewardsAddress);
-  await setMerkleRewardsTx.wait();
-  console.log("MerkleRewards address set in EmissionController");
-  
-  // 8. Deploy ProviderRegistry
-  console.log("\n8. Deploying ProviderRegistry...");
-  const ProviderRegistry = await hre.ethers.getContractFactory("ProviderRegistry");
-  const providerRegistry = await ProviderRegistry.connect(deployer).deploy(configAddress);
-  await providerRegistry.waitForDeployment();
-  const providerRegistryAddress = await providerRegistry.getAddress();
-  console.log("ProviderRegistry deployed to:", providerRegistryAddress);
-  
-  // 9. Deploy JobEscrow
-  console.log("\n9. Deploying JobEscrow...");
-  const JobEscrow = await hre.ethers.getContractFactory("JobEscrow");
-  const jobEscrow = await JobEscrow.connect(deployer).deploy(
-    tokenAddress,
-    configAddress,
-    providerRegistryAddress
+  await sendTx("EmissionController.setMerkleRewards", (nonce) =>
+    emissionController.connect(deployer).setMerkleRewards(merkleRewardsAddress, { nonce })
+  , {
+    postCheckLabel: "EmissionController.merkleRewards == merkleRewardsAddress",
+    postCheck: async () => sameAddr(await emissionController.merkleRewards(), merkleRewardsAddress),
+  }
   );
-  await jobEscrow.waitForDeployment();
-  const jobEscrowAddress = await jobEscrow.getAddress();
-  console.log("JobEscrow deployed to:", jobEscrowAddress);
+  console.log("MerkleRewards address set in EmissionController");
+
+  // 8. Deploy ProviderRegistry
+  const ProviderRegistry = await hre.ethers.getContractFactory("ProviderRegistry");
+  const { contract: providerRegistry, address: providerRegistryAddress } = await deployContract(
+    "ProviderRegistry",
+    ProviderRegistry,
+    [configAddress]
+  );
+
+  // 9. Deploy JobEscrow
+  const JobEscrow = await hre.ethers.getContractFactory("JobEscrow");
+  const { contract: jobEscrow, address: jobEscrowAddress } = await deployContract(
+    "JobEscrow",
+    JobEscrow,
+    [tokenAddress, configAddress, providerRegistryAddress]
+  );
   
   // Setup roles
   console.log("\n10. Setting up roles...");
   
   // Grant CAP_SETTER_ROLE to oracle
   const CAP_SETTER_ROLE = await token.CAP_SETTER_ROLE();
-  await token.connect(deployer).grantRole(CAP_SETTER_ROLE, oracleAddress);
+  await sendTx("CLDToken.grantRole(CAP_SETTER_ROLE)", (nonce) =>
+    token.connect(deployer).grantRole(CAP_SETTER_ROLE, oracleAddress, { nonce })
+  , {
+    postCheckLabel: "token.hasRole(CAP_SETTER_ROLE, oracle)",
+    postCheck: async () => await token.hasRole(CAP_SETTER_ROLE, oracleAddress),
+  }
+  );
   console.log("Granted CAP_SETTER_ROLE to oracle");
   
   // Grant MINTER_ROLE to EmissionController and MerkleRewards
   const MINTER_ROLE = await token.MINTER_ROLE();
-  await token.connect(deployer).grantRole(MINTER_ROLE, emissionControllerAddress);
-  await token.connect(deployer).grantRole(MINTER_ROLE, merkleRewardsAddress);
+  await sendTx("CLDToken.grantRole(MINTER_ROLE, EmissionController)", (nonce) =>
+    token.connect(deployer).grantRole(MINTER_ROLE, emissionControllerAddress, { nonce })
+  , {
+    postCheckLabel: "token.hasRole(MINTER_ROLE, EmissionController)",
+    postCheck: async () => await token.hasRole(MINTER_ROLE, emissionControllerAddress),
+  }
+  );
+  await sendTx("CLDToken.grantRole(MINTER_ROLE, MerkleRewardsPoUW)", (nonce) =>
+    token.connect(deployer).grantRole(MINTER_ROLE, merkleRewardsAddress, { nonce })
+  , {
+    postCheckLabel: "token.hasRole(MINTER_ROLE, MerkleRewardsPoUW)",
+    postCheck: async () => await token.hasRole(MINTER_ROLE, merkleRewardsAddress),
+  }
+  );
   console.log("Granted MINTER_ROLE to EmissionController and MerkleRewards");
   
   // Grant roles to all validator addresses
@@ -185,11 +367,41 @@ async function main() {
   const RELAYER_ROLE_JOB = await jobEscrow.RELAYER_ROLE();
   
   for (const validatorAddr of validatorAddresses) {
-    await merkleRewards.connect(deployer).grantRole(SETTLER_ROLE, validatorAddr);
-    await providerRegistry.connect(deployer).grantRole(VALIDATOR_ROLE, validatorAddr);
-    await jobEscrow.connect(deployer).grantRole(VALIDATOR_ROLE_JOB, validatorAddr);
-    await gasBank.connect(deployer).grantRole(RELAYER_ROLE, validatorAddr);
-    await jobEscrow.connect(deployer).grantRole(RELAYER_ROLE_JOB, validatorAddr);
+    await sendTx(`MerkleRewardsPoUW.grantRole(SETTLER_ROLE, ${validatorAddr})`, (nonce) =>
+      merkleRewards.connect(deployer).grantRole(SETTLER_ROLE, validatorAddr, { nonce })
+    , {
+      postCheckLabel: `merkleRewards.hasRole(SETTLER_ROLE, ${validatorAddr})`,
+      postCheck: async () => await merkleRewards.hasRole(SETTLER_ROLE, validatorAddr),
+    }
+    );
+    await sendTx(`ProviderRegistry.grantRole(VALIDATOR_ROLE, ${validatorAddr})`, (nonce) =>
+      providerRegistry.connect(deployer).grantRole(VALIDATOR_ROLE, validatorAddr, { nonce })
+    , {
+      postCheckLabel: `providerRegistry.hasRole(VALIDATOR_ROLE, ${validatorAddr})`,
+      postCheck: async () => await providerRegistry.hasRole(VALIDATOR_ROLE, validatorAddr),
+    }
+    );
+    await sendTx(`JobEscrow.grantRole(VALIDATOR_ROLE, ${validatorAddr})`, (nonce) =>
+      jobEscrow.connect(deployer).grantRole(VALIDATOR_ROLE_JOB, validatorAddr, { nonce })
+    , {
+      postCheckLabel: `jobEscrow.hasRole(VALIDATOR_ROLE, ${validatorAddr})`,
+      postCheck: async () => await jobEscrow.hasRole(VALIDATOR_ROLE_JOB, validatorAddr),
+    }
+    );
+    await sendTx(`GasBank.grantRole(RELAYER_ROLE, ${validatorAddr})`, (nonce) =>
+      gasBank.connect(deployer).grantRole(RELAYER_ROLE, validatorAddr, { nonce })
+    , {
+      postCheckLabel: `gasBank.hasRole(RELAYER_ROLE, ${validatorAddr})`,
+      postCheck: async () => await gasBank.hasRole(RELAYER_ROLE, validatorAddr),
+    }
+    );
+    await sendTx(`JobEscrow.grantRole(RELAYER_ROLE, ${validatorAddr})`, (nonce) =>
+      jobEscrow.connect(deployer).grantRole(RELAYER_ROLE_JOB, validatorAddr, { nonce })
+    , {
+      postCheckLabel: `jobEscrow.hasRole(RELAYER_ROLE, ${validatorAddr})`,
+      postCheck: async () => await jobEscrow.hasRole(RELAYER_ROLE_JOB, validatorAddr),
+    }
+    );
     console.log(`Granted all validator roles to: ${validatorAddr}`);
   }
   
@@ -201,7 +413,13 @@ async function main() {
     const treasuryContract = Treasury.attach(treasuryAddress);
     const TREASURY_ROLE = await treasuryContract.TREASURY_ROLE();
     for (const treasuryAddr of treasuryAdminAddresses) {
-      await treasuryContract.connect(deployer).grantRole(TREASURY_ROLE, treasuryAddr);
+      await sendTx(`Treasury.grantRole(TREASURY_ROLE, ${treasuryAddr})`, (nonce) =>
+        treasuryContract.connect(deployer).grantRole(TREASURY_ROLE, treasuryAddr, { nonce })
+      , {
+        postCheckLabel: `treasury.hasRole(TREASURY_ROLE, ${treasuryAddr})`,
+        postCheck: async () => await treasuryContract.hasRole(TREASURY_ROLE, treasuryAddr),
+      }
+      );
       console.log(`Granted TREASURY_ROLE to: ${treasuryAddr}`);
     }
   } catch (e) {
@@ -259,6 +477,10 @@ async function main() {
       { name: "MockCapOracle", address: oracleAddress, args: [tokenAddress] },
       { name: "Treasury", address: treasuryAddress, args: [tokenAddress] },
       { name: "GasBank", address: gasBankAddress, args: [configAddress] },
+      { name: "EmissionController", address: emissionControllerAddress, args: [tokenAddress, treasuryAddress, hre.ethers.ZeroAddress, EPOCH_DURATION] },
+      { name: "MerkleRewardsPoUW", address: merkleRewardsAddress, args: [tokenAddress, emissionControllerAddress] },
+      { name: "ProviderRegistry", address: providerRegistryAddress, args: [configAddress] },
+      { name: "JobEscrow", address: jobEscrowAddress, args: [tokenAddress, configAddress, providerRegistryAddress] },
     ];
     
     for (const contract of contracts) {

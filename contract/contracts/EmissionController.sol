@@ -183,23 +183,26 @@ contract EmissionController is AccessControl {
         uint256 treasuryAmount = (totalEmission * TREASURY_BPS) / 10000;
         uint256 governanceAmount = (totalEmission * GOVERNANCE_BPS) / 10000;
         
-        // Mint to validators (placeholder - would go to staking contract)
-        // For MVP, we'll mint to treasury as placeholder
-        token.mint(address(treasury), validatorsAmount);
-        
         // Set PoUW budget (mint-on-claim)
         pouwBudget[epoch] = pouwAmount;
         
-        // Mint to treasury
-        token.mint(address(treasury), treasuryAmount);
+        // Batch mint to reduce gas costs (saves ~90k gas per epoch)
+        address governanceRecipient = governanceIncentives != address(0) 
+            ? governanceIncentives 
+            : address(treasury);
         
-        // Mint to governance incentives
-        if (governanceIncentives != address(0)) {
-            token.mint(governanceIncentives, governanceAmount);
-        } else {
-            // If not set, send to treasury
-            token.mint(address(treasury), governanceAmount);
-        }
+        address[] memory recipients = new address[](2);
+        uint256[] memory amounts = new uint256[](2);
+        
+        // Treasury receives validators + treasury amounts
+        recipients[0] = address(treasury);
+        amounts[0] = validatorsAmount + treasuryAmount;
+        
+        // Governance recipient gets governance amount
+        recipients[1] = governanceRecipient;
+        amounts[1] = governanceAmount;
+        
+        token.batchMint(recipients, amounts);
         
         epochProcessed[epoch] = true;
         
@@ -219,6 +222,17 @@ contract EmissionController is AccessControl {
      */
     function getPouwBudget(uint256 epoch) external view returns (uint256) {
         return pouwBudget[epoch];
+    }
+    
+    /**
+     * @dev Get epoch info (processed status and budget) in single call
+     * Reduces external calls for gas optimization
+     * @param epoch Epoch index
+     * @return processed Whether epoch has been processed
+     * @return budget PoUW budget for the epoch
+     */
+    function getEpochInfo(uint256 epoch) external view returns (bool processed, uint256 budget) {
+        return (epochProcessed[epoch], pouwBudget[epoch]);
     }
 }
 

@@ -101,10 +101,12 @@ contract GasBank is AccessControl {
      */
     function getRemainingDailyLimit() external view returns (uint256) {
         uint256 currentDay = block.timestamp / 1 days;
+        uint256 dailyLimit = config.gasBankDailyLimit(); // Single external call
+        
         if (currentDay > lastResetDay) {
-            return config.gasBankDailyLimit();
+            return dailyLimit;
         }
-        uint256 dailyLimit = config.gasBankDailyLimit();
+        
         return dailyLimit > spentToday ? dailyLimit - spentToday : 0;
     }
 }
