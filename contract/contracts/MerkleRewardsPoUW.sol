@@ -10,6 +10,7 @@ import "./EmissionController.sol";
  * @title MerkleRewardsPoUW
  * @dev PoUW rewards distribution via Merkle roots
  * Mint-on-claim mechanism for gas efficiency
+ * Order-independent: setRoot and processEpoch can be called in any order
  */
 contract MerkleRewardsPoUW is AccessControl {
     bytes32 public constant SETTLER_ROLE = keccak256("SETTLER_ROLE");
@@ -42,6 +43,8 @@ contract MerkleRewardsPoUW is AccessControl {
     
     /**
      * @dev Publish merkle root for epoch (only settler/validator)
+     * Can be called before or after processEpoch - order doesn't matter
+     * Validation happens at claim time when both root and epoch processing must be complete
      * @param epoch Epoch index
      * @param root Merkle root
      * @param totalAmount Total amount of rewards in this root
@@ -49,11 +52,10 @@ contract MerkleRewardsPoUW is AccessControl {
     function setRoot(uint256 epoch, bytes32 root, uint256 totalAmount) external onlyRole(SETTLER_ROLE) {
         require(root != bytes32(0), "MerkleRewardsPoUW: Invalid root");
         require(merkleRoots[epoch] == bytes32(0), "MerkleRewardsPoUW: Root already set");
+        require(totalAmount > 0, "MerkleRewardsPoUW: Invalid total amount");
         
-        // Check budget constraint
-        uint256 budget = emissionController.getPouwBudget(epoch);
-        require(totalAmount <= budget, "MerkleRewardsPoUW: Total amount exceeds budget");
-        
+        // Store root - validation happens at claim time
+        // This allows setRoot to be called independently of processEpoch
         merkleRoots[epoch] = root;
         rootTotalAmounts[epoch] = totalAmount;
         
@@ -62,6 +64,7 @@ contract MerkleRewardsPoUW is AccessControl {
     
     /**
      * @dev Claim reward for provider
+     * Validates that both root is set AND epoch is processed
      * @param epoch Epoch index
      * @param amount Reward amount
      * @param proof Merkle proof
@@ -71,6 +74,21 @@ contract MerkleRewardsPoUW is AccessControl {
         require(!claimed[epoch][msg.sender], "MerkleRewardsPoUW: Already claimed");
         require(amount > 0, "MerkleRewardsPoUW: Invalid amount");
         
+        // CRITICAL: Both root and epoch processing must be complete
+        require(
+            emissionController.epochProcessed(epoch),
+            "MerkleRewardsPoUW: Epoch not processed yet"
+        );
+        
+        uint256 budget = emissionController.getPouwBudget(epoch);
+        require(budget > 0, "MerkleRewardsPoUW: Budget not set");
+        
+        // Validate root total doesn't exceed budget
+        require(
+            rootTotalAmounts[epoch] <= budget,
+            "MerkleRewardsPoUW: Root total exceeds budget"
+        );
+        
         // Verify merkle proof
         bytes32 leaf = keccak256(abi.encodePacked(msg.sender, amount));
         require(
@@ -78,7 +96,7 @@ contract MerkleRewardsPoUW is AccessControl {
             "MerkleRewardsPoUW: Invalid proof"
         );
         
-        // Check budget constraint
+        // Check claim doesn't exceed root total
         require(
             claimedTotal[epoch] + amount <= rootTotalAmounts[epoch],
             "MerkleRewardsPoUW: Claim exceeds root total"
@@ -108,6 +126,20 @@ contract MerkleRewardsPoUW is AccessControl {
         uint256 total = rootTotalAmounts[epoch];
         uint256 claimedAmount = claimedTotal[epoch];
         return total > claimedAmount ? total - claimedAmount : 0;
+    }
+    
+    /**
+     * @dev Check if root is valid (epoch processed and budget sufficient)
+     * Useful for off-chain monitoring to check if claims are ready
+     * @param epoch Epoch index
+     * @return true if root is set, epoch is processed, and budget is sufficient
+     */
+    function isRootValid(uint256 epoch) external view returns (bool) {
+        if (merkleRoots[epoch] == bytes32(0)) return false;
+        if (!emissionController.epochProcessed(epoch)) return false;
+        
+        uint256 budget = emissionController.getPouwBudget(epoch);
+        return budget > 0 && rootTotalAmounts[epoch] <= budget;
     }
 }
 

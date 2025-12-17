@@ -16,6 +16,25 @@ async function main() {
   const MockCapOracle = await hre.ethers.getContractFactory("MockCapOracle");
   const oracle = MockCapOracle.attach(addresses.MockCapOracle);
   
+  // Check if cap is already finalized
+  const capFinalized = await oracle.capFinalized();
+  if (capFinalized) {
+    console.log("Cap has already been finalized!");
+    const finalCap = await oracle.getFinalCap();
+    console.log("Final cap:", hre.ethers.formatEther(finalCap), "CLD");
+    process.exit(0);
+  }
+  
+  // Verify deployer has ORACLE_ROLE (should be granted in constructor)
+  const ORACLE_ROLE = await oracle.ORACLE_ROLE();
+  const hasRole = await oracle.hasRole(ORACLE_ROLE, deployer.address);
+  if (!hasRole) {
+    console.error("Error: Deployer does not have ORACLE_ROLE!");
+    console.error("Deployer address:", deployer.address);
+    process.exit(1);
+  }
+  console.log("✓ Deployer has ORACLE_ROLE");
+  
   // For MVP testnet, use a test random value
   // R = 10,000,000 CLD (10M)
   // Final cap = 21M + 10M = 31M CLD
