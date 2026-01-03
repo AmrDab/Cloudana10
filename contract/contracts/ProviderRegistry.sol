@@ -1,187 +1,132 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "./Config.sol";
+import "./CLDToken.sol";
 
 /**
  * @title ProviderRegistry
- * @dev Registry for providers with deposit requirement
+ * @dev Registry for compute providers in Cloudana MVP
  */
-contract ProviderRegistry is AccessControl, ReentrancyGuard {
-    bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
-    
-    Config public immutable config;
-    
+contract ProviderRegistry is AccessControl {
+    CLDToken public immutable cldToken;
+
     struct Provider {
-        address providerAddress;     // 20 bytes
-        uint128 depositAmount;       // 16 bytes (sufficient for ETH deposits)
-        uint64 registeredAt;         // 8 bytes (timestamp fits until year 2106)
-        uint128 autoRewardGasDeposit; // 16 bytes (ETH gas deposit)
-        bool isActive;               // 1 byte
-        bool autoRewardEnabled;      // 1 byte
-        // Total: 62 bytes = 2 storage slots (was 4 slots, saves ~50% gas on writes)
+        address owner;
+        bool active;
+        bytes32 metaHash;
+        uint64 createdAt;
     }
-    
+
     mapping(address => Provider) public providers;
-    address[] public providerList;
-    
-    // Provider rewards tracking (off-chain calculated, on-chain claimed)
-    mapping(address => uint256) public pendingRewards; // Epoch-based rewards
-    mapping(address => uint256) public jobRewards; // Job completion rewards
-    
-    event ProviderRegistered(address indexed provider, uint256 depositAmount);
-    event ProviderDeposited(address indexed provider, uint256 amount);
-    event ProviderWithdrawn(address indexed provider, uint256 amount);
-    event ProviderDeactivated(address indexed provider);
-    event AutoRewardEnabled(address indexed provider, uint256 gasDeposit);
-    event AutoRewardDisabled(address indexed provider);
-    event RewardAdded(address indexed provider, uint256 epochReward, uint256 jobReward);
-    event RewardClaimed(address indexed provider, uint256 amount);
-    
-    constructor(address _config) {
-        require(_config != address(0), "ProviderRegistry: Invalid config");
-        config = Config(_config);
+
+    error ProviderNotRegistered(address provider);
+    error ProviderAlreadyRegistered(address provider);
+    error NotProviderOwner(address caller, address owner);
+    error InvalidBurnAmount();
+
+    event ProviderRegistered(
+        address indexed owner,
+        bytes32 indexed metaHash,
+        uint256 burnedAmount
+    );
+    event ProviderStatusChanged(address indexed owner, bool active);
+    event ProviderMetaUpdated(address indexed owner, bytes32 indexed metaHash);
+
+    constructor(address _cldToken) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(VALIDATOR_ROLE, msg.sender);
+        cldToken = CLDToken(_cldToken);
     }
-    
+
     /**
-     * @dev Register as provider with deposit
+     * @dev Register a new provider with optional metadata hash
+     * @param metaHash Hash of provider metadata (IPFS, etc.)
      */
-    function register() external payable nonReentrant {
-        require(!providers[msg.sender].isActive, "ProviderRegistry: Already registered");
-        
-        uint256 requiredDeposit = config.providerDepositAmount();
-        require(msg.value >= requiredDeposit, "ProviderRegistry: Insufficient deposit");
-        
+    function registerProvider(bytes32 metaHash) external {
+        if (providers[msg.sender].owner != address(0)) {
+            revert ProviderAlreadyRegistered(msg.sender);
+        }
+
         providers[msg.sender] = Provider({
-            providerAddress: msg.sender,
-            depositAmount: uint128(requiredDeposit),
-            registeredAt: uint64(block.timestamp),
-            autoRewardGasDeposit: 0,
-            isActive: true,
-            autoRewardEnabled: false
+            owner: msg.sender,
+            active: true,
+            metaHash: metaHash,
+            createdAt: uint64(block.timestamp)
         });
-        
-        providerList.push(msg.sender);
-        
-        // Refund excess if any
-        if (msg.value > requiredDeposit) {
-            payable(msg.sender).transfer(msg.value - requiredDeposit);
-        }
-        
-        emit ProviderRegistered(msg.sender, requiredDeposit);
+
+        emit ProviderRegistered(msg.sender, metaHash, 0);
     }
-    
+
     /**
-     * @dev Enable auto-reward with gas deposit
+     * @dev Register a provider and burn CLD tokens (requires approval)
+     * @param metaHash Hash of provider metadata
+     * @param burnAmount Amount of CLD tokens to burn
      */
-    function enableAutoReward() external payable nonReentrant {
-        require(providers[msg.sender].isActive, "ProviderRegistry: Not registered");
-        require(!providers[msg.sender].autoRewardEnabled, "ProviderRegistry: Already enabled");
-        require(msg.value > 0, "ProviderRegistry: Gas deposit required");
-        
+    function registerProviderWithBurn(
+        bytes32 metaHash,
+        uint256 burnAmount
+    ) external {
+        if (providers[msg.sender].owner != address(0)) {
+            revert ProviderAlreadyRegistered(msg.sender);
+        }
+
+        if (burnAmount > 0) {
+            cldToken.burnFrom(msg.sender, burnAmount);
+        }
+
+        providers[msg.sender] = Provider({
+            owner: msg.sender,
+            active: true,
+            metaHash: metaHash,
+            createdAt: uint64(block.timestamp)
+        });
+
+        emit ProviderRegistered(msg.sender, metaHash, burnAmount);
+    }
+
+    /**
+     * @dev Set provider active status (only owner or admin)
+     * @param active New active status
+     */
+    function setProviderActive(bool active) external {
         Provider storage provider = providers[msg.sender];
-        provider.autoRewardEnabled = true;
-        provider.autoRewardGasDeposit += uint128(msg.value);
-        
-        emit AutoRewardEnabled(msg.sender, msg.value);
+        if (provider.owner == address(0)) {
+            revert ProviderNotRegistered(msg.sender);
+        }
+
+        // Allow owner or admin to change status
+        if (msg.sender != provider.owner && !hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) {
+            revert NotProviderOwner(msg.sender, provider.owner);
+        }
+
+        provider.active = active;
+        emit ProviderStatusChanged(msg.sender, active);
     }
-    
+
     /**
-     * @dev Disable auto-reward and withdraw gas deposit
+     * @dev Update provider metadata hash (only owner)
+     * @param metaHash New metadata hash
      */
-    function disableAutoReward() external nonReentrant {
-        require(providers[msg.sender].isActive, "ProviderRegistry: Not registered");
-        require(providers[msg.sender].autoRewardEnabled, "ProviderRegistry: Not enabled");
-        
+    function updateMetaHash(bytes32 metaHash) external {
         Provider storage provider = providers[msg.sender];
-        uint256 gasDeposit = provider.autoRewardGasDeposit;
-        provider.autoRewardEnabled = false;
-        provider.autoRewardGasDeposit = 0;
-        
-        if (gasDeposit > 0) {
-            payable(msg.sender).transfer(gasDeposit);
+        if (provider.owner == address(0)) {
+            revert ProviderNotRegistered(msg.sender);
         }
-        
-        emit AutoRewardDisabled(msg.sender);
-    }
-    
-    /**
-     * @dev Add reward to provider (only validator/backend)
-     */
-    function addReward(
-        address provider,
-        uint256 epochReward,
-        uint256 jobReward
-    ) external onlyRole(VALIDATOR_ROLE) {
-        require(providers[provider].isActive, "ProviderRegistry: Provider not active");
-        
-        if (epochReward > 0) {
-            pendingRewards[provider] += epochReward;
+        if (msg.sender != provider.owner) {
+            revert NotProviderOwner(msg.sender, provider.owner);
         }
-        if (jobReward > 0) {
-            jobRewards[provider] += jobReward;
-        }
-        
-        emit RewardAdded(provider, epochReward, jobReward);
+
+        provider.metaHash = metaHash;
+        emit ProviderMetaUpdated(msg.sender, metaHash);
     }
-    
+
     /**
-     * @dev Claim rewards (for manual claim)
-     * Note: Actual CLD rewards are distributed via MerkleRewardsPoUW
-     * This is for tracking purposes
+     * @dev Get provider information
+     * @param owner Provider owner address
+     * @return Provider struct
      */
-    function claimRewards() external nonReentrant {
-        require(providers[msg.sender].isActive, "ProviderRegistry: Not registered");
-        
-        uint256 totalReward = pendingRewards[msg.sender] + jobRewards[msg.sender];
-        require(totalReward > 0, "ProviderRegistry: No rewards to claim");
-        
-        // Reset rewards (actual claiming happens via MerkleRewardsPoUW)
-        pendingRewards[msg.sender] = 0;
-        jobRewards[msg.sender] = 0;
-        
-        emit RewardClaimed(msg.sender, totalReward);
-    }
-    
-    /**
-     * @dev Deactivate provider (only admin)
-     */
-    function deactivateProvider(address provider) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(providers[provider].isActive, "ProviderRegistry: Not active");
-        providers[provider].isActive = false;
-        emit ProviderDeactivated(provider);
-    }
-    
-    /**
-     * @dev Get provider info
-     */
-    function getProvider(address provider) external view returns (Provider memory) {
-        return providers[provider];
-    }
-    
-    /**
-     * @dev Get total provider count
-     */
-    function getProviderCount() external view returns (uint256) {
-        return providerList.length;
-    }
-    
-    /**
-     * @dev Check if provider is registered and active
-     */
-    function isProviderActive(address provider) external view returns (bool) {
-        return providers[provider].isActive;
-    }
-    
-    /**
-     * @dev Get total rewards for provider
-     */
-    function getTotalRewards(address provider) external view returns (uint256) {
-        return pendingRewards[provider] + jobRewards[provider];
+    function getProvider(address owner) external view returns (Provider memory) {
+        return providers[owner];
     }
 }
 

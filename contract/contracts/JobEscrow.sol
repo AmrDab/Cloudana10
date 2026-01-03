@@ -1,253 +1,308 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./CLDToken.sol";
-import "./Config.sol";
 import "./ProviderRegistry.sol";
 
 /**
  * @title JobEscrow
- * @dev Manages user job deposits and provider rewards from escrow
+ * @dev Escrow contract for job payments with usage reporting via EIP-712 signatures
  */
-contract JobEscrow is AccessControl, ReentrancyGuard {
-    bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
-    bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
-    
-    CLDToken public immutable token;
-    Config public immutable config;
+contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
+    CLDToken public immutable cldToken;
     ProviderRegistry public immutable providerRegistry;
-    
+
+    bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
+
+    bytes32 private constant USAGE_REPORT_TYPEHASH =
+        keccak256(
+            "UsageReport(uint256 jobId,address user,address provider,uint256 grossCost,uint256 providerEarn,uint256 nonce,uint256 deadline)"
+        );
+
+    enum JobStatus {
+        OPEN,
+        CLOSED
+    }
+
     struct Job {
-        address user;              // 20 bytes
-        address provider;          // 20 bytes
-        uint128 depositAmount;     // 16 bytes (sufficient for most tokens, max ~3.4e38)
-        uint128 remainingBalance;  // 16 bytes
-        uint64 createdAt;          // 8 bytes (timestamp fits until year 2106)
-        bool isActive;             // 1 byte
-        bool isCompleted;          // 1 byte
-        // Total: 82 bytes = 3 storage slots (was 6 slots, saves ~50% gas on writes)
+        address user;
+        address provider;
+        uint256 deposited;
+        uint256 spent;
+        uint256 nonce;
+        JobStatus status;
+        uint64 createdAt;
+        uint64 closedAt;
     }
-    
-    mapping(bytes32 => Job) public jobs;
-    mapping(address => bytes32[]) public userJobs;
-    mapping(address => bytes32[]) public providerJobs;
-    
-    // Job ID counter (or use hash of user+provider+timestamp)
-    uint256 public jobCounter;
-    
+
+    struct UsageReport {
+        uint256 jobId;
+        address user;
+        address provider;
+        uint256 grossCost;
+        uint256 providerEarn;
+        uint256 nonce;
+        uint256 deadline;
+    }
+
+    mapping(uint256 => Job) public jobs;
+    mapping(address => uint256) public providerCredit;
+    mapping(address => uint256) public userRefundCredit;
+
+    uint256 public nextJobId;
+
+    error ProviderNotActive(address provider);
+    error JobNotFound(uint256 jobId);
+    error JobNotOpen(uint256 jobId);
+    error InvalidSignature();
+    error InvalidNonce(uint256 expected, uint256 provided);
+    error InvalidUser(address expected, address provided);
+    error InvalidProvider(address expected, address provided);
+    error DeadlineExceeded(uint256 deadline, uint256 current);
+    error InsufficientDeposit(uint256 required, uint256 available);
+    error InvalidProviderEarn(uint256 grossCost, uint256 providerEarn);
+    error NoCreditToWithdraw(address account);
+    error UnauthorizedCloser(address caller, address user, address provider);
+
     event JobCreated(
-        bytes32 indexed jobId,
+        uint256 indexed jobId,
         address indexed user,
         address indexed provider,
-        uint256 depositAmount
+        uint256 budgetAmount
     );
-    event JobCompleted(bytes32 indexed jobId, address indexed user, address indexed provider);
-    event JobCancelled(bytes32 indexed jobId, address indexed user, address indexed provider);
-    event BalanceRefunded(
-        bytes32 indexed jobId,
-        address indexed user,
-        uint256 refundAmount,
-        uint256 fee
+    event JobDeposited(uint256 indexed jobId, uint256 amount);
+    event UsageSubmitted(
+        uint256 indexed jobId,
+        uint256 grossCost,
+        uint256 providerEarn,
+        uint256 refund,
+        uint256 nonceAfter
     );
-    event ProviderRewardPaid(
-        bytes32 indexed jobId,
-        address indexed provider,
-        uint256 rewardAmount
-    );
-    event BalanceDeducted(
-        bytes32 indexed jobId,
-        uint256 amount,
-        uint256 newBalance
-    );
-    
+    event JobClosed(uint256 indexed jobId, uint256 remaining);
+    event ProviderWithdrawn(address indexed provider, uint256 amount);
+    event UserRefundWithdrawn(address indexed user, uint256 amount);
+
     constructor(
-        address _token,
-        address _config,
+        address _cldToken,
         address _providerRegistry
-    ) {
-        require(_token != address(0), "JobEscrow: Invalid token");
-        require(_config != address(0), "JobEscrow: Invalid config");
-        require(_providerRegistry != address(0), "JobEscrow: Invalid provider registry");
-        
-        token = CLDToken(_token);
-        config = Config(_config);
-        providerRegistry = ProviderRegistry(_providerRegistry);
-        
+    ) EIP712("CloudanaJobEscrow", "1") {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(VALIDATOR_ROLE, msg.sender);
-        _grantRole(RELAYER_ROLE, msg.sender);
+        cldToken = CLDToken(_cldToken);
+        providerRegistry = ProviderRegistry(_providerRegistry);
     }
-    
+
     /**
-     * @dev Create a job with CLD deposit
-     * @param provider Provider address
-     * @param depositAmount Amount of CLD to deposit
+     * @dev Create a new job with initial budget
+     * @param provider Provider address (must be registered and active)
+     * @param budgetAmount Initial CLD deposit amount
+     * @return jobId The created job ID
      */
-    function createJob(address provider, uint256 depositAmount) external nonReentrant {
-        require(provider != address(0), "JobEscrow: Invalid provider");
-        require(
-            providerRegistry.isProviderActive(provider),
-            "JobEscrow: Provider not active"
+    function createJob(
+        address provider,
+        uint256 budgetAmount
+    ) external returns (uint256 jobId) {
+        ProviderRegistry.Provider memory providerInfo = providerRegistry.getProvider(
+            provider
         );
-        require(depositAmount >= config.minJobDeposit(), "JobEscrow: Insufficient deposit");
-        
-        // Transfer CLD from user
-        require(
-            token.transferFrom(msg.sender, address(this), depositAmount),
-            "JobEscrow: Transfer failed"
-        );
-        
-        bytes32 jobId = keccak256(
-            abi.encodePacked(msg.sender, provider, block.timestamp, jobCounter++)
-        );
-        
+        if (providerInfo.owner == address(0) || !providerInfo.active) {
+            revert ProviderNotActive(provider);
+        }
+
+        if (budgetAmount > 0) {
+            bool success = cldToken.transferFrom(
+                msg.sender,
+                address(this),
+                budgetAmount
+            );
+            require(success, "Transfer failed");
+        }
+
+        jobId = nextJobId++;
         jobs[jobId] = Job({
             user: msg.sender,
             provider: provider,
-            depositAmount: uint128(depositAmount),
-            remainingBalance: uint128(depositAmount),
+            deposited: budgetAmount,
+            spent: 0,
+            nonce: 0,
+            status: JobStatus.OPEN,
             createdAt: uint64(block.timestamp),
-            isActive: true,
-            isCompleted: false
+            closedAt: 0
         });
-        
-        userJobs[msg.sender].push(jobId);
-        providerJobs[provider].push(jobId);
-        
-        emit JobCreated(jobId, msg.sender, provider, depositAmount);
+
+        emit JobCreated(jobId, msg.sender, provider, budgetAmount);
+        return jobId;
     }
-    
+
     /**
-     * @dev Complete job and pay provider reward
+     * @dev Deposit additional funds to an open job
      * @param jobId Job ID
-     * @param rewardAmount Amount to pay provider (from remaining balance)
+     * @param amount Amount to deposit
      */
-    function completeJob(bytes32 jobId, uint256 rewardAmount) external nonReentrant {
+    function deposit(uint256 jobId, uint256 amount) external {
         Job storage job = jobs[jobId];
-        require(job.isActive, "JobEscrow: Job not active");
-        require(job.user == msg.sender || hasRole(VALIDATOR_ROLE, msg.sender), "JobEscrow: Unauthorized");
-        
-        // Cache remaining balance to reduce storage reads
-        uint128 remaining = job.remainingBalance;
-        require(rewardAmount <= remaining, "JobEscrow: Reward exceeds balance");
-        
-        // Update job state in one go
-        job.isActive = false;
-        job.isCompleted = true;
-        job.remainingBalance = 0; // Clear balance
-        
-        uint256 refundAmount = uint256(remaining) - rewardAmount;
-        
-        // Pay provider reward
-        if (rewardAmount > 0) {
-            require(
-                token.transfer(job.provider, rewardAmount),
-                "JobEscrow: Provider transfer failed"
-            );
-            
-            // Track reward in provider registry
-            providerRegistry.addReward(job.provider, 0, rewardAmount);
-            
-            emit ProviderRewardPaid(jobId, job.provider, rewardAmount);
+        if (job.user == address(0)) {
+            revert JobNotFound(jobId);
         }
-        
-        // Refund remaining balance to user (with fee)
-        if (refundAmount > 0) {
-            uint256 fee = (refundAmount * config.jobRefundFeeBps()) / 10000;
-            uint256 refundAfterFee = refundAmount - fee;
-            
-            require(
-                token.transfer(job.user, refundAfterFee),
-                "JobEscrow: Refund transfer failed"
-            );
-            
-            emit BalanceRefunded(jobId, job.user, refundAfterFee, fee);
+        if (job.user != msg.sender) {
+            revert UnauthorizedCloser(msg.sender, job.user, job.provider);
         }
-        
-        emit JobCompleted(jobId, job.user, job.provider);
-    }
-    
-    /**
-     * @dev Cancel job and refund (only validator or user)
-     * @param jobId Job ID
-     */
-    function cancelJob(bytes32 jobId) external nonReentrant {
-        Job storage job = jobs[jobId];
-        require(job.isActive, "JobEscrow: Job not active");
-        require(
-            job.user == msg.sender || hasRole(VALIDATOR_ROLE, msg.sender),
-            "JobEscrow: Unauthorized"
+        if (job.status != JobStatus.OPEN) {
+            revert JobNotOpen(jobId);
+        }
+
+        bool success = cldToken.transferFrom(
+            msg.sender,
+            address(this),
+            amount
         );
-        
-        job.isActive = false;
-        job.isCompleted = false;
-        
-        // Refund with fee (cache remaining balance)
-        uint128 remaining = job.remainingBalance;
-        job.remainingBalance = 0; // Clear balance
-        uint256 refundAmount = uint256(remaining);
-        if (refundAmount > 0) {
-            uint256 fee = (refundAmount * config.jobRefundFeeBps()) / 10000;
-            uint256 refundAfterFee = refundAmount - fee;
-            
-            require(
-                token.transfer(job.user, refundAfterFee),
-                "JobEscrow: Refund transfer failed"
+        require(success, "Transfer failed");
+
+        job.deposited += amount;
+        emit JobDeposited(jobId, amount);
+    }
+
+    /**
+     * @dev Submit a usage report with validator signature
+     * @param r UsageReport struct
+     * @param sig EIP-712 signature from validator
+     */
+    function submitUsageReport(
+        UsageReport calldata r,
+        bytes calldata sig
+    ) external {
+        Job storage job = jobs[r.jobId];
+        if (job.user == address(0)) {
+            revert JobNotFound(r.jobId);
+        }
+        if (job.status != JobStatus.OPEN) {
+            revert JobNotOpen(r.jobId);
+        }
+        if (job.user != r.user) {
+            revert InvalidUser(job.user, r.user);
+        }
+        if (job.provider != r.provider) {
+            revert InvalidProvider(job.provider, r.provider);
+        }
+        if (job.nonce != r.nonce) {
+            revert InvalidNonce(job.nonce, r.nonce);
+        }
+        if (r.deadline > 0 && block.timestamp > r.deadline) {
+            revert DeadlineExceeded(r.deadline, block.timestamp);
+        }
+        if (job.spent + r.grossCost > job.deposited) {
+            revert InsufficientDeposit(
+                job.spent + r.grossCost,
+                job.deposited
             );
-            
-            emit BalanceRefunded(jobId, job.user, refundAfterFee, fee);
         }
-        
-        emit JobCancelled(jobId, job.user, job.provider);
+        if (r.providerEarn > r.grossCost) {
+            revert InvalidProviderEarn(r.grossCost, r.providerEarn);
+        }
+
+        // Verify EIP-712 signature
+        bytes32 structHash = keccak256(
+            abi.encode(
+                USAGE_REPORT_TYPEHASH,
+                r.jobId,
+                r.user,
+                r.provider,
+                r.grossCost,
+                r.providerEarn,
+                r.nonce,
+                r.deadline
+            )
+        );
+        bytes32 hash = _hashTypedDataV4(structHash);
+        address signer = ECDSA.recover(hash, sig);
+
+        if (!hasRole(VALIDATOR_ROLE, signer)) {
+            revert InvalidSignature();
+        }
+
+        // Update state (checks-effects-interactions)
+        job.spent += r.grossCost;
+        providerCredit[r.provider] += r.providerEarn;
+        uint256 refund = r.grossCost - r.providerEarn;
+        userRefundCredit[r.user] += refund;
+        job.nonce++;
+
+        emit UsageSubmitted(
+            r.jobId,
+            r.grossCost,
+            r.providerEarn,
+            refund,
+            job.nonce
+        );
     }
-    
+
     /**
-     * @dev Deduct balance from job (called by validator/backend when balance insufficient)
+     * @dev Close a job and refund remaining deposit
      * @param jobId Job ID
-     * @param amount Amount to deduct
      */
-    function deductBalance(bytes32 jobId, uint256 amount) external onlyRole(VALIDATOR_ROLE) {
+    function closeJob(uint256 jobId) external {
         Job storage job = jobs[jobId];
-        require(job.isActive, "JobEscrow: Job not active");
-        
-        // Cache remaining balance
-        uint128 remaining = job.remainingBalance;
-        require(amount <= remaining, "JobEscrow: Amount exceeds balance");
-        
-        uint128 newBalance = remaining - uint128(amount);
-        job.remainingBalance = newBalance;
-        
-        emit BalanceDeducted(jobId, amount, newBalance);
-        
-        // Auto-cancel if balance too low
-        if (newBalance < config.minJobDeposit()) {
-            job.isActive = false;
-            emit JobCancelled(jobId, job.user, job.provider);
+        if (job.user == address(0)) {
+            revert JobNotFound(jobId);
         }
+        if (job.status != JobStatus.OPEN) {
+            revert JobNotOpen(jobId);
+        }
+
+        // Only user, provider, or admin can close
+        bool canClose =
+            msg.sender == job.user ||
+            msg.sender == job.provider ||
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender);
+
+        if (!canClose) {
+            revert UnauthorizedCloser(msg.sender, job.user, job.provider);
+        }
+
+        uint256 remaining = job.deposited - job.spent;
+        if (remaining > 0) {
+            userRefundCredit[job.user] += remaining;
+        }
+
+        job.status = JobStatus.CLOSED;
+        job.closedAt = uint64(block.timestamp);
+
+        emit JobClosed(jobId, remaining);
     }
-    
+
     /**
-     * @dev Get job info
+     * @dev Withdraw accumulated provider credits
      */
-    function getJob(bytes32 jobId) external view returns (Job memory) {
-        return jobs[jobId];
+    function withdrawProvider() external nonReentrant {
+        uint256 amount = providerCredit[msg.sender];
+        if (amount == 0) {
+            revert NoCreditToWithdraw(msg.sender);
+        }
+
+        providerCredit[msg.sender] = 0;
+        bool success = cldToken.transfer(msg.sender, amount);
+        require(success, "Transfer failed");
+
+        emit ProviderWithdrawn(msg.sender, amount);
     }
-    
+
     /**
-     * @dev Get user's jobs
+     * @dev Withdraw accumulated user refund credits
      */
-    function getUserJobs(address user) external view returns (bytes32[] memory) {
-        return userJobs[user];
-    }
-    
-    /**
-     * @dev Get provider's jobs
-     */
-    function getProviderJobs(address provider) external view returns (bytes32[] memory) {
-        return providerJobs[provider];
+    function withdrawUserRefund() external nonReentrant {
+        uint256 amount = userRefundCredit[msg.sender];
+        if (amount == 0) {
+            revert NoCreditToWithdraw(msg.sender);
+        }
+
+        userRefundCredit[msg.sender] = 0;
+        bool success = cldToken.transfer(msg.sender, amount);
+        require(success, "Transfer failed");
+
+        emit UserRefundWithdrawn(msg.sender, amount);
     }
 }
 

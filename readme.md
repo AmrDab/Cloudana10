@@ -1,1 +1,0 @@
-Cloudana DePIN system
