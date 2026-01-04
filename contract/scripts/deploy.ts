@@ -31,6 +31,18 @@ async function main() {
   const jobEscrowAddress = await jobEscrow.getAddress();
   console.log("JobEscrow deployed to:", jobEscrowAddress);
 
+  // Deploy providerRegistry
+  console.log("\nDeploying providerRegistry...");
+  const TEAM_WALLET = process.env.TEAM_WALLET || deployer.address;
+  const TREASURY_WALLET = process.env.TREASURY_WALLET || deployer.address;
+  const providerRegistry = await ethers.getContractFactory("providerRegistry");
+  const providerRegistry = await providerRegistry.deploy(cldTokenAddress, TEAM_WALLET, TREASURY_WALLET);
+  await providerRegistry.waitForDeployment();
+  const providerRegistryAddress = await providerRegistry.getAddress();
+  console.log("providerRegistry deployed to:", providerRegistryAddress);
+  console.log("Team Wallet:", TEAM_WALLET);
+  console.log("Treasury Wallet:", TREASURY_WALLET);
+
   // Grant roles
   console.log("\nGranting roles...");
   const MINTER_ROLE = await cldToken.MINTER_ROLE();
@@ -55,6 +67,7 @@ async function main() {
       CLDToken: cldTokenAddress,
       ProviderRegistry: providerRegistryAddress,
       JobEscrow: jobEscrowAddress,
+      providerRegistry: providerRegistryAddress,
     },
     roles: {
       minter: deployer.address,
@@ -62,8 +75,8 @@ async function main() {
     },
   };
 
-  // Write addresses to shared folder in replit project
-  const sharedDir = path.join(__dirname, "../../cloudana-mvp-replit/shared");
+  // Write addresses to shared folder
+  const sharedDir = path.join(__dirname, "../../shared");
   if (!fs.existsSync(sharedDir)) {
     fs.mkdirSync(sharedDir, { recursive: true });
   }
@@ -81,6 +94,7 @@ async function main() {
   const cldTokenArtifact = await ethers.getContractFactory("CLDToken");
   const providerRegistryArtifact = await ethers.getContractFactory("ProviderRegistry");
   const jobEscrowArtifact = await ethers.getContractFactory("JobEscrow");
+  const providerRegistryArtifact = await ethers.getContractFactory("providerRegistry");
 
   // Read compiled artifacts
   const artifactsPath = path.join(__dirname, "../artifacts/contracts");
@@ -96,6 +110,9 @@ async function main() {
   const jobEscrowAbi = JSON.parse(
     fs.readFileSync(path.join(artifactsPath, "JobEscrow.sol/JobEscrow.json"), "utf8")
   ).abi;
+  const ProviderRegistryAbi = JSON.parse(
+    fs.readFileSync(path.join(artifactsPath, "providerRegistry.sol/providerRegistry.json"), "utf8")
+  ).abi;
 
   fs.writeFileSync(path.join(abiDir, "CLDToken.json"), JSON.stringify(cldTokenAbi, null, 2));
   fs.writeFileSync(
@@ -103,6 +120,7 @@ async function main() {
     JSON.stringify(providerRegistryAbi, null, 2)
   );
   fs.writeFileSync(path.join(abiDir, "JobEscrow.json"), JSON.stringify(jobEscrowAbi, null, 2));
+  fs.writeFileSync(path.join(abiDir, "providerRegistry.json"), JSON.stringify(ProviderRegistryAbi, null, 2));
   console.log(`ABIs exported to ${abiDir}`);
 
   // Write EIP-712 schema
@@ -141,6 +159,9 @@ async function main() {
   console.log("CLDToken:", cldTokenAddress);
   console.log("ProviderRegistry:", providerRegistryAddress);
   console.log("JobEscrow:", jobEscrowAddress);
+  console.log("providerRegistry:", providerRegistryAddress);
+  console.log("Team Wallet:", TEAM_WALLET);
+  console.log("Treasury Wallet:", TREASURY_WALLET);
   console.log("Validator:", VALIDATOR_ADDRESS);
 }
 

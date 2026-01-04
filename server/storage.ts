@@ -20,11 +20,15 @@ import { sql } from "drizzle-orm";
 export interface IStorage {
   // Providers
   getProvider(id: string): Promise<Provider | undefined>;
-  getProviderByAddress(address: string): Promise<Provider | undefined>;
+  getProviderByProviderkey(providerkey: string): Promise<Provider | undefined>;
+  getProvidersByOwner(ownerAddress: string): Promise<Provider[]>;
   getAllProviders(): Promise<Provider[]>;
   getActiveProviders(): Promise<Provider[]>;
   createProvider(provider: InsertProvider): Promise<Provider>;
-  updateProviderStatus(id: string, status: "active" | "inactive"): Promise<void>;
+  updateProviderStatus(id: string, status: "Pending" | "Registered" | "Active" | "Inactive"): Promise<void>;
+  getPendingProviderByProviderkey(providerkey: string): Promise<Provider | undefined>;
+  updateProviderStatusByProviderkey(providerkey: string, status: "Pending" | "Registered" | "Active" | "Inactive"): Promise<void>;
+  updateProviderRegisteredAt(providerkey: string, registeredAt: Date): Promise<void>;
   updateProviderEarnings(id: string, amount: string): Promise<void>;
 
   // Jobs
@@ -61,9 +65,13 @@ export class DatabaseStorage implements IStorage {
     return provider || undefined;
   }
 
-  async getProviderByAddress(address: string): Promise<Provider | undefined> {
-    const [provider] = await db.select().from(providers).where(eq(providers.address, address));
+  async getProviderByProviderkey(providerkey: string): Promise<Provider | undefined> {
+    const [provider] = await db.select().from(providers).where(eq(providers.providerkey, providerkey));
     return provider || undefined;
+  }
+
+  async getProvidersByOwner(ownerAddress: string): Promise<Provider[]> {
+    return await db.select().from(providers).where(eq(providers.ownerAddress, ownerAddress)).orderBy(desc(providers.createdAt));
   }
 
   async getAllProviders(): Promise<Provider[]> {
@@ -71,7 +79,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getActiveProviders(): Promise<Provider[]> {
-    return await db.select().from(providers).where(eq(providers.status, "active"));
+    return await db.select().from(providers).where(eq(providers.status, "Active"));
   }
 
   async createProvider(insertProvider: InsertProvider): Promise<Provider> {
@@ -79,8 +87,33 @@ export class DatabaseStorage implements IStorage {
     return provider;
   }
 
-  async updateProviderStatus(id: string, status: "active" | "inactive"): Promise<void> {
+  async updateProviderStatus(id: string, status: "Pending" | "Registered" | "Active" | "Inactive"): Promise<void> {
     await db.update(providers).set({ status, updatedAt: new Date() }).where(eq(providers.id, id));
+  }
+
+  async getPendingProviderByProviderkey(providerkey: string): Promise<Provider | undefined> {
+    const [provider] = await db
+      .select()
+      .from(providers)
+      .where(and(eq(providers.providerkey, providerkey), eq(providers.status, "Pending")));
+    return provider || undefined;
+  }
+
+  async updateProviderStatusByProviderkey(
+    providerkey: string,
+    status: "Pending" | "Registered" | "Active" | "Inactive"
+  ): Promise<void> {
+    await db
+      .update(providers)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(providers.providerkey, providerkey));
+  }
+
+  async updateProviderRegisteredAt(providerkey: string, registeredAt: Date): Promise<void> {
+    await db
+      .update(providers)
+      .set({ registeredAt, updatedAt: new Date() })
+      .where(eq(providers.providerkey, providerkey));
   }
 
   async updateProviderEarnings(id: string, amount: string): Promise<void> {

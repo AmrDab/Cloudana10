@@ -328,3 +328,65 @@ export function useWithdrawUserRefund() {
   };
 }
 
+// ============== Node Registry Hooks ==============
+
+// Helper to convert hex string to bytes32
+export function hexToBytes32(hex: string): `0x${string}` {
+  if (hex.startsWith("0x")) {
+    hex = hex.slice(2);
+  }
+  // Pad or truncate to 64 hex characters (32 bytes)
+  const padded = hex.padEnd(64, "0").slice(0, 64);
+  return `0x${padded}` as `0x${string}`;
+}
+
+// Generate random node key
+export function generateproviderkey(): string {
+  const randomBytes = crypto.getRandomValues(new Uint8Array(32));
+  return `0x${Array.from(randomBytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+export function useproviderRegistryBondInfo() {
+  return useReadContract({
+    address: PROVIDER_REGISTRY_ADDRESS,
+    abi: ProviderRegistryAbi,
+    functionName: "getBondInfo",
+  });
+}
+
+export function useMyProviders(owner?: Address) {
+  return useReadContract({
+    address: PROVIDER_REGISTRY_ADDRESS,
+    abi: ProviderRegistryAbi,
+    functionName: "getMyProviders",
+    args: owner ? [owner] : undefined,
+    query: {
+      enabled: !!owner,
+    },
+  });
+}
+
+export function useRegisterNodeProvider() {
+  const { writeContract, data: hash, isPending, error } = useWriteContract();
+  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+
+  const register = (providerkey: string, region: string, hardwareTier: number, capacity: number) => {
+    writeContract({
+      address: PROVIDER_REGISTRY_ADDRESS,
+      abi: ProviderRegistryAbi,
+      functionName: "registerProvider",
+      args: [hexToBytes32(providerkey), region, hardwareTier, capacity],
+    });
+  };
+
+  return {
+    register,
+    hash,
+    isPending: isPending || isLoading,
+    isSuccess,
+    error,
+  };
+}
+

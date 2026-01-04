@@ -1,7 +1,5 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -9,16 +7,10 @@ import { useWallet } from "@/context/wallet-context";
 import { MOCK_JOBS } from "@/lib/mock-data";
 import { useLocation } from "wouter";
 import { Server, Coins, Settings, Activity } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
 
 export default function ProviderDashboard() {
-  const { isConnected, isProvider, registerAsProvider } = useWallet();
+  const { isConnected, isProvider } = useWallet();
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
-  
-  const [metaHash, setMetaHash] = useState("");
-  const [isRegistering, setIsRegistering] = useState(false);
 
   if (!isConnected) {
     return (
@@ -28,13 +20,6 @@ export default function ProviderDashboard() {
       </div>
     );
   }
-
-  const handleRegister = () => {
-    if (!metaHash) return;
-    setIsRegistering(true);
-    registerAsProvider(metaHash);
-    setTimeout(() => setIsRegistering(false), 1000); // Context handles the rest
-  };
 
   if (!isProvider) {
     return (
@@ -48,25 +33,15 @@ export default function ProviderDashboard() {
             <CardDescription className="text-lg">Register your machine to the Cloudana network and start earning CLD.</CardDescription>
           </CardHeader>
           <CardContent className="max-w-md mx-auto space-y-4 text-left">
-            <div className="space-y-2">
-              <Label htmlFor="metahash">Provider Metadata Hash (IPFS)</Label>
-              <Input 
-                id="metahash" 
-                placeholder="ipfs://Qm..." 
-                value={metaHash}
-                onChange={(e) => setMetaHash(e.target.value)}
-                className="bg-background/50"
-              />
-              <p className="text-xs text-muted-foreground">Link to your machine specs and pricing configuration.</p>
-            </div>
-            
-            <div className="flex items-center space-x-2 py-4">
-              <Switch id="stake" />
-              <Label htmlFor="stake">Stake CLD for higher trust score (Optional)</Label>
-            </div>
+            <p className="text-sm text-muted-foreground text-center">
+              Register your compute node with full device specifications. You'll need to provide detailed information about your hardware.
+            </p>
 
-            <Button onClick={handleRegister} disabled={isRegistering} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-12 text-lg">
-              {isRegistering ? "Registering..." : "Register Provider"}
+            <Button 
+              onClick={() => setLocation("/provider/register")} 
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-12 text-lg"
+            >
+              Register Provider
             </Button>
           </CardContent>
         </Card>
@@ -83,9 +58,17 @@ export default function ProviderDashboard() {
           <p className="text-muted-foreground">Monitor your node performance and earnings.</p>
         </div>
         <div className="flex items-center gap-2">
-           <Badge variant="outline" className="border-green-500 text-green-500 bg-green-500/10 px-3 py-1">
-             <Activity className="w-3 h-3 mr-2 animate-pulse" /> Node Active
-           </Badge>
+          <Button 
+            variant="outline" 
+            onClick={() => setLocation("/provider/register")}
+            className="border-primary/20 hover:bg-primary/10"
+          >
+            <Server className="h-4 w-4 mr-2" />
+            Register New Provider
+          </Button>
+          <Badge variant="outline" className="border-green-500 text-green-500 bg-green-500/10 px-3 py-1">
+            <Activity className="w-3 h-3 mr-2 animate-pulse" /> Node Active
+          </Badge>
         </div>
       </div>
 

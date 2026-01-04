@@ -15,20 +15,48 @@ export async function getActiveProviders(): Promise<Provider[]> {
   return res.json();
 }
 
-export async function getProviderByAddress(address: string): Promise<Provider | null> {
-  const res = await fetch(`${API_BASE}/providers/address/${address}`);
+export async function getProviderByProviderkey(providerkey: string): Promise<Provider | null> {
+  const res = await fetch(`${API_BASE}/providers/key/${providerkey}`);
   if (!res.ok) return null;
   return res.json();
 }
 
+export async function getProvidersByOwner(ownerAddress: string): Promise<Provider[]> {
+  const res = await fetch(`${API_BASE}/providers/owner/${ownerAddress}`);
+  if (!res.ok) throw new Error("Failed to fetch providers");
+  return res.json();
+}
+
 export async function registerProvider(data: {
-  address: string;
+  ownerAddress: string;
+  providerkey: string;
+  region: string;
+  hardwareTier: number;
+  capacity: number;
+  bondAmount: string;
   name: string;
-  metaHash: string;
-  status: "active" | "inactive";
-  pricing: string;
+  description?: string;
+  cpuModel?: string;
+  cpuCores?: number;
+  cpuThreads?: number;
+  cpuClockSpeed?: string;
+  gpuModel?: string;
+  gpuCount?: number;
+  gpuMemory?: string;
+  gpuCudaCores?: string;
+  ramTotal?: string;
+  ramType?: string;
+  storageTotal?: string;
+  storageType?: string;
+  storageSpeed?: string;
+  bandwidth?: string;
+  networkType?: string;
+  location?: string;
+  country?: string;
+  city?: string;
+  pricing?: string;
 }): Promise<Provider> {
-  const res = await fetch(`${API_BASE}/providers`, {
+  const res = await fetch(`${API_BASE}/providers/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -40,113 +68,114 @@ export async function registerProvider(data: {
   return res.json();
 }
 
-// Job API
-export async function getUserJobs(userAddress: string): Promise<Job[]> {
-  const res = await fetch(`${API_BASE}/jobs/user/${userAddress}`);
-  if (!res.ok) throw new Error("Failed to fetch jobs");
+
+// Node Registry API
+export interface BondInfo {
+  bondAmount: string;
+  teamWallet: string;
+  treasuryWallet: string;
+  deadAddress: string;
+}
+
+export interface ValidateAndPrepareResponse {
+  success: boolean;
+  validated: {
+    providerkey: string;
+    region: string;
+    hardwareTier: number;
+    capacity: number;
+    name: string;
+    ownerAddress: string;
+  };
+  transaction: {
+    to: string;
+    functionName: "registerProvider";
+    args: [string, string, number, number];
+  };
+  bondInfo: {
+    totalBond: string;
+    required: string;
+    available: string;
+    allowance: string;
+  };
+  gasEstimate: string;
+}
+
+export interface ProviderNode {
+  providerkey: string;
+  region: string;
+  hardwareTier: number;
+  capacity: number;
+  bondAmount: string;
+  registeredAt: number;
+  status: number; // 0=Registered, 1=Active, 2=Inactive
+}
+
+export async function getBondInfo(): Promise<BondInfo> {
+  const res = await fetch(`${API_BASE}/bond-info`);
+  if (!res.ok) throw new Error("Failed to fetch bond info");
   return res.json();
 }
 
-export async function getProviderJobs(providerId: string): Promise<Job[]> {
-  const res = await fetch(`${API_BASE}/jobs/provider/${providerId}`);
-  if (!res.ok) throw new Error("Failed to fetch jobs");
-  return res.json();
-}
-
-export async function getJob(jobId: string): Promise<Job> {
-  const res = await fetch(`${API_BASE}/jobs/${jobId}`);
-  if (!res.ok) throw new Error("Failed to fetch job");
-  return res.json();
-}
-
-export async function getJobByNumber(jobNumber: string): Promise<Job> {
-  const res = await fetch(`${API_BASE}/jobs/number/${jobNumber}`);
-  if (!res.ok) throw new Error("Failed to fetch job");
-  return res.json();
-}
-
-export async function createJob(data: {
-  creator: string;
-  providerId: string;
-  deposit: string;
-}): Promise<Job> {
-  const res = await fetch(`${API_BASE}/jobs`, {
+export async function validateAndPrepareRegistration(data: {
+  ownerAddress: string;
+  providerkey: string;
+  region: "Helsinki" | "EU" | "Global";
+  hardwareTier: number;
+  capacity: number;
+  name: string;
+  description?: string;
+  cpuModel?: string;
+  cpuCores?: number;
+  cpuThreads?: number;
+  cpuClockSpeed?: string;
+  gpuModel?: string;
+  gpuCount?: number;
+  gpuMemory?: string;
+  gpuCudaCores?: string;
+  ramTotal?: string;
+  ramType?: string;
+  storageTotal?: string;
+  storageType?: string;
+  storageSpeed?: string;
+  bandwidth?: string;
+  networkType?: string;
+  location?: string;
+  country?: string;
+  city?: string;
+}): Promise<ValidateAndPrepareResponse> {
+  const res = await fetch(`${API_BASE}/providers/validate-and-prepare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.error || "Failed to create job");
+    throw new Error(error.error || "Failed to validate and prepare registration");
   }
   return res.json();
 }
 
-export async function closeJob(jobId: string): Promise<{ success: boolean; refundAmount: string }> {
-  const res = await fetch(`${API_BASE}/jobs/${jobId}/close`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.error || "Failed to close job");
-  }
+export async function getMyProviders(owner: string): Promise<ProviderNode[]> {
+  const res = await fetch(`${API_BASE}/providers/${owner}`);
+  if (!res.ok) throw new Error("Failed to fetch providers");
   return res.json();
 }
 
-// Usage Report API
-export async function getUsageReports(jobId: string): Promise<UsageReport[]> {
-  const res = await fetch(`${API_BASE}/usage-reports/job/${jobId}`);
-  if (!res.ok) throw new Error("Failed to fetch usage reports");
-  return res.json();
-}
-
-export async function requestSignature(data: {
-  jobId: string;
-  grossCost: string;
-  providerEarn: string;
-  userRefund?: string;
-}): Promise<{ reportId: string; signature: string; jobNonce: number }> {
-  const res = await fetch(`${API_BASE}/usage-reports/request-signature`, {
+export async function sendHeartbeat(data: {
+  providerkey: string;
+  uptime?: number;
+  timestamp?: number;
+  signature?: string;
+}): Promise<{ success: boolean; message: string; timestamp: number }> {
+  const res = await fetch(`${API_BASE}/providers/heartbeat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.error || "Failed to request signature");
+    throw new Error(error.error || "Failed to send heartbeat");
   }
-  return res.json();
-}
-
-export async function confirmUsageReport(reportId: string, txHash: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/usage-reports/${reportId}/confirm`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ txHash }),
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.error || "Failed to confirm usage report");
-  }
-  return res.json();
-}
-
-// User Credits API
-export async function getUserCredits(userAddress: string): Promise<UserCredit> {
-  const res = await fetch(`${API_BASE}/credits/${userAddress}`);
-  if (!res.ok) throw new Error("Failed to fetch user credits");
-  return res.json();
-}
-
-// Events API
-export async function getJobEvents(jobId: string): Promise<Event[]> {
-  const res = await fetch(`${API_BASE}/events/job/${jobId}`);
-  if (!res.ok) throw new Error("Failed to fetch events");
-  return res.json();
-}
-
-export async function getUserEvents(userAddress: string): Promise<Event[]> {
-  const res = await fetch(`${API_BASE}/events/user/${userAddress}`);
-  if (!res.ok) throw new Error("Failed to fetch events");
   return res.json();
 }

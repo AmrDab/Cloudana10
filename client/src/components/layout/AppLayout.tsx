@@ -20,9 +20,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
-    { label: "User Dashboard", path: "/user", icon: LayoutDashboard, show: isConnected },
     { label: "Provider Dashboard", path: "/provider", icon: Server, show: isConnected },
-    { label: "Jobs Explorer", path: "/jobs", icon: Briefcase, show: true },
+    { label: "Register Provider", path: "/provider/register", icon: Server, show: isConnected },
     { label: "Providers", path: "/providers", icon: Search, show: true },
     { label: "Debug", path: "/debug", icon: Terminal, show: true },
   ];
