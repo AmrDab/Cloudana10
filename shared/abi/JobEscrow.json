@@ -114,14 +114,14 @@
   {
     "inputs": [
       {
-        "internalType": "address",
+        "internalType": "bytes32",
         "name": "expected",
-        "type": "address"
+        "type": "bytes32"
       },
       {
-        "internalType": "address",
+        "internalType": "bytes32",
         "name": "provided",
-        "type": "address"
+        "type": "bytes32"
       }
     ],
     "name": "InvalidProvider",
@@ -205,9 +205,9 @@
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "provider",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       }
     ],
     "name": "ProviderNotActive",
@@ -242,9 +242,9 @@
         "type": "address"
       },
       {
-        "internalType": "address",
-        "name": "provider",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       }
     ],
     "name": "UnauthorizedCloser",
@@ -292,9 +292,9 @@
       },
       {
         "indexed": true,
-        "internalType": "address",
-        "name": "provider",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       },
       {
         "indexed": false,
@@ -530,9 +530,9 @@
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "provider",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       },
       {
         "internalType": "uint256",
@@ -689,9 +689,9 @@
         "type": "address"
       },
       {
-        "internalType": "address",
-        "name": "provider",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       },
       {
         "internalType": "uint256",
@@ -823,9 +823,9 @@
             "type": "address"
           },
           {
-            "internalType": "address",
-            "name": "provider",
-            "type": "address"
+            "internalType": "bytes32",
+            "name": "providerkey",
+            "type": "bytes32"
           },
           {
             "internalType": "uint256",

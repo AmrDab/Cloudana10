@@ -5,6 +5,16 @@
         "internalType": "address",
         "name": "_cldToken",
         "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_teamWallet",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_treasuryWallet",
+        "type": "address"
       }
     ],
     "stateMutability": "nonpayable",
@@ -32,8 +42,66 @@
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "required",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "allowance",
+        "type": "uint256"
+      }
+    ],
+    "name": "InsufficientAllowance",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "required",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "available",
+        "type": "uint256"
+      }
+    ],
+    "name": "InsufficientBalance",
+    "type": "error"
+  },
+  {
     "inputs": [],
-    "name": "InvalidBurnAmount",
+    "name": "InvalidCapacity",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidHardwareTier",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidRegion",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Invalidproviderkey",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "owner",
+        "type": "address"
+      }
+    ],
+    "name": "MaxProvidersReached",
     "type": "error"
   },
   {
@@ -55,23 +123,23 @@
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "provider",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       }
     ],
-    "name": "ProviderAlreadyRegistered",
+    "name": "ProviderAlreadyExists",
     "type": "error"
   },
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "provider",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       }
     ],
-    "name": "ProviderNotRegistered",
+    "name": "ProviderNotFound",
     "type": "error"
   },
   {
@@ -79,18 +147,18 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "address",
-        "name": "owner",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       },
       {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "metaHash",
-        "type": "bytes32"
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "timestamp",
+        "type": "uint64"
       }
     ],
-    "name": "ProviderMetaUpdated",
+    "name": "AgentHeartbeat",
     "type": "event"
   },
   {
@@ -105,13 +173,31 @@
       {
         "indexed": true,
         "internalType": "bytes32",
-        "name": "metaHash",
+        "name": "providerkey",
         "type": "bytes32"
       },
       {
         "indexed": false,
+        "internalType": "string",
+        "name": "region",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "hardwareTier",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "capacity",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
         "internalType": "uint256",
-        "name": "burnedAmount",
+        "name": "bondAmount",
         "type": "uint256"
       }
     ],
@@ -123,18 +209,18 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "address",
-        "name": "owner",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
       },
       {
         "indexed": false,
-        "internalType": "bool",
-        "name": "active",
-        "type": "bool"
+        "internalType": "enum ProviderRegistry.ProviderStatus",
+        "name": "status",
+        "type": "uint8"
       }
     ],
-    "name": "ProviderStatusChanged",
+    "name": "ProviderStatusUpdated",
     "type": "event"
   },
   {
@@ -214,12 +300,96 @@
   },
   {
     "inputs": [],
+    "name": "DEAD_ADDRESS",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "DEFAULT_ADMIN_ROLE",
     "outputs": [
       {
         "internalType": "bytes32",
         "name": "",
         "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_PROVIDERS_PER_OWNER",
+    "outputs": [
+      {
+        "internalType": "uint8",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "STATIC_BOND",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "TEAM_PERCENT",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "TREASURY_PERCENT",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "agentHeartbeats",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
       }
     ],
     "stateMutability": "view",
@@ -246,6 +416,25 @@
         "type": "address"
       }
     ],
+    "name": "getMyProviders",
+    "outputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "",
+        "type": "bytes32[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "providerkey",
+        "type": "bytes32"
+      }
+    ],
     "name": "getProvider",
     "outputs": [
       {
@@ -256,19 +445,39 @@
             "type": "address"
           },
           {
-            "internalType": "bool",
-            "name": "active",
-            "type": "bool"
-          },
-          {
             "internalType": "bytes32",
-            "name": "metaHash",
+            "name": "providerkey",
             "type": "bytes32"
           },
           {
+            "internalType": "string",
+            "name": "region",
+            "type": "string"
+          },
+          {
+            "internalType": "uint8",
+            "name": "hardwareTier",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint8",
+            "name": "capacity",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint96",
+            "name": "bondAmount",
+            "type": "uint96"
+          },
+          {
             "internalType": "uint64",
-            "name": "createdAt",
+            "name": "registeredAt",
             "type": "uint64"
+          },
+          {
+            "internalType": "enum ProviderRegistry.ProviderStatus",
+            "name": "status",
+            "type": "uint8"
           }
         ],
         "internalType": "struct ProviderRegistry.Provider",
@@ -346,6 +555,30 @@
         "internalType": "address",
         "name": "",
         "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "ownerNodes",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
       }
     ],
     "name": "providers",
@@ -356,19 +589,39 @@
         "type": "address"
       },
       {
-        "internalType": "bool",
-        "name": "active",
-        "type": "bool"
-      },
-      {
         "internalType": "bytes32",
-        "name": "metaHash",
+        "name": "providerkey",
         "type": "bytes32"
       },
       {
+        "internalType": "string",
+        "name": "region",
+        "type": "string"
+      },
+      {
+        "internalType": "uint8",
+        "name": "hardwareTier",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint8",
+        "name": "capacity",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint96",
+        "name": "bondAmount",
+        "type": "uint96"
+      },
+      {
         "internalType": "uint64",
-        "name": "createdAt",
+        "name": "registeredAt",
         "type": "uint64"
+      },
+      {
+        "internalType": "enum ProviderRegistry.ProviderStatus",
+        "name": "status",
+        "type": "uint8"
       }
     ],
     "stateMutability": "view",
@@ -378,29 +631,26 @@
     "inputs": [
       {
         "internalType": "bytes32",
-        "name": "metaHash",
-        "type": "bytes32"
-      }
-    ],
-    "name": "registerProvider",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "metaHash",
+        "name": "providerkey",
         "type": "bytes32"
       },
       {
-        "internalType": "uint256",
-        "name": "burnAmount",
-        "type": "uint256"
+        "internalType": "string",
+        "name": "region",
+        "type": "string"
+      },
+      {
+        "internalType": "uint8",
+        "name": "hardwareTier",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint8",
+        "name": "capacity",
+        "type": "uint8"
       }
     ],
-    "name": "registerProviderWithBurn",
+    "name": "registerProvider",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -444,19 +694,6 @@
   {
     "inputs": [
       {
-        "internalType": "bool",
-        "name": "active",
-        "type": "bool"
-      }
-    ],
-    "name": "setProviderActive",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
         "internalType": "bytes4",
         "name": "interfaceId",
         "type": "bytes4"
@@ -474,14 +711,45 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "teamWallet",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "treasuryWallet",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "bytes32",
-        "name": "metaHash",
+        "name": "providerkey",
         "type": "bytes32"
+      },
+      {
+        "internalType": "enum ProviderRegistry.ProviderStatus",
+        "name": "status",
+        "type": "uint8"
       }
     ],
-    "name": "updateMetaHash",
+    "name": "updateProviderStatus",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

@@ -5,8 +5,7 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "export-abis": "ts-node scripts/export-abis.ts",
-    "deploy:base-sepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
+    "deploy": "hardhat run scripts/deploy.ts --network baseSepolia",
     "verify": "hardhat run scripts/verify.ts --network baseSepolia"
   },
   "devDependencies": {

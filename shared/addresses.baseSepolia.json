@@ -1,0 +1,13 @@
+{
+  "chainId": 84532,
+  "network": "baseSepolia",
+  "contracts": {
+    "CLDToken": "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2",
+    "ProviderRegistry": "0xc3D4f33d7b686A3c6edf1d69869D29AB6F7b5CFF",
+    "JobEscrow": "0x5F2Be10E979B5Bf7ed1743807227c859990D2B07"
+  },
+  "roles": {
+    "minter": "0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A",
+    "validator": "0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A"
+  }
+}
