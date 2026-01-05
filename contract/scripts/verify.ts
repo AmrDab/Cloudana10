@@ -9,7 +9,7 @@ async function main() {
 
   // Get deployed contract instances to read constructor arguments
   const cldToken = await ethers.getContractAt("CLDToken", addresses.contracts.CLDToken);
-  const providerRegistry = await ethers.getContractAt("ProviderRegistry", addresses.contracts.ProviderRegistry);
+  const ProviderRegistry = await ethers.getContractAt("ProviderRegistry", addresses.contracts.ProviderRegistry);
 
   // Read constructor arguments from deployed contracts
   const treasuryWallet = await cldToken.treasuryWallet();
@@ -24,20 +24,20 @@ async function main() {
 
   // Verify CLDToken
   // Constructor: constructor(address _treasuryWallet, address _teamWallet)
-  try {
-    console.log("\nVerifying CLDToken...");
-    await run("verify:verify", {
-      address: addresses.contracts.CLDToken,
-      constructorArguments: [treasuryWallet, teamWallet],
-    });
-    console.log("✅ CLDToken verified");
-  } catch (error: any) {
-    if (error.message.includes("Already Verified")) {
-      console.log("✅ CLDToken already verified");
-    } else {
-      console.error("❌ CLDToken verification error:", error.message);
-    }
-  }
+  // try {
+  //   console.log("\nVerifying CLDToken...");
+  //   await run("verify:verify", {
+  //     address: addresses.contracts.CLDToken,
+  //     constructorArguments: [treasuryWallet, teamWallet],
+  //   });
+  //   console.log("✅ CLDToken verified");
+  // } catch (error: any) {
+  //   if (error.message.includes("Already Verified")) {
+  //     console.log("✅ CLDToken already verified");
+  //   } else {
+  //     console.error("❌ CLDToken verification error:", error.message);
+  //   }
+  // }
 
   // Verify ProviderRegistry
   // Constructor: constructor(address _cldToken, address _teamWallet, address _treasuryWallet)
@@ -58,20 +58,20 @@ async function main() {
 
   // Verify JobEscrow
   // Constructor: constructor(address _cldToken, address _providerRegistry)
-  try {
-    console.log("\nVerifying JobEscrow...");
-    await run("verify:verify", {
-      address: addresses.contracts.JobEscrow,
-      constructorArguments: [addresses.contracts.CLDToken, addresses.contracts.ProviderRegistry],
-    });
-    console.log("✅ JobEscrow verified");
-  } catch (error: any) {
-    if (error.message.includes("Already Verified")) {
-      console.log("✅ JobEscrow already verified");
-    } else {
-      console.error("❌ JobEscrow verification error:", error.message);
-    }
-  }
+  // try {
+  //   console.log("\nVerifying JobEscrow...");
+  //   await run("verify:verify", {
+  //     address: addresses.contracts.JobEscrow,
+  //     constructorArguments: [addresses.contracts.CLDToken, addresses.contracts.ProviderRegistry],
+  //   });
+  //   console.log("✅ JobEscrow verified");
+  // } catch (error: any) {
+  //   if (error.message.includes("Already Verified")) {
+  //     console.log("✅ JobEscrow already verified");
+  //   } else {
+  //     console.error("❌ JobEscrow verification error:", error.message);
+  //   }
+  // }
 
   console.log("\n=== Verification Summary ===");
   console.log("All contracts have been processed for verification");

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
 import { WagmiProvider, useAccount, useBalance, useDisconnect } from 'wagmi';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createAppKit } from '@reown/appkit/react';
@@ -41,9 +41,12 @@ interface WalletContextType {
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
 function WalletContextProvider({ children }: { children: ReactNode }) {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chain } = useAccount();
   const { disconnect: wagmiDisconnect } = useDisconnect();
-  const { data: balanceData } = useBalance({ address });
+  const { data: balanceData } = useBalance({ 
+    address,
+    chainId: 84532, // Base Sepolia
+  });
   const { toast } = useToast();
   
   const [isProvider, setIsProvider] = useState(false);
@@ -76,6 +79,16 @@ function WalletContextProvider({ children }: { children: ReactNode }) {
     : null;
 
   const ethBalance = balanceData ? Number(balanceData.formatted) : 0;
+
+  // Debug logging for balance
+  useEffect(() => {
+    if (isConnected && address) {
+      console.log('[WalletContext] Connected to chain:', chain?.id, chain?.name);
+      console.log('[WalletContext] Address:', address);
+      console.log('[WalletContext] Balance data:', balanceData);
+      console.log('[WalletContext] ETH Balance:', ethBalance);
+    }
+  }, [isConnected, address, chain, balanceData, ethBalance]);
 
   const value = useMemo(() => ({
     isConnected,

@@ -20,7 +20,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
 
     bytes32 private constant USAGE_REPORT_TYPEHASH =
         keccak256(
-            "UsageReport(uint256 jobId,address user,bytes32 providerkey,uint256 grossCost,uint256 providerEarn,uint256 nonce,uint256 deadline)"
+            "UsageReport(uint256 jobId,address user,bytes32 pubKeyHash,uint256 grossCost,uint256 providerEarn,uint256 nonce,uint256 deadline)"
         );
 
     enum JobStatus {
@@ -30,7 +30,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
 
     struct Job {
         address user;
-        bytes32 providerkey;
+        bytes32 pubKeyHash;
         uint256 deposited;
         uint256 spent;
         uint256 nonce;
@@ -42,7 +42,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
     struct UsageReport {
         uint256 jobId;
         address user;
-        bytes32 providerkey;
+        bytes32 pubKeyHash;
         uint256 grossCost;
         uint256 providerEarn;
         uint256 nonce;
@@ -55,7 +55,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
 
     uint256 public nextJobId;
 
-    error ProviderNotActive(bytes32 providerkey);
+    error ProviderNotActive(bytes32 pubKeyHash);
     error JobNotFound(uint256 jobId);
     error JobNotOpen(uint256 jobId);
     error InvalidSignature();
@@ -66,12 +66,12 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
     error InsufficientDeposit(uint256 required, uint256 available);
     error InvalidProviderEarn(uint256 grossCost, uint256 providerEarn);
     error NoCreditToWithdraw(address account);
-    error UnauthorizedCloser(address caller, address user, bytes32 providerkey);
+    error UnauthorizedCloser(address caller, address user, bytes32 pubKeyHash);
 
     event JobCreated(
         uint256 indexed jobId,
         address indexed user,
-        bytes32 indexed providerkey,
+        bytes32 indexed pubKeyHash,
         uint256 budgetAmount
     );
     event JobDeposited(uint256 indexed jobId, uint256 amount);
@@ -97,19 +97,19 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
 
     /**
      * @dev Create a new job with initial budget
-     * @param providerkey Provider key (must be registered and active)
+     * @param pubKeyHash Provider public key hash (must be registered and active)
      * @param budgetAmount Initial CLD deposit amount
      * @return jobId The created job ID
      */
     function createJob(
-        bytes32 providerkey,
+        bytes32 pubKeyHash,
         uint256 budgetAmount
     ) external returns (uint256 jobId) {
         ProviderRegistry.Provider memory providerInfo = providerRegistry.getProvider(
-            providerkey
+            pubKeyHash
         );
         if (providerInfo.owner == address(0) || providerInfo.status != ProviderRegistry.ProviderStatus.Active) {
-            revert ProviderNotActive(providerkey);
+            revert ProviderNotActive(pubKeyHash);
         }
 
         if (budgetAmount > 0) {
@@ -124,7 +124,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
         jobId = nextJobId++;
         jobs[jobId] = Job({
             user: msg.sender,
-            providerkey: providerkey,
+            pubKeyHash: pubKeyHash,
             deposited: budgetAmount,
             spent: 0,
             nonce: 0,
@@ -133,7 +133,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
             closedAt: 0
         });
 
-        emit JobCreated(jobId, msg.sender, providerkey, budgetAmount);
+        emit JobCreated(jobId, msg.sender, pubKeyHash, budgetAmount);
         return jobId;
     }
 
@@ -148,7 +148,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
             revert JobNotFound(jobId);
         }
         if (job.user != msg.sender) {
-            revert UnauthorizedCloser(msg.sender, job.user, job.providerkey);
+            revert UnauthorizedCloser(msg.sender, job.user, job.pubKeyHash);
         }
         if (job.status != JobStatus.OPEN) {
             revert JobNotOpen(jobId);
@@ -184,8 +184,8 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
         if (job.user != r.user) {
             revert InvalidUser(job.user, r.user);
         }
-        if (job.providerkey != r.providerkey) {
-            revert InvalidProvider(job.providerkey, r.providerkey);
+        if (job.pubKeyHash != r.pubKeyHash) {
+            revert InvalidProvider(job.pubKeyHash, r.pubKeyHash);
         }
         if (job.nonce != r.nonce) {
             revert InvalidNonce(job.nonce, r.nonce);
@@ -209,7 +209,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
                 USAGE_REPORT_TYPEHASH,
                 r.jobId,
                 r.user,
-                r.providerkey,
+                r.pubKeyHash,
                 r.grossCost,
                 r.providerEarn,
                 r.nonce,
@@ -226,7 +226,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
         // Update state (checks-effects-interactions)
         job.spent += r.grossCost;
         // Get provider owner for credit tracking
-        ProviderRegistry.Provider memory providerInfo = providerRegistry.getProvider(r.providerkey);
+        ProviderRegistry.Provider memory providerInfo = providerRegistry.getProvider(r.pubKeyHash);
         providerCredit[providerInfo.owner] += r.providerEarn;
         uint256 refund = r.grossCost - r.providerEarn;
         userRefundCredit[r.user] += refund;
@@ -255,7 +255,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
         }
 
         // Get provider info to check owner
-        ProviderRegistry.Provider memory providerInfo = providerRegistry.getProvider(job.providerkey);
+        ProviderRegistry.Provider memory providerInfo = providerRegistry.getProvider(job.pubKeyHash);
         
         // Only user, provider owner, or admin can close
         bool canClose =
@@ -264,7 +264,7 @@ contract JobEscrow is AccessControl, ReentrancyGuard, EIP712 {
             hasRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         if (!canClose) {
-            revert UnauthorizedCloser(msg.sender, job.user, job.providerkey);
+            revert UnauthorizedCloser(msg.sender, job.user, job.pubKeyHash);
         }
 
         uint256 remaining = job.deposited - job.spent;

@@ -1,16 +1,23 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { useWallet } from "@/context/wallet-context";
-import { MOCK_JOBS } from "@/lib/mock-data";
+import { Label } from "@/components/ui/label";
+import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
 import { Server, Coins, Settings, Activity } from "lucide-react";
+import { useMyProviders, useProviderCredit } from "@/lib/contracts";
+import { formatEther } from "viem";
 
 export default function ProviderDashboard() {
-  const { isConnected, isProvider } = useWallet();
+  const { address, isConnected } = useAccount();
   const [, setLocation] = useLocation();
+  
+  const { data: myProviderKeys } = useMyProviders(address);
+  const { data: providerCredit } = useProviderCredit(address);
+  
+  const isProvider = myProviderKeys && Array.isArray(myProviderKeys) && myProviderKeys.length > 0;
+  const creditAmount = providerCredit && typeof providerCredit === 'bigint' ? parseFloat(formatEther(providerCredit)) : 0;
 
   if (!isConnected) {
     return (
@@ -84,13 +91,16 @@ export default function ProviderDashboard() {
           <CardContent>
             <div className="flex items-baseline gap-2">
               <span className="text-6xl font-bold font-mono tracking-tighter text-yellow-400 drop-shadow-[0_0_15px_rgba(250,204,21,0.3)]">
-                1,250.00
+                {creditAmount.toFixed(2)}
               </span>
               <span className="text-xl text-muted-foreground font-mono">CLD</span>
             </div>
           </CardContent>
           <CardFooter>
-            <Button className="bg-yellow-400/10 text-yellow-400 hover:bg-yellow-400/20 border border-yellow-400/20">
+            <Button 
+              className="bg-yellow-400/10 text-yellow-400 hover:bg-yellow-400/20 border border-yellow-400/20"
+              disabled={creditAmount === 0}
+            >
               Withdraw Earnings
             </Button>
           </CardFooter>
@@ -109,12 +119,19 @@ export default function ProviderDashboard() {
               <Switch checked={true} />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Metadata Hash</Label>
-              <div className="text-xs font-mono bg-black/50 p-2 rounded truncate">
-                ipfs://QmXyZ...123abc
+              <Label className="text-xs text-muted-foreground">Registered Nodes</Label>
+              <div className="text-2xl font-bold">
+                {myProviderKeys?.length || 0}
               </div>
             </div>
-            <Button variant="outline" size="sm" className="w-full">Update Metadata</Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="w-full"
+              onClick={() => setLocation("/provider/register")}
+            >
+              Register New Node
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -125,7 +142,7 @@ export default function ProviderDashboard() {
           <CardTitle>Assigned Jobs</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
+          {/* <Table>
             <TableHeader>
               <TableRow className="hover:bg-white/5 border-white/10">
                 <TableHead>Job ID</TableHead>
@@ -136,29 +153,7 @@ export default function ProviderDashboard() {
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
-              {MOCK_JOBS.slice(0, 1).map((job) => (
-                <TableRow key={job.id} className="hover:bg-white/5 border-white/10 transition-colors">
-                  <TableCell className="font-mono font-medium text-primary">
-                    {job.id}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">{job.creator}</TableCell>
-                  <TableCell>{job.deposit}</TableCell>
-                  <TableCell>{job.spent}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="border-green-500/50 text-green-400 bg-green-500/10">
-                      {job.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => setLocation(`/job/${job.id}`)}>
-                      View Details
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          </Table> */}
         </CardContent>
       </Card>
     </div>

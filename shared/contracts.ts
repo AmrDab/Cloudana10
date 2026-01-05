@@ -4,6 +4,7 @@
 import CLDTokenAbiData from "./abi/CLDToken.json";
 import ProviderRegistryAbiData from "./abi/ProviderRegistry.json";
 import JobEscrowAbiData from "./abi/JobEscrow.json";
+import type { Abi } from "viem";
 
 export interface ContractAddresses {
   chainId: number;
@@ -26,14 +27,14 @@ export const CONTRACT_ADDRESSES: ContractAddresses = {
   chainId: 84532,
   network: "baseSepolia",
   contracts: {
-    CLDToken: "0x0000000000000000000000000000000000000000", // Update after deployment
-    ProviderRegistry: "0x0000000000000000000000000000000000000000", // Update after deployment
-    JobEscrow: "0x0000000000000000000000000000000000000000", // Update after deployment
+    CLDToken: "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2", // Update after deployment
+    ProviderRegistry: "0xD1640B3d5B9c0BF5e33882A9F1e99e312CBa60DC", // Update after deployment
+    JobEscrow: "0x5F2Be10E979B5Bf7ed1743807227c859990D2B07", // Update after deployment
   },
 };
 
 // Export ABIs as arrays (wagmi/viem expects arrays)
-export const CLDTokenAbi = CLDTokenAbiData as readonly unknown[];
-export const ProviderRegistryAbi = ProviderRegistryAbiData as readonly unknown[];
-export const JobEscrowAbi = JobEscrowAbiData as readonly unknown[];
+export const CLDTokenAbi = CLDTokenAbiData as Abi;
+export const ProviderRegistryAbi = ProviderRegistryAbiData as Abi;
+export const JobEscrowAbi = JobEscrowAbiData as Abi;
 

@@ -6,11 +6,12 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "./CLDToken.sol";
 /**
  * @title ProviderRegistry
- * @dev Registry for DePIN providers with static bond mechanism
+ * @dev Minimal DePIN provider registry - stores only essential on-chain data
  * - Static bond: 1000 tokens total per registration
- * - Fee split: 80% burn (800), 15% team (150), 5% treasury (50)
+ * - Fee split: 80% treasury, 20% team
  * - Max 10 providers per wallet address
- * - Provider metadata: providerkey, region, hardwareTier, capacity
+ * - Minimal on-chain data: owner, pubkeyhash, CID, bond, status
+ * - All detailed metadata stored off-chain in IPFS
  */
 contract ProviderRegistry is AccessControl {
     CLDToken public immutable cldToken;
@@ -21,9 +22,6 @@ contract ProviderRegistry is AccessControl {
     // Fee split percentages (basis points: 10000 = 100%)
     uint256 public constant TREASURY_PERCENT = 8000;      // 80%
     uint256 public constant TEAM_PERCENT = 2000;       // 20%
-    
-    // Dead address for burning tokens
-    address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
     
     // Team and treasury wallets (set in constructor)
     address public immutable teamWallet;
@@ -39,53 +37,41 @@ contract ProviderRegistry is AccessControl {
         Inactive     // 2
     }
     
-    // Provider struct
+    // Minimal Provider struct - only essential on-chain data
     struct Provider {
-        address owner;
-        bytes32 providerkey;
-        string region;
-        uint8 hardwareTier;  // 0=CPU, 1=GPU-T1, 2=GPU-T2
-        uint8 capacity;     // 1-10 servers
-        uint96 bondAmount;   // Always 1000e18
-        uint64 registeredAt;
-        ProviderStatus status;
+        address owner;           // Owner wallet address
+        bytes32 pubKeyHash;      // Public key hash of the node
+        string ipfsCID;          // IPFS CID containing full node metadata
+        uint96 bondAmount;       // Bond amount (always 1000e18)
+        uint64 registeredAt;     // Registration timestamp
+        ProviderStatus status;   // Current status
     }
     
     // Mappings
-    mapping(bytes32 => Provider) public providers;  // providerkey => Provider
-    mapping(address => bytes32[]) public ownerNodes;  // owner => providerkeys[]
-    mapping(bytes32 => uint64) public agentHeartbeats;  // Future: agent uptime tracking
+    mapping(bytes32 => Provider) public providers;  // pubKeyHash => Provider
+    mapping(address => bytes32[]) public ownerNodes;  // owner => pubKeyHashes[]
     
     // Events
     event ProviderRegistered(
         address indexed owner,
-        bytes32 indexed providerkey,
-        string region,
-        uint8 hardwareTier,
-        uint8 capacity,
+        bytes32 indexed pubKeyHash,
+        string ipfsCID,
         uint256 bondAmount
     );
     
     event ProviderStatusUpdated(
-        bytes32 indexed providerkey,
+        bytes32 indexed pubKeyHash,
         ProviderStatus status
     );
     
-    event AgentHeartbeat(
-        bytes32 indexed providerkey,
-        uint64 timestamp
-    );
-    
     // Errors
-    error ProviderAlreadyExists(bytes32 providerkey);
+    error ProviderAlreadyExists(bytes32 pubKeyHash);
     error MaxProvidersReached(address owner);
     error InsufficientBalance(uint256 required, uint256 available);
     error InsufficientAllowance(uint256 required, uint256 allowance);
-    error Invalidproviderkey();
-    error InvalidRegion();
-    error InvalidHardwareTier();
-    error InvalidCapacity();
-    error ProviderNotFound(bytes32 providerkey);
+    error InvalidPubKeyHash();
+    error InvalidIPFSCID();
+    error ProviderNotFound(bytes32 pubKeyHash);
     error NotProviderOwner(address caller, address owner);
     
     constructor(
@@ -100,26 +86,22 @@ contract ProviderRegistry is AccessControl {
     }
     
     /**
-     * @dev Register a new provider with static bond
-     * @param providerkey Unique 32-byte node identifier
-     * @param region Provider region (Helsinki, EU, Global)
-     * @param hardwareTier Hardware tier (0=CPU, 1=GPU-T1, 2=GPU-T2)
-     * @param capacity Number of servers (1-10)
+     * @dev Register a new provider with minimal on-chain data
+     * @param pubKeyHash Public key hash of the node (unique identifier)
+     * @param ipfsCID IPFS CID containing full node metadata (hardware specs, location, etc.)
      */
     function registerProvider(
-        bytes32 providerkey,
-        string calldata region,
-        uint8 hardwareTier,
-        uint8 capacity
+        bytes32 pubKeyHash,
+        string calldata ipfsCID
     ) external {
-        // Validate providerkey
-        if (providerkey == bytes32(0)) {
-            revert Invalidproviderkey();
+        // Validate pubKeyHash
+        if (pubKeyHash == bytes32(0)) {
+            revert InvalidPubKeyHash();
         }
         
         // Check if provider already exists
-        if (providers[providerkey].owner != address(0)) {
-            revert ProviderAlreadyExists(providerkey);
+        if (providers[pubKeyHash].owner != address(0)) {
+            revert ProviderAlreadyExists(pubKeyHash);
         }
         
         // Check owner quota
@@ -127,19 +109,9 @@ contract ProviderRegistry is AccessControl {
             revert MaxProvidersReached(msg.sender);
         }
         
-        // Validate region (basic check - can be extended)
-        if (bytes(region).length == 0) {
-            revert InvalidRegion();
-        }
-        
-        // Validate hardware tier (0-2)
-        if (hardwareTier > 2) {
-            revert InvalidHardwareTier();
-        }
-        
-        // Validate capacity (1-10)
-        if (capacity == 0 || capacity > 10) {
-            revert InvalidCapacity();
+        // Validate IPFS CID (basic check)
+        if (bytes(ipfsCID).length == 0) {
+            revert InvalidIPFSCID();
         }
         
         // Check balance and allowance
@@ -157,8 +129,8 @@ contract ProviderRegistry is AccessControl {
         cldToken.transferFrom(msg.sender, address(this), STATIC_BOND);
         
         // Calculate fee split
-        uint256 teamAmount = (STATIC_BOND * TEAM_PERCENT) / 10000;      // 150 tokens
-        uint256 treasuryAmount = (STATIC_BOND * TREASURY_PERCENT) / 10000; // 50 tokens
+        uint256 teamAmount = (STATIC_BOND * TEAM_PERCENT) / 10000;      // 200 tokens (20%)
+        uint256 treasuryAmount = (STATIC_BOND * TREASURY_PERCENT) / 10000; // 800 tokens (80%)
         
         // Send 20% to team wallet
         cldToken.transfer(teamWallet, teamAmount);
@@ -166,47 +138,43 @@ contract ProviderRegistry is AccessControl {
         // Send 80% to treasury wallet
         cldToken.transfer(treasuryWallet, treasuryAmount);
         
-        // Create provider
-        providers[providerkey] = Provider({
+        // Create provider with minimal data
+        providers[pubKeyHash] = Provider({
             owner: msg.sender,
-            providerkey: providerkey,
-            region: region,
-            hardwareTier: hardwareTier,
-            capacity: capacity,
+            pubKeyHash: pubKeyHash,
+            ipfsCID: ipfsCID,
             bondAmount: uint96(STATIC_BOND),
             registeredAt: uint64(block.timestamp),
             status: ProviderStatus.Registered
         });
         
         // Track owner's nodes
-        ownerNodes[msg.sender].push(providerkey);
+        ownerNodes[msg.sender].push(pubKeyHash);
         
         emit ProviderRegistered(
             msg.sender,
-            providerkey,
-            region,
-            hardwareTier,
-            capacity,
+            pubKeyHash,
+            ipfsCID,
             STATIC_BOND
         );
     }
     
     /**
-     * @dev Get provider information by providerkey
-     * @param providerkey Provider node key
+     * @dev Get provider information by pubKeyHash
+     * @param pubKeyHash Provider public key hash
      * @return Provider struct
      */
-    function getProvider(bytes32 providerkey) external view returns (Provider memory) {
-        if (providers[providerkey].owner == address(0)) {
-            revert ProviderNotFound(providerkey);
+    function getProvider(bytes32 pubKeyHash) external view returns (Provider memory) {
+        if (providers[pubKeyHash].owner == address(0)) {
+            revert ProviderNotFound(pubKeyHash);
         }
-        return providers[providerkey];
+        return providers[pubKeyHash];
     }
     
     /**
      * @dev Get all providers for an owner
      * @param owner Provider owner address
-     * @return providerkeys Array of node keys owned by the address
+     * @return pubKeyHashes Array of public key hashes owned by the address
      */
     function getMyProviders(address owner) external view returns (bytes32[] memory) {
         return ownerNodes[owner];
@@ -214,13 +182,13 @@ contract ProviderRegistry is AccessControl {
     
     /**
      * @dev Update provider status (only owner or admin)
-     * @param providerkey Provider node key
+     * @param pubKeyHash Provider public key hash
      * @param status New status
      */
-    function updateProviderStatus(bytes32 providerkey, ProviderStatus status) external {
-        Provider storage provider = providers[providerkey];
+    function updateProviderStatus(bytes32 pubKeyHash, ProviderStatus status) external {
+        Provider storage provider = providers[pubKeyHash];
         if (provider.owner == address(0)) {
-            revert ProviderNotFound(providerkey);
+            revert ProviderNotFound(pubKeyHash);
         }
         
         // Only owner or admin can update status
@@ -229,7 +197,14 @@ contract ProviderRegistry is AccessControl {
         }
         
         provider.status = status;
-        emit ProviderStatusUpdated(providerkey, status);
+        emit ProviderStatusUpdated(pubKeyHash, status);
+    }
+
+    /**
+     * @dev Get bond amount required for registration
+     * @return Bond amount in wei
+     */
+    function getBondInfo() external pure returns (uint256) {
+        return STATIC_BOND;
     }
 }
-

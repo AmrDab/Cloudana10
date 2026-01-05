@@ -25,17 +25,17 @@ export default function JobDetail() {
 
   const [usageStep, setUsageStep] = useState(0); // 0: Idle, 1: Requesting, 2: Received Sig, 3: Submitting, 4: Done
   const [grossCost, setGrossCost] = useState("10");
-  const [backendSig, setBackendSig] = useState<string | null>(null);
+  const [validatorSig, setValidatorSig] = useState<string | null>(null);
 
   const handleRequestSignature = () => {
     setUsageStep(1);
-    // Simulate backend call
+    // Simulate validator signature request (EIP-712)
     setTimeout(() => {
-      setBackendSig("0x789...signature...abc");
+      setValidatorSig("0x789...signature...abc");
       setUsageStep(2);
       toast({
         title: "Signature Received",
-        description: "Backend has authorized this usage report.",
+        description: "Validator has authorized this usage report.",
       });
     }, 1500);
   };
@@ -54,7 +54,7 @@ export default function JobDetail() {
 
   const resetFlow = () => {
     setUsageStep(0);
-    setBackendSig(null);
+    setValidatorSig(null);
   };
 
   return (
@@ -170,9 +170,9 @@ export default function JobDetail() {
                         <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5" />
                         <div>
                           <h4 className="font-semibold text-green-500">Signature Received</h4>
-                          <p className="text-sm text-green-400/80 mt-1">Backend has verified the usage logs and authorized this deduction.</p>
+                          <p className="text-sm text-green-400/80 mt-1">Validator has verified the usage logs and authorized this deduction (EIP-712).</p>
                           <div className="mt-2 text-xs font-mono bg-black/40 p-2 rounded break-all text-muted-foreground">
-                            {backendSig}
+                            {validatorSig}
                           </div>
                         </div>
                      </div>

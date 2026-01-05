@@ -3,7 +3,7 @@
   "network": "baseSepolia",
   "contracts": {
     "CLDToken": "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2",
-    "ProviderRegistry": "0xc3D4f33d7b686A3c6edf1d69869D29AB6F7b5CFF",
+    "ProviderRegistry": "0xD1640B3d5B9c0BF5e33882A9F1e99e312CBa60DC",
     "JobEscrow": "0x5F2Be10E979B5Bf7ed1743807227c859990D2B07"
   },
   "roles": {

@@ -1,4 +1,4 @@
-// Contract interaction utilities and hooks
+// Contract interaction utilities and hooks for DePIN system
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseEther, formatEther, type Address } from "viem";
 import { CONTRACT_ADDRESSES, CLDTokenAbi, ProviderRegistryAbi, JobEscrowAbi } from "@shared/contracts";
@@ -12,12 +12,30 @@ export const CLD_TOKEN_ADDRESS = CONTRACT_ADDRESSES.contracts.CLDToken as Addres
 export const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
 export const JOB_ESCROW_ADDRESS = CONTRACT_ADDRESSES.contracts.JobEscrow as Address;
 
-// Helper to convert string to bytes32 (for metadata hash)
+// Helper to convert string to bytes32
 export function stringToBytes32(str: string): `0x${string}` {
   const hash = str.startsWith("0x") ? str.slice(2) : str;
   // Pad or truncate to 64 hex characters (32 bytes)
   const padded = hash.padEnd(64, "0").slice(0, 64);
   return `0x${padded}` as `0x${string}`;
+}
+
+// Helper to convert hex string to bytes32
+export function hexToBytes32(hex: string): `0x${string}` {
+  if (hex.startsWith("0x")) {
+    hex = hex.slice(2);
+  }
+  // Pad or truncate to 64 hex characters (32 bytes)
+  const padded = hex.padEnd(64, "0").slice(0, 64);
+  return `0x${padded}` as `0x${string}`;
+}
+
+// Generate random public key hash (for demo purposes)
+export function generatePubKeyHash(): string {
+  const randomBytes = crypto.getRandomValues(new Uint8Array(32));
+  return `0x${Array.from(randomBytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")}`;
 }
 
 // ============== CLD Token Hooks ==============
@@ -28,6 +46,7 @@ export function useCLDTokenBalance(address?: Address) {
     abi: CLDTokenAbi,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
+    chainId: CHAIN_ID,
     query: {
       enabled: !!address,
     },
@@ -40,6 +59,7 @@ export function useCLDTokenAllowance(owner?: Address, spender?: Address) {
     abi: CLDTokenAbi,
     functionName: "allowance",
     args: owner && spender ? [owner, spender] : undefined,
+    chainId: CHAIN_ID,
     query: {
       enabled: !!owner && !!spender,
     },
@@ -70,14 +90,37 @@ export function useApproveCLDToken() {
 
 // ============== Provider Registry Hooks ==============
 
-export function useProviderInfo(address?: Address) {
+export function useProviderRegistryBondInfo() {
+  return useReadContract({
+    address: PROVIDER_REGISTRY_ADDRESS,
+    abi: ProviderRegistryAbi,
+    functionName: "getBondInfo",
+    chainId: CHAIN_ID,
+  });
+}
+
+export function useMyProviders(owner?: Address) {
+  return useReadContract({
+    address: PROVIDER_REGISTRY_ADDRESS,
+    abi: ProviderRegistryAbi,
+    functionName: "getMyProviders",
+    args: owner ? [owner] : undefined,
+    chainId: CHAIN_ID,
+    query: {
+      enabled: !!owner,
+    },
+  });
+}
+
+export function useProviderInfo(pubKeyHash?: string) {
   return useReadContract({
     address: PROVIDER_REGISTRY_ADDRESS,
     abi: ProviderRegistryAbi,
     functionName: "getProvider",
-    args: address ? [address] : undefined,
+    args: pubKeyHash ? [hexToBytes32(pubKeyHash)] : undefined,
+    chainId: CHAIN_ID,
     query: {
-      enabled: !!address,
+      enabled: !!pubKeyHash,
     },
   });
 }
@@ -86,23 +129,13 @@ export function useRegisterProvider() {
   const { writeContract, data: hash, isPending, error } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  const register = (metaHash: string, burnAmount?: string) => {
-    const hashBytes32 = stringToBytes32(metaHash);
-    if (burnAmount && parseFloat(burnAmount) > 0) {
-      writeContract({
-        address: PROVIDER_REGISTRY_ADDRESS,
-        abi: ProviderRegistryAbi,
-        functionName: "registerProviderWithBurn",
-        args: [hashBytes32, parseEther(burnAmount)],
-      });
-    } else {
-      writeContract({
-        address: PROVIDER_REGISTRY_ADDRESS,
-        abi: ProviderRegistryAbi,
-        functionName: "registerProvider",
-        args: [hashBytes32],
-      });
-    }
+  const register = (pubKeyHash: string, ipfsCID: string) => {
+    writeContract({
+      address: PROVIDER_REGISTRY_ADDRESS,
+      abi: ProviderRegistryAbi,
+      functionName: "registerProvider",
+      args: [hexToBytes32(pubKeyHash), ipfsCID],
+    });
   };
 
   return {
@@ -114,21 +147,21 @@ export function useRegisterProvider() {
   };
 }
 
-export function useSetProviderActive() {
+export function useUpdateProviderStatus() {
   const { writeContract, data: hash, isPending, error } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  const setActive = (active: boolean) => {
+  const updateStatus = (pubKeyHash: string, status: 0 | 1 | 2) => {
     writeContract({
       address: PROVIDER_REGISTRY_ADDRESS,
       abi: ProviderRegistryAbi,
-      functionName: "setProviderActive",
-      args: [active],
+      functionName: "updateProviderStatus",
+      args: [hexToBytes32(pubKeyHash), status],
     });
   };
 
   return {
-    setActive,
+    updateStatus,
     hash,
     isPending: isPending || isLoading,
     isSuccess,
@@ -144,6 +177,7 @@ export function useJobInfo(jobId?: bigint) {
     abi: JobEscrowAbi,
     functionName: "jobs",
     args: jobId !== undefined ? [jobId] : undefined,
+    chainId: CHAIN_ID,
     query: {
       enabled: jobId !== undefined,
     },
@@ -156,6 +190,7 @@ export function useProviderCredit(provider?: Address) {
     abi: JobEscrowAbi,
     functionName: "providerCredit",
     args: provider ? [provider] : undefined,
+    chainId: CHAIN_ID,
     query: {
       enabled: !!provider,
     },
@@ -168,6 +203,7 @@ export function useUserRefundCredit(user?: Address) {
     abi: JobEscrowAbi,
     functionName: "userRefundCredit",
     args: user ? [user] : undefined,
+    chainId: CHAIN_ID,
     query: {
       enabled: !!user,
     },
@@ -178,12 +214,12 @@ export function useCreateJob() {
   const { writeContract, data: hash, isPending, error } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  const create = (provider: Address, budgetAmount: string) => {
+  const create = (pubKeyHash: string, budgetAmount: string) => {
     writeContract({
       address: JOB_ESCROW_ADDRESS,
       abi: JobEscrowAbi,
       functionName: "createJob",
-      args: [provider, parseEther(budgetAmount)],
+      args: [hexToBytes32(pubKeyHash), parseEther(budgetAmount)],
     });
   };
 
@@ -240,50 +276,6 @@ export function useCloseJob() {
   };
 }
 
-export function useSubmitUsageReport() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
-
-  const submit = (
-    report: {
-      jobId: bigint;
-      user: Address;
-      provider: Address;
-      grossCost: string;
-      providerEarn: string;
-      nonce: bigint;
-      deadline: bigint;
-    },
-    signature: `0x${string}`
-  ) => {
-    writeContract({
-      address: JOB_ESCROW_ADDRESS,
-      abi: JobEscrowAbi,
-      functionName: "submitUsageReport",
-      args: [
-        {
-          jobId: report.jobId,
-          user: report.user,
-          provider: report.provider,
-          grossCost: parseEther(report.grossCost),
-          providerEarn: parseEther(report.providerEarn),
-          nonce: report.nonce,
-          deadline: report.deadline,
-        },
-        signature,
-      ],
-    });
-  };
-
-  return {
-    submit,
-    hash,
-    isPending: isPending || isLoading,
-    isSuccess,
-    error,
-  };
-}
-
 export function useWithdrawProvider() {
   const { writeContract, data: hash, isPending, error } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
@@ -327,66 +319,3 @@ export function useWithdrawUserRefund() {
     error,
   };
 }
-
-// ============== Node Registry Hooks ==============
-
-// Helper to convert hex string to bytes32
-export function hexToBytes32(hex: string): `0x${string}` {
-  if (hex.startsWith("0x")) {
-    hex = hex.slice(2);
-  }
-  // Pad or truncate to 64 hex characters (32 bytes)
-  const padded = hex.padEnd(64, "0").slice(0, 64);
-  return `0x${padded}` as `0x${string}`;
-}
-
-// Generate random node key
-export function generateproviderkey(): string {
-  const randomBytes = crypto.getRandomValues(new Uint8Array(32));
-  return `0x${Array.from(randomBytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-export function useproviderRegistryBondInfo() {
-  return useReadContract({
-    address: PROVIDER_REGISTRY_ADDRESS,
-    abi: ProviderRegistryAbi,
-    functionName: "getBondInfo",
-  });
-}
-
-export function useMyProviders(owner?: Address) {
-  return useReadContract({
-    address: PROVIDER_REGISTRY_ADDRESS,
-    abi: ProviderRegistryAbi,
-    functionName: "getMyProviders",
-    args: owner ? [owner] : undefined,
-    query: {
-      enabled: !!owner,
-    },
-  });
-}
-
-export function useRegisterNodeProvider() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
-
-  const register = (providerkey: string, region: string, hardwareTier: number, capacity: number) => {
-    writeContract({
-      address: PROVIDER_REGISTRY_ADDRESS,
-      abi: ProviderRegistryAbi,
-      functionName: "registerProvider",
-      args: [hexToBytes32(providerkey), region, hardwareTier, capacity],
-    });
-  };
-
-  return {
-    register,
-    hash,
-    isPending: isPending || isLoading,
-    isSuccess,
-    error,
-  };
-}
-

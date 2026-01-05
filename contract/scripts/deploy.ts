@@ -228,12 +228,13 @@ async function main() {
   await delay(1000);
 
   // Deploy CLDToken
-  const CLDToken = await ethers.getContractFactory("CLDToken");
-  const cldToken = await deployWithRetry(CLDToken, [TREASURY_WALLET, TEAM_WALLET], "CLDToken", deployer);
-  const cldTokenAddress = await cldToken.getAddress();
-  console.log("CLDToken deployed to:", cldTokenAddress);
-  // Add a small delay between deployments
-  await delay(1000);
+  // const CLDToken = await ethers.getContractFactory("CLDToken");
+  // const cldToken = await deployWithRetry(CLDToken, [TREASURY_WALLET, TEAM_WALLET], "CLDToken", deployer);
+  const cldTokenAddress = "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2";
+  //const cldTokenAddress = await cldToken.getAddress();
+  // console.log("CLDToken deployed to:", cldTokenAddress);
+  // // Add a small delay between deployments
+  // await delay(1000);
 
   // Deploy providerRegistry
   const providerRegistryContract = await ethers.getContractFactory("ProviderRegistry");
@@ -251,125 +252,124 @@ async function main() {
   await delay(1000);
 
   // Deploy JobEscrow
-  const JobEscrow = await ethers.getContractFactory("JobEscrow");
-  const jobEscrow = await deployWithRetry(
-    JobEscrow,
-    [cldTokenAddress, providerRegistryAddress],
-    "JobEscrow",
-    deployer
-  );
-  const jobEscrowAddress = await jobEscrow.getAddress();
+  // const JobEscrow = await ethers.getContractFactory("JobEscrow");
+  // const jobEscrow = await deployWithRetry(
+  //   JobEscrow,
+  //   [cldTokenAddress, providerRegistryAddress],
+  //   "JobEscrow",
+  //   deployer
+  // );
+  // const jobEscrowAddress = await jobEscrow.getAddress();
 
-  // Grant roles
-  console.log("\nGranting roles...");
-  const MINTER_ROLE = await cldToken.MINTER_ROLE();
-  await sendTransactionWithRetry(cldToken, "grantRole", [MINTER_ROLE, deployer.address], deployer);
-  console.log("Granted MINTER_ROLE to deployer");
+  // // Grant roles
+  // console.log("\nGranting roles...");
+  // const MINTER_ROLE = await cldToken.MINTER_ROLE();
+  // await sendTransactionWithRetry(cldToken, "grantRole", [MINTER_ROLE, deployer.address], deployer);
+  // console.log("Granted MINTER_ROLE to deployer");
 
-  const VALIDATOR_ADDRESS = process.env.VALIDATOR_ADDRESS || deployer.address;
-  const VALIDATOR_ROLE = await jobEscrow.VALIDATOR_ROLE();
-  await sendTransactionWithRetry(jobEscrow, "grantRole", [VALIDATOR_ROLE, VALIDATOR_ADDRESS], deployer);
-  console.log(`Granted VALIDATOR_ROLE to ${VALIDATOR_ADDRESS}`);
+  // const VALIDATOR_ADDRESS = process.env.VALIDATOR_ADDRESS || deployer.address;
+  // const VALIDATOR_ROLE = await jobEscrow.VALIDATOR_ROLE();
+  // await sendTransactionWithRetry(jobEscrow, "grantRole", [VALIDATOR_ROLE, VALIDATOR_ADDRESS], deployer);
+  // console.log(`Granted VALIDATOR_ROLE to ${VALIDATOR_ADDRESS}`);
 
-  // Get network info
-  const network = await ethers.provider.getNetwork();
-  const chainId = Number(network.chainId);
-  const networkName = network.name === "unknown" ? "baseSepolia" : network.name;
+  // // Get network info
+  // const network = await ethers.provider.getNetwork();
+  // const chainId = Number(network.chainId);
+  // const networkName = network.name === "unknown" ? "baseSepolia" : network.name;
 
-  // Prepare addresses object
-  const addresses = {
-    chainId,
-    network: networkName,
-    contracts: {
-      CLDToken: cldTokenAddress,
-      ProviderRegistry: providerRegistryAddress,
-      JobEscrow: jobEscrowAddress,
-    },
-    roles: {
-      minter: deployer.address,
-      validator: VALIDATOR_ADDRESS,
-    },
-  };
+  // // Prepare addresses object
+  // const addresses = {
+  //   chainId,
+  //   network: networkName,
+  //   contracts: {
+  //     CLDToken: cldTokenAddress,
+  //     ProviderRegistry: providerRegistryAddress,
+  //     JobEscrow: jobEscrowAddress,
+  //   },
+  //   roles: {
+  //     minter: deployer.address,
+  //     validator: VALIDATOR_ADDRESS,
+  //   },
+  // };
 
-  // Write addresses to shared folder
-  const sharedDir = path.join(__dirname, "../../shared");
-  if (!fs.existsSync(sharedDir)) {
-    fs.mkdirSync(sharedDir, { recursive: true });
-  }
+  // // Write addresses to shared folder
+  // const sharedDir = path.join(__dirname, "../../shared");
+  // if (!fs.existsSync(sharedDir)) {
+  //   fs.mkdirSync(sharedDir, { recursive: true });
+  // }
 
-  const addressesFile = path.join(sharedDir, `addresses.${networkName}.json`);
-  fs.writeFileSync(addressesFile, JSON.stringify(addresses, null, 2));
-  console.log(`\nAddresses written to ${addressesFile}`);
+  // const addressesFile = path.join(sharedDir, `addresses.${networkName}.json`);
+  // fs.writeFileSync(addressesFile, JSON.stringify(addresses, null, 2));
+  // console.log(`\nAddresses written to ${addressesFile}`);
 
-  // Export ABIs
-  const abiDir = path.join(sharedDir, "abi");
-  if (!fs.existsSync(abiDir)) {
-    fs.mkdirSync(abiDir, { recursive: true });
-  }
+  // // Export ABIs
+  // const abiDir = path.join(sharedDir, "abi");
+  // if (!fs.existsSync(abiDir)) {
+  //   fs.mkdirSync(abiDir, { recursive: true });
+  // }
 
-  // Read compiled artifacts
-  const artifactsPath = path.join(__dirname, "../artifacts/contracts");
-  const cldTokenAbi = JSON.parse(
-    fs.readFileSync(path.join(artifactsPath, "CLDToken.sol/CLDToken.json"), "utf8")
-  ).abi;
-  const providerRegistryAbi = JSON.parse(
-    fs.readFileSync(
-      path.join(artifactsPath, "ProviderRegistry.sol/ProviderRegistry.json"),
-      "utf8"
-    )
-  ).abi;
-  const jobEscrowAbi = JSON.parse(
-    fs.readFileSync(path.join(artifactsPath, "JobEscrow.sol/JobEscrow.json"), "utf8")
-  ).abi;
+  // // Read compiled artifacts
+  // const artifactsPath = path.join(__dirname, "../artifacts/contracts");
+  // const cldTokenAbi = JSON.parse(
+  //   fs.readFileSync(path.join(artifactsPath, "CLDToken.sol/CLDToken.json"), "utf8")
+  // ).abi;
+  // const providerRegistryAbi = JSON.parse(
+  //   fs.readFileSync(
+  //     path.join(artifactsPath, "ProviderRegistry.sol/ProviderRegistry.json"),
+  //     "utf8"
+  //   )
+  // ).abi;
+  // const jobEscrowAbi = JSON.parse(
+  //   fs.readFileSync(path.join(artifactsPath, "JobEscrow.sol/JobEscrow.json"), "utf8")
+  // ).abi;
 
-  fs.writeFileSync(path.join(abiDir, "CLDToken.json"), JSON.stringify(cldTokenAbi, null, 2));
-  fs.writeFileSync(
-    path.join(abiDir, "ProviderRegistry.json"),
-    JSON.stringify(providerRegistryAbi, null, 2)
-  );
-  fs.writeFileSync(path.join(abiDir, "JobEscrow.json"), JSON.stringify(jobEscrowAbi, null, 2));
-  console.log(`ABIs exported to ${abiDir}`);
+  // fs.writeFileSync(path.join(abiDir, "CLDToken.json"), JSON.stringify(cldTokenAbi, null, 2));
+  // fs.writeFileSync(
+  //   path.join(abiDir, "ProviderRegistry.json"),
+  //   JSON.stringify(providerRegistryAbi, null, 2)
+  // );
+  // fs.writeFileSync(path.join(abiDir, "JobEscrow.json"), JSON.stringify(jobEscrowAbi, null, 2));
+  // console.log(`ABIs exported to ${abiDir}`);
 
-  // Write EIP-712 schema
-  const eip712Dir = path.join(sharedDir, "eip712");
-  if (!fs.existsSync(eip712Dir)) {
-    fs.mkdirSync(eip712Dir, { recursive: true });
-  }
+  // // Write EIP-712 schema
+  // const eip712Dir = path.join(sharedDir, "eip712");
+  // if (!fs.existsSync(eip712Dir)) {
+  //   fs.mkdirSync(eip712Dir, { recursive: true });
+  // }
 
-  const eip712Schema = {
-    domain: {
-      name: "CloudanaJobEscrow",
-      version: "1",
-      chainId: chainId,
-      verifyingContract: jobEscrowAddress,
-    },
-    types: {
-      UsageReport: [
-        { name: "jobId", type: "uint256" },
-        { name: "user", type: "address" },
-        { name: "provider", type: "address" },
-        { name: "grossCost", type: "uint256" },
-        { name: "providerEarn", type: "uint256" },
-        { name: "nonce", type: "uint256" },
-        { name: "deadline", type: "uint256" },
-      ],
-    },
-  };
+  // const eip712Schema = {
+  //   domain: {
+  //     name: "CloudanaJobEscrow",
+  //     version: "1",
+  //     chainId: chainId,
+  //     verifyingContract: jobEscrowAddress,
+  //   },
+  //   types: {
+  //     UsageReport: [
+  //       { name: "jobId", type: "uint256" },
+  //       { name: "user", type: "address" },
+  //       { name: "provider", type: "address" },
+  //       { name: "grossCost", type: "uint256" },
+  //       { name: "providerEarn", type: "uint256" },
+  //       { name: "nonce", type: "uint256" },
+  //       { name: "deadline", type: "uint256" },
+  //     ],
+  //   },
+  // };
 
-  fs.writeFileSync(
-    path.join(eip712Dir, "usageReport.json"),
-    JSON.stringify(eip712Schema, null, 2)
-  );
-  console.log(`EIP-712 schema written to ${path.join(eip712Dir, "usageReport.json")}`);
+  // fs.writeFileSync(
+  //   path.join(eip712Dir, "usageReport.json"),
+  //   JSON.stringify(eip712Schema, null, 2)
+  // );
+  // console.log(`EIP-712 schema written to ${path.join(eip712Dir, "usageReport.json")}`);
 
   console.log("\n=== Deployment Summary ===");
-  console.log("CLDToken:", cldTokenAddress);
-  console.log("ProviderRegistry:", providerRegistryAddress);
-  console.log("JobEscrow:", jobEscrowAddress);
+  // console.log("CLDToken:", cldTokenAddress);
+  // console.log("JobEscrow:", jobEscrowAddress);
   console.log("providerRegistry:", providerRegistryAddress);
-  console.log("Team Wallet:", TEAM_WALLET);
-  console.log("Treasury Wallet:", TREASURY_WALLET);
-  console.log("Validator:", VALIDATOR_ADDRESS);
+  // console.log("Team Wallet:", TEAM_WALLET);
+  // console.log("Treasury Wallet:", TREASURY_WALLET);
+  // console.log("Validator:", VALIDATOR_ADDRESS);
 }
 
 main()
