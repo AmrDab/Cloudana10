@@ -75,22 +75,12 @@
   },
   {
     "inputs": [],
-    "name": "InvalidCapacity",
+    "name": "InvalidIPFSCID",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "InvalidHardwareTier",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "InvalidRegion",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "Invalidproviderkey",
+    "name": "InvalidPubKeyHash",
     "type": "error"
   },
   {
@@ -124,7 +114,7 @@
     "inputs": [
       {
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       }
     ],
@@ -135,31 +125,12 @@
     "inputs": [
       {
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       }
     ],
     "name": "ProviderNotFound",
     "type": "error"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "providerkey",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint64",
-        "name": "timestamp",
-        "type": "uint64"
-      }
-    ],
-    "name": "AgentHeartbeat",
-    "type": "event"
   },
   {
     "anonymous": false,
@@ -173,26 +144,14 @@
       {
         "indexed": true,
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       },
       {
         "indexed": false,
         "internalType": "string",
-        "name": "region",
+        "name": "ipfsCID",
         "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint8",
-        "name": "hardwareTier",
-        "type": "uint8"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint8",
-        "name": "capacity",
-        "type": "uint8"
       },
       {
         "indexed": false,
@@ -210,7 +169,7 @@
       {
         "indexed": true,
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       },
       {
@@ -300,19 +259,6 @@
   },
   {
     "inputs": [],
-    "name": "DEAD_ADDRESS",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
     "name": "DEFAULT_ADMIN_ROLE",
     "outputs": [
       {
@@ -377,25 +323,6 @@
     "type": "function"
   },
   {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "",
-        "type": "bytes32"
-      }
-    ],
-    "name": "agentHeartbeats",
-    "outputs": [
-      {
-        "internalType": "uint64",
-        "name": "",
-        "type": "uint64"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
     "inputs": [],
     "name": "cldToken",
     "outputs": [
@@ -444,7 +371,7 @@
     "inputs": [
       {
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       }
     ],
@@ -459,23 +386,13 @@
           },
           {
             "internalType": "bytes32",
-            "name": "providerkey",
+            "name": "pubKeyHash",
             "type": "bytes32"
           },
           {
             "internalType": "string",
-            "name": "region",
+            "name": "ipfsCID",
             "type": "string"
-          },
-          {
-            "internalType": "uint8",
-            "name": "hardwareTier",
-            "type": "uint8"
-          },
-          {
-            "internalType": "uint8",
-            "name": "capacity",
-            "type": "uint8"
           },
           {
             "internalType": "uint96",
@@ -603,23 +520,13 @@
       },
       {
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       },
       {
         "internalType": "string",
-        "name": "region",
+        "name": "ipfsCID",
         "type": "string"
-      },
-      {
-        "internalType": "uint8",
-        "name": "hardwareTier",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint8",
-        "name": "capacity",
-        "type": "uint8"
       },
       {
         "internalType": "uint96",
@@ -644,23 +551,13 @@
     "inputs": [
       {
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       },
       {
         "internalType": "string",
-        "name": "region",
+        "name": "ipfsCID",
         "type": "string"
-      },
-      {
-        "internalType": "uint8",
-        "name": "hardwareTier",
-        "type": "uint8"
-      },
-      {
-        "internalType": "uint8",
-        "name": "capacity",
-        "type": "uint8"
       }
     ],
     "name": "registerProvider",
@@ -753,7 +650,7 @@
     "inputs": [
       {
         "internalType": "bytes32",
-        "name": "providerkey",
+        "name": "pubKeyHash",
         "type": "bytes32"
       },
       {

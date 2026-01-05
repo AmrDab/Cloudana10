@@ -380,8 +380,8 @@
       ]
     },
     "/home/cloudana-mvp/contract/contracts/ProviderRegistry.sol": {
-      "lastModificationDate": 1767521553121,
-      "contentHash": "e20d1185fe3cbad24e7f4447cd9853a3",
+      "lastModificationDate": 1767558434446,
+      "contentHash": "634c270087a44ae3b9c0fd7cfdc07a29",
       "sourceName": "contracts/ProviderRegistry.sol",
       "solcConfig": {
         "version": "0.8.20",
@@ -420,8 +420,8 @@
       ]
     },
     "/home/cloudana-mvp/contract/contracts/JobEscrow.sol": {
-      "lastModificationDate": 1767494477010,
-      "contentHash": "2ad650ef5f8f5b656bc2de0fa630ebd8",
+      "lastModificationDate": 1767552068323,
+      "contentHash": "733f118924b76b16398702a1441a8d8f",
       "sourceName": "contracts/JobEscrow.sol",
       "solcConfig": {
         "version": "0.8.20",

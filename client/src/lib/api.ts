@@ -1,6 +1,11 @@
 // IPFS and DePIN utilities for direct contract interaction
 // No backend needed - all data stored on-chain or IPFS
 
+import { readContract } from "@wagmi/core";
+import { wagmiConfig } from "@/lib/wagmi-config";
+import { ProviderRegistryAbi, CONTRACT_ADDRESSES } from "@shared/contracts";
+import type { Address } from "viem";
+
 export interface ProviderMetadata {
   name: string;
   description?: string;
@@ -109,4 +114,73 @@ export interface ProviderNode {
   status: number; // 0=Registered, 1=Active, 2=Inactive
   owner: string;
   metadata?: ProviderMetadata; // Fetched from IPFS
+}
+
+/**
+ * Get all registered providers from the blockchain
+ */
+export async function getAllProviders(): Promise<any[]> {
+  try {
+    // This would call the contract to get all providers
+    // For now, return empty array as the contract may not have a getAllProviders function
+    console.log('[API] Fetching all providers...');
+    return [];
+  } catch (error) {
+    console.error('[API] Error fetching all providers:', error);
+    return [];
+  }
+}
+
+/**
+ * Get providers by owner address from the blockchain
+ */
+export async function getProvidersByOwner(ownerAddress: Address): Promise<any[]> {
+  try {
+    console.log('[API] Fetching providers for owner:', ownerAddress);
+    // This would typically call a backend API or database
+    // For now, return empty array
+    return [];
+  } catch (error) {
+    console.error('[API] Error fetching providers by owner:', error);
+    return [];
+  }
+}
+
+/**
+ * Get providers registered by the current user from the blockchain
+ */
+export async function getMyProviders(ownerAddress: Address): Promise<any[]> {
+  try {
+    console.log('[API] Fetching my providers for:', ownerAddress);
+    
+    const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
+    const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
+    
+    // Call the contract's getMyProviders function
+    const result = await readContract(wagmiConfig, {
+      address: PROVIDER_REGISTRY_ADDRESS,
+      abi: ProviderRegistryAbi,
+      functionName: "getMyProviders",
+      args: [ownerAddress],
+      chainId: CHAIN_ID,
+    });
+    
+    // Transform the result to match expected format
+    const providers = (result as any[]).map((provider: any) => ({
+      providerkey: provider.pubKeyHash,
+      pubKeyHash: provider.pubKeyHash,
+      ipfsCID: provider.ipfsCID,
+      bondAmount: provider.bondAmount?.toString() || "0",
+      registeredAt: Number(provider.registeredAt || 0),
+      status: Number(provider.status || 0),
+      owner: provider.owner,
+      ownerAddress: provider.owner,
+    }));
+    
+    console.log('[API] Found providers:', providers);
+    return providers;
+  } catch (error) {
+    console.error('[API] Error fetching my providers:', error);
+    return [];
+  }
 }

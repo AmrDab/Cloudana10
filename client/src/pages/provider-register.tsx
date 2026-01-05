@@ -74,10 +74,10 @@ export default function ProviderRegister() {
   // Contract hooks
   const { data: balance, isLoading: balanceLoading } = useCLDTokenBalance(address);
   const { data: allowance, isLoading: allowanceLoading } = useCLDTokenAllowance(address, PROVIDER_REGISTRY_ADDRESS);
-  const { approve, isPending: isApproving, isSuccess: isApproved } = useApproveCLDToken();
-  const { register, hash, isPending: isRegistering, isSuccess: isRegistered, error } = useRegisterProvider();
+  const { approve, hash: approveHash, isPending: isApproving, isSuccess: isApproved, reset: resetApprove } = useApproveCLDToken();
+  const { register, hash: registerHash, isPending: isRegistering, isSuccess: isRegistered, error, reset: resetRegister } = useRegisterProvider();
   const { data: bondInfo } = useProviderRegistryBondInfo();
-  const { data: myProviderKeys, refetch: refetchMyProviders } = useMyProviders(address);
+  const { data: myProviderKeys } = useMyProviders(address);
   
   // Auto-generate pubKeyHash when name changes
   useEffect(() => {
@@ -94,7 +94,30 @@ export default function ProviderRegister() {
     }
   }, [myProviderKeys]);
   
-  // Reload providers after successful registration
+  // Show success message after approval (data will auto-refresh)
+  useEffect(() => {
+    if (isApproved) {
+      toast({
+        title: "Approval Successful!",
+        description: "Token approval has been confirmed. You can now register your provider.",
+      });
+    }
+  }, [isApproved]);
+  
+  // Clear errors when starting new transactions
+  useEffect(() => {
+    if (isApproving) {
+      resetApprove();
+    }
+  }, [isApproving, resetApprove]);
+
+  useEffect(() => {
+    if (isRegistering) {
+      resetRegister();
+    }
+  }, [isRegistering, resetRegister]);
+
+  // Show success message and reset form after registration (data will auto-refresh)
   useEffect(() => {
     if (isRegistered && address) {
       toast({
@@ -102,17 +125,19 @@ export default function ProviderRegister() {
         description: "Your provider has been registered on-chain.",
       });
       
-      // Reload providers
+      // Reset form after a short delay to allow user to see the success message
       setTimeout(() => {
-        refetchMyProviders();
-      }, 2000);
-      
-      // Reset form
-      resetForm();
+        resetForm();
+      }, 1500);
     }
   }, [isRegistered, address]);
   
   const resetForm = () => {
+    // Clear any transaction errors
+    resetApprove();
+    resetRegister();
+    
+    // Reset form fields
     setName("");
     setDescription("");
     setPubKeyHash("");
@@ -201,13 +226,22 @@ export default function ProviderRegister() {
   const handleApprove = () => {
     if (!bondInfo) return;
     const bondAmount = formatEther(bondInfo as bigint);
+    console.log('[ProviderRegister] Calling approve...');
     approve(PROVIDER_REGISTRY_ADDRESS, bondAmount);
   };
   
   const handleRegister = () => {
     if (!pubKeyHash || !ipfsCID) return;
+    console.log('[ProviderRegister] Calling register...', { isRegistering });
     register(pubKeyHash, ipfsCID);
   };
+
+  // Debug logging for loading states
+  useEffect(() => {
+    if (isApproving || isRegistering) {
+      console.log('[ProviderRegister] Loading states:', { isApproving, isRegistering, approveHash, registerHash });
+    }
+  }, [isApproving, isRegistering, approveHash, registerHash]);
   
   const balanceValue = balance && typeof balance === 'bigint' ? parseFloat(formatEther(balance)) : 0;
   const allowanceValue = allowance && typeof allowance === 'bigint' ? parseFloat(formatEther(allowance)) : 0;
@@ -662,7 +696,7 @@ export default function ProviderRegister() {
                 {isApproving ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Approving...
+                    {approveHash ? "Confirming..." : "Approving..."}
                   </>
                 ) : isApproved ? (
                   "Approved ✓"
@@ -681,7 +715,7 @@ export default function ProviderRegister() {
                 {isRegistering ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Registering...
+                    {registerHash ? "Confirming Transaction..." : "Submitting..."}
                   </>
                 ) : (
                   <>
@@ -693,9 +727,16 @@ export default function ProviderRegister() {
             )}
           </div>
           
-          {error && (
+          {error && !isRegistered && !isRegistering && !registerHash && (
             <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
-              {error.message || "Registration failed"}
+              <div className="font-semibold mb-1">Transaction Error</div>
+              <div className="text-xs opacity-90">
+                {error.message?.includes("Internal JSON-RPC error")
+                  ? "Transaction reverted. Please check your balance and allowance, then try again."
+                  : error.message?.includes("User rejected") || error.message?.includes("User denied")
+                  ? "Transaction was rejected in wallet"
+                  : error.message || "Registration failed"}
+              </div>
             </div>
           )}
         </CardContent>

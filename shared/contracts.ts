@@ -28,7 +28,7 @@ export const CONTRACT_ADDRESSES: ContractAddresses = {
   network: "baseSepolia",
   contracts: {
     CLDToken: "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2", // Update after deployment
-    ProviderRegistry: "0xD1640B3d5B9c0BF5e33882A9F1e99e312CBa60DC", // Update after deployment
+    ProviderRegistry: "0x8D489A5c427173216C5A04E9EF0F4947f2F7fA87", // Updated to match deployed contract
     JobEscrow: "0x5F2Be10E979B5Bf7ed1743807227c859990D2B07", // Update after deployment
   },
 };

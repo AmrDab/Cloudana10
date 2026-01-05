@@ -49,6 +49,8 @@ export function useCLDTokenBalance(address?: Address) {
     chainId: CHAIN_ID,
     query: {
       enabled: !!address,
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
     },
   });
 }
@@ -62,15 +64,24 @@ export function useCLDTokenAllowance(owner?: Address, spender?: Address) {
     chainId: CHAIN_ID,
     query: {
       enabled: !!owner && !!spender,
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
     },
   });
 }
 
 export function useApproveCLDToken() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const approve = (spender: Address, amount: string) => {
+    // Reset any previous errors before new transaction
+    reset();
     writeContract({
       address: CLD_TOKEN_ADDRESS,
       abi: CLDTokenAbi,
@@ -79,12 +90,31 @@ export function useApproveCLDToken() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  // - isWritePending: true while submitting transaction to wallet/network
+  // - !!hash && !isSuccess && !confirmError: true when transaction submitted but not yet confirmed
+  // - isConfirming: true while actively waiting for block confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
+  // Debug logging
+  if (hash) {
+    console.log('[useApproveCLDToken] State:', {
+      hash: hash?.slice(0, 10) + '...',
+      isWritePending,
+      isConfirming,
+      isSuccess,
+      confirmError: !!confirmError,
+      isPending,
+    });
+  }
+
   return {
     approve,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
@@ -96,6 +126,10 @@ export function useProviderRegistryBondInfo() {
     abi: ProviderRegistryAbi,
     functionName: "getBondInfo",
     chainId: CHAIN_ID,
+    query: {
+      refetchInterval: 10000, // Refetch every 10 seconds
+      staleTime: 5000, // Data considered fresh for 5 seconds
+    },
   });
 }
 
@@ -108,6 +142,8 @@ export function useMyProviders(owner?: Address) {
     chainId: CHAIN_ID,
     query: {
       enabled: !!owner,
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
     },
   });
 }
@@ -121,15 +157,25 @@ export function useProviderInfo(pubKeyHash?: string) {
     chainId: CHAIN_ID,
     query: {
       enabled: !!pubKeyHash,
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
     },
   });
 }
 
 export function useRegisterProvider() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const register = (pubKeyHash: string, ipfsCID: string) => {
+    // Reset any previous errors before new transaction
+    reset();
+    console.log('[useRegisterProvider] Initiating registration...');
     writeContract({
       address: PROVIDER_REGISTRY_ADDRESS,
       abi: ProviderRegistryAbi,
@@ -138,20 +184,45 @@ export function useRegisterProvider() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  // - isWritePending: true while submitting transaction to wallet/network
+  // - !!hash && !isSuccess && !confirmError: true when transaction submitted but not yet confirmed
+  // - isConfirming: true while actively waiting for block confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
+  // Debug logging
+  if (hash || isWritePending) {
+    console.log('[useRegisterProvider] State:', {
+      hash: hash ? hash.slice(0, 10) + '...' : 'none',
+      isWritePending,
+      isConfirming,
+      isSuccess,
+      confirmError: !!confirmError,
+      isPending,
+    });
+  }
+
   return {
     register,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
 export function useUpdateProviderStatus() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const updateStatus = (pubKeyHash: string, status: 0 | 1 | 2) => {
+    reset();
     writeContract({
       address: PROVIDER_REGISTRY_ADDRESS,
       abi: ProviderRegistryAbi,
@@ -160,12 +231,16 @@ export function useUpdateProviderStatus() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
   return {
     updateStatus,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
@@ -180,6 +255,8 @@ export function useJobInfo(jobId?: bigint) {
     chainId: CHAIN_ID,
     query: {
       enabled: jobId !== undefined,
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
     },
   });
 }
@@ -193,6 +270,8 @@ export function useProviderCredit(provider?: Address) {
     chainId: CHAIN_ID,
     query: {
       enabled: !!provider,
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
     },
   });
 }
@@ -206,15 +285,23 @@ export function useUserRefundCredit(user?: Address) {
     chainId: CHAIN_ID,
     query: {
       enabled: !!user,
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
     },
   });
 }
 
 export function useCreateJob() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const create = (pubKeyHash: string, budgetAmount: string) => {
+    reset();
     writeContract({
       address: JOB_ESCROW_ADDRESS,
       abi: JobEscrowAbi,
@@ -223,20 +310,30 @@ export function useCreateJob() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
   return {
     create,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
 export function useDepositToJob() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const deposit = (jobId: bigint, amount: string) => {
+    reset();
     writeContract({
       address: JOB_ESCROW_ADDRESS,
       abi: JobEscrowAbi,
@@ -245,20 +342,30 @@ export function useDepositToJob() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
   return {
     deposit,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
 export function useCloseJob() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const close = (jobId: bigint) => {
+    reset();
     writeContract({
       address: JOB_ESCROW_ADDRESS,
       abi: JobEscrowAbi,
@@ -267,20 +374,30 @@ export function useCloseJob() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
   return {
     close,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
 export function useWithdrawProvider() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const withdraw = () => {
+    reset();
     writeContract({
       address: JOB_ESCROW_ADDRESS,
       abi: JobEscrowAbi,
@@ -289,20 +406,30 @@ export function useWithdrawProvider() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
   return {
     withdraw,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
 export function useWithdrawUserRefund() {
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
+    hash,
+    query: {
+      enabled: !!hash,
+    },
+  });
 
   const withdraw = () => {
+    reset();
     writeContract({
       address: JOB_ESCROW_ADDRESS,
       abi: JobEscrowAbi,
@@ -311,11 +438,15 @@ export function useWithdrawUserRefund() {
     });
   };
 
+  // Comprehensive loading state: active from submission through confirmation
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
   return {
     withdraw,
     hash,
-    isPending: isPending || isLoading,
+    isPending,
     isSuccess,
-    error,
+    error: writeError || confirmError,
+    reset,
   };
 }
