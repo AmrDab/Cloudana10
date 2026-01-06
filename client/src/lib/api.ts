@@ -1,7 +1,7 @@
 // IPFS and DePIN utilities for direct contract interaction
 // No backend needed - all data stored on-chain or IPFS
 
-import { readContract } from "@wagmi/core";
+import { readContract, getPublicClient } from "@wagmi/core";
 import { wagmiConfig } from "@/lib/wagmi-config";
 import { ProviderRegistryAbi, CONTRACT_ADDRESSES } from "@shared/contracts";
 import type { Address } from "viem";
@@ -40,49 +40,123 @@ export interface ProviderMetadata {
   createdAt?: string;
 }
 
+// IPFS Configuration
+const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
+const PINATA_GATEWAY = import.meta.env.VITE_PINATA_GATEWAY || 'gateway.pinata.cloud';
+
+// Pinata API endpoints
+const PINATA_API_URL = 'https://api.pinata.cloud';
+const PINATA_UPLOAD_URL = `${PINATA_API_URL}/pinning/pinJSONToIPFS`;
+
 /**
- * Upload provider metadata to IPFS
- * In production, this would use a service like Pinata, Web3.Storage, or local IPFS node
- * For now, we'll create a mock implementation
+ * Upload provider metadata to IPFS using Pinata
+ * 
+ * This uploads JSON metadata to IPFS via Pinata's API and returns the CID.
+ * The data is permanently stored on IPFS and accessible via any IPFS gateway.
+ * 
+ * @param metadata - Provider metadata to upload
+ * @returns IPFS CID (Content Identifier)
+ * @throws Error if upload fails
  */
 export async function uploadToIPFS(metadata: ProviderMetadata): Promise<string> {
-  // TODO: Implement actual IPFS upload using Pinata or Web3.Storage
-  // For now, return a mock CID based on the data hash
-  
-  const jsonString = JSON.stringify(metadata, null, 2);
-  
-  // Mock CID generation (in production, this would be the actual IPFS CID)
-  // Using a simple hash-like string for demonstration
-  const mockCID = `Qm${btoa(jsonString.substring(0, 32)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 44)}`;
-  
-  console.log('[IPFS] Mock upload to IPFS:', mockCID);
-  console.log('[IPFS] Metadata:', metadata);
-  
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  return mockCID;
+  try {
+    // Validate JWT token
+    if (!PINATA_JWT) {
+      throw new Error('PINATA_JWT environment variable is not set. Please configure it in .env file.');
+    }
+
+    // Add timestamp if not present
+    if (!metadata.createdAt) {
+      metadata.createdAt = new Date().toISOString();
+    }
+
+    console.log('[IPFS] Uploading to Pinata...');
+    console.log('[IPFS] Metadata:', metadata);
+
+    // Upload to Pinata
+    const response = await fetch(PINATA_UPLOAD_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${PINATA_JWT}`,
+      },
+      body: JSON.stringify({
+        pinataContent: metadata,
+        pinataMetadata: {
+          name: `provider-${metadata.name || 'node'}-${Date.now()}`,
+          keyvalues: {
+            type: 'provider-metadata',
+            network: 'cloudana',
+            timestamp: new Date().toISOString(),
+          }
+        },
+        pinataOptions: {
+          cidVersion: 1,
+        }
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      throw new Error(`Pinata API error (${response.status}): ${errorData}`);
+    }
+
+    const result = await response.json();
+    const cid = result.IpfsHash;
+
+    console.log('[IPFS] ✓ Successfully uploaded to IPFS');
+    console.log('[IPFS] CID:', cid);
+    console.log('[IPFS] Gateway URL:', `https://${PINATA_GATEWAY}/ipfs/${cid}`);
+
+    return cid;
+  } catch (error) {
+    console.error('[IPFS] ✗ Upload failed:', error);
+    throw new Error(`Failed to upload to IPFS: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
- * Fetch provider metadata from IPFS
- * In production, this would fetch from IPFS gateway
+ * Fetch provider metadata from IPFS using Pinata gateway
+ * 
+ * This retrieves JSON metadata from IPFS using the CID.
+ * Data is fetched from Pinata's optimized gateway for best performance.
+ * 
+ * @param cid - IPFS Content Identifier
+ * @returns Provider metadata or null if not found
  */
 export async function fetchFromIPFS(cid: string): Promise<ProviderMetadata | null> {
-  // TODO: Implement actual IPFS fetch using gateway
-  // For now, return mock data
-  
-  console.log('[IPFS] Mock fetch from IPFS:', cid);
-  
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 300));
-  
-  // Return mock metadata
-  return {
-    name: 'Provider Node',
-    description: 'DePIN compute node',
-    createdAt: new Date().toISOString(),
-  };
+  try {
+    console.log('[IPFS] Fetching from IPFS...');
+    console.log('[IPFS] CID:', cid);
+
+    // Construct gateway URL
+    const gatewayUrl = `https://ipfs.io/ipfs/${cid}`;
+    console.log('[IPFS] Gateway URL:', gatewayUrl);
+
+    // Fetch from IPFS gateway
+    const response = await fetch(gatewayUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.warn('[IPFS] ✗ CID not found on IPFS');
+        return null;
+      }
+      throw new Error(`Gateway error (${response.status}): ${response.statusText}`);
+    }
+
+    const metadata = await response.json() as ProviderMetadata;
+    console.log('[IPFS] ✓ Successfully fetched metadata:', metadata);
+
+    return metadata;
+  } catch (error) {
+    console.error('[IPFS] ✗ Fetch failed:', error);
+    return null;
+  }
 }
 
 /**
@@ -105,6 +179,18 @@ export function isValidIPFSCID(cid: string): boolean {
          /^[a-z2-7]{59}$/.test(cid); // CIDv1 base32
 }
 
+/**
+ * Generate Pinata gateway URL for viewing IPFS content
+ * @param cid IPFS CID
+ * @returns Full Pinata gateway URL
+ */
+export function getPinataGatewayUrl(cid: string): string {
+  // Use public gateway for viewing (no authentication required)
+  // Your dedicated gateway requires authentication which isn't suitable for public links
+  const PUBLIC_GATEWAY = "gateway.pinata.cloud";
+  return `https://${PUBLIC_GATEWAY}/ipfs/${cid}`;
+}
+
 // Export types for use in components
 export interface ProviderNode {
   pubKeyHash: string;
@@ -118,13 +204,82 @@ export interface ProviderNode {
 
 /**
  * Get all registered providers from the blockchain
+ * Uses contract's getAllProviderKeys() function (no events needed)
+ * Follows the same reliable pattern as getMyProviders()
  */
 export async function getAllProviders(): Promise<any[]> {
   try {
-    // This would call the contract to get all providers
-    // For now, return empty array as the contract may not have a getAllProviders function
-    console.log('[API] Fetching all providers...');
-    return [];
+    console.log('[API] Fetching all providers from blockchain...');
+    
+    const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
+    const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
+    
+    // Call the contract's getAllProviderKeys function to get all pubKeyHashes
+    const pubKeyHashes = await readContract(wagmiConfig, {
+      address: PROVIDER_REGISTRY_ADDRESS,
+      abi: ProviderRegistryAbi,
+      functionName: "getAllProviderKeys",
+      chainId: CHAIN_ID,
+    }) as `0x${string}`[];
+    
+    console.log(`[API] Found ${pubKeyHashes.length} total providers`);
+    
+    // Fetch full details for each provider (same pattern as getMyProviders)
+    const providers = await Promise.all(
+      pubKeyHashes.map(async (pubKeyHash, index) => {
+        try {
+          // Get provider details from contract using public providers mapping
+          const providerDetails = await readContract(wagmiConfig, {
+            address: PROVIDER_REGISTRY_ADDRESS,
+            abi: ProviderRegistryAbi,
+            functionName: "providers",
+            args: [pubKeyHash],
+            chainId: CHAIN_ID,
+          }) as any;
+          
+          // Skip if provider doesn't exist (owner is zero address)
+          if (!providerDetails[0] || providerDetails[0] === '0x0000000000000000000000000000000000000000') {
+            return null;
+          }
+          
+          // Fetch IPFS metadata
+          let metadata = null;
+          if (providerDetails[2]) {
+            try {
+              metadata = await fetchFromIPFS(providerDetails[2] as string);
+            } catch (ipfsErr) {
+              console.warn(`[API] Failed to fetch IPFS metadata for ${pubKeyHash}:`, ipfsErr);
+            }
+          }
+          
+          // Return complete provider data
+          return {
+            id: `provider-${index}-${pubKeyHash}`,
+            pubKeyHash,
+            providerkey: pubKeyHash,
+            ipfsCID: providerDetails[2],
+            bondAmount: providerDetails[3]?.toString() || "0",
+            registeredAt: Number(providerDetails[4] || 0),
+            status: Number(providerDetails[5] || 0),
+            owner: providerDetails[0],
+            ownerAddress: providerDetails[0],
+            // Spread IPFS metadata (name, description, hardware specs, etc.)
+            ...metadata,
+          };
+        } catch (err) {
+          console.warn(`[API] Failed to fetch details for provider ${pubKeyHash}:`, err);
+          return null;
+        }
+      })
+    );
+    
+    // Filter out null values (failed fetches) and sort by registration time (most recent first)
+    const validProviders = providers
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+      .sort((a, b) => b.registeredAt - a.registeredAt);
+    
+    console.log(`[API] Successfully loaded ${validProviders.length} providers with metadata`);
+    return validProviders;
   } catch (error) {
     console.error('[API] Error fetching all providers:', error);
     return [];
@@ -132,22 +287,8 @@ export async function getAllProviders(): Promise<any[]> {
 }
 
 /**
- * Get providers by owner address from the blockchain
- */
-export async function getProvidersByOwner(ownerAddress: Address): Promise<any[]> {
-  try {
-    console.log('[API] Fetching providers for owner:', ownerAddress);
-    // This would typically call a backend API or database
-    // For now, return empty array
-    return [];
-  } catch (error) {
-    console.error('[API] Error fetching providers by owner:', error);
-    return [];
-  }
-}
-
-/**
  * Get providers registered by the current user from the blockchain
+ * Returns full provider details with IPFS metadata
  */
 export async function getMyProviders(ownerAddress: Address): Promise<any[]> {
   try {
@@ -156,29 +297,60 @@ export async function getMyProviders(ownerAddress: Address): Promise<any[]> {
     const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
     const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
     
-    // Call the contract's getMyProviders function
-    const result = await readContract(wagmiConfig, {
+    // Call the contract's getMyProviders function to get pubKeyHashes
+    const pubKeyHashes = await readContract(wagmiConfig, {
       address: PROVIDER_REGISTRY_ADDRESS,
       abi: ProviderRegistryAbi,
       functionName: "getMyProviders",
       args: [ownerAddress],
       chainId: CHAIN_ID,
-    });
+    }) as `0x${string}`[];
     
-    // Transform the result to match expected format
-    const providers = (result as any[]).map((provider: any) => ({
-      providerkey: provider.pubKeyHash,
-      pubKeyHash: provider.pubKeyHash,
-      ipfsCID: provider.ipfsCID,
-      bondAmount: provider.bondAmount?.toString() || "0",
-      registeredAt: Number(provider.registeredAt || 0),
-      status: Number(provider.status || 0),
-      owner: provider.owner,
-      ownerAddress: provider.owner,
-    }));
+    console.log(`[API] Found ${pubKeyHashes.length} provider keys`);
     
-    console.log('[API] Found providers:', providers);
-    return providers;
+    // Fetch full details for each provider including IPFS metadata
+    const providers = await Promise.all(
+      pubKeyHashes.map(async (pubKeyHash) => {
+        try {
+          // Get provider details from contract using public providers mapping
+          const providerDetails = await readContract(wagmiConfig, {
+            address: PROVIDER_REGISTRY_ADDRESS,
+            abi: ProviderRegistryAbi,
+            functionName: "providers",
+            args: [pubKeyHash],
+            chainId: CHAIN_ID,
+          }) as any;
+          
+          // Fetch IPFS metadata
+          let metadata = null;
+          console.log('providerDetails from Contract', providerDetails);
+          if (providerDetails[2]) {
+            metadata = await fetchFromIPFS(providerDetails[2] as string);
+          }
+          console.log('providerDetails from IPFS', metadata);
+          return {
+            pubKeyHash,
+            providerkey: pubKeyHash,
+            ipfsCID: providerDetails[2],
+            bondAmount: providerDetails[3]?.toString() || "0",
+            registeredAt: Number(providerDetails[4] || 0),
+            status: Number(providerDetails[5] || 0),
+            owner: providerDetails[0],
+            ownerAddress: providerDetails[0],
+            // Spread IPFS metadata
+            ...metadata,
+          };
+        } catch (err) {
+          console.warn(`[API] Failed to fetch details for provider ${pubKeyHash}:`, err);
+          return null;
+        }
+      })
+    );
+    
+    // Filter out null values (failed fetches)
+    const validProviders = providers.filter((p) => p !== null);
+    console.log(`[API] Successfully loaded ${validProviders.length} providers with metadata`);
+    return validProviders;
   } catch (error) {
     console.error('[API] Error fetching my providers:', error);
     return [];

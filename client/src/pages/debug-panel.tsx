@@ -1,7 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { AddressDisplay } from "@/components/ui/address-display";
 import { RefreshCw, Database, Globe } from "lucide-react";
 import { useState } from "react";
+import { CLD_TOKEN_ADDRESS, PROVIDER_REGISTRY_ADDRESS, JOB_ESCROW_ADDRESS } from "@/lib/contracts";
 
 export default function DebugPanel() {
   const [lastSync, setLastSync] = useState(new Date().toLocaleTimeString());
@@ -42,18 +44,18 @@ export default function DebugPanel() {
               <Database className="h-5 w-5 text-purple-400" /> Contract Addresses
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4 font-mono text-sm">
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">Cloudana Token (CLD)</span>
-              <div className="bg-black/30 p-2 rounded text-xs select-all">0x71C95911E9a5D330f4D621842EC243EE13432921</div>
+          <CardContent className="space-y-4 text-sm">
+            <div className="space-y-2">
+              <span className="text-xs text-muted-foreground uppercase tracking-wider block">Cloudana Token (CLD)</span>
+              <AddressDisplay address={CLD_TOKEN_ADDRESS} truncate={false} />
             </div>
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">Provider Registry</span>
-              <div className="bg-black/30 p-2 rounded text-xs select-all">0x82D39511E9a5D330f4D621842EC243EE13433B44</div>
+            <div className="space-y-2">
+              <span className="text-xs text-muted-foreground uppercase tracking-wider block">Provider Registry</span>
+              <AddressDisplay address={PROVIDER_REGISTRY_ADDRESS} truncate={false} />
             </div>
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">Job Escrow</span>
-              <div className="bg-black/30 p-2 rounded text-xs select-all">0x93E39511E9a5D330f4D621842EC243EE13435C67</div>
+            <div className="space-y-2">
+              <span className="text-xs text-muted-foreground uppercase tracking-wider block">Job Escrow</span>
+              <AddressDisplay address={JOB_ESCROW_ADDRESS} truncate={false} />
             </div>
           </CardContent>
         </Card>

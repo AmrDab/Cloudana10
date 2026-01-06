@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Switch, Route } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import { WalletProvider } from "@/context/wallet-context";
@@ -26,10 +27,12 @@ function Router() {
 
 function App() {
   return (
-    <WalletProvider>
-      <Router />
-      <Toaster />
-    </WalletProvider>
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
+      <WalletProvider>
+        <Router />
+        <Toaster />
+      </WalletProvider>
+    </Suspense>
   );
 }
 

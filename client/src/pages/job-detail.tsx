@@ -5,10 +5,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { AddressDisplay } from "@/components/ui/address-display";
+import { TxLink } from "@/components/ui/tx-link";
 import { useWallet } from "@/context/wallet-context";
 import { MOCK_JOBS, MOCK_LOGS } from "@/lib/mock-data";
 import { useRoute, useLocation } from "wouter";
-import { ArrowLeft, CheckCircle2, Clock, FileCode, Send, ShieldCheck, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, FileCode, Send, ShieldCheck, XCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -85,12 +87,12 @@ export default function JobDetail() {
             <CardContent className="space-y-6">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-muted-foreground block mb-1">Creator</span>
-                  <span className="font-mono bg-white/5 px-2 py-1 rounded">{job.creator}</span>
+                  <span className="text-muted-foreground block mb-2">Creator</span>
+                  <AddressDisplay address={job.creator} truncate={true} truncateLength={6} />
                 </div>
                 <div>
-                  <span className="text-muted-foreground block mb-1">Provider</span>
-                  <span className="font-mono bg-white/5 px-2 py-1 rounded">{job.providerAddress}</span>
+                  <span className="text-muted-foreground block mb-2">Provider</span>
+                  <AddressDisplay address={job.providerAddress} truncate={true} truncateLength={6} />
                 </div>
               </div>
 
@@ -140,6 +142,7 @@ export default function JobDetail() {
                       </div>
                     </div>
                     <Button onClick={handleRequestSignature} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
+                      <Send className="mr-2 h-4 w-4" />
                       Request Signature from Backend
                     </Button>
                   </motion.div>
@@ -185,9 +188,11 @@ export default function JobDetail() {
                  {usageStep === 3 && (
                   <motion.div 
                     key="step3"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
                     className="flex flex-col items-center justify-center py-8 space-y-4"
                   >
-                    <div className="w-12 h-12 border-4 border-yellow-400 border-t-transparent rounded-full animate-spin" />
+                    <Loader2 className="h-12 w-12 text-yellow-400 animate-spin" />
                     <p className="text-muted-foreground">Waiting for block confirmation...</p>
                   </motion.div>
                 )}
@@ -235,9 +240,9 @@ export default function JobDetail() {
                           -{log.amount} CLD
                         </span>
                       )}
-                      <a href="#" className="text-xs text-blue-400 hover:underline mt-1 truncate max-w-[150px]">
-                        {log.tx}
-                      </a>
+                      {log.tx && (
+                        <TxLink hash={log.tx as `0x${string}`} variant="inline" className="mt-1" />
+                      )}
                     </div>
                   </div>
                 ))}

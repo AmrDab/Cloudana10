@@ -2,8 +2,9 @@ import { useProviderEvents } from '@/hooks/useProviderEvents';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, RefreshCw, Activity, ExternalLink } from 'lucide-react';
+import { AlertCircle, RefreshCw, Activity, ExternalLink, FileJson } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getPinataGatewayUrl } from '@/lib/api';
 
 /**
  * Real-time Provider Events Monitor Component
@@ -146,6 +147,12 @@ export function ProviderEventsMonitor() {
                           {provider.bondAmountFormatted} CLD
                         </span>
                       </div>
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground">Metadata:</span>{' '}
+                        <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                          {provider.ipfsCID.slice(0, 20)}...
+                        </code>
+                      </div>
                     </div>
 
                     {/* Footer */}
@@ -158,6 +165,15 @@ export function ProviderEventsMonitor() {
                         className="flex items-center gap-1 hover:text-primary transition-colors"
                       >
                         View TX <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <a
+                        href={getPinataGatewayUrl(provider.ipfsCID)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 hover:text-primary transition-colors"
+                        title="View provider metadata on IPFS"
+                      >
+                        <FileJson className="h-3 w-3" /> View Metadata
                       </a>
                     </div>
                   </div>

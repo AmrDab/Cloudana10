@@ -76,6 +76,8 @@ export function useApproveCLDToken() {
     hash,
     query: {
       enabled: !!hash,
+      retry: 3, // Retry failed RPC calls
+      retryDelay: 1000, // Wait 1 second between retries
     },
   });
 
@@ -169,6 +171,8 @@ export function useRegisterProvider() {
     hash,
     query: {
       enabled: !!hash,
+      retry: 3, // Retry failed RPC calls
+      retryDelay: 1000, // Wait 1 second between retries
     },
   });
 

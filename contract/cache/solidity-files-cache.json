@@ -380,8 +380,8 @@
       ]
     },
     "/home/cloudana-mvp/contract/contracts/ProviderRegistry.sol": {
-      "lastModificationDate": 1767558434446,
-      "contentHash": "634c270087a44ae3b9c0fd7cfdc07a29",
+      "lastModificationDate": 1767683568887,
+      "contentHash": "6dc9b071c17c4effa13743aa7245299a",
       "sourceName": "contracts/ProviderRegistry.sol",
       "solcConfig": {
         "version": "0.8.20",

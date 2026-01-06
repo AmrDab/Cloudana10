@@ -50,6 +50,7 @@ contract ProviderRegistry is AccessControl {
     // Mappings
     mapping(bytes32 => Provider) public providers;  // pubKeyHash => Provider
     mapping(address => bytes32[]) public ownerNodes;  // owner => pubKeyHashes[]
+    bytes32[] public allProviderKeys;  // Array of all registered provider pubKeyHashes
     
     // Events
     event ProviderRegistered(
@@ -151,6 +152,9 @@ contract ProviderRegistry is AccessControl {
         // Track owner's nodes
         ownerNodes[msg.sender].push(pubKeyHash);
         
+        // Track all providers
+        allProviderKeys.push(pubKeyHash);
+        
         emit ProviderRegistered(
             msg.sender,
             pubKeyHash,
@@ -178,6 +182,22 @@ contract ProviderRegistry is AccessControl {
      */
     function getMyProviders(address owner) external view returns (bytes32[] memory) {
         return ownerNodes[owner];
+    }
+    
+    /**
+     * @dev Get all registered provider keys
+     * @return pubKeyHashes Array of all provider public key hashes
+     */
+    function getAllProviderKeys() external view returns (bytes32[] memory) {
+        return allProviderKeys;
+    }
+    
+    /**
+     * @dev Get the total number of registered providers
+     * @return Total count of providers
+     */
+    function getProviderCount() external view returns (uint256) {
+        return allProviderKeys.length;
     }
     
     /**

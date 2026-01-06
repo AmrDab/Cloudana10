@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -5,19 +6,50 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
-import { Server, Coins, Settings, Activity } from "lucide-react";
-import { useMyProviders, useProviderCredit } from "@/lib/contracts";
+import { useToast } from "@/hooks/use-toast";
+import { Server, Coins, Settings, Activity, Loader2 } from "lucide-react";
+import { useMyProviders, useProviderCredit, useWithdrawProvider, JOB_ESCROW_ADDRESS } from "@/lib/contracts";
 import { formatEther } from "viem";
+import { TxLink } from "@/components/ui/tx-link";
+import { AddressDisplay } from "@/components/ui/address-display";
 
 export default function ProviderDashboard() {
   const { address, isConnected } = useAccount();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
   
   const { data: myProviderKeys } = useMyProviders(address);
   const { data: providerCredit } = useProviderCredit(address);
+  const { withdraw, hash: withdrawHash, isPending: isWithdrawing, isSuccess: isWithdrawn, error: withdrawError, reset: resetWithdraw } = useWithdrawProvider();
   
   const isProvider = myProviderKeys && Array.isArray(myProviderKeys) && myProviderKeys.length > 0;
   const creditAmount = providerCredit && typeof providerCredit === 'bigint' ? parseFloat(formatEther(providerCredit)) : 0;
+
+  // Show success message after withdrawal
+  useEffect(() => {
+    if (isWithdrawn && withdrawHash) {
+      toast({
+        title: "Withdrawal Successful!",
+        description: "Your earnings have been transferred to your wallet.",
+      });
+    }
+  }, [isWithdrawn, withdrawHash, toast]);
+
+  // Show error message
+  useEffect(() => {
+    if (withdrawError && !isWithdrawing && !withdrawHash) {
+      toast({
+        title: "Withdrawal Failed",
+        description: withdrawError.message || "Failed to withdraw earnings",
+        variant: "destructive",
+      });
+    }
+  }, [withdrawError, isWithdrawing, withdrawHash, toast]);
+
+  const handleWithdraw = () => {
+    resetWithdraw();
+    withdraw();
+  };
 
   if (!isConnected) {
     return (
@@ -88,20 +120,39 @@ export default function ProviderDashboard() {
             </CardTitle>
             <CardDescription>CLD tokens earned from completed jobs.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="flex items-baseline gap-2">
               <span className="text-6xl font-bold font-mono tracking-tighter text-yellow-400 drop-shadow-[0_0_15px_rgba(250,204,21,0.3)]">
                 {creditAmount.toFixed(2)}
               </span>
               <span className="text-xl text-muted-foreground font-mono">CLD</span>
             </div>
+            <div className="pt-2 border-t border-white/5">
+              <p className="text-xs text-muted-foreground mb-2">Job Escrow Contract:</p>
+              <AddressDisplay 
+                address={JOB_ESCROW_ADDRESS} 
+                truncate={true}
+                truncateLength={6}
+              />
+            </div>
+            {withdrawHash && isWithdrawn && (
+              <TxLink hash={withdrawHash} label="Withdrawal confirmed" />
+            )}
           </CardContent>
           <CardFooter>
             <Button 
               className="bg-yellow-400/10 text-yellow-400 hover:bg-yellow-400/20 border border-yellow-400/20"
-              disabled={creditAmount === 0}
+              disabled={creditAmount === 0 || isWithdrawing}
+              onClick={handleWithdraw}
             >
-              Withdraw Earnings
+              {isWithdrawing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {withdrawHash ? "Confirming..." : "Withdrawing..."}
+                </>
+              ) : (
+                "Withdraw Earnings"
+              )}
             </Button>
           </CardFooter>
         </Card>

@@ -2,8 +2,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getAllProviders, getProvidersByOwner, getMyProviders } from "@/lib/api";
-import { Search, Server, Cpu, HardDrive, Network, MapPin } from "lucide-react";
+import { AddressDisplay } from "@/components/ui/address-display";
+import { getAllProviders, getMyProviders, getPinataGatewayUrl } from "@/lib/api";
+import { Search, Server, Cpu, HardDrive, Network, MapPin, ExternalLink } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,36 +15,23 @@ export default function ProvidersExplorer() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   
-  // Get all providers
+  // Get all providers (from blockchain + IPFS)
   const { data: allProviders = [], isLoading: isLoadingAll } = useQuery({
     queryKey: ["providers"],
     queryFn: getAllProviders,
+    staleTime: 2000, // Cache for 30 seconds
   });
 
-  // Get owner's providers (on-chain data)
-  const { data: myProvidersOnChain = [], isLoading: isLoadingMyOnChain } = useQuery({
+  // Get owner's providers (from blockchain + IPFS)
+  const { data: myProviders = [], isLoading: isLoadingMy } = useQuery({
     queryKey: ["myProviders", address],
     queryFn: () => address ? getMyProviders(address) : Promise.resolve([]),
     enabled: !!address && isConnected,
+    staleTime: 2000, // Cache for 30 seconds
   });
-
-  // Get owner's providers (DB data)
-  const { data: myProvidersDB = [], isLoading: isLoadingMyDB } = useQuery({
-    queryKey: ["myProvidersDB", address],
-    queryFn: () => address ? getProvidersByOwner(address) : Promise.resolve([]),
-    enabled: !!address && isConnected,
-  });
-
-  // Merge on-chain and DB data for owner's providers
-  const myProviders = useMemo(() => {
-    return myProvidersOnChain.map((onChain: any) => {
-      const dbData = myProvidersDB.find((p: any) => p.providerkey === onChain.providerkey);
-      return { ...onChain, ...dbData };
-    });
-  }, [myProvidersOnChain, myProvidersDB]);
 
   const providersToShow = activeTab === "all" ? allProviders : myProviders;
-  const isLoading = activeTab === "all" ? isLoadingAll : (isLoadingMyOnChain || isLoadingMyDB);
+  const isLoading = activeTab === "all" ? isLoadingAll : isLoadingMy;
 
   const filteredProviders = useMemo(() => 
     providersToShow.filter((p: any) => {
@@ -190,9 +178,15 @@ function ProviderCard({ provider, isOwner = false }: { provider: any; isOwner?: 
         {provider.description && (
           <CardDescription className="line-clamp-2">{provider.description}</CardDescription>
         )}
-        <div className="font-mono text-xs text-muted-foreground bg-black/20 px-2 py-1 rounded w-fit mt-2">
-          {provider.providerkey ? `${provider.providerkey.slice(0, 10)}...${provider.providerkey.slice(-8)}` : provider.ownerAddress}
-        </div>
+        {(provider.providerkey || provider.ownerAddress) && (
+          <div className="mt-2">
+            <AddressDisplay 
+              address={provider.providerkey || provider.ownerAddress}
+              truncate={true}
+              truncateLength={6}
+            />
+          </div>
+        )}
       </CardHeader>
       
       <CardContent className="relative space-y-4">
@@ -216,6 +210,25 @@ function ProviderCard({ provider, isOwner = false }: { provider: any; isOwner?: 
             <div className="space-y-1">
               <span className="text-muted-foreground text-xs">Bond</span>
               <div className="font-medium">{parseFloat(provider.bondAmount) / 1e18} CLD</div>
+            </div>
+          )}
+          {provider.ipfsCID && (
+            <div className="space-y-1 col-span-2">
+              <span className="text-muted-foreground text-xs">Metadata</span>
+              <div className="flex items-center gap-2">
+                <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                  {provider.ipfsCID.slice(0, 15)}...
+                </code>
+                <a
+                  href={getPinataGatewayUrl(provider.ipfsCID)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:text-primary/80 transition-colors"
+                  title="View metadata on IPFS"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
             </div>
           )}
         </div>

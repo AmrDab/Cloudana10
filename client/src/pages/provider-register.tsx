@@ -9,7 +9,9 @@ import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Server, Copy, Loader2, Flame, Cpu, HardDrive, Network, MapPin, CheckCircle } from "lucide-react";
+import { TxLink } from "@/components/ui/tx-link";
+import { AddressDisplay } from "@/components/ui/address-display";
+import { Server, Copy, Check, Loader2, Flame, Cpu, HardDrive, Network, MapPin, CheckCircle, ExternalLink } from "lucide-react";
 import {
   useCLDTokenBalance,
   useCLDTokenAllowance,
@@ -22,7 +24,7 @@ import {
   useMyProviders,
   useProviderInfo,
 } from "@/lib/contracts";
-import { uploadToIPFS, generatePubKeyHash as generatePubKey, type ProviderMetadata, type ProviderNode } from "@/lib/api";
+import { uploadToIPFS, generatePubKeyHash as generatePubKey, getPinataGatewayUrl, type ProviderMetadata, type ProviderNode } from "@/lib/api";
 import { formatEther } from "viem";
 import { formatDistanceToNow } from "date-fns";
 
@@ -70,6 +72,7 @@ export default function ProviderRegister() {
   const [isPreparingIPFS, setIsPreparingIPFS] = useState(false);
   const [isPrepared, setIsPrepared] = useState(false);
   const [myProviders, setMyProviders] = useState<any[]>([]);
+  const [copiedPubKey, setCopiedPubKey] = useState(false);
   
   // Contract hooks
   const { data: balance, isLoading: balanceLoading } = useCLDTokenBalance(address);
@@ -96,41 +99,33 @@ export default function ProviderRegister() {
   
   // Show success message after approval (data will auto-refresh)
   useEffect(() => {
-    if (isApproved) {
+    if (isApproved && approveHash) {
       toast({
         title: "Approval Successful!",
         description: "Token approval has been confirmed. You can now register your provider.",
       });
     }
-  }, [isApproved]);
-  
-  // Clear errors when starting new transactions
-  useEffect(() => {
-    if (isApproving) {
-      resetApprove();
-    }
-  }, [isApproving, resetApprove]);
+  }, [isApproved, approveHash]);
 
+  // Show success message after registration (keep form data for potential reuse)
   useEffect(() => {
-    if (isRegistering) {
-      resetRegister();
-    }
-  }, [isRegistering, resetRegister]);
-
-  // Show success message and reset form after registration (data will auto-refresh)
-  useEffect(() => {
-    if (isRegistered && address) {
+    if (isRegistered && address && registerHash) {
       toast({
         title: "Registration Successful!",
-        description: "Your provider has been registered on-chain.",
+        description: "Your provider has been registered on-chain. You can register another provider or clear the form.",
+        duration: 5000,
       });
       
-      // Reset form after a short delay to allow user to see the success message
-      setTimeout(() => {
-        resetForm();
-      }, 1500);
+      // Reset only the prepared state to allow registering another provider with similar data
+      setIsPrepared(false);
+      setIpfsCID("");
+      // Generate new pubKeyHash for next provider
+      if (name && region) {
+        const newKey = generatePubKeyHash();
+        setPubKeyHash(newKey);
+      }
     }
-  }, [isRegistered, address]);
+  }, [isRegistered, address, registerHash]);
   
   const resetForm = () => {
     // Clear any transaction errors
@@ -248,10 +243,10 @@ export default function ProviderRegister() {
   const bondAmount = bondInfo && typeof bondInfo === 'bigint' ? parseFloat(formatEther(bondInfo)) : 1000;
   const needsApproval = allowanceValue < bondAmount;
   const hasEnoughBalance = balanceValue >= bondAmount;
-  
-  const canPrepare = name && !isPrepared;
-  const canRegister = isPrepared && hasEnoughBalance && !needsApproval;
   const remainingQuota = 10 - myProviders.length;
+  
+  const canPrepare = name && !isPrepared && remainingQuota > 0;
+  const canRegister = isPrepared && hasEnoughBalance && !needsApproval && remainingQuota > 0;
   
   if (!isConnected) {
     return (
@@ -294,26 +289,51 @@ export default function ProviderRegister() {
                   <span className="text-muted-foreground">Public Key Hash:</span>
                   <span className="font-mono text-xs">{pubKeyHash.slice(0, 20)}...</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">IPFS CID:</span>
-                  <span className="font-mono text-xs">{ipfsCID}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs">{ipfsCID.slice(0, 20)}...</span>
+                    <a
+                      href={getPinataGatewayUrl(ipfsCID)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:text-primary/80 transition-colors"
+                      title="View metadata on IPFS"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  </div>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Bond Amount:</span>
                   <span className="font-bold">{bondAmount} CLD</span>
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setIsPrepared(false);
-                  setIpfsCID("");
-                }}
-              >
-                ← Back to Edit
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setIsPrepared(false);
+                    setIpfsCID("");
+                  }}
+                >
+                  ← Back to Edit
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to clear all form data? This cannot be undone.")) {
+                      resetForm();
+                    }
+                  }}
+                >
+                  Clear Form
+                </Button>
+              </div>
             </div>
           )}
 
@@ -347,16 +367,48 @@ export default function ProviderRegister() {
                           type="button"
                           variant="outline"
                           size="icon"
+                          className={copiedPubKey ? "bg-green-500/10 border-green-500/20" : ""}
                           onClick={async () => {
-                            await navigator.clipboard.writeText(pubKeyHash);
-                            toast({
-                              title: "Copied!",
-                              description: "Public key hash copied to clipboard.",
-                            });
+                            try {
+                              // Try modern clipboard API first
+                              if (navigator.clipboard && navigator.clipboard.writeText) {
+                                await navigator.clipboard.writeText(pubKeyHash);
+                              } else {
+                                // Fallback for older browsers
+                                const textArea = document.createElement("textarea");
+                                textArea.value = pubKeyHash;
+                                textArea.style.position = "fixed";
+                                textArea.style.left = "-999999px";
+                                textArea.style.top = "-999999px";
+                                document.body.appendChild(textArea);
+                                textArea.focus();
+                                textArea.select();
+                                document.execCommand('copy');
+                                textArea.remove();
+                              }
+                              
+                              setCopiedPubKey(true);
+                              toast({
+                                title: "Copied!",
+                                description: "Public key hash copied to clipboard.",
+                              });
+                              setTimeout(() => setCopiedPubKey(false), 2000);
+                            } catch (err) {
+                              console.error('Failed to copy public key hash:', err);
+                              toast({
+                                title: "Copy Failed",
+                                description: "Could not copy to clipboard. Please copy manually.",
+                                variant: "destructive",
+                              });
+                            }
                           }}
-                          title="Copy to clipboard"
+                          title={copiedPubKey ? "Copied!" : "Copy to clipboard"}
                         >
-                          <Copy className="h-4 w-4" />
+                          {copiedPubKey ? (
+                            <Check className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <Copy className="h-4 w-4" />
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -636,7 +688,7 @@ export default function ProviderRegister() {
           )}
           
           {/* Bond Info */}
-          <div className="p-4 rounded-lg bg-muted/50 space-y-2">
+          <div className="p-4 rounded-lg bg-muted/50 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Total Bond:</span>
               <span className="text-lg font-bold">{bondAmount} CLD</span>
@@ -645,10 +697,18 @@ export default function ProviderRegister() {
               <div>🏛️ Treasury (80%): {(bondAmount * 0.8).toFixed(0)} CLD</div>
               <div>👥 Team (20%): {(bondAmount * 0.2).toFixed(0)} CLD</div>
             </div>
+            <div className="pt-2 border-t border-white/5">
+              <p className="text-xs text-muted-foreground mb-2">Registry Contract:</p>
+              <AddressDisplay 
+                address={PROVIDER_REGISTRY_ADDRESS} 
+                truncate={true}
+                truncateLength={6}
+              />
+            </div>
           </div>
           
           {/* Balance & Allowance */}
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="flex justify-between text-sm">
               <span>Your Balance:</span>
               <span className={hasEnoughBalance ? "text-green-500" : "text-red-500"}>
@@ -663,81 +723,143 @@ export default function ProviderRegister() {
             </div>
             <div className="flex justify-between text-sm">
               <span>Remaining Quota:</span>
-              <span>{remainingQuota} / 10 providers</span>
+              <span className={remainingQuota === 0 ? "text-red-500 font-semibold" : remainingQuota <= 2 ? "text-yellow-500" : "text-green-500"}>
+                {remainingQuota} / 10 providers
+              </span>
+            </div>
+            {remainingQuota === 0 && (
+              <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded p-2">
+                ⚠️ Maximum provider limit reached. You cannot register more providers.
+              </div>
+            )}
+            <div className="pt-2 border-t border-white/5">
+              <p className="text-xs text-muted-foreground mb-2">CLD Token Contract:</p>
+              <AddressDisplay 
+                address={CLD_TOKEN_ADDRESS} 
+                truncate={true}
+                truncateLength={6}
+              />
             </div>
           </div>
           
           {/* Actions */}
-          <div className="flex gap-2">
-            {!isPrepared && (
-              <Button
-                onClick={handlePrepareIPFS}
-                disabled={isPreparingIPFS || !canPrepare}
-                className="flex-1"
-              >
-                {isPreparingIPFS ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Uploading to IPFS...
-                  </>
-                ) : (
-                  "Prepare & Upload to IPFS"
-                )}
-              </Button>
-            )}
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              {!isPrepared && (
+                <>
+                  <Button
+                    onClick={handlePrepareIPFS}
+                    disabled={isPreparingIPFS || !canPrepare}
+                    className="flex-1"
+                    title={remainingQuota === 0 ? "Maximum provider limit reached" : !name ? "Please enter a provider name" : ""}
+                  >
+                    {isPreparingIPFS ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Uploading to IPFS...
+                      </>
+                    ) : remainingQuota === 0 ? (
+                      "Quota Full - Cannot Register"
+                    ) : (
+                      "Prepare & Upload to IPFS"
+                    )}
+                  </Button>
+                  {(name || description || cpuModel || gpuModel) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        if (confirm("Are you sure you want to clear all form data? This cannot be undone.")) {
+                          resetForm();
+                        }
+                      }}
+                    >
+                      Clear Form
+                    </Button>
+                  )}
+                </>
+              )}
+              
+              {isPrepared && needsApproval && (
+                <Button
+                  onClick={handleApprove}
+                  disabled={isApproving || isApproved}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  {isApproving ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {approveHash ? "Confirming Approval..." : "Waiting for Wallet..."}
+                    </>
+                  ) : isApproved ? (
+                    <>
+                      <Check className="mr-2 h-4 w-4" />
+                      Approved
+                    </>
+                  ) : (
+                    "Approve Tokens"
+                  )}
+                </Button>
+              )}
+              
+              {(canRegister || (isPrepared && remainingQuota === 0)) && (
+                <Button
+                  onClick={handleRegister}
+                  disabled={isRegistering || remainingQuota === 0}
+                  className="flex-1 bg-orange-600 hover:bg-orange-700"
+                  title={remainingQuota === 0 ? "Maximum provider limit reached" : ""}
+                >
+                  {isRegistering ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {registerHash ? "Confirming Registration..." : "Waiting for Wallet..."}
+                    </>
+                  ) : remainingQuota === 0 ? (
+                    "Quota Full - Cannot Register"
+                  ) : (
+                    <>
+                      <Flame className="mr-2 h-4 w-4" />
+                      Register Provider
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
             
-            {isPrepared && needsApproval && (
-              <Button
-                onClick={handleApprove}
-                disabled={isApproving || isApproved}
-                variant="outline"
-                className="flex-1"
-              >
-                {isApproving ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {approveHash ? "Confirming..." : "Approving..."}
-                  </>
-                ) : isApproved ? (
-                  "Approved ✓"
-                ) : (
-                  "Approve Tokens"
-                )}
-              </Button>
-            )}
-            
-            {canRegister && (
-              <Button
-                onClick={handleRegister}
-                disabled={isRegistering}
-                className="flex-1 bg-orange-600 hover:bg-orange-700"
-              >
-                {isRegistering ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {registerHash ? "Confirming Transaction..." : "Submitting..."}
-                  </>
-                ) : (
-                  <>
-                    <Flame className="mr-2 h-4 w-4" />
-                    Register Provider
-                  </>
-                )}
-              </Button>
+            {/* Show "Register Another" after successful registration */}
+            {isRegistered && registerHash && !isPrepared && (
+              <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                <p className="text-sm text-green-600 dark:text-green-400 mb-2">
+                  ✓ Registration successful! You can register another provider with the same data or clear the form.
+                </p>
+                <div className="flex gap-2">
+                </div>
+              </div>
             )}
           </div>
           
-          {error && !isRegistered && !isRegistering && !registerHash && (
-            <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
-              <div className="font-semibold mb-1">Transaction Error</div>
-              <div className="text-xs opacity-90">
-                {error.message?.includes("Internal JSON-RPC error")
-                  ? "Transaction reverted. Please check your balance and allowance, then try again."
-                  : error.message?.includes("User rejected") || error.message?.includes("User denied")
-                  ? "Transaction was rejected in wallet"
-                  : error.message || "Registration failed"}
+          {error && !isRegistered && !isRegistering && (
+            // Don't show "Internal JSON-RPC error" during polling - it's transient
+            !error.message?.includes("Internal JSON-RPC error") && (
+              <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+                <div className="font-semibold mb-1">Transaction Error</div>
+                <div className="text-xs opacity-90">
+                  {error.message?.includes("User rejected") || error.message?.includes("User denied")
+                    ? "Transaction was rejected in wallet"
+                    : error.message || "Registration failed"}
+                </div>
               </div>
-            </div>
+            )
+          )}
+          
+          {/* Transaction Success Links */}
+          {approveHash && isApproved && (
+            <TxLink hash={approveHash} label="Token approval confirmed" />
+          )}
+          
+          {registerHash && isRegistered && (
+            <TxLink hash={registerHash} label="Provider registration confirmed" />
           )}
         </CardContent>
       </Card>
