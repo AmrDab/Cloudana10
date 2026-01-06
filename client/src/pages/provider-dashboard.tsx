@@ -7,16 +7,18 @@ import { Label } from "@/components/ui/label";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { Server, Coins, Settings, Activity, Loader2 } from "lucide-react";
+import { Server, Coins, Settings, Activity, Loader2, Users } from "lucide-react";
 import { useMyProviders, useProviderCredit, useWithdrawProvider, JOB_ESCROW_ADDRESS } from "@/lib/contracts";
 import { formatEther } from "viem";
 import { TxLink } from "@/components/ui/tx-link";
 import { AddressDisplay } from "@/components/ui/address-display";
+import { ProviderRewardsModal } from "@/components/provider-rewards-modal";
 
 export default function ProviderDashboard() {
   const { address, isConnected } = useAccount();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [showRewardsModal, setShowRewardsModal] = useState(false);
   
   const { data: myProviderKeys } = useMyProviders(address);
   const { data: providerCredit } = useProviderCredit(address);
@@ -97,6 +99,14 @@ export default function ProviderDashboard() {
           <p className="text-muted-foreground">Monitor your node performance and earnings.</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            onClick={() => setShowRewardsModal(true)}
+            className="border-yellow-400/20 hover:bg-yellow-400/10 text-yellow-400"
+          >
+            <Users className="h-4 w-4 mr-2" />
+            All Rewards
+          </Button>
           <Button 
             variant="outline" 
             onClick={() => setLocation("/provider/register")}
@@ -207,6 +217,13 @@ export default function ProviderDashboard() {
           </Table> */}
         </CardContent>
       </Card>
+
+      {/* Provider Rewards Modal */}
+      <ProviderRewardsModal 
+        open={showRewardsModal} 
+        onOpenChange={setShowRewardsModal}
+        ownerAddress={address}
+      />
     </div>
   );
 }

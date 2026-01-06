@@ -4,11 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AddressDisplay } from "@/components/ui/address-display";
 import { getAllProviders, getMyProviders, getPinataGatewayUrl } from "@/lib/api";
-import { Search, Server, Cpu, HardDrive, Network, MapPin, ExternalLink } from "lucide-react";
+import { Search, Server, Cpu, HardDrive, Network, MapPin, ExternalLink, Copy, Check } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAccount } from "wagmi";
+import { Button } from "@/components/ui/button";
 
 export default function ProvidersExplorer() {
   const { address, isConnected } = useAccount();
@@ -145,6 +146,8 @@ export default function ProvidersExplorer() {
 }
 
 function ProviderCard({ provider, isOwner = false }: { provider: any; isOwner?: boolean }) {
+  const [copiedHash, setCopiedHash] = useState(false);
+
   const statusLabels: Record<string, string> = {
     "Registered": "🟡 Registered",
     "Active": "🟢 Active",
@@ -155,6 +158,35 @@ function ProviderCard({ provider, isOwner = false }: { provider: any; isOwner?: 
 
   const status = provider.status === 0 ? "Registered" : provider.status === 1 ? "Active" : provider.status === 2 ? "Inactive" : provider.status;
   const statusLabel = statusLabels[status] || status;
+
+  const handleCopyHash = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    try {
+      const hashToCopy = provider.providerkey || "";
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(hashToCopy);
+      } else {
+        // Fallback for older browsers
+        const textArea = document.createElement("textarea");
+        textArea.value = hashToCopy;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        textArea.style.top = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      
+      setCopiedHash(true);
+      setTimeout(() => setCopiedHash(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy hash:', err);
+    }
+  };
 
   return (
     <Card className="group hover:border-primary/50 transition-all duration-300 overflow-hidden bg-card/60 backdrop-blur-sm border-white/5">
@@ -178,13 +210,25 @@ function ProviderCard({ provider, isOwner = false }: { provider: any; isOwner?: 
         {provider.description && (
           <CardDescription className="line-clamp-2">{provider.description}</CardDescription>
         )}
-        {(provider.providerkey || provider.ownerAddress) && (
-          <div className="mt-2">
-            <AddressDisplay 
-              address={provider.providerkey || provider.ownerAddress}
-              truncate={true}
-              truncateLength={6}
-            />
+        {provider.providerkey && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">HashKey:</span>
+            <code className="font-mono text-xs bg-muted px-2 py-0.5 rounded">
+              {provider.providerkey.slice(0, 10)}...{provider.providerkey.slice(-8)}
+            </code>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`h-6 w-6 transition-colors ${copiedHash ? "bg-green-500/10 hover:bg-green-500/20" : ""}`}
+              onClick={handleCopyHash}
+              title={copiedHash ? "Copied!" : "Copy hash key"}
+            >
+              {copiedHash ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </Button>
           </div>
         )}
       </CardHeader>
