@@ -7,7 +7,9 @@ import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
 import ProviderDashboard from "@/pages/provider-dashboard";
 import ProviderRegister from "@/pages/provider-register";
-import ProvidersExplorer from "@/pages/providers-explorer";
+import ProviderListPage from "@/pages/provider-list";
+import ProviderDetailPage from "@/pages/provider-detail";
+import ProviderRawPage from "@/pages/provider-raw";
 import UserDashboard from "@/pages/user-dashboard";
 import DebugPanel from "@/pages/debug-panel";
 
@@ -16,10 +18,12 @@ function Router() {
     <AppLayout>
       <Switch>
         <Route path="/" component={LandingPage} />
-        <Route path="/user" component={UserDashboard} />  
+        <Route path="/user" component={UserDashboard} />
         <Route path="/provider" component={ProviderDashboard} />
         <Route path="/provider/register" component={ProviderRegister} />
-        <Route path="/providers" component={ProvidersExplorer} />
+        <Route path="/providers/:owner/raw" component={ProviderRawPage} />
+        <Route path="/providers/:owner" component={ProviderDetailPage} />
+        <Route path="/providers" component={ProviderListPage} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />
       </Switch>
