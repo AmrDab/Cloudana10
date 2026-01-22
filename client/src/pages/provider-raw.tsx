@@ -9,7 +9,8 @@ export default function ProviderRawPage({ params }: ProviderRawPageProps) {
   const owner = params?.owner ?? "";
 
   // Handle case when route params are not yet available (e.g., on refresh)
-  if (!params || !owner) {
+  // This is a safety check - wrapper should handle this, but keep as fallback
+  if (!params || !owner || owner === "") {
     return (
       <div className="flex items-center justify-center py-16">
         <Spinner className="h-10 w-10 text-primary" />

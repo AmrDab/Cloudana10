@@ -48,7 +48,7 @@ export function ProviderTable({ providers, sortOption }: Props) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {providers.map((p) => (
+        {(providers || []).map((p) => (
           <ProviderTableRow key={p.owner} provider={p} />
         ))}
       </TableBody>

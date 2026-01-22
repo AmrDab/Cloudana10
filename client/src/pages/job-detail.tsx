@@ -27,7 +27,8 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
   const { toast } = useToast();
   
   // Handle case when route params are not yet available (e.g., on refresh)
-  if (!params || !params.id) {
+  // This is a safety check - wrapper should handle this, but keep as fallback
+  if (!params || !params.id || params.id === "") {
     return (
       <div className="flex items-center justify-center py-16">
         <Spinner className="h-10 w-10 text-primary" />
@@ -241,7 +242,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
             </CardHeader>
             <CardContent>
               <div className="relative border-l border-white/10 ml-3 space-y-8 pb-4">
-                {logs.map((log, i) => (
+                {(logs || []).map((log, i) => (
                   <div key={i} className="pl-6 relative">
                     <div className="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full bg-primary ring-4 ring-background" />
                     <div className="flex flex-col gap-1">

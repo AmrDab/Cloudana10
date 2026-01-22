@@ -1,9 +1,7 @@
 import { Link, useLocation } from "wouter";
-import { useWallet } from "@/context/wallet-context";
 import {
   LayoutDashboard,
   Server,
-  Search,
   Terminal,
   Menu,
   X,
@@ -28,7 +26,6 @@ interface NavItem {
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { isConnected } = useWallet();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
@@ -47,13 +44,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       label: "Provider",
       path: "/provider",
       icon: Server,
-      show: isConnected,
+      show: true,
       children: [
-        { label: "Dashboard", path: "/provider", icon: LayoutDashboard, show: isConnected },
-        { label: "Register", path: "/provider/register", icon: Server, show: isConnected },
+        { label: "Dashboard", path: "/providers", icon: LayoutDashboard, show: true },
+        { label: "Register", path: "/provider", icon: Server, show: true },
       ],
     },
-    { label: "Providers", path: "/providers", icon: Search, show: true },
     { label: "Debug", path: "/debug", icon: Terminal, show: true },
   ];
 
@@ -69,17 +65,21 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     });
   };
 
+  // Only the exact matching item is selected. Parents are never selected when a child matches.
   const isItemActive = (item: NavItem): boolean => {
-    if (location === item.path) return true;
-    if (item.path !== "/" && location.startsWith(item.path + "/")) return true;
-    if (item.children) {
-      return item.children.some((child) => isItemActive(child));
-    }
-    return false;
+    if (item.children) return false;
+    return location === item.path;
+  };
+
+  const hasActiveDescendant = (item: NavItem): boolean => {
+    if (!item.children) return false;
+    return item.children.some(
+      (child) => location === child.path || hasActiveDescendant(child)
+    );
   };
 
   const isItemExpanded = (item: NavItem): boolean => {
-    return expandedItems.has(item.path) || isItemActive(item);
+    return expandedItems.has(item.path) || hasActiveDescendant(item);
   };
 
   const renderNavItem = (item: NavItem, level: number = 0) => {
@@ -89,41 +89,35 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     const isExpanded = isItemExpanded(item);
     const hasChildren = item.children && item.children.length > 0;
 
+    const baseClasses = "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 w-full text-left min-w-0";
+    const activeClasses = isActive
+      ? "bg-primary/10 text-primary border border-primary/20"
+      : "text-muted-foreground hover:text-foreground hover:bg-white/5";
+    const rightSlotW = "w-6 shrink-0 flex justify-end";
+
     return (
       <div key={item.path}>
-        <div className="flex items-center">
+        <div className="flex items-center w-full" style={level > 0 ? { paddingLeft: `${level * 1}rem` } : undefined}>
           {hasChildren ? (
             <button
               onClick={() => toggleExpanded(item.path)}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 w-full text-left",
-                isActive
-                  ? "bg-primary/10 text-primary border border-primary/20"
-                  : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-              )}
+              className={cn(baseClasses, activeClasses)}
             >
               <item.icon className="h-4 w-4 shrink-0" />
-              <span className="flex-1">{item.label}</span>
-              {isExpanded ? (
-                <ChevronDown className="h-4 w-4 opacity-50" />
-              ) : (
-                <ChevronRight className="h-4 w-4 opacity-50" />
-              )}
+              <span className="flex-1 min-w-0 truncate">{item.label}</span>
+              <span className={rightSlotW}>
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4 opacity-50" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 opacity-50" />
+                )}
+              </span>
             </button>
           ) : (
-            <Link href={item.path}>
-              <div
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 cursor-pointer",
-                  isActive
-                    ? "bg-primary/10 text-primary border border-primary/20"
-                    : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-                )}
-                style={{ paddingLeft: `${0.75 + level * 1}rem` }}
-              >
+            <Link href={item.path} className="block w-full min-w-0 flex-1">
+              <div className={cn(baseClasses, activeClasses, "cursor-pointer")}>
                 <item.icon className="h-4 w-4 shrink-0" />
-                <span>{item.label}</span>
-                {isActive ? <ChevronRight className="ml-auto h-4 w-4 opacity-50" /> : null}
+                <span className="flex-1 min-w-0 truncate">{item.label}</span>
               </div>
             </Link>
           )}
@@ -190,7 +184,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               {navItems.map((item) => {
                 if (!item.show) return null;
                 const hasChildren = item.children && item.children.length > 0;
-                const isExpanded = expandedItems.has(item.path);
+                const isExpanded = expandedItems.has(item.path) || (hasChildren && hasActiveDescendant(item));
                 
                 return (
                   <div key={item.path}>
@@ -249,9 +243,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                         >
                           <item.icon className="h-5 w-5" />
                           <span className="font-medium">{item.label}</span>
-                          {location === item.path ? (
-                            <ChevronRight className="ml-auto h-4 w-4 opacity-50" />
-                          ) : null}
                         </div>
                       </Link>
                     )}

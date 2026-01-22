@@ -13,6 +13,7 @@ export function appendSearchParams(params: Record<string, string | number | bool
 
 export const providerUrls = {
   list: (sort?: string) => `/providers${appendSearchParams({ sort })}`,
+  register: () => "/provider",
   detail: (owner: string) => `/providers/${owner}`,
   detailRaw: (owner: string) => `/providers/${owner}/raw`,
   detailEdit: (owner: string) => `/providers/${owner}/edit`,

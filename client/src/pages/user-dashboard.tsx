@@ -35,10 +35,25 @@ type ViewType = "home" | "deployments" | "templates" | "providers";
 
 export default function UserDashboard() {
   const { address, isConnected } = useAccount();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   
-  const [activeView, setActiveView] = useState<ViewType>("home");
+  // Check URL hash for view (e.g., /user#templates)
+  const hashView = typeof window !== "undefined" && window.location.hash ? window.location.hash.slice(1) : null;
+  const initialView = (hashView && ["home", "deployments", "templates", "providers"].includes(hashView)) ? hashView as ViewType : "home";
+  const [activeView, setActiveView] = useState<ViewType>(initialView);
+  
+  // Update view when hash changes
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1);
+      if (hash && ["home", "deployments", "templates", "providers"].includes(hash)) {
+        setActiveView(hash as ViewType);
+      }
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
   const [selectedProvider, setSelectedProvider] = useState("");
   const [budget, setBudget] = useState("");
 
@@ -121,14 +136,7 @@ export default function UserDashboard() {
     }
   }, [withdrawError, toast, resetWithdraw]);
 
-  if (!isConnected) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[50vh]">
-        <h2 className="text-2xl font-bold mb-4">Access Restricted</h2>
-        <p className="text-muted-foreground mb-4">Please connect your wallet to view your dashboard.</p>
-      </div>
-    );
-  }
+  // Dashboard is always visible, but interactive features require wallet connection
 
   const handleCreateJob = async () => {
     if (!selectedProvider || !budget) {
@@ -237,30 +245,37 @@ export default function UserDashboard() {
             <CardContent className="space-y-4">
               <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">CLD Balance</div>
-                <div className="text-2xl font-bold font-mono">{balance.toFixed(2)}</div>
+                <div className="text-2xl font-bold font-mono">{isConnected ? balance.toFixed(2) : "—"}</div>
               </div>
               <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">Refund Credits</div>
-                <div className="text-2xl font-bold font-mono text-green-400">{refundAmount.toFixed(2)}</div>
+                <div className="text-2xl font-bold font-mono text-green-400">{isConnected ? refundAmount.toFixed(2) : "—"}</div>
               </div>
-              <div className="pt-2 border-t border-white/5 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Open Jobs</span>
-                  <Badge variant="outline" className="border-green-500/50 text-green-400 bg-green-500/10">
-                    {openJobsCount}
-                  </Badge>
+              {!isConnected && (
+                <div className="pt-2 border-t border-white/5">
+                  <p className="text-xs text-muted-foreground/70">Connect wallet to view your stats</p>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Closed Jobs</span>
-                  <Badge variant="outline" className="border-white/20 text-muted-foreground bg-white/5">
-                    {closedJobsCount}
-                  </Badge>
+              )}
+              {isConnected && (
+                <div className="pt-2 border-t border-white/5 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Open Jobs</span>
+                    <Badge variant="outline" className="border-green-500/50 text-green-400 bg-green-500/10">
+                      {openJobsCount}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Closed Jobs</span>
+                    <Badge variant="outline" className="border-white/20 text-muted-foreground bg-white/5">
+                      {closedJobsCount}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Total Spent</span>
+                    <span className="text-sm font-mono font-semibold">{totalSpent.toFixed(2)} CLD</span>
+                  </div>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Total Spent</span>
-                  <span className="text-sm font-mono font-semibold">{totalSpent.toFixed(2)} CLD</span>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 
@@ -275,12 +290,16 @@ export default function UserDashboard() {
             <CardContent className="space-y-2">
               <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">Wallet Address</div>
-                <AddressDisplay address={address || "0x"} truncate={true} truncateLength={6} />
+                {isConnected && address ? (
+                  <AddressDisplay address={address} truncate={true} truncateLength={6} />
+                ) : (
+                  <div className="text-sm text-muted-foreground/60">Not connected</div>
+                )}
               </div>
               <div className="pt-2 border-t border-white/5">
                 <div className="flex items-center gap-2 text-xs">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-muted-foreground">Connected</span>
+                  <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500 animate-pulse" : "bg-muted-foreground/40"}`} />
+                  <span className="text-muted-foreground">{isConnected ? "Connected" : "Not Connected"}</span>
                 </div>
               </div>
             </CardContent>
@@ -314,6 +333,7 @@ export default function UserDashboard() {
             setLocation={setLocation}
             address={address}
             setActiveView={setActiveView}
+            isConnected={isConnected}
           />
         )}
 
@@ -336,6 +356,7 @@ export default function UserDashboard() {
             approveHash={approveHash}
             createHash={createHash}
             refetchJobs={refetchJobs}
+            isConnected={isConnected}
           />
         )}
 
@@ -383,6 +404,7 @@ function HomeViewContent({
   setLocation,
   address,
   setActiveView,
+  isConnected,
 }: {
   selectedProvider: string;
   setSelectedProvider: (v: string) => void;
@@ -406,6 +428,7 @@ function HomeViewContent({
   setLocation: (path: string) => void;
   address?: `0x${string}`;
   setActiveView?: (view: ViewType) => void;
+  isConnected: boolean;
 }) {
   const activeDeploymentsCount = jobs.filter(j => j.status === 0).length;
   const totalSpentInDeployments = jobs.reduce((sum, job) => sum + parseFloat(formatEther(job.spent)), 0);
@@ -431,10 +454,11 @@ function HomeViewContent({
               setActiveView("deployments");
             }
           }}
+          disabled={!isConnected}
           className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <Rocket className="mr-2 h-4 w-4" />
-          Deploy
+          {isConnected ? "Deploy" : "Connect Wallet to Deploy"}
         </Button>
       </div>
 
@@ -452,11 +476,11 @@ function HomeViewContent({
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline justify-between mb-1">
-              <div className="text-3xl font-bold font-mono">{balance.toFixed(2)}</div>
-              <div className="text-sm text-muted-foreground">${balanceUsd.toFixed(2)}</div>
+              <div className="text-3xl font-bold font-mono">{isConnected ? balance.toFixed(2) : "—"}</div>
+              <div className="text-sm text-muted-foreground">{isConnected ? `$${balanceUsd.toFixed(2)}` : "—"}</div>
             </div>
             <div className="text-xs text-muted-foreground mt-2">
-              {totalSpentInDeployments.toFixed(2)} CLD used in deployments
+              {isConnected ? `${totalSpentInDeployments.toFixed(2)} CLD used in deployments` : "Connect wallet to view"}
             </div>
           </CardContent>
         </Card>
@@ -473,11 +497,11 @@ function HomeViewContent({
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline justify-between mb-1">
-              <div className="text-3xl font-bold font-mono text-green-400">{refundAmount.toFixed(2)}</div>
-              <div className="text-sm text-muted-foreground">${(refundAmount * cldToUsd).toFixed(2)}</div>
+              <div className="text-3xl font-bold font-mono text-green-400">{isConnected ? refundAmount.toFixed(2) : "—"}</div>
+              <div className="text-sm text-muted-foreground">{isConnected ? `$${(refundAmount * cldToUsd).toFixed(2)}` : "—"}</div>
             </div>
             <div className="text-xs text-muted-foreground mt-2">
-              Available to withdraw
+              {isConnected ? "Available to withdraw" : "Connect wallet to view"}
             </div>
           </CardContent>
         </Card>
@@ -541,6 +565,7 @@ function DeploymentsView({
   approveHash,
   createHash,
   refetchJobs,
+  isConnected,
 }: {
   jobs: any[];
   jobsLoading: boolean;
@@ -559,6 +584,7 @@ function DeploymentsView({
   approveHash?: `0x${string}`;
   createHash?: `0x${string}`;
   refetchJobs: () => void;
+  isConnected: boolean;
 }) {
   const activeDeployments = jobs.filter(j => j.status === 0);
   const allDeployments = jobs;
@@ -587,12 +613,12 @@ function DeploymentsView({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="deployment-provider">Select Provider</Label>
-              <Select value={selectedProvider} onValueChange={setSelectedProvider}>
-                <SelectTrigger id="deployment-provider" className="bg-background/50 border-white/10">
-                  <SelectValue placeholder="Choose a provider..." />
+              <Select value={selectedProvider} onValueChange={setSelectedProvider} disabled={!isConnected}>
+                <SelectTrigger id="deployment-provider" className="bg-background/50 border-white/10" disabled={!isConnected}>
+                  <SelectValue placeholder={isConnected ? "Choose a provider..." : "Connect wallet to select provider"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {providers
+                  {(providers || [])
                     .filter(p => p.status === 1) // Only show Active providers
                     .map(p => (
                       <SelectItem key={p.pubKeyHash} value={p.pubKeyHash}>
@@ -607,24 +633,33 @@ function DeploymentsView({
               <div className="relative">
                 <Input 
                   id="deployment-budget" 
-                  placeholder="e.g. 100" 
+                  placeholder={isConnected ? "e.g. 100" : "Connect wallet to enter budget"} 
                   type="number" 
                   className="bg-background/50 border-white/10 pr-12"
                   value={budget}
                   onChange={(e) => setBudget(e.target.value)}
+                  disabled={!isConnected}
                 />
                 <span className="absolute right-3 top-2.5 text-xs text-muted-foreground font-mono">CLD</span>
               </div>
             </div>
           </div>
+          {!isConnected && (
+            <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-muted-foreground/20">
+              <p className="text-sm text-muted-foreground">
+                <WalletIcon className="inline h-4 w-4 mr-2" />
+                Connect your wallet to create deployments
+              </p>
+            </div>
+          )}
         </CardContent>
         <CardFooter className="flex justify-between border-t border-white/5 pt-6">
           <div className="text-sm text-muted-foreground">
-            Balance: <span className="font-mono text-foreground">{balance.toFixed(2)} CLD</span>
+            Balance: <span className="font-mono text-foreground">{isConnected ? balance.toFixed(2) : "—"} CLD</span>
           </div>
           <Button 
             onClick={handleCreateJob} 
-            disabled={isCreating || isApproving || providersLoading || !selectedProvider || !budget} 
+            disabled={!isConnected || isCreating || isApproving || providersLoading || !selectedProvider || !budget} 
             className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[160px]"
           >
             {isApproving ? (
@@ -784,7 +819,7 @@ function TemplatesView({
   });
 
   const handleDeployFromTemplate = (template: typeof allTemplates[0]) => {
-    const activeProvider = providers.find(p => p.status === 1);
+    const activeProvider = (providers || []).find(p => p.status === 1);
     if (activeProvider) {
       onCreateFromTemplate(activeProvider.pubKeyHash, template.budget);
     }
@@ -886,7 +921,7 @@ function TemplatesView({
                 <CardFooter>
                   <Button 
                     className="w-full"
-                    disabled={providersLoading || !providers.find(p => p.status === 1)}
+                    disabled={providersLoading || !(providers || []).find(p => p.status === 1)}
                   >
                     <Rocket className="mr-2 h-4 w-4" />
                     Deploy from Template

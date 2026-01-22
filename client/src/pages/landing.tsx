@@ -45,7 +45,7 @@ export default function LandingPage() {
             </motion.div>
           </Link>
 
-          <Link href="/provider">
+          <Link href="/providers">
             <motion.div 
               whileHover={{ scale: 1.02, borderColor: "hsl(var(--secondary-foreground))" }}
               className="p-8 rounded-xl bg-card border border-white/5 cursor-pointer hover:shadow-[0_0_30px_rgba(255,255,255,0.05)] transition-all group"
@@ -81,7 +81,7 @@ export default function LandingPage() {
 
         <h1 className="text-5xl md:text-7xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-white/50 leading-[1.1]">
           Decentralized Compute <br />
-          <span className="text-primary">Marketplace</span>
+          <span className="text-primary">Operating System</span>
         </h1>
 
         <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
@@ -97,14 +97,14 @@ export default function LandingPage() {
           >
             Connect Wallet to Start
           </Button>
-          <Link href="/jobs">
+          <Link href="/user#templates">
             <Button 
               variant="outline" 
               size="lg" 
               className="h-14 px-8 text-lg rounded-full border-white/10 hover:bg-white/5 hover:border-white/20 w-full sm:w-auto"
               data-testid="button-explore-jobs"
             >
-              Explore Jobs
+              Explore Works
             </Button>
           </Link>
         </div>

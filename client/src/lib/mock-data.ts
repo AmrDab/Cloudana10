@@ -2,6 +2,8 @@
  * Mock data for jobs and logs (used when contracts are not deployed or for demo purposes)
  */
 
+import type { ClientProviderList } from "@/lib/provider-types";
+
 export interface MockJob {
   id: string;
   createdAt: string | number;
@@ -173,3 +175,16 @@ export const MOCK_LOGS: MockLog[] = [
     tx: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   },
 ];
+
+/** Sample providers for map when no real providers (demo only). Mix of active and inactive. */
+export const SAMPLE_PROVIDERS = [
+  // Active providers (green on map)
+  { owner: "0x1111111111111111111111111111111111111111", name: "Sample US East", hostUri: "https://sample1.example.com", ipRegion: "Virginia", ipRegionCode: "VA", ipCountry: "United States", ipCountryCode: "US", ipLat: "37.5", ipLon: "-77.4", isOnline: true, isAudited: false, uptime7d: 100, leaseCount: 12, gpuModels: [], activeStats: { cpu: 1766, gpu: 65, memory: 5.07e12, storage: 25.88e12 }, pendingStats: { cpu: 0, gpu: 0, memory: 0, storage: 0 }, availableStats: { cpu: 7643, gpu: 214, memory: 71e12, storage: 683.27e12 } },
+  { owner: "0x2222222222222222222222222222222222222222", name: "Sample EU West", hostUri: "https://sample2.example.com", ipRegion: "Frankfurt", ipRegionCode: "DE-HE", ipCountry: "Germany", ipCountryCode: "DE", ipLat: "50.1", ipLon: "8.7", isOnline: true, isAudited: true, uptime7d: 99, leaseCount: 8, gpuModels: [], activeStats: { cpu: 2500, gpu: 45, memory: 8e12, storage: 50e12 }, pendingStats: { cpu: 500, gpu: 5, memory: 2e12, storage: 10e12 }, availableStats: { cpu: 5000, gpu: 150, memory: 40e12, storage: 200e12 } },
+  { owner: "0x3333333333333333333333333333333333333333", name: "Sample Asia Pacific", hostUri: "https://sample3.example.com", ipRegion: "Tokyo", ipRegionCode: "JP-13", ipCountry: "Japan", ipCountryCode: "JP", ipLat: "35.7", ipLon: "139.7", isOnline: true, isAudited: false, uptime7d: 98, leaseCount: 5, gpuModels: [], activeStats: { cpu: 3200, gpu: 80, memory: 12e12, storage: 80e12 }, pendingStats: { cpu: 800, gpu: 10, memory: 3e12, storage: 20e12 }, availableStats: { cpu: 4000, gpu: 110, memory: 35e12, storage: 200e12 } },
+  { owner: "0x7777777777777777777777777777777777777777", name: "Sample Canada", hostUri: "https://sample7.example.com", ipRegion: "Toronto", ipRegionCode: "ON", ipCountry: "Canada", ipCountryCode: "CA", ipLat: "43.65", ipLon: "-79.38", isOnline: true, isAudited: true, uptime7d: 97, leaseCount: 6, gpuModels: [], activeStats: { cpu: 1800, gpu: 30, memory: 6e12, storage: 40e12 }, pendingStats: { cpu: 200, gpu: 2, memory: 1e12, storage: 5e12 }, availableStats: { cpu: 6000, gpu: 68, memory: 43e12, storage: 255e12 } },
+  { owner: "0x8888888888888888888888888888888888888888", name: "Sample India", hostUri: "https://sample8.example.com", ipRegion: "Mumbai", ipRegionCode: "MH", ipCountry: "India", ipCountryCode: "IN", ipLat: "19.08", ipLon: "72.88", isOnline: true, isAudited: false, uptime7d: 96, leaseCount: 4, gpuModels: [], activeStats: { cpu: 1400, gpu: 25, memory: 4e12, storage: 30e12 }, pendingStats: { cpu: 300, gpu: 3, memory: 1.5e12, storage: 8e12 }, availableStats: { cpu: 5300, gpu: 72, memory: 44.5e12, storage: 262e12 } },
+  // Inactive providers (red on map)
+  { owner: "0x4444444444444444444444444444444444444444", name: "Sample UK (Inactive)", hostUri: "https://sample4.example.com", ipRegion: "London", ipRegionCode: "GB-LND", ipCountry: "United Kingdom", ipCountryCode: "GB", ipLat: "51.5", ipLon: "-0.1", isOnline: false, isAudited: true, uptime7d: 0, leaseCount: 0, gpuModels: [], activeStats: { cpu: 0, gpu: 0, memory: 0, storage: 0 }, pendingStats: { cpu: 0, gpu: 0, memory: 0, storage: 0 }, availableStats: { cpu: 8000, gpu: 8, memory: 128e12, storage: 4e15 } },
+  { owner: "0x5555555555555555555555555555555555555555", name: "Sample Brazil (Inactive)", hostUri: "https://sample5.example.com", ipRegion: "São Paulo", ipRegionCode: "BR-SP", ipCountry: "Brazil", ipCountryCode: "BR", ipLat: "-23.5", ipLon: "-46.6", isOnline: false, isAudited: false, uptime7d: 0, leaseCount: 0, gpuModels: [], activeStats: { cpu: 0, gpu: 0, memory: 0, storage: 0 }, pendingStats: { cpu: 0, gpu: 0, memory: 0, storage: 0 }, availableStats: { cpu: 2000, gpu: 2, memory: 16e12, storage: 500e12 } },
+] as ClientProviderList[];

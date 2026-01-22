@@ -41,11 +41,7 @@ export function ProviderDetailLayout({ children, page, address, provider, refres
   };
 
   function handleBackClick() {
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      window.history.back();
-    } else {
-      setLocation(providerUrls.list());
-    }
+    setLocation(providerUrls.list());
   }
 
   return (

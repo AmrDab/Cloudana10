@@ -18,9 +18,10 @@ import { useFavoriteProviders } from "@/hooks/useFavoriteProviders";
 import type { ClientProviderList } from "@/lib/provider-types";
 import { ProviderMap } from "@/components/providers/ProviderMap";
 import { ProviderTable } from "@/components/providers/ProviderTable";
-import { NetworkCapacity } from "@/components/providers/NetworkCapacity";
+import { ProviderStatsDonutChart } from "@/components/providers/ProviderStatsDonutChart";
 import { CheckboxWithLabel } from "@/components/providers/CheckboxWithLabel";
 import { CustomPagination } from "@/components/providers/CustomPagination";
+import { SAMPLE_PROVIDERS } from "@/lib/mock-data";
 
 type SortId =
   | "active-leases-desc"
@@ -42,7 +43,7 @@ export default function ProviderListPage() {
   const [pageSize, setPageSize] = useState(10);
   const [sort, setSort] = useState<SortId>("gpu-available-desc");
   const [search, setSearch] = useState("");
-  const [filterActive, setFilterActive] = useState(true);
+  const [filterActive, setFilterActive] = useState(false);
   const [filterAudited, setFilterAudited] = useState(false);
   const [filterFavorites, setFilterFavorites] = useState(false);
 
@@ -68,8 +69,15 @@ export default function ProviderListPage() {
 
     list.sort((a, b) => {
       if (sort === "gpu-available-desc") {
-        const ga = a.availableStats.gpu + a.pendingStats.gpu + a.activeStats.gpu;
-        const gb = b.availableStats.gpu + b.pendingStats.gpu + b.activeStats.gpu;
+        const emptyStats = { cpu: 0, gpu: 0, memory: 0, storage: 0 };
+        const aStats = a.availableStats || emptyStats;
+        const aPending = a.pendingStats || emptyStats;
+        const aActive = a.activeStats || emptyStats;
+        const bStats = b.availableStats || emptyStats;
+        const bPending = b.pendingStats || emptyStats;
+        const bActive = b.activeStats || emptyStats;
+        const ga = (aStats.gpu || 0) + (aPending.gpu || 0) + (aActive.gpu || 0);
+        const gb = (bStats.gpu || 0) + (bPending.gpu || 0) + (bActive.gpu || 0);
         return gb - ga;
       }
       if (sort === "name-asc") return (a.name || a.hostUri || "").localeCompare(b.name || b.hostUri || "");
@@ -86,7 +94,10 @@ export default function ProviderListPage() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
 
   const networkCapacity = useMemo(() => {
-    if (!filtered.length) return null;
+    // Use all providers (both active and inactive) for network stats
+    const source = providers && providers.length > 0 ? providers : SAMPLE_PROVIDERS;
+    if (!source.length) return null;
+    const emptyStats = { cpu: 0, gpu: 0, memory: 0, storage: 0 };
     let aCpu = 0,
       tCpu = 0,
       aGpu = 0,
@@ -95,15 +106,18 @@ export default function ProviderListPage() {
       tMem = 0,
       aStore = 0,
       tStore = 0;
-    for (const p of filtered) {
-      aCpu += (p.activeStats.cpu + p.pendingStats.cpu) / 1000;
-      tCpu += (p.activeStats.cpu + p.pendingStats.cpu + p.availableStats.cpu) / 1000;
-      aGpu += p.activeStats.gpu + p.pendingStats.gpu;
-      tGpu += p.activeStats.gpu + p.pendingStats.gpu + p.availableStats.gpu;
-      aMem += p.activeStats.memory + p.pendingStats.memory;
-      tMem += p.activeStats.memory + p.pendingStats.memory + p.availableStats.memory;
-      aStore += p.activeStats.storage + p.pendingStats.storage;
-      tStore += p.activeStats.storage + p.pendingStats.storage + p.availableStats.storage;
+    for (const p of source) {
+      const active = p.activeStats || emptyStats;
+      const pending = p.pendingStats || emptyStats;
+      const available = p.availableStats || emptyStats;
+      aCpu += ((active.cpu || 0) + (pending.cpu || 0)) / 1000;
+      tCpu += ((active.cpu || 0) + (pending.cpu || 0) + (available.cpu || 0)) / 1000;
+      aGpu += (active.gpu || 0) + (pending.gpu || 0);
+      tGpu += (active.gpu || 0) + (pending.gpu || 0) + (available.gpu || 0);
+      aMem += (active.memory || 0) + (pending.memory || 0);
+      tMem += (active.memory || 0) + (pending.memory || 0) + (available.memory || 0);
+      aStore += (active.storage || 0) + (pending.storage || 0);
+      tStore += (active.storage || 0) + (pending.storage || 0) + (available.storage || 0);
     }
     if (tCpu + tGpu + tMem + tStore === 0) return null;
     return {
@@ -116,7 +130,12 @@ export default function ProviderListPage() {
       activeStorage: aStore,
       totalStorage: tStore,
     };
-  }, [filtered]);
+  }, [providers]);
+
+  const mapProviders: ClientProviderList[] = useMemo(() => {
+    if (providers && providers.length > 0) return providers;
+    return SAMPLE_PROVIDERS;
+  }, [providers]);
 
   useEffect(() => {
     setPageIndex(0);
@@ -131,17 +150,17 @@ export default function ProviderListPage() {
     setSort(v as SortId);
   };
 
-  const activeCount = providers?.filter((x) => x.isOnline).length ?? 0;
+  const allProviders = providers && providers.length > 0 ? providers : SAMPLE_PROVIDERS;
+  const activeCount = allProviders.filter((x) => x.isOnline).length;
+  const totalCount = allProviders.length;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Network Capacity</h1>
-        {providers && providers.length > 0 && (
-          <p className="mt-2 text-muted-foreground text-base">
-            <span className="font-bold text-primary text-2xl">{activeCount}</span> active providers
-          </p>
-        )}
+        <p className="mt-2 text-muted-foreground text-base">
+          <span className="font-bold text-primary text-2xl">{activeCount}</span> active / <span className="font-bold text-2xl">{totalCount}</span> total providers
+        </p>
       </div>
 
       {loading && (
@@ -150,44 +169,42 @@ export default function ProviderListPage() {
         </div>
       )}
 
-      {providers && providers.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-8">
-          <div className="lg:col-span-2">
-            {networkCapacity && (
-              <NetworkCapacity
-                activeCPU={networkCapacity.activeCPU}
-                totalCPU={networkCapacity.totalCPU}
-                activeGPU={networkCapacity.activeGPU}
-                totalGPU={networkCapacity.totalGPU}
-                activeMemory={networkCapacity.activeMemory}
-                totalMemory={networkCapacity.totalMemory}
-                activeStorage={networkCapacity.activeStorage}
-                totalStorage={networkCapacity.totalStorage}
-                compact
-              />
-            )}
-          </div>
-          <div className="lg:col-span-3">
-            <ProviderMap providers={providers} />
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-8">
+        <div className="lg:col-span-2 flex items-center justify-center">
+          {networkCapacity && (
+            <ProviderStatsDonutChart
+              activeCPU={networkCapacity.activeCPU}
+              totalCPU={networkCapacity.totalCPU}
+              activeGPU={networkCapacity.activeGPU}
+              totalGPU={networkCapacity.totalGPU}
+              activeMemory={networkCapacity.activeMemory}
+              totalMemory={networkCapacity.totalMemory}
+              activeStorage={networkCapacity.activeStorage}
+              totalStorage={networkCapacity.totalStorage}
+            />
+          )}
         </div>
-      )}
+        <div className="lg:col-span-3 relative">
+          <ProviderMap providers={mapProviders} />
+          {(!providers || providers.length === 0) && !loading && (
+            <div className="absolute left-1/2 bottom-3 -translate-x-1/2 px-3 py-1 rounded-full text-xs font-medium bg-muted/80 text-muted-foreground backdrop-blur-sm">
+              Sample providers
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex justify-end mb-4">
+        <Link href="/provider">
+          <Button variant="secondary" size="sm" className="gap-2">
+            <ExternalLink className="h-4 w-4" />
+            Become a provider
+          </Button>
+        </Link>
+      </div>
 
       {providers && providers.length > 0 && (
         <>
-          <div className="flex justify-end">
-            <Link href="/provider/register">
-              <Button
-                variant="secondary"
-                size="sm"
-                className="gap-2"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Become a provider
-              </Button>
-            </Link>
-          </div>
-
           <div>
             <div className="flex flex-wrap items-center gap-4 pt-4">
               <h2 className="text-2xl font-bold">Providers</h2>

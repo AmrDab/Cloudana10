@@ -24,7 +24,6 @@ export function ProviderMap({
   initialCoordinates = [0, 0],
 }: Props) {
   const [dotSize, setDotSize] = useState({ r: 5, w: 1 });
-  const activeProviders = providers.filter((p) => p.isOnline);
   const [position, setPosition] = useState({ coordinates: initialCoordinates, zoom: initialZoom });
   const isInitial =
     position.coordinates[0] === initialCoordinates[0] &&
@@ -100,15 +99,18 @@ export function ProviderMap({
               ))
             }
           </Geographies>
-          {activeProviders.map(({ owner, name, ipLon, ipLat, ipRegion, ipCountryCode }) => (
+          {(providers || []).map(({ owner, name, ipLon, ipLat, ipRegion, ipCountryCode, isOnline }) => (
             <Link key={owner} href={providerUrls.detail(owner)}>
               <Marker coordinates={[parseFloat(ipLon), parseFloat(ipLat)]}>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <circle
-                        className="cursor-pointer fill-primary stroke-background transition-opacity hover:opacity-90"
-                        strokeWidth={dotSize.w}
+                        className="cursor-pointer stroke-background transition-opacity hover:opacity-90"
+                        style={{
+                          fill: isOnline ? "hsl(142 76% 36%)" : "hsl(0 84% 60%)",
+                          strokeWidth: dotSize.w,
+                        }}
                         r={dotSize.r}
                       />
                     </TooltipTrigger>
@@ -117,6 +119,9 @@ export function ProviderMap({
                         <div className="font-medium">{name || owner.slice(0, 10) + "…"}</div>
                         <div className="text-muted-foreground text-xs">
                           {ipRegion}, {ipCountryCode}
+                        </div>
+                        <div className={`text-xs font-medium mt-1 ${isOnline ? "text-green-400" : "text-red-400"}`}>
+                          {isOnline ? "Active" : "Inactive"}
                         </div>
                       </div>
                     </TooltipContent>

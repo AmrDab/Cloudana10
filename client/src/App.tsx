@@ -6,7 +6,6 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
-import ProviderDashboard from "@/pages/provider-dashboard";
 import ProviderRegister from "@/pages/provider-register";
 import ProviderListPage from "@/pages/provider-list";
 import ProviderDetailPageWrapper from "@/pages/provider-detail-wrapper";
@@ -21,8 +20,7 @@ function Router() {
       <Switch>
         <Route path="/" component={LandingPage} />
         <Route path="/user" component={UserDashboard} />
-        <Route path="/provider" component={ProviderDashboard} />
-        <Route path="/provider/register" component={ProviderRegister} />
+        <Route path="/provider" component={ProviderRegister} />
         <Route path="/providers/:owner/raw" component={ProviderRawPageWrapper} />
         <Route path="/providers/:owner" component={ProviderDetailPageWrapper} />
         <Route path="/providers" component={ProviderListPage} />

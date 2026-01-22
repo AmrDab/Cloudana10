@@ -43,43 +43,49 @@ export function ProviderTableRow({ provider }: Props) {
   const { favoriteProviders, toggle } = useFavoriteProviders();
   const isFavorite = favoriteProviders.includes(provider.owner);
 
-  const activeCPU = provider.isOnline ? provider.activeStats.cpu / 1000 : 0;
-  const pendingCPU = provider.isOnline ? provider.pendingStats.cpu / 1000 : 0;
+  // Defensive checks for stats objects
+  const emptyStats = { cpu: 0, gpu: 0, memory: 0, storage: 0 };
+  const activeStats = provider.activeStats || emptyStats;
+  const pendingStats = provider.pendingStats || emptyStats;
+  const availableStats = provider.availableStats || emptyStats;
+
+  const activeCPU = provider.isOnline ? (activeStats.cpu || 0) / 1000 : 0;
+  const pendingCPU = provider.isOnline ? (pendingStats.cpu || 0) / 1000 : 0;
   const totalCPU = provider.isOnline
-    ? (provider.availableStats.cpu + provider.pendingStats.cpu + provider.activeStats.cpu) / 1000
+    ? ((availableStats.cpu || 0) + (pendingStats.cpu || 0) + (activeStats.cpu || 0)) / 1000
     : 0;
-  const activeGPU = provider.isOnline ? provider.activeStats.gpu : 0;
-  const pendingGPU = provider.isOnline ? provider.pendingStats.gpu : 0;
+  const activeGPU = provider.isOnline ? (activeStats.gpu || 0) : 0;
+  const pendingGPU = provider.isOnline ? (pendingStats.gpu || 0) : 0;
   const totalGPU = provider.isOnline
-    ? provider.availableStats.gpu + provider.pendingStats.gpu + provider.activeStats.gpu
+    ? (availableStats.gpu || 0) + (pendingStats.gpu || 0) + (activeStats.gpu || 0)
     : 0;
   const activeMem = provider.isOnline
-    ? bytesToShrink(provider.activeStats.memory + provider.pendingStats.memory)
+    ? bytesToShrink((activeStats.memory || 0) + (pendingStats.memory || 0))
     : null;
   const totalMem = provider.isOnline
     ? bytesToShrink(
-        provider.availableStats.memory + provider.pendingStats.memory + provider.activeStats.memory
+        (availableStats.memory || 0) + (pendingStats.memory || 0) + (activeStats.memory || 0)
       )
     : null;
   const activeStorage = provider.isOnline
-    ? bytesToShrink(provider.activeStats.storage + provider.pendingStats.storage)
+    ? bytesToShrink((activeStats.storage || 0) + (pendingStats.storage || 0))
     : null;
   const totalStorage = provider.isOnline
     ? bytesToShrink(
-        provider.availableStats.storage + provider.pendingStats.storage + provider.activeStats.storage
+        (availableStats.storage || 0) + (pendingStats.storage || 0) + (activeStats.storage || 0)
       )
     : null;
   const memRatio =
     provider.isOnline && totalMem && totalMem.value > 0
-      ? (provider.activeStats.memory + provider.pendingStats.memory) /
-        (provider.availableStats.memory + provider.pendingStats.memory + provider.activeStats.memory)
+      ? ((activeStats.memory || 0) + (pendingStats.memory || 0)) /
+        ((availableStats.memory || 0) + (pendingStats.memory || 0) + (activeStats.memory || 0))
       : 0;
   const storageRatio =
     provider.isOnline && totalStorage && totalStorage.value > 0
-      ? (provider.activeStats.storage + provider.pendingStats.storage) /
-        (provider.availableStats.storage +
-          provider.pendingStats.storage +
-          provider.activeStats.storage)
+      ? ((activeStats.storage || 0) + (pendingStats.storage || 0)) /
+        ((availableStats.storage || 0) +
+          (pendingStats.storage || 0) +
+          (activeStats.storage || 0))
       : 0;
   const gpuModels = uniqueGpuModels(provider.gpuModels);
 

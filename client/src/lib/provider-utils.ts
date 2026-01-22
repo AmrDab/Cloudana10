@@ -36,6 +36,7 @@ function unique<T>(arr: T[]): T[] {
   return [...new Set(arr)];
 }
 
-export function uniqueGpuModels(models: { model: string }[]): string[] {
+export function uniqueGpuModels(models: { model: string }[] | undefined | null): string[] {
+  if (!models || !Array.isArray(models)) return [];
   return unique(models.map((x) => x.model).filter(Boolean));
 }

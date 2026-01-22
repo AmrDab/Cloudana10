@@ -17,7 +17,8 @@ export default function ProviderDetailPage({ params }: ProviderDetailPageProps) 
   const { data: provider, isLoading, refetch } = useProviderDetail(owner);
   
   // Handle case when route params are not yet available (e.g., on refresh)
-  if (!params || !owner) {
+  // This is a safety check - wrapper should handle this, but keep as fallback
+  if (!params || !owner || owner === "") {
     return (
       <div className="flex items-center justify-center py-16">
         <Spinner className="h-10 w-10 text-primary" />
@@ -29,22 +30,24 @@ export default function ProviderDetailPage({ params }: ProviderDetailPageProps) 
 
   const networkCapacity = useMemo(() => {
     if (!provider) return null;
-    const a = provider.activeStats;
-    const p = provider.pendingStats;
-    const v = provider.availableStats;
-    const totalCpu = (a.cpu + p.cpu + v.cpu) / 1000;
-    const totalGpu = a.gpu + p.gpu + v.gpu;
-    const totalMem = a.memory + p.memory + v.memory;
-    const totalStorage = a.storage + p.storage + v.storage;
+    // Defensive checks for stats objects
+    const emptyStats = { cpu: 0, gpu: 0, memory: 0, storage: 0 };
+    const a = provider.activeStats || emptyStats;
+    const p = provider.pendingStats || emptyStats;
+    const v = provider.availableStats || emptyStats;
+    const totalCpu = ((a.cpu || 0) + (p.cpu || 0) + (v.cpu || 0)) / 1000;
+    const totalGpu = (a.gpu || 0) + (p.gpu || 0) + (v.gpu || 0);
+    const totalMem = (a.memory || 0) + (p.memory || 0) + (v.memory || 0);
+    const totalStorage = (a.storage || 0) + (p.storage || 0) + (v.storage || 0);
     if (totalCpu + totalGpu + totalMem + totalStorage === 0) return null;
     return {
-      activeCPU: (a.cpu + p.cpu) / 1000,
+      activeCPU: ((a.cpu || 0) + (p.cpu || 0)) / 1000,
       totalCPU: totalCpu,
-      activeGPU: a.gpu + p.gpu,
+      activeGPU: (a.gpu || 0) + (p.gpu || 0),
       totalGPU: totalGpu,
-      activeMemory: a.memory + p.memory,
+      activeMemory: (a.memory || 0) + (p.memory || 0),
       totalMemory: totalMem,
-      activeStorage: a.storage + p.storage,
+      activeStorage: (a.storage || 0) + (p.storage || 0),
       totalStorage,
     };
   }, [provider]);
