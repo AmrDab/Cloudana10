@@ -8,6 +8,7 @@ import LandingPage from "@/pages/landing";
 import ProviderDashboard from "@/pages/provider-dashboard";
 import ProviderRegister from "@/pages/provider-register";
 import ProvidersExplorer from "@/pages/providers-explorer";
+import UserDashboard from "@/pages/user-dashboard";
 import DebugPanel from "@/pages/debug-panel";
 
 function Router() {
@@ -15,6 +16,7 @@ function Router() {
     <AppLayout>
       <Switch>
         <Route path="/" component={LandingPage} />
+        <Route path="/user" component={UserDashboard} />  
         <Route path="/provider" component={ProviderDashboard} />
         <Route path="/provider/register" component={ProviderRegister} />
         <Route path="/providers" component={ProvidersExplorer} />
