@@ -24,8 +24,9 @@ type Props = {
 
 export function ProviderDetailLayout({ children, page, address, provider, refresh }: Props) {
   const [, setLocation] = useLocation();
-  const { userAddress } = useWallet();
-  const isOwner = !!provider?.owner && userAddress && userAddress.toLowerCase() === provider.owner.toLowerCase();
+  const { userAddress, isConnected } = useWallet();
+  // Only show owner-specific features when wallet is connected AND user is the owner
+  const isOwner = isConnected && !!provider?.owner && userAddress && userAddress.toLowerCase() === provider.owner.toLowerCase();
 
   const handleTabChange = (value: string) => {
     switch (value as ProviderDetailTabs) {

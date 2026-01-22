@@ -1,10 +1,21 @@
-import { useRoute } from "wouter";
 import { ProviderRawData } from "@/components/providers/ProviderRawData";
+import { Spinner } from "@/components/ui/spinner";
 
-export default function ProviderRawPage() {
-  const [, params] = useRoute("/providers/:owner/raw");
+interface ProviderRawPageProps {
+  params?: { owner?: string };
+}
+
+export default function ProviderRawPage({ params }: ProviderRawPageProps) {
   const owner = params?.owner ?? "";
 
-  if (!owner) return null;
+  // Handle case when route params are not yet available (e.g., on refresh)
+  if (!params || !owner) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Spinner className="h-10 w-10 text-primary" />
+      </div>
+    );
+  }
+  
   return <ProviderRawData owner={owner} />;
 }

@@ -42,11 +42,11 @@ export default function UserDashboard() {
   const [selectedProvider, setSelectedProvider] = useState("");
   const [budget, setBudget] = useState("");
 
-  // Fetch available providers
+  // Fetch available providers - this should work even when not connected (public data)
   const { data: providers = [], isLoading: providersLoading } = useQuery({
     queryKey: ["allProviders"],
     queryFn: getAllProviders,
-    enabled: isConnected,
+    // Don't require connection for public provider list
   });
 
   // Fetch user jobs from blockchain events
@@ -54,12 +54,12 @@ export default function UserDashboard() {
     enabled: isConnected,
   });
 
-  // Get CLD token balance
-  const { data: tokenBalance } = useCLDTokenBalance(address);
+  // Get CLD token balance - only when connected
+  const { data: tokenBalance } = useCLDTokenBalance(isConnected ? address : undefined);
   const balance = tokenBalance && typeof tokenBalance === 'bigint' ? parseFloat(formatEther(tokenBalance)) : 0;
 
-  // Get user refund credit
-  const { data: refundCredit } = useUserRefundCredit(address);
+  // Get user refund credit - only when connected
+  const { data: refundCredit } = useUserRefundCredit(isConnected ? address : undefined);
   const refundAmount = refundCredit && typeof refundCredit === 'bigint' ? parseFloat(formatEther(refundCredit)) : 0;
 
   // Token approval
@@ -71,9 +71,9 @@ export default function UserDashboard() {
   // Withdraw refund
   const { withdraw: withdrawRefund, hash: withdrawHash, isPending: isWithdrawing, isSuccess: isWithdrawn, error: withdrawError, reset: resetWithdraw } = useWithdrawUserRefund();
 
-  // Check if approval is needed
-  const { data: allowance } = useCLDTokenAllowance(address, JOB_ESCROW_ADDRESS);
-  const needsApproval = budget && allowance && typeof allowance === 'bigint' ? parseFloat(formatEther(allowance)) < parseFloat(budget) : true;
+  // Check if approval is needed - only when connected
+  const { data: allowance } = useCLDTokenAllowance(isConnected ? address : undefined, isConnected ? JOB_ESCROW_ADDRESS : undefined);
+  const needsApproval = isConnected && budget && allowance && typeof allowance === 'bigint' ? parseFloat(formatEther(allowance)) < parseFloat(budget) : true;
 
   // Show success/error messages
   useEffect(() => {

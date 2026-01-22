@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, type ChangeEventHandler } from "react";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -175,15 +176,16 @@ export default function ProviderListPage() {
       {providers && providers.length > 0 && (
         <>
           <div className="flex justify-end">
-            <Button
-              variant="secondary"
-              size="sm"
-              className="gap-2"
-              onClick={() => window.open("https://akash.network/providers/", "_blank")}
-            >
-              <ExternalLink className="h-4 w-4" />
-              Become a provider
-            </Button>
+            <Link href="/provider/register">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="gap-2"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Become a provider
+              </Button>
+            </Link>
           </div>
 
           <div>

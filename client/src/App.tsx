@@ -3,15 +3,17 @@ import { Switch, Route } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import { WalletProvider } from "@/context/wallet-context";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
 import ProviderDashboard from "@/pages/provider-dashboard";
 import ProviderRegister from "@/pages/provider-register";
 import ProviderListPage from "@/pages/provider-list";
-import ProviderDetailPage from "@/pages/provider-detail";
-import ProviderRawPage from "@/pages/provider-raw";
+import ProviderDetailPageWrapper from "@/pages/provider-detail-wrapper";
+import ProviderRawPageWrapper from "@/pages/provider-raw-wrapper";
 import UserDashboard from "@/pages/user-dashboard";
 import DebugPanel from "@/pages/debug-panel";
+import JobDetailPageWrapper from "@/pages/job-detail-wrapper";
 
 function Router() {
   return (
@@ -21,9 +23,10 @@ function Router() {
         <Route path="/user" component={UserDashboard} />
         <Route path="/provider" component={ProviderDashboard} />
         <Route path="/provider/register" component={ProviderRegister} />
-        <Route path="/providers/:owner/raw" component={ProviderRawPage} />
-        <Route path="/providers/:owner" component={ProviderDetailPage} />
+        <Route path="/providers/:owner/raw" component={ProviderRawPageWrapper} />
+        <Route path="/providers/:owner" component={ProviderDetailPageWrapper} />
         <Route path="/providers" component={ProviderListPage} />
+        <Route path="/job/:id" component={JobDetailPageWrapper} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />
       </Switch>
@@ -33,12 +36,14 @@ function Router() {
 
 function App() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
-      <WalletProvider>
-        <Router />
-        <Toaster />
-      </WalletProvider>
-    </Suspense>
+    <ErrorBoundary>
+      <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
+        <WalletProvider>
+          <Router />
+          <Toaster />
+        </WalletProvider>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 

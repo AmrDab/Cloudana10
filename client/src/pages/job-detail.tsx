@@ -9,20 +9,34 @@ import { AddressDisplay } from "@/components/ui/address-display";
 import { TxLink } from "@/components/ui/tx-link";
 import { useWallet } from "@/context/wallet-context";
 import { MOCK_JOBS, MOCK_LOGS } from "@/lib/mock-data";
-import { useRoute, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { ArrowLeft, CheckCircle2, Clock, FileCode, Send, ShieldCheck, XCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function JobDetail() {
-  const [match, params] = useRoute("/job/:id");
+import { Spinner } from "@/components/ui/spinner";
+
+interface JobDetailPageProps {
+  params?: { id?: string };
+}
+
+export default function JobDetailPage({ params }: JobDetailPageProps) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   
+  // Handle case when route params are not yet available (e.g., on refresh)
+  if (!params || !params.id) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Spinner className="h-10 w-10 text-primary" />
+      </div>
+    );
+  }
+  
   // Mock finding job
-  const job = MOCK_JOBS.find(j => j.id === params?.id) || MOCK_JOBS[0];
+  const job = MOCK_JOBS.find(j => j.id === params.id) || MOCK_JOBS[0];
   const logs = MOCK_LOGS.filter(l => l.jobId === job.id);
 
   const [usageStep, setUsageStep] = useState(0); // 0: Idle, 1: Requesting, 2: Received Sig, 3: Submitting, 4: Done

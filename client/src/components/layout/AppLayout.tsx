@@ -8,7 +8,9 @@ import {
   Menu,
   X,
   ChevronRight,
+  ChevronDown,
   Home,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -16,19 +18,124 @@ import { Button } from "@/components/ui/button";
 
 const SIDEBAR_WIDTH = "14rem";
 
+interface NavItem {
+  label: string;
+  path: string;
+  icon: React.ComponentType<{ className?: string }>;
+  show: boolean;
+  children?: NavItem[];
+}
+
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { isConnected } = useWallet();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
-  const navItems = [
+  const navItems: NavItem[] = [
     { label: "Home", path: "/", icon: Home, show: true },
-    { label: "User Dashboard", path: "/user", icon: LayoutDashboard, show: true },
-    { label: "Provider Dashboard", path: "/provider", icon: Server, show: isConnected },
-    { label: "Register Provider", path: "/provider/register", icon: Server, show: isConnected },
+    {
+      label: "User",
+      path: "/user",
+      icon: Users,
+      show: true,
+      children: [
+        { label: "Dashboard", path: "/user", icon: LayoutDashboard, show: true },
+      ],
+    },
+    {
+      label: "Provider",
+      path: "/provider",
+      icon: Server,
+      show: isConnected,
+      children: [
+        { label: "Dashboard", path: "/provider", icon: LayoutDashboard, show: isConnected },
+        { label: "Register", path: "/provider/register", icon: Server, show: isConnected },
+      ],
+    },
     { label: "Providers", path: "/providers", icon: Search, show: true },
     { label: "Debug", path: "/debug", icon: Terminal, show: true },
   ];
+
+  const toggleExpanded = (path: string) => {
+    setExpandedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const isItemActive = (item: NavItem): boolean => {
+    if (location === item.path) return true;
+    if (item.path !== "/" && location.startsWith(item.path + "/")) return true;
+    if (item.children) {
+      return item.children.some((child) => isItemActive(child));
+    }
+    return false;
+  };
+
+  const isItemExpanded = (item: NavItem): boolean => {
+    return expandedItems.has(item.path) || isItemActive(item);
+  };
+
+  const renderNavItem = (item: NavItem, level: number = 0) => {
+    if (!item.show) return null;
+
+    const isActive = isItemActive(item);
+    const isExpanded = isItemExpanded(item);
+    const hasChildren = item.children && item.children.length > 0;
+
+    return (
+      <div key={item.path}>
+        <div className="flex items-center">
+          {hasChildren ? (
+            <button
+              onClick={() => toggleExpanded(item.path)}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 w-full text-left",
+                isActive
+                  ? "bg-primary/10 text-primary border border-primary/20"
+                  : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+              )}
+            >
+              <item.icon className="h-4 w-4 shrink-0" />
+              <span className="flex-1">{item.label}</span>
+              {isExpanded ? (
+                <ChevronDown className="h-4 w-4 opacity-50" />
+              ) : (
+                <ChevronRight className="h-4 w-4 opacity-50" />
+              )}
+            </button>
+          ) : (
+            <Link href={item.path}>
+              <div
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 cursor-pointer",
+                  isActive
+                    ? "bg-primary/10 text-primary border border-primary/20"
+                    : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                )}
+                style={{ paddingLeft: `${0.75 + level * 1}rem` }}
+              >
+                <item.icon className="h-4 w-4 shrink-0" />
+                <span>{item.label}</span>
+                {isActive ? <ChevronRight className="ml-auto h-4 w-4 opacity-50" /> : null}
+              </div>
+            </Link>
+          )}
+        </div>
+        {hasChildren && isExpanded && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-white/5 pl-2">
+            {item.children?.map((child) => renderNavItem(child, level + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground flex font-sans selection:bg-primary/20 selection:text-primary">
@@ -46,26 +153,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </Link>
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {navItems.filter((item) => item.show).map((item) => {
-            const isActive =
-              location === item.path || (item.path !== "/" && location.startsWith(item.path + "/"));
-            return (
-              <Link key={item.path} href={item.path}>
-                <div
-                  className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 cursor-pointer",
-                    isActive
-                      ? "bg-primary/10 text-primary border border-primary/20"
-                      : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-                  )}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  <span>{item.label}</span>
-                  {isActive ? <ChevronRight className="ml-auto h-4 w-4 opacity-50" /> : null}
-                </div>
-              </Link>
-            );
-          })}
+          {navItems.map((item) => renderNavItem(item))}
         </nav>
       </aside>
 
@@ -99,24 +187,77 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         {mobileMenuOpen && (
           <div className="md:hidden fixed inset-0 top-16 z-40 bg-background/95 backdrop-blur-xl border-b border-white/10 animate-in slide-in-from-top-5">
             <nav className="p-4 flex flex-col gap-2">
-              {navItems.filter((item) => item.show).map((item) => (
-                <Link key={item.path} href={item.path} onClick={() => setMobileMenuOpen(false)}>
-                  <div
-                    className={cn(
-                      "p-4 rounded-lg flex items-center gap-3 transition-colors",
-                      location === item.path
-                        ? "bg-primary/10 text-primary border border-primary/20"
-                        : "bg-card hover:bg-white/5"
+              {navItems.map((item) => {
+                if (!item.show) return null;
+                const hasChildren = item.children && item.children.length > 0;
+                const isExpanded = expandedItems.has(item.path);
+                
+                return (
+                  <div key={item.path}>
+                    {hasChildren ? (
+                      <>
+                        <button
+                          onClick={() => toggleExpanded(item.path)}
+                          className={cn(
+                            "w-full p-4 rounded-lg flex items-center gap-3 transition-colors text-left",
+                            isItemActive(item)
+                              ? "bg-primary/10 text-primary border border-primary/20"
+                              : "bg-card hover:bg-white/5"
+                          )}
+                        >
+                          <item.icon className="h-5 w-5" />
+                          <span className="font-medium flex-1">{item.label}</span>
+                          {isExpanded ? (
+                            <ChevronDown className="h-4 w-4 opacity-50" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 opacity-50" />
+                          )}
+                        </button>
+                        {isExpanded && item.children && (
+                          <div className="ml-4 mt-1 space-y-1">
+                            {item.children.map((child) => (
+                              <Link
+                                key={child.path}
+                                href={child.path}
+                                onClick={() => setMobileMenuOpen(false)}
+                              >
+                                <div
+                                  className={cn(
+                                    "p-3 rounded-lg flex items-center gap-3 transition-colors",
+                                    location === child.path
+                                      ? "bg-primary/10 text-primary border border-primary/20"
+                                      : "bg-card/50 hover:bg-white/5"
+                                  )}
+                                >
+                                  <child.icon className="h-4 w-4" />
+                                  <span className="font-medium text-sm">{child.label}</span>
+                                </div>
+                              </Link>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <Link href={item.path} onClick={() => setMobileMenuOpen(false)}>
+                        <div
+                          className={cn(
+                            "p-4 rounded-lg flex items-center gap-3 transition-colors",
+                            location === item.path
+                              ? "bg-primary/10 text-primary border border-primary/20"
+                              : "bg-card hover:bg-white/5"
+                          )}
+                        >
+                          <item.icon className="h-5 w-5" />
+                          <span className="font-medium">{item.label}</span>
+                          {location === item.path ? (
+                            <ChevronRight className="ml-auto h-4 w-4 opacity-50" />
+                          ) : null}
+                        </div>
+                      </Link>
                     )}
-                  >
-                    <item.icon className="h-5 w-5" />
-                    <span className="font-medium">{item.label}</span>
-                    {location === item.path ? (
-                      <ChevronRight className="ml-auto h-4 w-4 opacity-50" />
-                    ) : null}
                   </div>
-                </Link>
-              ))}
+                );
+              })}
             </nav>
           </div>
         )}

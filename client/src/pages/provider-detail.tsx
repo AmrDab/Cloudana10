@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { useRoute } from "wouter";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
@@ -9,10 +8,22 @@ import { LabelValue } from "@/components/providers/LabelValue";
 import { ProviderSpecs } from "@/components/providers/ProviderSpecs";
 import { NetworkCapacity } from "@/components/providers/NetworkCapacity";
 
-export default function ProviderDetailPage() {
-  const [, params] = useRoute("/providers/:owner");
+interface ProviderDetailPageProps {
+  params?: { owner?: string };
+}
+
+export default function ProviderDetailPage({ params }: ProviderDetailPageProps) {
   const owner = params?.owner ?? "";
   const { data: provider, isLoading, refetch } = useProviderDetail(owner);
+  
+  // Handle case when route params are not yet available (e.g., on refresh)
+  if (!params || !owner) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Spinner className="h-10 w-10 text-primary" />
+      </div>
+    );
+  }
 
   const refresh = () => refetch();
 
