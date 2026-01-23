@@ -13,6 +13,9 @@ import {
   Cpu,
   Calculator,
   TrendingUp,
+  Rocket,
+  FileText,
+  Briefcase,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -29,7 +32,7 @@ interface NavItem {
 }
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
@@ -41,7 +44,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       icon: Users,
       show: true,
       children: [
-        { label: "Dashboard", path: "/user", icon: LayoutDashboard, show: true },
+        { label: "Get Started", path: "/user#home", icon: Home, show: true },
+        { label: "Deployments", path: "/user#deployments", icon: Rocket, show: true },
+        { label: "Templates", path: "/user#templates", icon: FileText, show: true },
+        { label: "Browse Providers", path: "/user#providers", icon: Briefcase, show: true },
       ],
     },
     {
@@ -83,14 +89,30 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   // Only the exact matching item is selected. Parents are never selected when a child matches.
   const isItemActive = (item: NavItem): boolean => {
     if (item.children) return false;
+    const currentPath = location.split('#')[0];
+    const currentHash = typeof window !== "undefined" ? window.location.hash : "";
+    const itemPath = item.path.split('#')[0];
+    const itemHash = item.path.includes('#') ? item.path.split('#')[1] : null;
+    
+    if (itemHash) {
+      return currentPath === itemPath && currentHash === `#${itemHash}`;
+    }
     return location === item.path;
   };
 
   const hasActiveDescendant = (item: NavItem): boolean => {
     if (!item.children) return false;
-    return item.children.some(
-      (child) => location === child.path || hasActiveDescendant(child)
-    );
+    return item.children.some((child) => {
+      const currentPath = location.split('#')[0];
+      const currentHash = typeof window !== "undefined" ? window.location.hash : "";
+      const childPath = child.path.split('#')[0];
+      const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
+      
+      if (childHash) {
+        return currentPath === childPath && currentHash === `#${childHash}`;
+      }
+      return location === child.path || hasActiveDescendant(child);
+    });
   };
 
   const isItemExpanded = (item: NavItem): boolean => {
@@ -129,12 +151,28 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               </span>
             </button>
           ) : (
-            <Link href={item.path} className="block w-full min-w-0 flex-1">
+            <div 
+              className="block w-full min-w-0 flex-1"
+              onClick={() => {
+                const [path, hash] = item.path.split('#');
+                if (hash) {
+                  // For hash paths, navigate to path and set hash to trigger hashchange event
+                  setLocation(path);
+                  // Use requestAnimationFrame to ensure route change happens first
+                  requestAnimationFrame(() => {
+                    window.location.hash = hash;
+                  });
+                } else {
+                  // Use setLocation for normal paths
+                  setLocation(item.path);
+                }
+              }}
+            >
               <div className={cn(baseClasses, activeClasses, "cursor-pointer")}>
                 <item.icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 min-w-0 truncate">{item.label}</span>
               </div>
-            </Link>
+            </div>
           )}
         </div>
         {hasChildren && isExpanded && (
@@ -224,25 +262,44 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                         </button>
                         {isExpanded && item.children && (
                           <div className="ml-4 mt-1 space-y-1">
-                            {item.children.map((child) => (
-                              <Link
+                            {item.children.map((child) => {
+                              const [path, hash] = child.path.split('#');
+                              return (
+                              <div
                                 key={child.path}
-                                href={child.path}
-                                onClick={() => setMobileMenuOpen(false)}
+                                onClick={() => {
+                                  if (hash) {
+                                    setLocation(path);
+                                    requestAnimationFrame(() => {
+                                      window.location.hash = hash;
+                                    });
+                                  } else {
+                                    setLocation(child.path);
+                                  }
+                                  setMobileMenuOpen(false);
+                                }}
+                                className={cn(
+                                  "p-3 rounded-lg flex items-center gap-3 transition-colors cursor-pointer",
+                                  (() => {
+                                    const currentPath = location.split('#')[0];
+                                    const currentHash = typeof window !== "undefined" ? window.location.hash : "";
+                                    const childPath = child.path.split('#')[0];
+                                    const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
+                                    
+                                    if (childHash) {
+                                      return currentPath === childPath && currentHash === `#${childHash}`;
+                                    }
+                                    return location === child.path;
+                                  })()
+                                    ? "bg-primary/10 text-primary border border-primary/20"
+                                    : "bg-card/50 hover:bg-white/5"
+                                )}
                               >
-                                <div
-                                  className={cn(
-                                    "p-3 rounded-lg flex items-center gap-3 transition-colors",
-                                    location === child.path
-                                      ? "bg-primary/10 text-primary border border-primary/20"
-                                      : "bg-card/50 hover:bg-white/5"
-                                  )}
-                                >
-                                  <child.icon className="h-4 w-4" />
-                                  <span className="font-medium text-sm">{child.label}</span>
-                                </div>
-                              </Link>
-                            ))}
+                                <child.icon className="h-4 w-4" />
+                                <span className="font-medium text-sm">{child.label}</span>
+                              </div>
+                              );
+                            })}
                           </div>
                         )}
                       </>

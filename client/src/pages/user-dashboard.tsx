@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
-import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Activity, Rocket, FileText, ArrowLeft } from "lucide-react";
+import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Activity, Rocket, FileText, ArrowLeft, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -32,6 +32,7 @@ import { useUserJobs } from "@/hooks/useUserJobs";
 import { AddressDisplay } from "@/components/ui/address-display";
 import { TxLink } from "@/components/ui/tx-link";
 import ProvidersExplorer from "@/pages/providers-explorer";
+import NewDeployment from "@/pages/new-deployment";
 
 type ViewType = "home" | "deployments" | "templates" | "providers";
 
@@ -45,6 +46,7 @@ export default function UserDashboard() {
   const initialView = (hashView && ["home", "deployments", "templates", "providers"].includes(hashView)) ? hashView as ViewType : "home";
   const [activeView, setActiveView] = useState<ViewType>(initialView);
   const [userMenuExpanded, setUserMenuExpanded] = useState(true); // User menu expanded by default
+  const [showTemplateSelection, setShowTemplateSelection] = useState(false); // Track template selection page in deployments
       
   // Update view when hash changes
   useEffect(() => {
@@ -190,53 +192,10 @@ export default function UserDashboard() {
 
   return (
     <div className="flex gap-6 animate-in fade-in duration-500">
-      {/* Left Sidebar */}
-      <aside className="w-64 flex-shrink-0 hidden lg:block">
+      {/* Left Sidebar - Hide when showing template selection in deployments */}
+      {!(activeView === "deployments" && showTemplateSelection) && (
+        <aside className="w-64 flex-shrink-0 hidden lg:block">
         <div className="sticky top-24 space-y-6">
-          {/* Navigation */}
-          <Card className="border-white/5 bg-card/40">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <LayoutDashboard className="h-5 w-5" />
-                Navigation
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Button
-                variant={activeView === "home" ? "secondary" : "ghost"}
-                className="w-full justify-start"
-                onClick={() => setActiveView("home")}
-              >
-                <Home className="mr-2 h-4 w-4" />
-                Home
-              </Button>
-              <Button
-                variant={activeView === "deployments" ? "secondary" : "ghost"}
-                className="w-full justify-start"
-                onClick={() => setActiveView("deployments")}
-              >
-                <Rocket className="mr-2 h-4 w-4" />
-                Deployments
-              </Button>
-              <Button
-                variant={activeView === "templates" ? "secondary" : "ghost"}
-                className="w-full justify-start"
-                onClick={() => setActiveView("templates")}
-              >
-                <FileText className="mr-2 h-4 w-4" />
-                Templates
-              </Button>
-              <Button
-                variant={activeView === "providers" ? "secondary" : "ghost"}
-                className="w-full justify-start"
-                onClick={() => setActiveView("providers")}
-              >
-                <Briefcase className="mr-2 h-4 w-4" />
-                Browse Providers
-              </Button>
-            </CardContent>
-          </Card>
-
           {/* Quick Stats */}
           <Card className="border-white/5 bg-card/40">
             <CardHeader>
@@ -309,6 +268,7 @@ export default function UserDashboard() {
           </Card>
         </div>
       </aside>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 space-y-8 min-w-0">
@@ -360,6 +320,8 @@ export default function UserDashboard() {
             createHash={createHash}
             refetchJobs={refetchJobs}
             isConnected={isConnected}
+            showTemplateSelection={showTemplateSelection}
+            setShowTemplateSelection={setShowTemplateSelection}
           />
         )}
 
@@ -569,6 +531,8 @@ function DeploymentsView({
   createHash,
   refetchJobs,
   isConnected,
+  showTemplateSelection,
+  setShowTemplateSelection,
 }: {
   jobs: any[];
   jobsLoading: boolean;
@@ -588,7 +552,10 @@ function DeploymentsView({
   createHash?: `0x${string}`;
   refetchJobs: () => void;
   isConnected: boolean;
+  showTemplateSelection: boolean;
+  setShowTemplateSelection: (show: boolean) => void;
 }) {
+
   const activeDeployments = jobs.filter(j => j.status === 0);
   const allDeployments = jobs;
 
@@ -604,96 +571,83 @@ function DeploymentsView({
         </div>
       </div>
 
-      {/* Create Deployment Card */}
-      <Card className="border-primary/20 glass-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5 text-primary" /> Create New Deployment
-          </CardTitle>
-          <CardDescription>Provision compute resources by depositing CLD tokens.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="deployment-provider">Select Provider</Label>
-              <Select value={selectedProvider} onValueChange={setSelectedProvider} disabled={!isConnected}>
-                <SelectTrigger id="deployment-provider" className="bg-background/50 border-white/10" disabled={!isConnected}>
-                  <SelectValue placeholder={isConnected ? "Choose a provider..." : "Connect wallet to select provider"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {providers
-                    .filter(p => p.status === 1) // Only show Active providers
-                    .map(p => (
-                      <SelectItem key={p.pubKeyHash} value={p.pubKeyHash}>
-                        {p.name || `Provider ${p.pubKeyHash.slice(0, 8)}...`}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="deployment-budget">Budget (CLD)</Label>
-              <div className="relative">
-                <Input 
-                  id="deployment-budget" 
-                  placeholder={isConnected ? "e.g. 100" : "Connect wallet to enter budget"} 
-                  type="number" 
-                  className="bg-background/50 border-white/10 pr-12"
-                  value={budget}
-                  onChange={(e) => setBudget(e.target.value)}
-                  disabled={!isConnected}
-                />
-                <span className="absolute right-3 top-2.5 text-xs text-muted-foreground font-mono">CLD</span>
+      {!showTemplateSelection ? (
+        /* Create Deployment Card */
+        <Card className="border-primary/20 glass-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5 text-primary" /> Create New Deployment
+            </CardTitle>
+            <CardDescription>Provision compute resources by depositing CLD tokens.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!isConnected && (
+              <div className="flex flex-col items-center justify-center py-12">
+                <WalletIcon className="h-16 w-16 text-muted-foreground mb-4 opacity-50" />
+                <p className="text-lg font-medium text-center mb-2">Wallet Not Connected</p>
+                <p className="text-sm text-muted-foreground text-center max-w-md">
+                  Please connect your wallet to create and manage deployments.
+                </p>
               </div>
-            </div>
-          </div>
-          {!isConnected && (
-            <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-muted-foreground/20">
-              <p className="text-sm text-muted-foreground">
-                <WalletIcon className="inline h-4 w-4 mr-2" />
-                Connect your wallet to create deployments
-              </p>
-            </div>
-          )}
-        </CardContent>
-        <CardFooter className="flex justify-between border-t border-white/5 pt-6">
-          <div className="text-sm text-muted-foreground">
-            Balance: <span className="font-mono text-foreground">{isConnected ? balance.toFixed(2) : "—"} CLD</span>
-          </div>
-          <Button 
-            onClick={handleCreateJob} 
-            disabled={!isConnected || isCreating || isApproving || providersLoading || !selectedProvider || !budget} 
-            className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[160px]"
-          >
-            {isApproving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Approving...
-              </>
-            ) : isCreating ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...
-              </>
-            ) : needsApproval && budget ? (
-              "Approve & Create"
-            ) : (
-              "Create Deployment"
             )}
-          </Button>
-        </CardFooter>
-        {approveHash && (
-          <div className="px-6 pb-4">
-            <TxLink hash={approveHash} label="Approval transaction" />
-          </div>
-        )}
-        {createHash && (
-          <div className="px-6 pb-4">
-            <TxLink hash={createHash} label="Deployment creation transaction" />
-          </div>
-        )}
-      </Card>
+          </CardContent>
+          <CardFooter className="flex justify-between border-t border-white/5 pt-6">
+            <div className="text-sm text-muted-foreground">
+              Balance: <span className="font-mono text-foreground">{isConnected ? balance.toFixed(2) : "—"} CLD</span>
+            </div>
+            <Button 
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log("Create Deployment button clicked");
+                setShowTemplateSelection(true);
+              }} 
+              className="bg-primary hover:bg-primary/90 text-primary-foreground min-w-[160px] cursor-pointer"
+              type="button"
+            >
+              <Plus className="mr-2 h-4 w-4" /> Create Deployment
+            </Button>
+          </CardFooter>
+        </Card>
+      ) : (
+        /* Template Selection Page - Full Width */
+        <NewDeployment
+          providers={providers}
+          providersLoading={providersLoading}
+          selectedProvider={selectedProvider}
+          setSelectedProvider={setSelectedProvider}
+          budget={budget}
+          setBudget={setBudget}
+          isConnected={isConnected}
+          handleCreateJob={handleCreateJob}
+          isCreating={isCreating}
+          isApproving={isApproving}
+          needsApproval={needsApproval}
+          onBack={() => {
+            setShowTemplateSelection(false);
+          }}
+        />
+      )}
 
-      {/* Deployment List */}
-      <Card className="border-white/5 bg-card/40">
+      {/* Transaction Links */}
+      {approveHash && (
+        <Card className="border-white/5 bg-card/40 mt-6">
+          <CardContent className="pt-6">
+            <TxLink hash={approveHash} label="Approval transaction" />
+          </CardContent>
+        </Card>
+      )}
+      {createHash && (
+        <Card className="border-white/5 bg-card/40 mt-6">
+          <CardContent className="pt-6">
+            <TxLink hash={createHash} label="Deployment creation transaction" />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Deployment List - Hide when showing template selection */}
+      {!showTemplateSelection && (
+        <Card className="border-white/5 bg-card/40">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Rocket className="h-5 w-5" />
@@ -772,6 +726,7 @@ function DeploymentsView({
           </Table>
         </CardContent>
       </Card>
+      )}
     </>
   );
 }
