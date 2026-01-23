@@ -13,6 +13,10 @@ import ProviderRawPageWrapper from "@/pages/provider-raw-wrapper";
 import UserDashboard from "@/pages/user-dashboard";
 import DebugPanel from "@/pages/debug-panel";
 import JobDetailPageWrapper from "@/pages/job-detail-wrapper";
+import GpuPricingPage from "@/pages/pricing/gpus";
+import GpusOnDemandPage from "@/pages/pricing/gpus-on-demand";
+import UsageCalculatorPage from "@/pages/pricing/usage-calculator";
+import ProviderCalculatorPage from "@/pages/pricing/provider-calculator";
 
 function Router() {
   return (
@@ -25,6 +29,10 @@ function Router() {
         <Route path="/providers/:owner" component={ProviderDetailPageWrapper} />
         <Route path="/providers" component={ProviderListPage} />
         <Route path="/job/:id" component={JobDetailPageWrapper} />
+        <Route path="/pricing/gpus" component={GpuPricingPage} />
+        <Route path="/pricing/gpus-on-demand" component={GpusOnDemandPage} />
+        <Route path="/pricing/usage" component={UsageCalculatorPage} />
+        <Route path="/pricing/provider" component={ProviderCalculatorPage} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />
       </Switch>

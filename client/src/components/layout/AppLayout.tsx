@@ -9,6 +9,10 @@ import {
   ChevronDown,
   Home,
   Users,
+  DollarSign,
+  Cpu,
+  Calculator,
+  TrendingUp,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -48,6 +52,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       children: [
         { label: "Dashboard", path: "/providers", icon: LayoutDashboard, show: true },
         { label: "Register", path: "/provider", icon: Server, show: true },
+      ],
+    },
+    {
+      label: "Pricing",
+      path: "/pricing/gpus",
+      icon: DollarSign,
+      show: true,
+      children: [
+        { label: "GPU Pricing", path: "/pricing/gpus", icon: Cpu, show: true },
+        { label: "Usage Calculator", path: "/pricing/usage", icon: Calculator, show: true },
+        { label: "Provider Calculator", path: "/pricing/provider", icon: TrendingUp, show: true },
       ],
     },
     { label: "Debug", path: "/debug", icon: Terminal, show: true },

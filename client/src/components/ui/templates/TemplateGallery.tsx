@@ -119,7 +119,7 @@ export const TemplateGallery: React.FunctionComponent = () => {
       <CustomNextSeo
         title="Template Gallery"
         url={`${domainName}${UrlService.templates()}`}
-        description="Explore all the templates made by the community to easily deploy any docker container on the Akash Network."
+        description="Explore all the templates made by the community to easily deploy any docker container on the Cloudana OS."
       />
 
       <div className="mb-6 sm:mb-8 md:mb-12">

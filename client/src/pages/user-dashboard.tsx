@@ -618,7 +618,7 @@ function DeploymentsView({
                   <SelectValue placeholder={isConnected ? "Choose a provider..." : "Connect wallet to select provider"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {(providers || [])
+                  {providers
                     .filter(p => p.status === 1) // Only show Active providers
                     .map(p => (
                       <SelectItem key={p.pubKeyHash} value={p.pubKeyHash}>
@@ -819,7 +819,7 @@ function TemplatesView({
   });
 
   const handleDeployFromTemplate = (template: typeof allTemplates[0]) => {
-    const activeProvider = (providers || []).find(p => p.status === 1);
+    const activeProvider = providers.find(p => p.status === 1);
     if (activeProvider) {
       onCreateFromTemplate(activeProvider.pubKeyHash, template.budget);
     }
@@ -921,7 +921,7 @@ function TemplatesView({
                 <CardFooter>
                   <Button 
                     className="w-full"
-                    disabled={providersLoading || !(providers || []).find(p => p.status === 1)}
+                    disabled={providersLoading || !providers.find(p => p.status === 1)}
                   >
                     <Rocket className="mr-2 h-4 w-4" />
                     Deploy from Template
