@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
-import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Activity, Rocket, FileText } from "lucide-react";
+import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Activity, Rocket, FileText, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -44,7 +44,8 @@ export default function UserDashboard() {
   const hashView = typeof window !== "undefined" && window.location.hash ? window.location.hash.slice(1) : null;
   const initialView = (hashView && ["home", "deployments", "templates", "providers"].includes(hashView)) ? hashView as ViewType : "home";
   const [activeView, setActiveView] = useState<ViewType>(initialView);
-  
+  const [userMenuExpanded, setUserMenuExpanded] = useState(true); // User menu expanded by default
+      
   // Update view when hash changes
   useEffect(() => {
     const handleHashChange = () => {
@@ -787,6 +788,7 @@ function TemplatesView({
 }) {
   const [searchTerms, setSearchTerms] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<(typeof allTemplatesFlat)[number] | null>(null);
 
   // Fetch templates using async function
   const [allTemplates, setAllTemplates] = useState<Awaited<ReturnType<typeof getAllTemplates>>>(undefined);
@@ -832,7 +834,10 @@ function TemplatesView({
   }, [templatesLoading]);
 
   // Get categories from API response (allTemplates is already TemplateCategory[])
-  const templateCategories = allTemplates || [];
+  // Sort categories alphabetically by title
+  const templateCategories = (allTemplates || []).sort((a, b) => 
+    a.title.localeCompare(b.title)
+  );
 
   // Flatten all templates from all categories into a single array
   const allTemplatesFlat = allTemplates?.flatMap(category => 
@@ -848,14 +853,6 @@ function TemplatesView({
     return matchesCategory && matchesSearch;
   });
 
-  const handleDeployFromTemplate = (template: typeof allTemplatesFlat[0]) => {
-    const activeProvider = providers.find(p => p.status === 1);
-    if (activeProvider) {
-      // Use default budget of 100 CLD if not specified
-      const budget = (template as any).budget || "100";
-      onCreateFromTemplate(activeProvider.pubKeyHash, budget);
-    }
-  };
 
   return (
     <>
@@ -953,6 +950,106 @@ function TemplatesView({
                 </Card>
               ))}
             </div>
+          ) : selectedTemplate ? (
+            /* Template Info Page */
+            <div className="space-y-6">
+              <Button
+                variant="ghost"
+                className="mb-4"
+                onClick={() => setSelectedTemplate(null)}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to Templates
+              </Button>
+
+              <Card className="border-white/5 bg-card/40">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                        <FileText className="h-8 w-8 text-primary" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-2xl mb-2">{selectedTemplate.name}</CardTitle>
+                        <CardDescription className="text-base">
+                          Category: {selectedTemplate.category}
+                        </CardDescription>
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {selectedTemplate.summary && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">Summary</h3>
+                      <p className="text-muted-foreground whitespace-pre-line">
+                        {selectedTemplate.summary}
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedTemplate.readme && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">Documentation</h3>
+                      <div className="max-h-96 overflow-y-auto rounded-md border border-white/10 bg-background/60 p-4 text-sm text-muted-foreground whitespace-pre-wrap">
+                        {selectedTemplate.readme}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/10">
+                    <div>
+                      <p className="text-sm font-medium mb-1">Template Path</p>
+                      <p className="text-sm text-muted-foreground font-mono break-all">
+                        {selectedTemplate.path}
+                      </p>
+                    </div>
+                    {selectedTemplate.githubUrl && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">GitHub Repository</p>
+                        <a
+                          href={selectedTemplate.githubUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sm text-primary underline underline-offset-2 hover:text-primary/80 break-all"
+                        >
+                          {selectedTemplate.githubUrl}
+                        </a>
+                      </div>
+                    )}
+                    {selectedTemplate.logoUrl && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">Logo</p>
+                        <img 
+                          src={selectedTemplate.logoUrl} 
+                          alt={selectedTemplate.name}
+                          className="h-16 w-16 object-contain"
+                        />
+                      </div>
+                    )}
+                    {selectedTemplate.persistentStorageEnabled !== undefined && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">Persistent Storage</p>
+                        <Badge variant={selectedTemplate.persistentStorageEnabled ? "default" : "secondary"}>
+                          {selectedTemplate.persistentStorageEnabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedTemplate.deploy && (
+                    <div className="pt-4 border-t border-white/10">
+                      <h3 className="text-lg font-semibold mb-2">Deploy Configuration</h3>
+                      <div className="rounded-md border border-white/10 bg-background/60 p-4">
+                        <pre className="text-xs text-muted-foreground whitespace-pre-wrap overflow-x-auto">
+                          {selectedTemplate.deploy}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           ) : (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -960,12 +1057,24 @@ function TemplatesView({
                   <Card 
                     key={template.id} 
                     className="border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer"
-                    onClick={() => handleDeployFromTemplate(template)}
+                    onClick={() => setSelectedTemplate(template)}
                   >
                     <CardHeader>
                       <div className="flex items-center gap-4">
-                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <FileText className="h-5 w-5 text-primary" />
+                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+                          {template.logoUrl ? (
+                            <img 
+                              src={template.logoUrl} 
+                              alt={template.name}
+                              className="h-full w-full object-contain p-1"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                const fallback = e.currentTarget.parentElement?.querySelector('.fallback-icon');
+                                if (fallback) fallback.classList.remove('hidden');
+                              }}
+                            />
+                          ) : null}
+                          <FileText className={`h-5 w-5 text-primary fallback-icon ${template.logoUrl ? 'hidden' : ''}`} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <CardTitle className="truncate">{template.name}</CardTitle>
@@ -981,15 +1090,6 @@ function TemplatesView({
                         <span className="font-mono font-semibold">{(template as any).budget || "100"} CLD</span>
                       </div>
                     </CardContent>
-                    <CardFooter>
-                      <Button 
-                        className="w-full"
-                        disabled={providersLoading || !providers.find(p => p.status === 1)}
-                      >
-                        <Rocket className="mr-2 h-4 w-4" />
-                        Deploy from Template
-                      </Button>
-                    </CardFooter>
                   </Card>
                 ))}
               </div>
