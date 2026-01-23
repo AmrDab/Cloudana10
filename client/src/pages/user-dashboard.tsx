@@ -7,12 +7,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
-import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Activity, Rocket, FileText } from "lucide-react";
+import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Activity, Rocket, FileText, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatEther, parseEther } from "viem";
+import { getAllTemplates, type Template, type TemplateCategory } from "./templates";
+
 import { 
   useCLDTokenBalance,
   useCLDTokenAllowance,
@@ -42,7 +44,8 @@ export default function UserDashboard() {
   const hashView = typeof window !== "undefined" && window.location.hash ? window.location.hash.slice(1) : null;
   const initialView = (hashView && ["home", "deployments", "templates", "providers"].includes(hashView)) ? hashView as ViewType : "home";
   const [activeView, setActiveView] = useState<ViewType>(initialView);
-  
+  const [userMenuExpanded, setUserMenuExpanded] = useState(true); // User menu expanded by default
+      
   // Update view when hash changes
   useEffect(() => {
     const handleHashChange = () => {
@@ -785,45 +788,71 @@ function TemplatesView({
 }) {
   const [searchTerms, setSearchTerms] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<(typeof allTemplatesFlat)[number] | null>(null);
 
-  // Template categories and templates (matching Akash structure)
-  const templateCategories = [
-    { title: "Web Applications", templates: ["WordPress", "Next.js", "React App"] },
-    { title: "Databases", templates: ["PostgreSQL", "MySQL", "MongoDB"] },
-    { title: "Development Tools", templates: ["VS Code Server", "Jupyter Notebook", "GitLab"] },
-    { title: "Media & Streaming", templates: ["Plex Server", "Jellyfin", "OBS Studio"] },
-  ];
+  // Fetch templates using async function
+  const [allTemplates, setAllTemplates] = useState<Awaited<ReturnType<typeof getAllTemplates>>>(undefined);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
 
-  const allTemplates = [
-    { id: "wordpress", name: "WordPress", category: "Web Applications", description: "Popular CMS for blogs and websites", budget: "50", logoUrl: null },
-    { id: "nextjs", name: "Next.js", category: "Web Applications", description: "React framework for production", budget: "60", logoUrl: null },
-    { id: "react-app", name: "React App", category: "Web Applications", description: "Standard React application", budget: "40", logoUrl: null },
-    { id: "postgresql", name: "PostgreSQL", category: "Databases", description: "Advanced open-source relational database", budget: "80", logoUrl: null },
-    { id: "mysql", name: "MySQL", category: "Databases", description: "Popular relational database management system", budget: "70", logoUrl: null },
-    { id: "mongodb", name: "MongoDB", category: "Databases", description: "NoSQL document database", budget: "75", logoUrl: null },
-    { id: "vscode", name: "VS Code Server", category: "Development Tools", description: "Browser-based code editor", budget: "45", logoUrl: null },
-    { id: "jupyter", name: "Jupyter Notebook", category: "Development Tools", description: "Interactive data science environment", budget: "55", logoUrl: null },
-    { id: "gitlab", name: "GitLab", category: "Development Tools", description: "DevOps platform and Git repository", budget: "100", logoUrl: null },
-    { id: "plex", name: "Plex Server", category: "Media & Streaming", description: "Media server for streaming content", budget: "65", logoUrl: null },
-    { id: "jellyfin", name: "Jellyfin", category: "Media & Streaming", description: "Open-source media server", budget: "60", logoUrl: null },
-    { id: "obs", name: "OBS Studio", category: "Media & Streaming", description: "Streaming and recording software", budget: "50", logoUrl: null },
-  ];
+  useEffect(() => {
+    const fetchTemplates = async () => {
+      try {
+        setTemplatesLoading(true);
+        const templates = await getAllTemplates();
+        setAllTemplates(templates);
+        
+        // Debug: Show allTemplates
+        console.log("allTemplates:", templates);
+        console.log("allTemplates length:", templates?.length);
+        if (templates && templates.length > 0) {
+          console.log("First template:", templates[0]);
+          console.log("All templates:", JSON.stringify(templates, null, 2));
+        }
+      } catch (error) {
+        console.error("Failed to fetch templates:", error);
+        setAllTemplates(undefined);
+      } finally {
+        setTemplatesLoading(false);
+      }
+    };
+
+    fetchTemplates();
+  }, []);
+
+  // Set busy cursor on body when loading templates
+  useEffect(() => {
+    if (templatesLoading) {
+      document.body.style.cursor = 'wait';
+    } else {
+      document.body.style.cursor = 'default';
+    }
+    
+    // Cleanup: restore default cursor when component unmounts or loading finishes
+    return () => {
+      document.body.style.cursor = 'default';
+    };
+  }, [templatesLoading]);
+
+  // Get categories from API response (allTemplates is already TemplateCategory[])
+  // Sort categories alphabetically by title
+  const templateCategories = (allTemplates || []).sort((a, b) => 
+    a.title.localeCompare(b.title)
+  );
+
+  // Flatten all templates from all categories into a single array
+  const allTemplatesFlat = allTemplates?.flatMap(category => 
+    category.templates.map(template => ({ ...template, category: category.title }))
+  ) || [];
 
   // Filter templates based on category and search
-  const filteredTemplates = allTemplates.filter(template => {
+  const filteredTemplates = allTemplatesFlat.filter(template => {
     const matchesCategory = !selectedCategory || template.category === selectedCategory;
     const matchesSearch = !searchTerms || 
       template.name.toLowerCase().includes(searchTerms.toLowerCase()) ||
-      template.description.toLowerCase().includes(searchTerms.toLowerCase());
+      (template.summary && template.summary.toLowerCase().includes(searchTerms.toLowerCase()));
     return matchesCategory && matchesSearch;
   });
 
-  const handleDeployFromTemplate = (template: typeof allTemplates[0]) => {
-    const activeProvider = providers.find(p => p.status === 1);
-    if (activeProvider) {
-      onCreateFromTemplate(activeProvider.pubKeyHash, template.budget);
-    }
-  };
 
   return (
     <>
@@ -834,9 +863,23 @@ function TemplatesView({
         </p>
       </div>
 
-      <div className="flex gap-6">
+      {/* Loading Overlay */}
+      {templatesLoading && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            <p className="text-lg font-medium">Loading templates...</p>
+            <p className="text-sm text-muted-foreground">Please wait while we fetch available templates</p>
+          </div>
+        </div>
+      )}
+
+      <div 
+        className="flex gap-6"
+        style={{ cursor: templatesLoading ? 'wait' : 'default', opacity: templatesLoading ? 0.5 : 1, pointerEvents: templatesLoading ? 'none' : 'auto' }}
+      >
         {/* Sidebar Filters */}
-        {allTemplates.length > 0 && (
+        {allTemplatesFlat.length > 0 && (
           <div className="hidden md:block w-[222px] flex-shrink-0">
             <p className="mb-4 font-bold">Filter Templates</p>
 
@@ -855,11 +898,11 @@ function TemplatesView({
                 className="w-full justify-start h-8"
                 onClick={() => setSelectedCategory(null)}
               >
-                All <span className="ml-2 text-xs text-muted-foreground">({allTemplates.length})</span>
+                All <span className="ml-2 text-xs text-muted-foreground">({allTemplatesFlat.length})</span>
               </Button>
 
               {templateCategories.map((category) => {
-                const count = allTemplates.filter(t => t.category === category.title).length;
+                const count = category.templates?.length || 0;
                 return (
                   <Button
                     key={category.title}
@@ -892,50 +935,172 @@ function TemplatesView({
             <p className="mb-4 font-bold">{selectedCategory}</p>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredTemplates.map((template) => (
-              <Card 
-                key={template.id} 
-                className="border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer"
-                onClick={() => handleDeployFromTemplate(template)}
+          {templatesLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[...Array(6)].map((_, i) => (
+                <Card key={i} className="border-white/5 bg-card/40">
+                  <CardHeader>
+                    <Skeleton className="h-10 w-10 rounded-full" />
+                    <Skeleton className="h-4 w-3/4 mt-2" />
+                  </CardHeader>
+                  <CardContent>
+                    <Skeleton className="h-4 w-full mb-2" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : selectedTemplate ? (
+            /* Template Info Page */
+            <div className="space-y-6">
+              <Button
+                variant="ghost"
+                className="mb-4"
+                onClick={() => setSelectedTemplate(null)}
               >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to Templates
+              </Button>
+
+              <Card className="border-white/5 bg-card/40">
                 <CardHeader>
-                  <div className="flex items-center gap-4">
-                    <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <FileText className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <CardTitle className="truncate">{template.name}</CardTitle>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                        <FileText className="h-8 w-8 text-primary" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-2xl mb-2">{selectedTemplate.name}</CardTitle>
+                        <CardDescription className="text-base">
+                          Category: {selectedTemplate.category}
+                        </CardDescription>
+                      </div>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="pt-0">
-                  <CardDescription className="line-clamp-2 mb-4">
-                    {template.description}
-                  </CardDescription>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Budget:</span>
-                    <span className="font-mono font-semibold">{template.budget} CLD</span>
-                  </div>
-                </CardContent>
-                <CardFooter>
-                  <Button 
-                    className="w-full"
-                    disabled={providersLoading || !providers.find(p => p.status === 1)}
-                  >
-                    <Rocket className="mr-2 h-4 w-4" />
-                    Deploy from Template
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
+                <CardContent className="space-y-6">
+                  {selectedTemplate.summary && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">Summary</h3>
+                      <p className="text-muted-foreground whitespace-pre-line">
+                        {selectedTemplate.summary}
+                      </p>
+                    </div>
+                  )}
 
-          {filteredTemplates.length === 0 && (
-            <div className="flex h-[200px] flex-col items-center justify-center border border-white/10 rounded-lg">
-              <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
-              <p className="text-muted-foreground">No templates found. Try adjusting your filters.</p>
+                  {selectedTemplate.readme && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">Documentation</h3>
+                      <div className="max-h-96 overflow-y-auto rounded-md border border-white/10 bg-background/60 p-4 text-sm text-muted-foreground whitespace-pre-wrap">
+                        {selectedTemplate.readme}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/10">
+                    <div>
+                      <p className="text-sm font-medium mb-1">Template Path</p>
+                      <p className="text-sm text-muted-foreground font-mono break-all">
+                        {selectedTemplate.path}
+                      </p>
+                    </div>
+                    {selectedTemplate.githubUrl && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">GitHub Repository</p>
+                        <a
+                          href={selectedTemplate.githubUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sm text-primary underline underline-offset-2 hover:text-primary/80 break-all"
+                        >
+                          {selectedTemplate.githubUrl}
+                        </a>
+                      </div>
+                    )}
+                    {selectedTemplate.logoUrl && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">Logo</p>
+                        <img 
+                          src={selectedTemplate.logoUrl} 
+                          alt={selectedTemplate.name}
+                          className="h-16 w-16 object-contain"
+                        />
+                      </div>
+                    )}
+                    {selectedTemplate.persistentStorageEnabled !== undefined && (
+                      <div>
+                        <p className="text-sm font-medium mb-1">Persistent Storage</p>
+                        <Badge variant={selectedTemplate.persistentStorageEnabled ? "default" : "secondary"}>
+                          {selectedTemplate.persistentStorageEnabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedTemplate.deploy && (
+                    <div className="pt-4 border-t border-white/10">
+                      <h3 className="text-lg font-semibold mb-2">Deploy Configuration</h3>
+                      <div className="rounded-md border border-white/10 bg-background/60 p-4">
+                        <pre className="text-xs text-muted-foreground whitespace-pre-wrap overflow-x-auto">
+                          {selectedTemplate.deploy}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredTemplates.map((template) => (
+                  <Card 
+                    key={template.id} 
+                    className="border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer"
+                    onClick={() => setSelectedTemplate(template)}
+                  >
+                    <CardHeader>
+                      <div className="flex items-center gap-4">
+                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+                          {template.logoUrl ? (
+                            <img 
+                              src={template.logoUrl} 
+                              alt={template.name}
+                              className="h-full w-full object-contain p-1"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                const fallback = e.currentTarget.parentElement?.querySelector('.fallback-icon');
+                                if (fallback) fallback.classList.remove('hidden');
+                              }}
+                            />
+                          ) : null}
+                          <FileText className={`h-5 w-5 text-primary fallback-icon ${template.logoUrl ? 'hidden' : ''}`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <CardTitle className="truncate">{template.name}</CardTitle>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <CardDescription className="line-clamp-2 mb-4">
+                        {template.summary || "No description available"}
+                      </CardDescription>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">Budget:</span>
+                        <span className="font-mono font-semibold">{(template as any).budget || "100"} CLD</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              {filteredTemplates.length === 0 && !templatesLoading && (
+                <div className="flex h-[200px] flex-col items-center justify-center border border-white/10 rounded-lg">
+                  <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
+                  <p className="text-muted-foreground">No templates found. Try adjusting your filters.</p>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
