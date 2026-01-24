@@ -1,5 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,6 +27,9 @@ import {
   Plus,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { useLocation } from "wouter";
+import { sendDeployment, type Deployment } from "@/lib/deployment";
+import { parseDeployToJson, validateSDL } from "@/lib/sdl";
 
 type StorageUnit = "Mi" | "Gi" | "Ti";
 
@@ -191,7 +202,50 @@ function deployToBuilderConfig(parsed: Record<string, unknown>) {
   };
 }
 
+export type DeploySummary = {
+  cpu: string;
+  ram: string;
+  gpu: string;
+  disk: string;
+  dockerImage: string;
+  expose: string;
+  env: string;
+  commands: string;
+};
+
+function extractDeploySummary(config: string): DeploySummary | null {
+  try {
+    const parsed = JSON.parse(config.trim()) as Record<string, unknown>;
+    const b = deployToBuilderConfig(parsed);
+    const gpuStr =
+      !b.hasGpu || b.gpuModels.length === 0
+        ? "None"
+        : `${b.gpuModels.reduce((s, g) => s + Math.max(1, g.count), 0)} (${b.gpuModels.map((g) => `${g.vendor} ${g.model}`).join(", ")})`;
+    const diskEphemeral = `${b.ephemeralStorage} ${b.ephemeralUnit}`;
+    const diskPersistent =
+      b.persistentStorages.length === 0
+        ? "None"
+        : b.persistentStorages.map((p) => `${p.name}: ${p.size} ${p.unit}`).join("; ");
+    const disk = diskPersistent === "None" ? diskEphemeral : `Ephemeral: ${diskEphemeral}; Persistent: ${diskPersistent}`;
+    const exposeStr =
+      b.expose.length === 0 ? "None" : b.expose.map((e) => `${e.port}${e.as !== e.port ? ` → ${e.as}` : ""}`).join(", ");
+    return {
+      cpu: `${b.cpu} units`,
+      ram: `${b.memory} ${b.memoryUnit}`,
+      gpu: gpuStr,
+      disk,
+      dockerImage: b.image,
+      expose: exposeStr,
+      env: b.env.length === 0 ? "None" : `${b.env.length} variable(s)`,
+      commands: b.commands.length === 0 ? "None" : b.commands.join("; "),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function DeploymentEdit({ template, onBack, onDeploy }: DeploymentEditProps) {
+  const [, setLocation] = useLocation();
   const [editableTitle, setEditableTitle] = useState(template.name || "");
   const [editableDeployConfig, setEditableDeployConfig] = useState(template.deploy || "");
   const [editMode, setEditMode] = useState<"builder" | "yaml">("yaml");
@@ -199,6 +253,12 @@ export default function DeploymentEdit({ template, onBack, onDeploy }: Deploymen
   const [editingEnv, setEditingEnv] = useState(false);
   const [editingCommands, setEditingCommands] = useState(false);
   const [builderConfig, setBuilderConfig] = useState(() => ({ ...defaultBuilderConfig }));
+  const [sdlError, setSdlError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingDeploy, setPendingDeploy] = useState<{
+    payload: DeploymentEditTemplate & { name?: string; deploy?: string };
+    summary: DeploySummary;
+  } | null>(null);
 
   useEffect(() => {
     setEditableTitle(template.name || "");
@@ -212,6 +272,10 @@ export default function DeploymentEdit({ template, onBack, onDeploy }: Deploymen
       }
     }
   }, [template]);
+
+  useEffect(() => {
+    setSdlError(null);
+  }, [editableDeployConfig]);
 
   const generateYamlFromBuilder = useCallback(() => {
     const storage: {
@@ -466,24 +530,135 @@ export default function DeploymentEdit({ template, onBack, onDeploy }: Deploymen
             </div>
           </div>
         </CardContent>
-        <CardFooter className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onBack}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              onDeploy({
-                ...template,
-                name: editableTitle || template.name,
-                deploy: editableDeployConfig || template.deploy,
-              });
-            }}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            Create Deployment
-          </Button>
+        <CardFooter className="flex flex-col items-stretch gap-3 pt-4">
+          {sdlError && (
+            <p className="text-sm text-destructive font-medium" role="alert">
+              {sdlError}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onBack}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const deploy = editableDeployConfig || template.deploy || "";
+                let parsed: Record<string, unknown>;
+                try {
+                  parsed = parseDeployToJson(deploy);
+                  console.log("Deploy configuration info:", parsed);
+                } catch (e) {
+                  setSdlError(e instanceof Error ? e.message : "Failed to parse deploy config.");
+                  return;
+                }
+                if (!validateSDL(parsed)) {
+                  setSdlError("Invalid deploy configuration.");
+                  return;
+                }
+                setSdlError(null);
+                const deployJson = JSON.stringify(parsed, null, 2);
+                const summary = extractDeploySummary(deployJson);
+                if (!summary) {
+                  setSdlError("Could not read deployment summary.");
+                  return;
+                }
+                const payload = {
+                  ...template,
+                  name: editableTitle || template.name,
+                  deploy: deployJson,
+                };
+                setPendingDeploy({ payload, summary });
+                setConfirmOpen(true);
+              }}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              Create Deployment
+            </Button>
+          </div>
         </CardFooter>
       </Card>
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          setConfirmOpen(open);
+          if (!open) setPendingDeploy(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm deployment</DialogTitle>
+            <DialogDescription>
+              Review your deployment configuration before continuing.
+            </DialogDescription>
+          </DialogHeader>
+          {pendingDeploy && (
+            <dl className="grid grid-cols-1 gap-3 text-sm">
+              <div>
+                <dt className="font-medium text-muted-foreground">Docker image</dt>
+                <dd className="mt-0.5 font-mono">{pendingDeploy.summary.dockerImage}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">CPU</dt>
+                <dd className="mt-0.5">{pendingDeploy.summary.cpu}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">RAM</dt>
+                <dd className="mt-0.5">{pendingDeploy.summary.ram}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">GPU</dt>
+                <dd className="mt-0.5">{pendingDeploy.summary.gpu}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Disk</dt>
+                <dd className="mt-0.5">{pendingDeploy.summary.disk}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Expose</dt>
+                <dd className="mt-0.5">{pendingDeploy.summary.expose}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Environment</dt>
+                <dd className="mt-0.5">{pendingDeploy.summary.env}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-muted-foreground">Commands</dt>
+                <dd className="mt-0.5 break-all">{pendingDeploy.summary.commands}</dd>
+              </div>
+            </dl>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setConfirmOpen(false);
+                setPendingDeploy(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+              onClick={() => {
+                if (pendingDeploy) {
+                  const deployment: Deployment = {
+                    ...pendingDeploy.payload,
+                    id: "new deployment",
+                  };
+                  sendDeployment(deployment);
+                  onDeploy(pendingDeploy.payload);
+                  setConfirmOpen(false);
+                  setPendingDeploy(null);
+                  setLocation("/deployment-completion");
+                }
+              }}
+            >
+              Continue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
