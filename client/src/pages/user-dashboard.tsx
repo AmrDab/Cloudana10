@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
-import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Activity, Rocket, FileText, ArrowLeft, X } from "lucide-react";
+import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Rocket, FileText, ArrowLeft, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -29,7 +29,6 @@ import {
 } from "@/lib/contracts";
 import { getAllProviders } from "@/lib/api";
 import { useUserJobs } from "@/hooks/useUserJobs";
-import { AddressDisplay } from "@/components/ui/address-display";
 import { TxLink } from "@/components/ui/tx-link";
 import ProvidersExplorer from "@/pages/providers-explorer";
 import NewDeployment from "@/pages/new-deployment";
@@ -186,90 +185,8 @@ export default function UserDashboard() {
     withdrawRefund();
   };
 
-  const openJobsCount = jobs.filter(j => j.status === 0).length;
-  const closedJobsCount = jobs.filter(j => j.status === 1).length;
-  const totalSpent = jobs.reduce((sum, job) => sum + parseFloat(formatEther(job.spent)), 0);
-
   return (
     <div className="flex gap-6 animate-in fade-in duration-500">
-      {/* Left Sidebar - Hide when showing template selection in deployments */}
-      {!(activeView === "deployments" && showTemplateSelection) && (
-        <aside className="w-64 flex-shrink-0 hidden lg:block">
-        <div className="sticky top-24 space-y-6">
-          {/* Quick Stats */}
-          <Card className="border-white/5 bg-card/40">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <TrendingUp className="h-5 w-5" />
-                Quick Stats
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">CLD Balance</div>
-                <div className="text-2xl font-bold font-mono">{isConnected ? balance.toFixed(2) : "—"}</div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Refund Credits</div>
-                <div className="text-2xl font-bold font-mono text-green-400">{isConnected ? refundAmount.toFixed(2) : "—"}</div>
-              </div>
-              {!isConnected && (
-                <div className="pt-2 border-t border-white/5">
-                  <p className="text-xs text-muted-foreground/70">Connect wallet to view your stats</p>
-                </div>
-              )}
-              {isConnected && (
-                <div className="pt-2 border-t border-white/5 space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Open Jobs</span>
-                    <Badge variant="outline" className="border-green-500/50 text-green-400 bg-green-500/10">
-                      {openJobsCount}
-                    </Badge>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Closed Jobs</span>
-                    <Badge variant="outline" className="border-white/20 text-muted-foreground bg-white/5">
-                      {closedJobsCount}
-                    </Badge>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Total Spent</span>
-                    <span className="text-sm font-mono font-semibold">{totalSpent.toFixed(2)} CLD</span>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Account Info */}
-          <Card className="border-white/5 bg-card/40">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Activity className="h-5 w-5" />
-                Account
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Wallet Address</div>
-                {isConnected && address ? (
-                  <AddressDisplay address={address} truncate={true} truncateLength={6} />
-                ) : (
-                  <div className="text-sm text-muted-foreground/60">Not connected</div>
-                )}
-              </div>
-              <div className="pt-2 border-t border-white/5">
-                <div className="flex items-center gap-2 text-xs">
-                  <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500 animate-pulse" : "bg-muted-foreground/40"}`} />
-                  <span className="text-muted-foreground">{isConnected ? "Connected" : "Not Connected"}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </aside>
-      )}
-
       {/* Main Content */}
       <div className="flex-1 space-y-8 min-w-0">
         {activeView === "home" && (
@@ -429,48 +346,6 @@ function HomeViewContent({
 
       {/* Account Info Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Available Balance (CLD) */}
-        <Card className="bg-card/50 border-white/5 relative overflow-hidden">
-          <div className="absolute top-4 right-4 opacity-20">
-            <WalletIcon className="h-8 w-8" />
-          </div>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Available Balance (CLD)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-baseline justify-between mb-1">
-              <div className="text-3xl font-bold font-mono">{isConnected ? balance.toFixed(2) : "—"}</div>
-              <div className="text-sm text-muted-foreground">{isConnected ? `$${balanceUsd.toFixed(2)}` : "—"}</div>
-            </div>
-            <div className="text-xs text-muted-foreground mt-2">
-              {isConnected ? `${totalSpentInDeployments.toFixed(2)} CLD used in deployments` : "Connect wallet to view"}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Refund Credits */}
-        <Card className="bg-card/50 border-white/5 relative overflow-hidden">
-          <div className="absolute top-4 right-4 opacity-20">
-            <WalletIcon className="h-8 w-8 text-green-400" />
-          </div>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Refund Credits (CLD)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-baseline justify-between mb-1">
-              <div className="text-3xl font-bold font-mono text-green-400">{isConnected ? refundAmount.toFixed(2) : "—"}</div>
-              <div className="text-sm text-muted-foreground">{isConnected ? `$${(refundAmount * cldToUsd).toFixed(2)}` : "—"}</div>
-            </div>
-            <div className="text-xs text-muted-foreground mt-2">
-              {isConnected ? "Available to withdraw" : "Connect wallet to view"}
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Active Deployments */}
         <Card className="bg-card/50 border-white/5 relative overflow-hidden">
           <div className="absolute top-4 right-4 opacity-20">

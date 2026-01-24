@@ -16,10 +16,22 @@ import {
   Rocket,
   FileText,
   Briefcase,
+  Activity,
+  Copy,
+  Check,
+  ExternalLink,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
+import { useWallet } from "@/context/wallet-context";
+import { getAddressExplorerUrl } from "@/lib/transaction-utils";
+import { useCLDTokenBalance, useUserRefundCredit } from "@/lib/contracts";
+import { formatEther } from "viem";
+import { useUserJobs } from "@/hooks/useUserJobs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 const SIDEBAR_WIDTH = "14rem";
 
@@ -35,6 +47,88 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [currentHash, setCurrentHash] = useState<string>("");
+  const { isConnected, userAddress } = useWallet();
+  const [copied, setCopied] = useState(false);
+  
+  // Get CLD token balance and refund credit for wallet tooltip
+  const { data: tokenBalance } = useCLDTokenBalance(isConnected ? (userAddress as `0x${string}`) : undefined);
+  const { data: refundCredit } = useUserRefundCredit(isConnected ? (userAddress as `0x${string}`) : undefined);
+  
+  const cldBalance = tokenBalance && typeof tokenBalance === 'bigint' ? parseFloat(formatEther(tokenBalance)) : 0;
+  const refundAmount = refundCredit && typeof refundCredit === 'bigint' ? parseFloat(formatEther(refundCredit)) : 0;
+  
+  const displayAddress = userAddress 
+    ? `${userAddress.slice(0, 6)}...${userAddress.slice(-10)}`
+    : "";
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!userAddress) return;
+    
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(userAddress);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = userAddress;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        textArea.style.top = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy address:', err);
+    }
+  };
+
+  const handleOpenExplorer = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (userAddress) {
+      window.open(getAddressExplorerUrl(userAddress), "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const currentPath = location.split("#")[0];
+  const showQuickStats =
+    currentPath.startsWith("/user") ||
+    currentPath === "/provider" ||
+    currentPath.startsWith("/providers") ||
+    currentPath.startsWith("/pricing");
+
+  const { jobs } = useUserJobs({
+    enabled: showQuickStats && !!isConnected,
+  });
+  const openJobsCount = jobs.filter((j) => j.status === 0).length;
+  const closedJobsCount = jobs.filter((j) => j.status === 1).length;
+  const totalSpent = jobs.reduce((sum, job) => sum + parseFloat(formatEther(job.spent)), 0);
+
+  // Sync hash with state to trigger re-renders when hash changes
+  useEffect(() => {
+    const updateHash = () => {
+      setCurrentHash(typeof window !== "undefined" ? window.location.hash : "");
+    };
+    
+    // Set initial hash
+    updateHash();
+    
+    // Listen to hash changes
+    window.addEventListener("hashchange", updateHash);
+    
+    return () => {
+      window.removeEventListener("hashchange", updateHash);
+    };
+  }, []);
 
   const navItems: NavItem[] = [
     { label: "Home", path: "/", icon: Home, show: true },
@@ -47,7 +141,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         { label: "Get Started", path: "/user#home", icon: Home, show: true },
         { label: "Deployments", path: "/user#deployments", icon: Rocket, show: true },
         { label: "Templates", path: "/user#templates", icon: FileText, show: true },
-        { label: "Browse Providers", path: "/user#providers", icon: Briefcase, show: true },
+        { label: "Browse Providers", path: "/user#providers", icon: Briefcase, show: false },
       ],
     },
     {
@@ -90,12 +184,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const isItemActive = (item: NavItem): boolean => {
     if (item.children) return false;
     const currentPath = location.split('#')[0];
-    const currentHash = typeof window !== "undefined" ? window.location.hash : "";
+    const hash = currentHash || (typeof window !== "undefined" ? window.location.hash : "");
     const itemPath = item.path.split('#')[0];
     const itemHash = item.path.includes('#') ? item.path.split('#')[1] : null;
     
     if (itemHash) {
-      return currentPath === itemPath && currentHash === `#${itemHash}`;
+      return currentPath === itemPath && hash === `#${itemHash}`;
     }
     return location === item.path;
   };
@@ -104,12 +198,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     if (!item.children) return false;
     return item.children.some((child) => {
       const currentPath = location.split('#')[0];
-      const currentHash = typeof window !== "undefined" ? window.location.hash : "";
+      const hash = currentHash || (typeof window !== "undefined" ? window.location.hash : "");
       const childPath = child.path.split('#')[0];
       const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
       
       if (childHash) {
-        return currentPath === childPath && currentHash === `#${childHash}`;
+        return currentPath === childPath && hash === `#${childHash}`;
       }
       return location === child.path || hasActiveDescendant(child);
     });
@@ -161,10 +255,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                   // Use requestAnimationFrame to ensure route change happens first
                   requestAnimationFrame(() => {
                     window.location.hash = hash;
+                    setCurrentHash(`#${hash}`);
                   });
                 } else {
                   // Use setLocation for normal paths
                   setLocation(item.path);
+                  setCurrentHash("");
                 }
               }}
             >
@@ -202,6 +298,47 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           {navItems.map((item) => renderNavItem(item))}
         </nav>
+
+        {/* Quick Stats - at sidebar bottom when User, Provider, or Pricing selected */}
+        {showQuickStats && (
+          <div className="flex-shrink-0 border-t border-white/5 p-3">
+            <Card className="border-white/5 bg-card/40 shadow-lg">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5" />
+                  Quick Stats
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!isConnected && (
+                  <div className="pt-2 border-t border-white/5">
+                    <p className="text-xs text-muted-foreground/70">Connect wallet to view your stats</p>
+                  </div>
+                )}
+                {isConnected && (
+                  <div className="pt-2 border-t border-white/5 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">Open Jobs</span>
+                      <Badge variant="outline" className="border-green-500/50 text-green-400 bg-green-500/10">
+                        {openJobsCount}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">Closed Jobs</span>
+                      <Badge variant="outline" className="border-white/20 text-muted-foreground bg-white/5">
+                        {closedJobsCount}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">Total Spent</span>
+                      <span className="text-sm font-mono font-semibold">{totalSpent.toFixed(2)} CLD</span>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </aside>
 
       {/* Main area */}
@@ -218,7 +355,79 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
             <div className="flex-1" />
             <div className="flex items-center gap-3">
-              <appkit-button />
+              {isConnected ? (
+                <HoverCard>
+                  <HoverCardTrigger asChild>
+                    <div className="cursor-pointer">
+                      <appkit-button />
+                    </div>
+                  </HoverCardTrigger>
+                  <HoverCardContent side="top" align="end" className="w-72">
+                    <div className="space-y-4">
+                      {/* CLD Balance and Refund Credits */}
+                      <div className="space-y-3">
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">CLD Balance</div>
+                          <div className="text-lg font-bold">{cldBalance.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Refund Credits</div>
+                          <div className="text-lg font-bold text-green-400">{refundAmount.toFixed(2)}</div>
+                        </div>
+                      </div>
+                      
+                      {/* Divider */}
+                      <div className="border-t border-white/5" />
+                      
+                      {/* Account Header */}
+                      <div className="flex items-center gap-2">
+                        <Activity className="h-4 w-4" />
+                        <span className="font-medium">Account</span>
+                      </div>
+                      
+                      {/* Wallet Address */}
+                      <div className="space-y-2">
+                        <div className="text-xs text-muted-foreground">Wallet Address</div>
+                        <div className="flex items-center gap-2">
+                          <code className="font-mono text-sm bg-muted px-2 py-1 rounded flex-1">
+                            {displayAddress}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={handleCopy}
+                            title={copied ? "Copied!" : "Copy address"}
+                          >
+                            {copied ? (
+                              <Check className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={handleOpenExplorer}
+                            title="View on Base Sepolia explorer"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {/* Connected Status */}
+                      <div className="flex items-center gap-2 pt-2 border-t border-white/5">
+                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                        <span className="text-sm text-muted-foreground">Connected</span>
+                      </div>
+                    </div>
+                  </HoverCardContent>
+                </HoverCard>
+              ) : (
+                <appkit-button />
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -264,40 +473,44 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                           <div className="ml-4 mt-1 space-y-1">
                             {item.children.map((child) => {
                               const [path, hash] = child.path.split('#');
+                              const isChildActive = (() => {
+                                const currentPath = location.split('#')[0];
+                                const hashValue = currentHash || (typeof window !== "undefined" ? window.location.hash : "");
+                                const childPath = child.path.split('#')[0];
+                                const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
+                                
+                                if (childHash) {
+                                  return currentPath === childPath && hashValue === `#${childHash}`;
+                                }
+                                return location === child.path;
+                              })();
+                              
                               return (
-                              <div
-                                key={child.path}
-                                onClick={() => {
-                                  if (hash) {
-                                    setLocation(path);
-                                    requestAnimationFrame(() => {
-                                      window.location.hash = hash;
-                                    });
-                                  } else {
-                                    setLocation(child.path);
-                                  }
-                                  setMobileMenuOpen(false);
-                                }}
-                                className={cn(
-                                  "p-3 rounded-lg flex items-center gap-3 transition-colors cursor-pointer",
-                                  (() => {
-                                    const currentPath = location.split('#')[0];
-                                    const currentHash = typeof window !== "undefined" ? window.location.hash : "";
-                                    const childPath = child.path.split('#')[0];
-                                    const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
-                                    
-                                    if (childHash) {
-                                      return currentPath === childPath && currentHash === `#${childHash}`;
+                                <div
+                                  key={child.path}
+                                  onClick={() => {
+                                    if (hash) {
+                                      setLocation(path);
+                                      requestAnimationFrame(() => {
+                                        window.location.hash = hash;
+                                        setCurrentHash(`#${hash}`);
+                                      });
+                                    } else {
+                                      setLocation(child.path);
+                                      setCurrentHash("");
                                     }
-                                    return location === child.path;
-                                  })()
-                                    ? "bg-primary/10 text-primary border border-primary/20"
-                                    : "bg-card/50 hover:bg-white/5"
-                                )}
-                              >
-                                <child.icon className="h-4 w-4" />
-                                <span className="font-medium text-sm">{child.label}</span>
-                              </div>
+                                    setMobileMenuOpen(false);
+                                  }}
+                                  className={cn(
+                                    "p-3 rounded-lg flex items-center gap-3 transition-colors cursor-pointer",
+                                    isChildActive
+                                      ? "bg-primary/10 text-primary border border-primary/20"
+                                      : "bg-card/50 hover:bg-white/5"
+                                  )}
+                                >
+                                  <child.icon className="h-4 w-4" />
+                                  <span className="font-medium text-sm">{child.label}</span>
+                                </div>
                               );
                             })}
                           </div>

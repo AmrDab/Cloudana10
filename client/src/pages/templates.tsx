@@ -150,6 +150,7 @@ export function useAllTemplates() {
         return undefined;
       }
     },
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
     refetchInterval: 1000 * 60,
     refetchIntervalInBackground: true,
     retry: 2,

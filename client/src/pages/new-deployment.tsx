@@ -5,10 +5,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, ArrowLeft, Loader2 } from "lucide-react";
-import { useState, useEffect } from "react";
-import { getAllTemplates, type Template, type TemplateCategory } from "./templates";
+import { FileText, ArrowLeft, Loader2, LayoutGrid, Github, GitBranch, Box, Server, Package, Upload } from "lucide-react";
+import { useState, useRef } from "react";
+import { useAllTemplates, type Template, type TemplateCategory } from "./templates";
+import DeploymentEdit, { type DeploymentEditTemplate } from "./deployment-edit";
 
 interface NewDeploymentProps {
   providers: any[];
@@ -39,491 +39,29 @@ export default function NewDeployment({
   needsApproval,
   onBack,
 }: NewDeploymentProps) {
-  const [templates, setTemplates] = useState<Awaited<ReturnType<typeof getAllTemplates>>>(undefined);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const { data: templates, isLoading: templatesLoading } = useAllTemplates();
+  const [showAllTemplates, setShowAllTemplates] = useState(false);
+  const [selectedBuildType, setSelectedBuildType] = useState<"build-deploy" | "container-vm" | "custom-container" | null>(null);
+  const uploadSdlInputRef = useRef<HTMLInputElement>(null);
   const [selectedTemplateForDeployment, setSelectedTemplateForDeployment] = useState<any>(null);
-  const [selectedTemplateForEdit, setSelectedTemplateForEdit] = useState<any>(null);
-  const [editableTitle, setEditableTitle] = useState<string>("");
-  const [editableDeployConfig, setEditableDeployConfig] = useState<string>("");
-  const [editMode, setEditMode] = useState<"builder" | "yaml">("yaml");
-  
-  // Builder state
-  const [builderConfig, setBuilderConfig] = useState({
-    cpu: 1,
-    gpu: 0,
-    hasGpu: false,
-    memory: 1,
-    memoryUnit: "Gi" as "Mi" | "Gi" | "Ti",
-    storage: 10,
-    storageUnit: "Gi" as "Mi" | "Gi" | "Ti",
-  });
+  const [selectedTemplateForEdit, setSelectedTemplateForEdit] = useState<DeploymentEditTemplate | null>(null);
 
-  // Fetch templates when component mounts
-  useEffect(() => {
-    if (!templates) {
-      const fetchTemplates = async () => {
-        try {
-          setTemplatesLoading(true);
-          const fetchedTemplates = await getAllTemplates();
-          setTemplates(fetchedTemplates);
-        } catch (error) {
-          console.error("Failed to fetch templates:", error);
-        } finally {
-          setTemplatesLoading(false);
-        }
-      };
-      fetchTemplates();
-    }
-  }, [templates]);
-
-  const allTemplatesFlat = templates?.flatMap(category => 
+  const allTemplatesFlat = templates?.flatMap(category =>
     category.templates.map(template => ({ ...template, category: category.title }))
-  ) || [];
-  const displayTemplates = allTemplatesFlat.slice(0, 10);
+  ) ?? [];
+  const displayTemplates = showAllTemplates ? allTemplatesFlat : allTemplatesFlat.slice(0, 10);
+  const hasMoreTemplates = allTemplatesFlat.length > 10;
 
-  // Initialize editable fields when template is selected
-  useEffect(() => {
-    if (selectedTemplateForEdit) {
-      setEditableTitle(selectedTemplateForEdit.name || "");
-      setEditableDeployConfig(selectedTemplateForEdit.deploy || "");
-      // Try to parse existing deploy config to populate builder
-      if (selectedTemplateForEdit.deploy) {
-        try {
-          const parsed = JSON.parse(selectedTemplateForEdit.deploy);
-          if (parsed.profiles?.compute) {
-            const compute = Object.values(parsed.profiles.compute)[0] as any;
-            if (compute?.resources) {
-              const resources = compute.resources;
-              setBuilderConfig({
-                cpu: resources.cpu?.units || 1,
-                gpu: resources.gpu?.units || 0,
-                hasGpu: !!resources.gpu,
-                memory: parseFloat(resources.memory?.size?.replace(/[^0-9.]/g, "") || "1"),
-                memoryUnit: resources.memory?.size?.includes("Gi") ? "Gi" : resources.memory?.size?.includes("Ti") ? "Ti" : "Mi",
-                storage: parseFloat(resources.storage?.[0]?.size?.replace(/[^0-9.]/g, "") || "10"),
-                storageUnit: resources.storage?.[0]?.size?.includes("Gi") ? "Gi" : resources.storage?.[0]?.size?.includes("Ti") ? "Ti" : "Mi",
-              });
-            }
-          }
-        } catch (e) {
-          // If parsing fails, use defaults
-        }
-      }
-    }
-  }, [selectedTemplateForEdit]);
-
-  // Generate YAML from builder config
-  const generateYamlFromBuilder = () => {
-    const resources: any = {
-      cpu: {
-        units: builderConfig.cpu
-      },
-      memory: {
-        size: `${builderConfig.memory}${builderConfig.memoryUnit}`
-      },
-      storage: [
-        {
-          size: `${builderConfig.storage}${builderConfig.storageUnit}`
-        }
-      ]
-    };
-
-    if (builderConfig.hasGpu && builderConfig.gpu > 0) {
-      resources.gpu = {
-        units: builderConfig.gpu,
-        attributes: {
-          vendor: {
-            nvidia: {
-              model: "A100"
-            }
-          }
-        }
-      };
-    }
-
-    const sdl = {
-      version: "2.0",
-      services: {
-        web: {
-          image: "nginx:latest",
-          expose: [
-            {
-              port: 80,
-              as: 80,
-              to: [
-                {
-                  global: true
-                }
-              ]
-            }
-          ]
-        }
-      },
-      profiles: {
-        compute: {
-          web: {
-            resources
-          }
-        },
-        placement: {
-          akash: {
-            pricing: {
-              web: {
-                denom: "uakt",
-                amount: 1000
-              }
-            }
-          }
-        }
-      }
-    };
-
-    return JSON.stringify(sdl, null, 2);
-  };
-
-  // Parse YAML and update builder config
-  const parseYamlToBuilder = (yamlString: string) => {
-    try {
-      const parsed = JSON.parse(yamlString);
-      if (parsed.profiles?.compute) {
-        const compute = Object.values(parsed.profiles.compute)[0] as any;
-        if (compute?.resources) {
-          const resources = compute.resources;
-          const newBuilderConfig = {
-            cpu: resources.cpu?.units || 1,
-            gpu: resources.gpu?.units || 0,
-            hasGpu: !!resources.gpu,
-            memory: parseFloat(resources.memory?.size?.replace(/[^0-9.]/g, "") || "1"),
-            memoryUnit: (resources.memory?.size?.includes("Gi") ? "Gi" : resources.memory?.size?.includes("Ti") ? "Ti" : "Mi") as "Mi" | "Gi" | "Ti",
-            storage: parseFloat(resources.storage?.[0]?.size?.replace(/[^0-9.]/g, "") || "10"),
-            storageUnit: (resources.storage?.[0]?.size?.includes("Gi") ? "Gi" : resources.storage?.[0]?.size?.includes("Ti") ? "Ti" : "Mi") as "Mi" | "Gi" | "Ti",
-          };
-          setBuilderConfig(newBuilderConfig);
-        }
-      }
-    } catch (e) {
-      // If parsing fails, don't update builder config
-      console.warn("Failed to parse YAML to builder config:", e);
-    }
-  };
-
-  // Update YAML when builder config changes (only in builder mode)
-  useEffect(() => {
-    if (editMode === "builder" && selectedTemplateForEdit) {
-      const generatedYaml = generateYamlFromBuilder();
-      setEditableDeployConfig(generatedYaml);
-    }
-  }, [builderConfig, editMode, selectedTemplateForEdit]);
-
-  // Parse YAML and update builder when switching to builder mode
-  useEffect(() => {
-    if (editMode === "builder" && editableDeployConfig && selectedTemplateForEdit) {
-      // Only parse if we're switching to builder mode and have YAML content
-      parseYamlToBuilder(editableDeployConfig);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, selectedTemplateForEdit]); // Sync when mode changes or template changes
-
-  // Show template edit page if a template is selected for editing
   if (selectedTemplateForEdit) {
     return (
-      <div className="space-y-6 w-full">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-              <FileText className="h-6 w-6 text-primary" />
-              Template Details
-            </h2>
-            <p className="text-muted-foreground">Edit template configuration</p>
-          </div>
-          <Button 
-            variant="ghost"
-            onClick={() => {
-              setSelectedTemplateForEdit(null);
-              setEditableTitle("");
-              setEditableDeployConfig("");
-            }}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Templates
-          </Button>
-        </div>
-
-        <Card className="border-white/5 bg-card/40">
-          <CardHeader>
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-4">
-                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
-                  {selectedTemplateForEdit.logoUrl ? (
-                    <img 
-                      src={selectedTemplateForEdit.logoUrl} 
-                      alt={editableTitle || selectedTemplateForEdit.name}
-                      className="h-full w-full object-contain p-1"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                        const fallback = e.currentTarget.parentElement?.querySelector('.fallback-icon');
-                        if (fallback) fallback.classList.remove('hidden');
-                      }}
-                    />
-                  ) : null}
-                  <FileText className={`h-8 w-8 text-primary fallback-icon ${selectedTemplateForEdit.logoUrl ? 'hidden' : ''}`} />
-                </div>
-                <div className="flex-1">
-                  <Label htmlFor="template-title" className="text-sm font-medium mb-2 block">Template Title</Label>
-                  <Input
-                    id="template-title"
-                    value={editableTitle}
-                    onChange={(e) => setEditableTitle(e.target.value)}
-                    className="text-2xl font-bold bg-background/50 border-white/10"
-                    placeholder="Enter template title"
-                  />
-                  <CardDescription className="text-base mt-2">
-                    Category: {selectedTemplateForEdit.category}
-                  </CardDescription>
-                </div>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {selectedTemplateForEdit.summary && (
-              <div>
-                <h3 className="text-lg font-semibold mb-2">Summary</h3>
-                <p className="text-muted-foreground whitespace-pre-line">
-                  {selectedTemplateForEdit.summary}
-                </p>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/10">
-              <div>
-                <p className="text-sm font-medium mb-1">Template Path</p>
-                <p className="text-sm text-muted-foreground font-mono break-all">
-                  {selectedTemplateForEdit.path}
-                </p>
-              </div>
-              {selectedTemplateForEdit.githubUrl && (
-                <div>
-                  <p className="text-sm font-medium mb-1">GitHub Repository</p>
-                  <a
-                    href={selectedTemplateForEdit.githubUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm text-primary underline underline-offset-2 hover:text-primary/80 break-all"
-                  >
-                    {selectedTemplateForEdit.githubUrl}
-                  </a>
-                </div>
-              )}
-              {selectedTemplateForEdit.logoUrl && (
-                <div>
-                  <p className="text-sm font-medium mb-1">Logo</p>
-                  <img 
-                    src={selectedTemplateForEdit.logoUrl} 
-                    alt={editableTitle || selectedTemplateForEdit.name}
-                    className="h-16 w-16 object-contain"
-                  />
-                </div>
-              )}
-              {selectedTemplateForEdit.persistentStorageEnabled !== undefined && (
-                <div>
-                  <p className="text-sm font-medium mb-1">Persistent Storage</p>
-                  <Badge variant={selectedTemplateForEdit.persistentStorageEnabled ? "default" : "secondary"}>
-                    {selectedTemplateForEdit.persistentStorageEnabled ? "Enabled" : "Disabled"}
-                  </Badge>
-                </div>
-              )}
-            </div>
-
-            <div className="pt-4 border-t border-white/10">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Label className="text-lg font-semibold">Deploy Configuration</Label>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant={editMode === "builder" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setEditMode("builder")}
-                    >
-                      Builder
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={editMode === "yaml" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setEditMode("yaml")}
-                    >
-                      YAML
-                    </Button>
-                  </div>
-                </div>
-
-                {editMode === "yaml" ? (
-                  <Textarea
-                    id="deploy-config"
-                    value={editableDeployConfig}
-                    onChange={(e) => {
-                      setEditableDeployConfig(e.target.value);
-                      // Optionally parse and update builder in background (but don't force sync)
-                    }}
-                    className="min-h-[300px] font-mono text-xs bg-background/50 border-white/10"
-                    placeholder="Enter deploy configuration..."
-                  />
-                ) : (
-                  <div className="space-y-6 p-4 border border-white/10 rounded-md bg-background/30">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <Label htmlFor="builder-cpu">CPU (units)</Label>
-                        <Input
-                          id="builder-cpu"
-                          type="number"
-                          min="0.1"
-                          step="0.1"
-                          value={builderConfig.cpu}
-                          onChange={(e) => setBuilderConfig({ ...builderConfig, cpu: parseFloat(e.target.value) || 0 })}
-                          className="bg-background/50 border-white/10"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            id="builder-has-gpu"
-                            checked={builderConfig.hasGpu}
-                            onChange={(e) => setBuilderConfig({ ...builderConfig, hasGpu: e.target.checked, gpu: e.target.checked ? builderConfig.gpu || 1 : 0 })}
-                            className="rounded"
-                          />
-                          <Label htmlFor="builder-has-gpu" className="cursor-pointer">Enable GPU</Label>
-                        </div>
-                        {builderConfig.hasGpu && (
-                          <Input
-                            id="builder-gpu"
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={builderConfig.gpu}
-                            onChange={(e) => setBuilderConfig({ ...builderConfig, gpu: parseInt(e.target.value) || 0 })}
-                            className="bg-background/50 border-white/10"
-                            placeholder="GPU units"
-                          />
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="builder-memory">Memory</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            id="builder-memory"
-                            type="number"
-                            min="0.1"
-                            step="0.1"
-                            value={builderConfig.memory}
-                            onChange={(e) => setBuilderConfig({ ...builderConfig, memory: parseFloat(e.target.value) || 0 })}
-                            className="bg-background/50 border-white/10"
-                          />
-                          <Select
-                            value={builderConfig.memoryUnit}
-                            onValueChange={(value: "Mi" | "Gi" | "Ti") => setBuilderConfig({ ...builderConfig, memoryUnit: value })}
-                          >
-                            <SelectTrigger className="w-20 bg-background/50 border-white/10">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Mi">Mi</SelectItem>
-                              <SelectItem value="Gi">Gi</SelectItem>
-                              <SelectItem value="Ti">Ti</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="builder-storage">Storage</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            id="builder-storage"
-                            type="number"
-                            min="0.1"
-                            step="0.1"
-                            value={builderConfig.storage}
-                            onChange={(e) => setBuilderConfig({ ...builderConfig, storage: parseFloat(e.target.value) || 0 })}
-                            className="bg-background/50 border-white/10"
-                          />
-                          <Select
-                            value={builderConfig.storageUnit}
-                            onValueChange={(value: "Mi" | "Gi" | "Ti") => setBuilderConfig({ ...builderConfig, storageUnit: value })}
-                          >
-                            <SelectTrigger className="w-20 bg-background/50 border-white/10">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Mi">Mi</SelectItem>
-                              <SelectItem value="Gi">Gi</SelectItem>
-                              <SelectItem value="Ti">Ti</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-white/10">
-                      <div className="flex items-center justify-between mb-2">
-                        <Label className="text-sm font-medium">Generated Configuration (Preview)</Label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            parseYamlToBuilder(editableDeployConfig);
-                          }}
-                          className="text-xs"
-                        >
-                          Sync from YAML
-                        </Button>
-                      </div>
-                      <div className="rounded-md border border-white/10 bg-background/60 p-4 max-h-64 overflow-y-auto">
-                        <pre className="text-xs text-muted-foreground whitespace-pre-wrap">
-                          {editableDeployConfig}
-                        </pre>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-          <CardFooter className="flex justify-end gap-2">
-            <Button 
-              variant="outline"
-              onClick={() => {
-                setSelectedTemplateForEdit(null);
-                setEditableTitle("");
-                setEditableDeployConfig("");
-              }}
-            >
-              Cancel
-            </Button>
-            <Button 
-              onClick={() => {
-                // Update template with edited values
-                const updatedTemplate = {
-                  ...selectedTemplateForEdit,
-                  name: editableTitle || selectedTemplateForEdit.name,
-                  deploy: editableDeployConfig || selectedTemplateForEdit.deploy,
-                };
-                setSelectedTemplateForDeployment(updatedTemplate);
-                setSelectedTemplateForEdit(null);
-                setEditableTitle("");
-                setEditableDeployConfig("");
-              }}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground"
-            >
-              Deploy This Template
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
+      <DeploymentEdit
+        template={selectedTemplateForEdit}
+        onBack={() => setSelectedTemplateForEdit(null)}
+        onDeploy={(updated) => {
+          setSelectedTemplateForDeployment(updated);
+          setSelectedTemplateForEdit(null);
+        }}
+      />
     );
   }
 
@@ -537,29 +75,156 @@ export default function NewDeployment({
           </h2>
           <p className="text-muted-foreground">Select a template to get started</p>
         </div>
-        <Button 
-          variant="ghost"
-          onClick={onBack}
-        >
+        <Button variant="ghost" onClick={onBack}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
       </div>
 
+      {/* Build Your Own */}
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold tracking-tight">Build Your Own</h3>
+          </div>
+          <input
+            ref={uploadSdlInputRef}
+            type="file"
+            accept=".yaml,.yml,.sdl,application/x-yaml,text/yaml"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                const r = new FileReader();
+                r.onload = () => console.log("SDL uploaded:", f.name, (r.result as string)?.slice(0, 200));
+                r.readAsText(f);
+              }
+              e.target.value = "";
+            }}
+          />
+          <Button
+            variant="default"
+            className="bg-foreground text-background hover:bg-foreground/90"
+            onClick={() => uploadSdlInputRef.current?.click()}
+          >
+            <Upload className="mr-2 h-4 w-4" />
+            Upload SDL
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card
+            className={`border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer ${
+              selectedBuildType === "build-deploy" ? "border-primary/50 bg-primary/5" : ""
+            }`}
+            onClick={() => setSelectedBuildType((v) => (v === "build-deploy" ? null : "build-deploy"))}
+          >
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex gap-1.5">
+                  <div className="h-9 w-9 rounded-lg bg-[#24292e] flex items-center justify-center">
+                    <Github className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="h-9 w-9 rounded-lg bg-[#fc6d26] flex items-center justify-center">
+                    <GitBranch className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="h-9 w-9 rounded-lg bg-primary/20 flex items-center justify-center">
+                    <Box className="h-4 w-4 text-primary" />
+                  </div>
+                </div>
+                <CardTitle className="text-base">Build and Deploy</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <CardDescription>
+                Build & Deploy directly from a code repository (VCS)
+              </CardDescription>
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {["Node.js", "Vue", "Python"].map((t) => (
+                  <Badge key={t} variant="secondary" className="text-xs font-normal">
+                    {t}
+                  </Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <Card
+            className={`border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer ${
+              selectedBuildType === "container-vm" ? "border-primary/50 bg-primary/5" : ""
+            }`}
+            onClick={() => setSelectedBuildType((v) => (v === "container-vm" ? null : "container-vm"))}
+          >
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex gap-1.5">
+                  <div className="h-9 w-9 rounded-lg bg-primary/20 flex items-center justify-center">
+                    <Package className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center border border-primary/20">
+                    <span className="text-[10px] font-mono font-semibold text-primary">VM</span>
+                  </div>
+                </div>
+                <CardTitle className="text-base">Launch Container-VM</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <CardDescription>
+                Deploy and work with a plain-linux vm-like container
+              </CardDescription>
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {["Ubuntu", "Fedora", "Debian"].map((t) => (
+                  <Badge key={t} variant="secondary" className="text-xs font-normal">
+                    {t}
+                  </Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <Card
+            className={`border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer ${
+              selectedBuildType === "custom-container" ? "border-primary/50 bg-primary/5" : ""
+            }`}
+            onClick={() => setSelectedBuildType((v) => (v === "custom-container" ? null : "custom-container"))}
+          >
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-lg bg-primary/20 flex items-center justify-center">
+                  <Package className="h-4 w-4 text-primary" />
+                </div>
+                <CardTitle className="text-base">Run Custom Container</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <CardDescription>
+                Run your own docker container stored in a private or public container registry
+              </CardDescription>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Explorer Templates */}
+      <div className="space-y-3">
+        <h3 className="text-lg font-semibold tracking-tight">Explorer Templates</h3>
+        {!templatesLoading && hasMoreTemplates && (
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setShowAllTemplates((v) => !v)}
+              className="border-white/10"
+            >
+              <LayoutGrid className="mr-2 h-4 w-4" />
+              {showAllTemplates ? "Show less" : "View all"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Right content area: template grid with busy state when loading */}
       {templatesLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[...Array(6)].map((_, i) => (
-            <Card key={i} className="border-white/5 bg-card/40">
-              <CardHeader>
-                <Skeleton className="h-10 w-10 rounded-full" />
-                <Skeleton className="h-4 w-3/4 mt-2" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-4 w-full mb-2" />
-                <Skeleton className="h-4 w-2/3" />
-              </CardContent>
-            </Card>
-          ))}
+        <div className="rounded-lg border border-white/5 bg-card/20 p-12 min-h-[320px] flex flex-col items-center justify-center gap-4">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+          <p className="text-lg font-medium">Loading templates...</p>
+          <p className="text-sm text-muted-foreground">Please wait while we fetch available templates</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
