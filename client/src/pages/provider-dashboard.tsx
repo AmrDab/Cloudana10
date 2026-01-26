@@ -79,7 +79,7 @@ export default function ProviderDashboard() {
             </p>
 
             <Button 
-              onClick={() => setLocation("/provider/register")} 
+              onClick={() => setLocation("/provider")} 
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-12 text-lg"
             >
               Register Provider
@@ -109,7 +109,7 @@ export default function ProviderDashboard() {
           </Button>
           <Button 
             variant="outline" 
-            onClick={() => setLocation("/provider/register")}
+            onClick={() => setLocation("/provider")}
             className="border-primary/20 hover:bg-primary/10"
           >
             <Server className="h-4 w-4 mr-2" />
@@ -189,7 +189,7 @@ export default function ProviderDashboard() {
               variant="outline" 
               size="sm" 
               className="w-full"
-              onClick={() => setLocation("/provider/register")}
+              onClick={() => setLocation("/provider")}
             >
               Register New Node
             </Button>

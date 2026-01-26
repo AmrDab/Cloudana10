@@ -7,6 +7,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
 import ProviderRegister from "@/pages/provider-register";
+import ProviderRegisterStaged from "@/pages/provider-register-staged";
 import ProviderListPage from "@/pages/provider-list";
 import ProviderDetailPageWrapper from "@/pages/provider-detail-wrapper";
 import ProviderRawPageWrapper from "@/pages/provider-raw-wrapper";
@@ -25,7 +26,8 @@ function Router() {
       <Switch>
         <Route path="/" component={LandingPage} />
         <Route path="/user" component={UserDashboard} />
-        <Route path="/provider" component={ProviderRegister} />
+        <Route path="/provider" component={ProviderRegisterStaged} />
+        <Route path="/provider/register" component={ProviderRegister} />
         <Route path="/providers/:owner/raw" component={ProviderRawPageWrapper} />
         <Route path="/providers/:owner" component={ProviderDetailPageWrapper} />
         <Route path="/providers" component={ProviderListPage} />
