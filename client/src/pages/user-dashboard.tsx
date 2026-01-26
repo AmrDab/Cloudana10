@@ -31,7 +31,7 @@ import { getAllProviders } from "@/lib/api";
 import { useUserJobs } from "@/hooks/useUserJobs";
 import { TxLink } from "@/components/ui/tx-link";
 import ProvidersExplorer from "@/pages/providers-explorer";
-import NewDeployment from "@/pages/new-deployment";
+import NewDeployment from "@/pages/new-deployment/index";
 
 type ViewType = "home" | "deployments" | "templates" | "providers";
 

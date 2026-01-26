@@ -6,9 +6,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { FileText, ArrowLeft, Loader2, LayoutGrid, Github, GitBranch, Box, Server, Package, Upload } from "lucide-react";
-import { useState, useRef } from "react";
-import { useAllTemplates, type Template, type TemplateCategory } from "./templates";
-import DeploymentEdit, { type DeploymentEditTemplate } from "./deployment-edit";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useAllTemplates, type Template, type TemplateCategory } from "../templates";
+import DeploymentEdit, { type DeploymentEditTemplate, type BuildType } from "./deployment-edit";
+
+function buildTypeToTemplate(bt: BuildType): DeploymentEditTemplate {
+  const map: Record<BuildType, { name: string; summary: string }> = {
+    "build-deploy": { name: "Build and Deploy", summary: "Build & Deploy directly from a code repository (VCS)" },
+    "container-vm": { name: "Launch Container-VM", summary: "Deploy and work with a plain-linux vm-like container" },
+    "custom-container": { name: "Run Custom Container", summary: "Run your own docker container stored in a private or public container registry" },
+  };
+  const { name, summary } = map[bt];
+  return { id: `build-type-${bt}`, name, summary, deploy: "", buildType: bt };
+}
 
 interface NewDeploymentProps {
   providers: any[];
@@ -41,10 +51,25 @@ export default function NewDeployment({
 }: NewDeploymentProps) {
   const { data: templates, isLoading: templatesLoading } = useAllTemplates();
   const [showAllTemplates, setShowAllTemplates] = useState(false);
-  const [selectedBuildType, setSelectedBuildType] = useState<"build-deploy" | "container-vm" | "custom-container" | null>(null);
   const uploadSdlInputRef = useRef<HTMLInputElement>(null);
   const [selectedTemplateForDeployment, setSelectedTemplateForDeployment] = useState<any>(null);
   const [selectedTemplateForEdit, setSelectedTemplateForEdit] = useState<DeploymentEditTemplate | null>(null);
+
+  const goToEdit = useCallback((template: DeploymentEditTemplate) => {
+    const url = typeof window !== "undefined"
+      ? `${window.location.pathname}${window.location.search}${window.location.hash || "#deployments"}`
+      : "#deployments";
+    window.history.pushState({ deploymentEdit: true }, "", url);
+    setSelectedTemplateForEdit(template);
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setSelectedTemplateForEdit(null);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   const allTemplatesFlat = templates?.flatMap(category =>
     category.templates.map(template => ({ ...template, category: category.title }))
@@ -113,10 +138,8 @@ export default function NewDeployment({
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card
-            className={`border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer ${
-              selectedBuildType === "build-deploy" ? "border-primary/50 bg-primary/5" : ""
-            }`}
-            onClick={() => setSelectedBuildType((v) => (v === "build-deploy" ? null : "build-deploy"))}
+            className="border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer"
+            onClick={() => goToEdit(buildTypeToTemplate("build-deploy"))}
           >
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -148,10 +171,8 @@ export default function NewDeployment({
             </CardContent>
           </Card>
           <Card
-            className={`border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer ${
-              selectedBuildType === "container-vm" ? "border-primary/50 bg-primary/5" : ""
-            }`}
-            onClick={() => setSelectedBuildType((v) => (v === "container-vm" ? null : "container-vm"))}
+            className="border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer"
+            onClick={() => setSelectedTemplateForEdit(buildTypeToTemplate("container-vm"))}
           >
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -180,10 +201,8 @@ export default function NewDeployment({
             </CardContent>
           </Card>
           <Card
-            className={`border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer ${
-              selectedBuildType === "custom-container" ? "border-primary/50 bg-primary/5" : ""
-            }`}
-            onClick={() => setSelectedBuildType((v) => (v === "custom-container" ? null : "custom-container"))}
+            className="border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer"
+            onClick={() => goToEdit(buildTypeToTemplate("custom-container"))}
           >
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -234,7 +253,7 @@ export default function NewDeployment({
               className={`border-white/5 bg-card/40 hover:border-primary/20 transition-colors cursor-pointer ${
                 selectedTemplateForDeployment?.id === template.id ? 'border-primary/50 bg-primary/5' : ''
               }`}
-              onClick={() => setSelectedTemplateForEdit(template)}
+              onClick={() => goToEdit(template)}
             >
               <CardHeader>
                 <div className="flex items-center gap-4">
