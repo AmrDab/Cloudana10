@@ -3,7 +3,13 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
 import { cors } from "hono/cors";
 import { templatesRouter } from "./routes/v1/templates.js";
+import { config } from "dotenv";
 
+config();
+
+const PORT = Number(process.env.PORT);
+console.log("port", PORT);
+console.log("api_url", process.env.API_URL);
 const app = new OpenAPIHono();
 
 // Enable CORS for all routes
@@ -38,8 +44,8 @@ app.get("/v1/doc", (c) => {
       version: "1.0.0"
     },
     servers: [
-      {
-        url: process.env.API_URL || `http://localhost:${Number(process.env.PORT) || 3000}`,
+      { 
+        url: `http://localhost:${PORT}`,
         description: "API Server"
       }
     ]
@@ -49,7 +55,7 @@ app.get("/v1/doc", (c) => {
 // Swagger UI endpoint
 app.get("/v1/swagger", swaggerUI({ url: "/v1/doc" }));
 
-const port = Number(process.env.PORT) || 3000;
+const port = PORT;
 
 console.log(`Server is running on port ${port}`);
 console.log(`Swagger UI available at http://localhost:${port}/v1/swagger`);

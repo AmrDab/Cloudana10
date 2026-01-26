@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 const TEMPLATES_API_URL = import.meta.env.VITE_API_URL 
   ? `${import.meta.env.VITE_API_URL}/v1/templates`
-  : "http://localhost:3000/v1/templates";
+  : "http://localhost:7002/v1/templates";
 
 
 export interface Template {
