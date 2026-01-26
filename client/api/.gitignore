@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+
+# Package manager lock files (keep the one you use)
+# package-lock.json  # Uncomment if using yarn
+# yarn.lock         # Uncomment if using npm

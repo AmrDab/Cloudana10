@@ -5,3 +5,4 @@ server/public
 vite.config.ts.*
 *.tar.gz
 /contract/node_modules
+/client/api/node_modules

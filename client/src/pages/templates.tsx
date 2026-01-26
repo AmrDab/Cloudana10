@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
-const TEMPLATES_API_URL = "https://console-api.akash.network/v1/templates";
+const TEMPLATES_API_URL = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL}/v1/templates`
+  : "http://localhost:3000/v1/templates";
 
 
 export interface Template {
@@ -26,67 +28,39 @@ export interface TemplateCategory {
 
 // Fetch templates from API with proper error handling and timeout
 const fetchWithBrowserHeaders = async (url: string): Promise<TemplatesResponse> => {
-    // Create a timeout promise
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Request timeout after 30 seconds')), 30000);
+  // Create a timeout promise (increased to 2 minutes for template processing)
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('Request timeout after 2 minutes')), 120000);
+  });
+
+  const fetchPromise = async (): Promise<TemplatesResponse> => {
+    console.log('Fetching templates from:', url);
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
     });
-
-    // First, try a simple fetch with JSON Accept header
-    const fetchPromise = async (): Promise<TemplatesResponse> => {
-      try {
-        console.log('Attempting direct fetch to:', url);
-        const response = await fetch(url, {
-          method: 'GET',
-          mode: 'cors',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        console.log('Direct fetch successful, data type:', Array.isArray(data) ? 'array' : typeof data, 'length:', Array.isArray(data) ? data.length : 'N/A');
-        return data as TemplatesResponse;
-      } catch (error) {
-        console.warn('Direct fetch failed:', error);
-        throw error;
-      }
-    };
-
-    try {
-      // Race between fetch and timeout
-      return await Promise.race([fetchPromise(), timeoutPromise]);
-    } catch (error) {
-      // Fallback: Try with CORS proxy
-      try {
-        console.log('Trying CORS proxy...');
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-        const proxyPromise = fetch(proxyUrl, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-          },
-        });
-
-        const response = await Promise.race([proxyPromise, timeoutPromise]);
-  
-        if (!response.ok) {
-          throw new Error(`Proxy fetch failed: ${response.status} ${response.statusText}`);
-        }
-  
-        const data = await response.json();
-        console.log('Proxy fetch successful, data type:', Array.isArray(data) ? 'array' : typeof data, 'length:', Array.isArray(data) ? data.length : 'N/A');
-        return data as TemplatesResponse;
-      } catch (proxyError) {
-        console.error('All fetch methods failed:', proxyError);
-        throw new Error(`Failed to fetch templates: ${proxyError instanceof Error ? proxyError.message : 'Unknown error'}`);
-      }
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => response.statusText);
+      throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
     }
+    
+    const data = await response.json();
+    console.log('Fetch successful, data type:', Array.isArray(data) ? 'array' : typeof data, 'length:', Array.isArray(data) ? data.length : 'N/A');
+    return data as TemplatesResponse;
   };
+
+  try {
+    // Race between fetch and timeout
+    return await Promise.race([fetchPromise(), timeoutPromise]);
+  } catch (error) {
+    console.error('Failed to fetch templates:', error);
+    throw new Error(`Failed to fetch templates: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
   
 
 // The API returns an array of TemplateCategory directly
