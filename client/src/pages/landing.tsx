@@ -29,7 +29,7 @@ export default function LandingPage() {
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
-          <Link href="/user">
+          <Link href="/user#home">
             <motion.div 
               whileHover={{ scale: 1.02, borderColor: "hsl(var(--primary))" }}
               className="p-8 rounded-xl bg-card border border-white/5 cursor-pointer hover:shadow-[0_0_30px_rgba(6,182,212,0.15)] transition-all group"

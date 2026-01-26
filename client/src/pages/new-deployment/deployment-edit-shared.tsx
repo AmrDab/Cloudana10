@@ -1,28 +1,17 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import {
-  FileText,
-  ArrowLeft,
-  Check,
-  ChevronRight,
-  Info,
-  Trash2,
-  ExternalLink,
-  Plus,
-} from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Info, Trash2, ExternalLink, Plus } from "lucide-react";
 
-type StorageUnit = "Mi" | "Gi" | "Ti";
+export type StorageUnit = "Mi" | "Gi" | "Ti";
 
-interface GpuModel {
+export interface GpuModel {
   id: string;
   vendor: string;
   model: string;
@@ -31,7 +20,7 @@ interface GpuModel {
   count: number;
 }
 
-interface PersistentStorageItem {
+export interface PersistentStorageItem {
   id: string;
   size: number;
   unit: StorageUnit;
@@ -41,7 +30,7 @@ interface PersistentStorageItem {
   mount: string;
 }
 
-interface RamStorageItem {
+export interface RamStorageItem {
   id: string;
   size: number;
   unit: StorageUnit;
@@ -50,12 +39,14 @@ interface RamStorageItem {
   mount: string;
 }
 
-interface ExposeItem {
+export interface ExposeItem {
   port: number;
   as?: number;
   global: boolean;
   accept?: string;
 }
+
+export type BuildType = "build-deploy" | "container-vm" | "custom-container";
 
 export interface DeploymentEditTemplate {
   id: string;
@@ -67,15 +58,21 @@ export interface DeploymentEditTemplate {
   deploy?: string;
   category?: string;
   persistentStorageEnabled?: boolean;
+  buildType?: BuildType;
 }
 
-interface DeploymentEditProps {
-  template: DeploymentEditTemplate;
-  onBack: () => void;
-  onDeploy: (updated: DeploymentEditTemplate & { name?: string; deploy?: string }) => void;
-}
+export type DeploySummary = {
+  cpu: string;
+  ram: string;
+  gpu: string;
+  disk: string;
+  dockerImage: string;
+  expose: string;
+  env: string;
+  commands: string;
+};
 
-const defaultBuilderConfig = {
+export const defaultBuilderConfig = {
   image: "nginx:latest",
   imagePrivate: false,
   cpu: 1,
@@ -93,9 +90,13 @@ const defaultBuilderConfig = {
   env: [] as { key: string; value: string }[],
   commands: [] as string[],
   gpuModels: [] as GpuModel[],
+  serviceCount: 1,
+  token: "CLD",
 };
 
-function deployToBuilderConfig(parsed: Record<string, unknown>) {
+export type BuilderConfig = typeof defaultBuilderConfig;
+
+export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<BuilderConfig> {
   const svc =
     parsed?.services && typeof parsed.services === "object"
       ? (Object.values(parsed.services)[0] as Record<string, unknown>)
@@ -191,315 +192,62 @@ function deployToBuilderConfig(parsed: Record<string, unknown>) {
   };
 }
 
-export default function DeploymentEdit({ template, onBack, onDeploy }: DeploymentEditProps) {
-  const [editableTitle, setEditableTitle] = useState(template.name || "");
-  const [editableDeployConfig, setEditableDeployConfig] = useState(template.deploy || "");
-  const [editMode, setEditMode] = useState<"builder" | "yaml">("yaml");
-  const [editingExpose, setEditingExpose] = useState(false);
-  const [editingEnv, setEditingEnv] = useState(false);
-  const [editingCommands, setEditingCommands] = useState(false);
-  const [builderConfig, setBuilderConfig] = useState(() => ({ ...defaultBuilderConfig }));
-
-  useEffect(() => {
-    setEditableTitle(template.name || "");
-    setEditableDeployConfig(template.deploy || "");
-    if (template.deploy) {
-      try {
-        const parsed = JSON.parse(template.deploy) as Record<string, unknown>;
-        setBuilderConfig((prev) => ({ ...prev, ...deployToBuilderConfig(parsed) }));
-      } catch {
-        /* keep defaults */
-      }
-    }
-  }, [template]);
-
-  const generateYamlFromBuilder = useCallback(() => {
-    const storage: {
-      size: string;
-      name?: string;
-      mount?: string;
-      attributes?: { persistent?: boolean; class?: string };
-    }[] = [{ size: `${builderConfig.ephemeralStorage}${builderConfig.ephemeralUnit}` }];
-    builderConfig.persistentStorages.forEach((p) => {
-      storage.push({
-        size: `${p.size}${p.unit}`,
-        name: p.name,
-        mount: p.mount,
-        attributes: { persistent: true, class: p.type },
-      });
-    });
-    builderConfig.ramStorages.forEach((r) => {
-      storage.push({
-        size: `${r.size}${r.unit}`,
-        name: r.name,
-        mount: r.mount,
-        attributes: { class: "ram" },
-      });
-    });
-
-    const resources: Record<string, unknown> = {
-      cpu: { units: builderConfig.cpu },
-      memory: { size: `${builderConfig.memory}${builderConfig.memoryUnit}` },
-      storage,
+export function extractDeploySummary(config: string): DeploySummary | null {
+  try {
+    const parsed = JSON.parse(config.trim()) as Record<string, unknown>;
+    const b = deployToBuilderConfig(parsed) as BuilderConfig;
+    const gpuStr =
+      !b.hasGpu || b.gpuModels.length === 0
+        ? "None"
+        : `${b.gpuModels.reduce((s, g) => s + Math.max(1, g.count), 0)} (${b.gpuModels.map((g) => `${g.vendor} ${g.model}`).join(", ")})`;
+    const diskEphemeral = `${b.ephemeralStorage} ${b.ephemeralUnit}`;
+    const diskPersistent =
+      b.persistentStorages.length === 0
+        ? "None"
+        : b.persistentStorages.map((p) => `${p.name}: ${p.size} ${p.unit}`).join("; ");
+    const disk = diskPersistent === "None" ? diskEphemeral : `Ephemeral: ${diskEphemeral}; Persistent: ${diskPersistent}`;
+    const exposeStr =
+      b.expose.length === 0 ? "None" : b.expose.map((e) => `${e.port}${e.as !== e.port ? ` → ${e.as}` : ""}`).join(", ");
+    return {
+      cpu: `${b.cpu} units`,
+      ram: `${b.memory} ${b.memoryUnit}`,
+      gpu: gpuStr,
+      disk,
+      dockerImage: b.image,
+      expose: exposeStr,
+      env: b.env.length === 0 ? "None" : `${b.env.length} variable(s)`,
+      commands: b.commands.length === 0 ? "None" : b.commands.join("; "),
     };
-    if (builderConfig.hasGpu && builderConfig.gpuModels.length > 0) {
-      const totalUnits = builderConfig.gpuModels.reduce((s, g) => s + Math.max(1, g.count || 1), 0);
-      const first = builderConfig.gpuModels[0];
-      const v = first.vendor;
-      const m = first.model;
-      const att: Record<string, unknown> = { model: m };
-      if (first.memory) att.memory = first.memory;
-      if (first.interface) att.interface = first.interface;
-      resources.gpu = {
-        units: totalUnits,
-        attributes: { vendor: { [v]: Object.keys(att).length > 1 ? att : { model: m } } },
-      };
-    }
-
-    const svc: Record<string, unknown> = {
-      image: builderConfig.image,
-      expose: (builderConfig.expose.length ? builderConfig.expose : [{ port: 80, as: 80, global: true }]).map((e) => ({
-        port: e.port,
-        as: e.as ?? e.port,
-        to: [{ global: e.global, ...(e.accept ? { accept: e.accept } : {}) }],
-      })),
-    };
-    if (builderConfig.env.length) svc.env = builderConfig.env.map((e) => ({ key: e.key, value: e.value }));
-    if (builderConfig.commands.length) svc.command = builderConfig.commands;
-
-    return JSON.stringify(
-      {
-        version: "2.0",
-        services: { web: svc },
-        profiles: {
-          compute: { web: { resources } },
-          placement: { akash: { pricing: { web: { denom: "uakt", amount: 1000 } } } },
-        },
-      },
-      null,
-      2
-    );
-  }, [builderConfig]);
-
-  const parseYamlToBuilder = useCallback((yamlString: string) => {
-    try {
-      const parsed = JSON.parse(yamlString) as Record<string, unknown>;
-      setBuilderConfig((prev) => ({ ...prev, ...deployToBuilderConfig(parsed) }));
-    } catch (e) {
-      console.warn("Failed to parse YAML to builder config:", e);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (editMode === "builder") {
-      setEditableDeployConfig(generateYamlFromBuilder());
-    }
-  }, [builderConfig, editMode, generateYamlFromBuilder]);
-
-  useEffect(() => {
-    if (editMode === "builder" && editableDeployConfig) {
-      parseYamlToBuilder(editableDeployConfig);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode]);
-
-  return (
-    <div className="space-y-6 w-full">
-      <div className="flex items-center gap-1 w-full">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-full bg-foreground flex items-center justify-center">
-            <Check className="h-4 w-4 text-background" />
-          </div>
-          <span className="text-sm font-semibold">Choose Template</span>
-        </div>
-        <ChevronRight className="h-5 w-5 text-muted-foreground/60 mx-1" />
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-full border-2 border-foreground flex items-center justify-center bg-background">
-            <span className="text-sm font-bold">2</span>
-          </div>
-          <span className="text-sm font-semibold">Create Deployment</span>
-        </div>
-        <ChevronRight className="h-5 w-5 text-muted-foreground/40 mx-1" />
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-full border-2 border-muted-foreground/40 flex items-center justify-center bg-transparent">
-            <span className="text-sm font-semibold text-muted-foreground">3</span>
-          </div>
-          <span className="text-sm text-muted-foreground">Choose providers</span>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <FileText className="h-6 w-6 text-primary" />
-            Template Details
-          </h2>
-          <p className="text-muted-foreground">Edit template configuration</p>
-        </div>
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Templates
-        </Button>
-      </div>
-
-      <Card className="border-white/5 bg-card/40">
-        <CardHeader>
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
-                {template.logoUrl ? (
-                  <img
-                    src={template.logoUrl}
-                    alt={editableTitle || template.name || ""}
-                    className="h-full w-full object-contain p-1"
-                    onError={(e) => {
-                      e.currentTarget.style.display = "none";
-                      const fallback = e.currentTarget.parentElement?.querySelector(".fallback-icon");
-                      if (fallback) fallback.classList.remove("hidden");
-                    }}
-                  />
-                ) : null}
-                <FileText className={`h-8 w-8 text-primary fallback-icon ${template.logoUrl ? "hidden" : ""}`} />
-              </div>
-              <div className="flex-1">
-                <Label htmlFor="template-title" className="text-sm font-medium mb-2 block">
-                  Template Title
-                </Label>
-                <Input
-                  id="template-title"
-                  value={editableTitle}
-                  onChange={(e) => setEditableTitle(e.target.value)}
-                  className="text-2xl font-bold bg-background/50 border-white/10"
-                  placeholder="Enter template title"
-                />
-                <CardDescription className="text-base mt-2">Category: {template.category}</CardDescription>
-              </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {template.summary && (
-            <div>
-              <h3 className="text-lg font-semibold mb-2">Summary</h3>
-              <p className="text-muted-foreground whitespace-pre-line">{template.summary}</p>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/10">
-            <div>
-              <p className="text-sm font-medium mb-1">Template Path</p>
-              <p className="text-sm text-muted-foreground font-mono break-all">{template.path}</p>
-            </div>
-            {template.githubUrl && (
-              <div>
-                <p className="text-sm font-medium mb-1">GitHub Repository</p>
-                <a
-                  href={template.githubUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm text-primary underline underline-offset-2 hover:text-primary/80 break-all"
-                >
-                  {template.githubUrl}
-                </a>
-              </div>
-            )}
-            {template.logoUrl && (
-              <div>
-                <p className="text-sm font-medium mb-1">Logo</p>
-                <img src={template.logoUrl} alt={editableTitle || template.name || ""} className="h-16 w-16 object-contain" />
-              </div>
-            )}
-            {template.persistentStorageEnabled !== undefined && (
-              <div>
-                <p className="text-sm font-medium mb-1">Persistent Storage</p>
-                <Badge variant={template.persistentStorageEnabled ? "default" : "secondary"}>
-                  {template.persistentStorageEnabled ? "Enabled" : "Disabled"}
-                </Badge>
-              </div>
-            )}
-          </div>
-
-          <div className="pt-4 border-t border-white/10">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label className="text-lg font-semibold">Deploy Configuration</Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={editMode === "builder" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setEditMode("builder")}
-                  >
-                    Builder
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={editMode === "yaml" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setEditMode("yaml")}
-                  >
-                    YAML
-                  </Button>
-                </div>
-              </div>
-
-              {editMode === "yaml" ? (
-                <Textarea
-                  id="deploy-config"
-                  value={editableDeployConfig}
-                  onChange={(e) => setEditableDeployConfig(e.target.value)}
-                  className="min-h-[300px] font-mono text-xs bg-background/50 border-white/10"
-                  placeholder="Enter deploy configuration..."
-                />
-              ) : (
-                <DeploymentEditBuilder
-                  builderConfig={builderConfig}
-                  setBuilderConfig={setBuilderConfig}
-                  editingExpose={editingExpose}
-                  setEditingExpose={setEditingExpose}
-                  editingEnv={editingEnv}
-                  setEditingEnv={setEditingEnv}
-                  editingCommands={editingCommands}
-                  setEditingCommands={setEditingCommands}
-                />
-              )}
-            </div>
-          </div>
-        </CardContent>
-        <CardFooter className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onBack}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              onDeploy({
-                ...template,
-                name: editableTitle || template.name,
-                deploy: editableDeployConfig || template.deploy,
-              });
-            }}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            Create Deployment
-          </Button>
-        </CardFooter>
-      </Card>
-    </div>
-  );
+  } catch {
+    return null;
+  }
 }
 
-interface BuilderProps {
-  builderConfig: typeof defaultBuilderConfig;
-  setBuilderConfig: React.Dispatch<React.SetStateAction<typeof defaultBuilderConfig>>;
+export const CONTAINER_VM_OS_OPTIONS = [
+  { label: "Ubuntu 24.04", value: "ubuntu:24.04" },
+  { label: "CentOS Stream 9", value: "quay.io/centos/centos:stream9" },
+  { label: "Debian 11", value: "debian:11" },
+  { label: "SuSE Leap 15.5", value: "opensuse/leap:15.5" },
+] as const;
+
+export interface BuilderProps {
+  builderConfig: BuilderConfig;
+  setBuilderConfig: React.Dispatch<React.SetStateAction<BuilderConfig>>;
   editingExpose: boolean;
   setEditingExpose: (v: boolean) => void;
   editingEnv: boolean;
   setEditingEnv: (v: boolean) => void;
   editingCommands: boolean;
   setEditingCommands: (v: boolean) => void;
+  hideDockerImage?: boolean;
+  hideExposeEnvCommands?: boolean;
+  hidePersistentRamStorage?: boolean;
+  useDockerImagePreset?: boolean;
+  hideCommands?: boolean;
+  hideServiceCount?: boolean;
 }
 
-function DeploymentEditBuilder({
+export function DeploymentEditBuilder({
   builderConfig,
   setBuilderConfig,
   editingExpose,
@@ -508,12 +256,17 @@ function DeploymentEditBuilder({
   setEditingEnv,
   editingCommands,
   setEditingCommands,
+  hideDockerImage = false,
+  hideExposeEnvCommands = false,
+  hidePersistentRamStorage = false,
+  useDockerImagePreset = false,
+  hideCommands = false,
+  hideServiceCount = false,
 }: BuilderProps) {
-  const [gpuListExpanded, setGpuListExpanded] = useState(false);
   return (
     <TooltipProvider>
       <div className="space-y-4">
-        {/* Docker Image / OS */}
+        {!hideDockerImage && (
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -523,42 +276,68 @@ function DeploymentEditBuilder({
                   <TooltipTrigger asChild>
                     <Info className="h-4 w-4 text-muted-foreground" />
                   </TooltipTrigger>
-                  <TooltipContent>Container image (e.g. nginx:latest or lmsysorg/sglang:v0.4.1)</TooltipContent>
+                  <TooltipContent>
+                    {useDockerImagePreset
+                      ? "Select an OS image for your container VM"
+                      : "Container image (e.g. nginx:latest or lmsysorg/sglang:v0.4.1)"}
+                  </TooltipContent>
                 </Tooltip>
               </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="image-private"
-                  checked={builderConfig.imagePrivate}
-                  onCheckedChange={(c) => setBuilderConfig({ ...builderConfig, imagePrivate: !!c })}
-                />
-                <Label htmlFor="image-private" className="text-sm cursor-pointer">
-                  Private
-                </Label>
-              </div>
+              {!useDockerImagePreset && (
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="image-private"
+                    checked={builderConfig.imagePrivate}
+                    onCheckedChange={(c) => setBuilderConfig({ ...builderConfig, imagePrivate: !!c })}
+                  />
+                  <Label htmlFor="image-private" className="text-sm cursor-pointer">
+                    Private
+                  </Label>
+                </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="flex gap-2">
-            <Input
-              value={builderConfig.image}
-              onChange={(e) => setBuilderConfig({ ...builderConfig, image: e.target.value })}
-              placeholder="e.g. nginx:latest"
-              className="bg-background/50 border-white/10"
-            />
-            <Button type="button" variant="outline" size="icon" asChild>
-              <a
-                href={`https://hub.docker.com/search?q=${encodeURIComponent(builderConfig.image.split(":")[0] || "")}`}
-                target="_blank"
-                rel="noreferrer"
-                title="Search on Docker Hub"
+            {useDockerImagePreset ? (
+              <Select
+                value={CONTAINER_VM_OS_OPTIONS.some((o) => o.value === builderConfig.image) ? builderConfig.image : "ubuntu:24.04"}
+                onValueChange={(v) => setBuilderConfig({ ...builderConfig, image: v })}
               >
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            </Button>
+                <SelectTrigger className="bg-background/50 border-white/10 max-w-sm">
+                  <SelectValue placeholder="Select OS" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CONTAINER_VM_OS_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <>
+                <Input
+                  value={builderConfig.image}
+                  onChange={(e) => setBuilderConfig({ ...builderConfig, image: e.target.value })}
+                  placeholder="e.g. nginx:latest"
+                  className="bg-background/50 border-white/10"
+                />
+                <Button type="button" variant="outline" size="icon" asChild>
+                  <a
+                    href={`https://hub.docker.com/search?q=${encodeURIComponent(builderConfig.image.split(":")[0] || "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Search on Docker Hub"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
+        )}
 
-        {/* CPU */}
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -601,7 +380,6 @@ function DeploymentEditBuilder({
           </CardContent>
         </Card>
 
-        {/* GPU */}
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -778,7 +556,6 @@ function DeploymentEditBuilder({
           </CardContent>
         </Card>
 
-        {/* Memory */}
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -825,7 +602,6 @@ function DeploymentEditBuilder({
           </CardContent>
         </Card>
 
-        {/* Ephemeral Storage */}
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -871,7 +647,65 @@ function DeploymentEditBuilder({
           </CardContent>
         </Card>
 
-        {/* Persistent Storage */}
+        {!hideServiceCount && (
+        <Card className="border-white/10 bg-card/40">
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base">Service Count</CardTitle>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="rounded p-0.5 text-muted-foreground hover:text-foreground focus:outline-none focus:ring-0"
+                    aria-label="Service count info"
+                  >
+                    <Info className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Number of service instances to deploy</TooltipContent>
+              </Tooltip>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Input
+              type="number"
+              min={1}
+              value={builderConfig.serviceCount ?? 1}
+              onChange={(e) =>
+                setBuilderConfig({
+                  ...builderConfig,
+                  serviceCount: Math.max(1, parseInt(e.target.value) || 1),
+                })
+              }
+              className="w-24 bg-background/50 border-white/10"
+            />
+          </CardContent>
+        </Card>
+        )}
+
+        <Card className="border-white/10 bg-card/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Token</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Select
+              value={builderConfig.token ?? "CLD"}
+              onValueChange={(v) => setBuilderConfig({ ...builderConfig, token: v })}
+            >
+              <SelectTrigger className="w-28 bg-background/50 border-white/10">
+                <SelectValue placeholder="Select token" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CLD">CLD</SelectItem>
+                <SelectItem value="USDC">USDC</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+
+        {!hidePersistentRamStorage && (
+        <>
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -1032,7 +866,6 @@ function DeploymentEditBuilder({
           </CardContent>
         </Card>
 
-        {/* RAM Storage */}
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
@@ -1141,8 +974,11 @@ function DeploymentEditBuilder({
             </Button>
           </CardContent>
         </Card>
+        </>
+        )}
 
-        {/* Expose */}
+        {!hideExposeEnvCommands && (
+        <>
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -1258,7 +1094,6 @@ function DeploymentEditBuilder({
           </CardContent>
         </Card>
 
-        {/* Environment Variables */}
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -1343,7 +1178,7 @@ function DeploymentEditBuilder({
           </CardContent>
         </Card>
 
-        {/* Commands */}
+        {!hideCommands && (
         <Card className="border-white/10 bg-card/40">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -1384,6 +1219,9 @@ function DeploymentEditBuilder({
             )}
           </CardContent>
         </Card>
+        )}
+        </>
+        )}
       </div>
     </TooltipProvider>
   );

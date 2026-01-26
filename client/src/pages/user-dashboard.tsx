@@ -31,7 +31,7 @@ import { getAllProviders } from "@/lib/api";
 import { useUserJobs } from "@/hooks/useUserJobs";
 import { TxLink } from "@/components/ui/tx-link";
 import ProvidersExplorer from "@/pages/providers-explorer";
-import NewDeployment from "@/pages/new-deployment";
+import NewDeployment from "@/pages/new-deployment/index";
 
 type ViewType = "home" | "deployments" | "templates" | "providers";
 
@@ -45,16 +45,20 @@ export default function UserDashboard() {
   const initialView = (hashView && ["home", "deployments", "templates", "providers"].includes(hashView)) ? hashView as ViewType : "home";
   const [activeView, setActiveView] = useState<ViewType>(initialView);
   const [userMenuExpanded, setUserMenuExpanded] = useState(true); // User menu expanded by default
-  const [showTemplateSelection, setShowTemplateSelection] = useState(false); // Track template selection page in deployments
-      
-  // Update view when hash changes
+  const [showTemplateSelection, setShowTemplateSelection] = useState(false);
+
+  // Update view when hash changes; show deployments landing (Create card + My Deployments) when opening deployments
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.slice(1);
       if (hash && ["home", "deployments", "templates", "providers"].includes(hash)) {
         setActiveView(hash as ViewType);
+        if (hash === "deployments") {
+          setShowTemplateSelection(false);
+        }
       }
     };
+    handleHashChange();
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
@@ -331,9 +335,14 @@ function HomeViewContent({
         <h1 className="text-3xl font-bold tracking-tight">Your account</h1>
         <Button 
           onClick={() => {
-            // Switch to deployments view to create deployment
+            if (typeof window !== "undefined") {
+              window.location.hash = "deployments";
+            }
             if (setActiveView) {
               setActiveView("deployments");
+            }
+            if (setLocation) {
+              setLocation("/user#deployments");
             }
           }}
           disabled={!isConnected}
@@ -649,20 +658,6 @@ function TemplatesView({
     fetchTemplates();
   }, []);
 
-  // Set busy cursor on body when loading templates
-  useEffect(() => {
-    if (templatesLoading) {
-      document.body.style.cursor = 'wait';
-    } else {
-      document.body.style.cursor = 'default';
-    }
-    
-    // Cleanup: restore default cursor when component unmounts or loading finishes
-    return () => {
-      document.body.style.cursor = 'default';
-    };
-  }, [templatesLoading]);
-
   // Get categories from API response (allTemplates is already TemplateCategory[])
   // Sort categories alphabetically by title
   const templateCategories = (allTemplates || []).sort((a, b) => 
@@ -693,21 +688,7 @@ function TemplatesView({
         </p>
       </div>
 
-      {/* Loading Overlay */}
-      {templatesLoading && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="h-12 w-12 animate-spin text-primary" />
-            <p className="text-lg font-medium">Loading templates...</p>
-            <p className="text-sm text-muted-foreground">Please wait while we fetch available templates</p>
-          </div>
-        </div>
-      )}
-
-      <div 
-        className="flex gap-6"
-        style={{ cursor: templatesLoading ? 'wait' : 'default', opacity: templatesLoading ? 0.5 : 1, pointerEvents: templatesLoading ? 'none' : 'auto' }}
-      >
+      <div className="flex gap-6">
         {/* Sidebar Filters */}
         {allTemplatesFlat.length > 0 && (
           <div className="hidden md:block w-[222px] flex-shrink-0">
@@ -766,19 +747,10 @@ function TemplatesView({
           )}
 
           {templatesLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[...Array(6)].map((_, i) => (
-                <Card key={i} className="border-white/5 bg-card/40">
-                  <CardHeader>
-                    <Skeleton className="h-10 w-10 rounded-full" />
-                    <Skeleton className="h-4 w-3/4 mt-2" />
-                  </CardHeader>
-                  <CardContent>
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-4 w-2/3" />
-                  </CardContent>
-                </Card>
-              ))}
+            <div className="flex min-h-[min(420px,65vh)] w-full flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-white/10 bg-muted/20 py-20">
+              <Loader2 className="h-12 w-12 animate-spin text-primary" />
+              <p className="text-lg font-medium">Loading templates...</p>
+              <p className="text-sm text-muted-foreground">Please wait while we fetch available templates</p>
             </div>
           ) : selectedTemplate ? (
             /* Template Info Page */
