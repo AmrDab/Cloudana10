@@ -3,10 +3,7 @@ import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle, Circle, Wallet, Server, Network, Settings, Tag, ArrowRight, ExternalLink, Loader2, AlertCircle } from "lucide-react";
+import { CheckCircle, Circle, Wallet, Server, Network, Settings, Tag, ArrowRight, ExternalLink } from "lucide-react";
 import { useCLDTokenBalance } from "@/lib/contracts";
 import { formatEther } from "viem";
 
@@ -28,33 +25,6 @@ export default function ProviderRegisterStaged() {
   const [currentStage, setCurrentStage] = useState<Stage>("wallet");
   const [completedStages, setCompletedStages] = useState<Set<Stage>>(new Set());
   
-  // Network configuration state
-  const [publicIP, setPublicIP] = useState("");
-  const [sshPort, setSshPort] = useState("22");
-  const [sshAuthMethod, setSshAuthMethod] = useState<"password" | "key">("password");
-  const [sshPassword, setSshPassword] = useState("");
-  const [sshKeyFile, setSshKeyFile] = useState<File | null>(null);
-  const [sshKeyContent, setSshKeyContent] = useState("");
-  const [isCheckingSSH, setIsCheckingSSH] = useState(false);
-  const [sshConnectionStatus, setSshConnectionStatus] = useState<"idle" | "checking" | "success" | "error">("idle");
-  const [sshErrorMessage, setSshErrorMessage] = useState("");
-  const [portsOpen, setPortsOpen] = useState({
-    port8443: false,
-    port8444: false,
-    port80: false,
-    port443: false,
-  });
-  
-  // Provider configuration state
-  const [domainName, setDomainName] = useState("");
-  const [organizationName, setOrganizationName] = useState("");
-  const [email, setEmail] = useState("");
-  
-  // Provider attributes state
-  const [region, setRegion] = useState("");
-  const [specializations, setSpecializations] = useState("");
-  const [hardwareCapabilities, setHardwareCapabilities] = useState("");
-
   const balanceValue = balance && typeof balance === 'bigint' ? parseFloat(formatEther(balance)) : 0;
   const hasEnoughBalance = balanceValue >= 30; // Minimum 30 CLD requirement
 
@@ -66,119 +36,18 @@ export default function ProviderRegisterStaged() {
         return isConnected && hasEnoughBalance;
       case "requirements":
         return true; // Just needs confirmation
-      case "network": {
-        const hasSSHConnection = sshConnectionStatus === "success";
-        return publicIP !== "" && 
-               Object.values(portsOpen).every(v => v) &&
-               (sshAuthMethod === "password" ? sshPassword !== "" : sshKeyContent !== "") &&
-               hasSSHConnection;
-      }
+      case "network":
+        return true; // Just needs confirmation
       case "configuration":
-        return domainName !== "" && organizationName !== "";
+        return true; // Just needs confirmation
       case "attributes":
-        return region !== "";
+        return true; // Just needs confirmation
       default:
         return false;
     }
   };
 
-  // Test SSH connection
-  const testSSHConnection = async (): Promise<boolean> => {
-    if (!publicIP || !sshPort) {
-      setSshConnectionStatus("error");
-      setSshErrorMessage("Please provide IP address and SSH port");
-      return false;
-    }
-
-    if (sshAuthMethod === "password" && !sshPassword) {
-      setSshConnectionStatus("error");
-      setSshErrorMessage("Please provide SSH password");
-      return false;
-    }
-
-    if (sshAuthMethod === "key" && !sshKeyContent) {
-      setSshConnectionStatus("error");
-      setSshErrorMessage("Please provide SSH key");
-      return false;
-    }
-
-    setIsCheckingSSH(true);
-    setSshConnectionStatus("checking");
-    setSshErrorMessage("");
-
-    try {
-      // In a real implementation, this would call a backend API to test SSH connection
-      // For now, we'll simulate a connection test
-      // TODO: Replace with actual API call to backend
-      const response = await fetch("/api/v1/test-ssh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          host: publicIP,
-          port: parseInt(sshPort),
-          authMethod: sshAuthMethod,
-          password: sshAuthMethod === "password" ? sshPassword : undefined,
-          privateKey: sshAuthMethod === "key" ? sshKeyContent : undefined,
-        }),
-      });
-
-      if (response.ok) {
-        setSshConnectionStatus("success");
-        setSshErrorMessage("");
-        return true;
-      } else {
-        const error = await response.json().catch(() => ({ message: "SSH connection failed" }));
-        setSshConnectionStatus("error");
-        setSshErrorMessage(error.message || "Failed to connect via SSH");
-        return false;
-      }
-    } catch (error) {
-      // If API endpoint doesn't exist, simulate a basic check
-      // In production, this should be handled by a backend service
-      console.warn("SSH test endpoint not available, simulating connection check");
-      
-      // Simulate connection check (remove this in production)
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Basic validation: check if IP format is valid
-      const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-      if (ipRegex.test(publicIP) && parseInt(sshPort) > 0 && parseInt(sshPort) <= 65535) {
-        setSshConnectionStatus("success");
-        setSshErrorMessage("");
-        return true;
-      } else {
-        setSshConnectionStatus("error");
-        setSshErrorMessage("Invalid IP address or port format");
-        return false;
-      }
-    } finally {
-      setIsCheckingSSH(false);
-    }
-  };
-
-  const handleSSHKeyFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSshKeyFile(file);
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const content = event.target?.result as string;
-        setSshKeyContent(content);
-      };
-      reader.readAsText(file);
-    }
-  };
-
   const handleConfirm = async () => {
-    // For network stage, test SSH connection first
-    if (currentStage === "network" && sshConnectionStatus !== "success") {
-      const connectionSuccess = await testSSHConnection();
-      // Don't proceed if connection test failed
-      if (!connectionSuccess) {
-        return;
-      }
-    }
-
     if (!canProceedToNext()) return;
 
     // Mark current stage as completed
@@ -288,8 +157,18 @@ export default function ProviderRegisterStaged() {
                   <span>100 GB Storage</span>
                 </li>
               </ul>
+            </div>
+          </div>
+        );
 
-              <h3 className="text-lg font-semibold mb-4">Network Configuration</h3>
+      case "network":
+        return (
+          <div className="space-y-6">
+            <div>
+              <p className="text-sm text-muted-foreground mb-6">
+                Configure your network settings to ensure proper communication between your server and the Cloudana network.
+              </p>
+
               <ul className="space-y-2 text-sm text-muted-foreground mb-6">
                 <li className="flex items-start">
                   <span className="mr-2">•</span>
@@ -308,193 +187,6 @@ export default function ProviderRegisterStaged() {
                   <span>Ideally, all control plane nodes should have public IPs.</span>
                 </li>
               </ul>
-
-              <h3 className="text-lg font-semibold mb-4">Access Requirements</h3>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li className="flex items-start">
-                  <span className="mr-2">•</span>
-                  <span>Root access should be enabled for better compatibility.</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-        );
-
-      case "network":
-        return (
-          <div className="space-y-6">
-            <div>
-              <p className="text-sm text-muted-foreground mb-6">
-                Configure your network settings to ensure proper communication between your server and the Cloudana network.
-              </p>
-              
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="publicIP">Public IP Address</Label>
-                  <Input
-                    id="publicIP"
-                    value={publicIP}
-                    onChange={(e) => setPublicIP(e.target.value)}
-                    placeholder="e.g., 192.168.1.1"
-                    className="mt-1"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    At least one control node needs to have a public IP address.
-                  </p>
-                </div>
-
-                <div>
-                  <Label htmlFor="sshPort">SSH Port</Label>
-                  <Input
-                    id="sshPort"
-                    value={sshPort}
-                    onChange={(e) => setSshPort(e.target.value)}
-                    placeholder="22"
-                    className="mt-1"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Ensure this port is open and accessible from public IPs.
-                  </p>
-                </div>
-
-                <div>
-                  <Label>SSH Authentication</Label>
-                  <div className="mt-2 space-y-4">
-                    <div className="flex gap-4">
-                      <Button
-                        type="button"
-                        variant={sshAuthMethod === "password" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => {
-                          setSshAuthMethod("password");
-                          setSshConnectionStatus("idle");
-                          setSshErrorMessage("");
-                        }}
-                      >
-                        Password
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={sshAuthMethod === "key" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => {
-                          setSshAuthMethod("key");
-                          setSshConnectionStatus("idle");
-                          setSshErrorMessage("");
-                        }}
-                      >
-                        SSH Key
-                      </Button>
-                    </div>
-
-                    {sshAuthMethod === "password" ? (
-                      <div>
-                        <Label htmlFor="sshPassword">SSH Password</Label>
-                        <Input
-                          id="sshPassword"
-                          type="password"
-                          value={sshPassword}
-                          onChange={(e) => {
-                            setSshPassword(e.target.value);
-                            setSshConnectionStatus("idle");
-                            setSshErrorMessage("");
-                          }}
-                          placeholder="Enter SSH password"
-                          className="mt-1"
-                        />
-                      </div>
-                    ) : (
-                      <div>
-                        <Label htmlFor="sshKey">SSH Private Key</Label>
-                        <Input
-                          id="sshKey"
-                          type="file"
-                          accept=".pem,.key,text/plain"
-                          onChange={handleSSHKeyFileChange}
-                          className="mt-1"
-                        />
-                        {sshKeyFile && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Selected: {sshKeyFile.name}
-                          </p>
-                        )}
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Upload your SSH private key file (.pem, .key)
-                        </p>
-                      </div>
-                    )}
-
-                    {/* SSH Connection Status */}
-                    {sshConnectionStatus !== "idle" && (
-                      <div className={`p-3 rounded-lg border ${
-                        sshConnectionStatus === "success" 
-                          ? "bg-green-500/10 border-green-500/50" 
-                          : sshConnectionStatus === "error"
-                          ? "bg-red-500/10 border-red-500/50"
-                          : "bg-blue-500/10 border-blue-500/50"
-                      }`}>
-                        <div className="flex items-center gap-2">
-                          {sshConnectionStatus === "checking" && (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                              <span className="text-sm text-blue-500">Testing SSH connection...</span>
-                            </>
-                          )}
-                          {sshConnectionStatus === "success" && (
-                            <>
-                              <CheckCircle className="h-4 w-4 text-green-500" />
-                              <span className="text-sm text-green-500">SSH connection successful</span>
-                            </>
-                          )}
-                          {sshConnectionStatus === "error" && (
-                            <>
-                              <AlertCircle className="h-4 w-4 text-red-500" />
-                              <div className="flex-1">
-                                <span className="text-sm text-red-500">SSH connection failed</span>
-                                {sshErrorMessage && (
-                                  <p className="text-xs text-red-400 mt-1">{sshErrorMessage}</p>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <Label>Required Ports</Label>
-                  <div className="mt-2 space-y-2">
-                    {[
-                      { key: "port8443", label: "Port 8443", description: "Provider API" },
-                      { key: "port8444", label: "Port 8444", description: "Provider API" },
-                      { key: "port80", label: "Port 80", description: "HTTP" },
-                      { key: "port443", label: "Port 443", description: "HTTPS" },
-                    ].map((port) => (
-                      <div key={port.key} className="flex items-center justify-between p-3 border rounded-lg">
-                        <div>
-                          <div className="font-medium text-sm">{port.label}</div>
-                          <div className="text-xs text-muted-foreground">{port.description}</div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant={portsOpen[port.key as keyof typeof portsOpen] ? "default" : "outline"}
-                          size="sm"
-                          onClick={() =>
-                            setPortsOpen((prev) => ({
-                              ...prev,
-                              [port.key]: !prev[port.key as keyof typeof portsOpen],
-                            }))
-                          }
-                        >
-                          {portsOpen[port.key as keyof typeof portsOpen] ? "Open" : "Closed"}
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         );
@@ -506,47 +198,23 @@ export default function ProviderRegisterStaged() {
               <p className="text-sm text-muted-foreground mb-6">
                 A proper configuration ensures smooth communication between your server and the Cloudana network.
               </p>
-              
+
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="domainName">Domain Name</Label>
-                  <Input
-                    id="domainName"
-                    value={domainName}
-                    onChange={(e) => setDomainName(e.target.value)}
-                    placeholder="e.g., provider.example.com"
-                    className="mt-1"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <h3 className="text-sm font-semibold mb-1">Domain Name</h3>
+                  <p className="text-sm text-muted-foreground">
                     Obtain a domain name and point it to the IP address of your primary server.
                   </p>
                 </div>
-
                 <div>
-                  <Label htmlFor="organizationName">Organization Name</Label>
-                  <Input
-                    id="organizationName"
-                    value={organizationName}
-                    onChange={(e) => setOrganizationName(e.target.value)}
-                    placeholder="e.g., My Compute Provider"
-                    className="mt-1"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <h3 className="text-sm font-semibold mb-1">Organization Information</h3>
+                  <p className="text-sm text-muted-foreground">
                     Decide on an organization name.
                   </p>
                 </div>
-
                 <div>
-                  <Label htmlFor="email">Email Address (Optional)</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="contact@example.com"
-                    className="mt-1"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <h3 className="text-sm font-semibold mb-1">Email Address (Optional)</h3>
+                  <p className="text-sm text-muted-foreground">
                     Email address for notifications and updates.
                   </p>
                 </div>
@@ -573,43 +241,6 @@ export default function ProviderRegisterStaged() {
                   <span>Adding more attributes improves your chances of receiving bids from tenants.</span>
                 </li>
               </ul>
-              
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="region">Region</Label>
-                  <Input
-                    id="region"
-                    value={region}
-                    onChange={(e) => setRegion(e.target.value)}
-                    placeholder="e.g., Helsinki, EU, Global"
-                    className="mt-1"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="specializations">Specializations</Label>
-                  <Textarea
-                    id="specializations"
-                    value={specializations}
-                    onChange={(e) => setSpecializations(e.target.value)}
-                    placeholder="e.g., AI/ML workloads, High-performance computing, GPU acceleration"
-                    className="mt-1"
-                    rows={3}
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="hardwareCapabilities">Hardware Capabilities</Label>
-                  <Textarea
-                    id="hardwareCapabilities"
-                    value={hardwareCapabilities}
-                    onChange={(e) => setHardwareCapabilities(e.target.value)}
-                    placeholder="e.g., NVIDIA A100 GPUs, High-speed NVMe storage, 10 Gbps network"
-                    className="mt-1"
-                    rows={3}
-                  />
-                </div>
-              </div>
             </div>
           </div>
         );
@@ -709,7 +340,7 @@ export default function ProviderRegisterStaged() {
                 >
                   {getCurrentStageIndex() === STAGES.length - 1 ? (
                     <>
-                      Complete Registration <ArrowRight className="ml-2 h-4 w-4" />
+                      Create Provider <ArrowRight className="ml-2 h-4 w-4" />
                     </>
                   ) : (
                     <>

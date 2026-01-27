@@ -15,7 +15,9 @@
     "@hono/node-server": "^1.13.7",
     "@hono/swagger-ui": "0.4.1",
     "@hono/zod-openapi": "0.18.4",
+    "@types/ssh2": "^1.15.5",
     "hono": "^4.6.12",
+    "ssh2": "^1.17.0",
     "zod": "3.25.76"
   },
   "devDependencies": {

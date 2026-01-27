@@ -3,6 +3,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
 import { cors } from "hono/cors";
 import { templatesRouter } from "./routes/v1/templates.js";
+import { verifyRouter } from "./routes/v1/verify.js";
 import { config } from "dotenv";
 
 config();
@@ -33,6 +34,7 @@ app.get("/health", (c) => {
 
 // API v1 routes
 app.route("/v1", templatesRouter);
+app.route("/v1", verifyRouter);
 
 // OpenAPI JSON endpoint
 app.get("/v1/doc", (c) => {
