@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,29 @@ export default function ProviderRegisterStaged() {
       setLocation("/provider/register");
     }
   };
+
+  // Handle Enter key press to activate Next button
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only trigger if not typing in an input field
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        if (canProceedToNext()) {
+          handleConfirm();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [currentStage, isConnected, hasEnoughBalance]);
 
   // Removed handleStageClick - users can only progress via Next button
 

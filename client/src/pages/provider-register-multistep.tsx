@@ -3,17 +3,27 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle, Circle, Loader2, AlertCircle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CheckCircle, Circle, Loader2, AlertCircle, Trash2, Info } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 
-type Step = "server-access" | "provider-config" | "provider-attributes" | "provider-pricing" | "import-wallet";
+const ATTRIBUTE_KEYS = ["host", "tier", "organization"] as const;
+
+type AttributeRow = { key: string; value: string };
+
+const DEFAULT_ATTRIBUTES: AttributeRow[] = [
+  { key: "host", value: "akash" },
+  { key: "tier", value: "community" },
+  { key: "organization", value: "asdf" },
+];
+
+type Step = "server-access" | "provider-config" | "provider-attributes" | "import-wallet";
 
 const STEPS: { id: Step; title: string; number: number }[] = [
   { id: "server-access", title: "Server Access", number: 1 },
   { id: "provider-config", title: "Provider Config", number: 2 },
   { id: "provider-attributes", title: "Provider Attributes", number: 3 },
-  { id: "provider-pricing", title: "Provider Pricing", number: 4 },
-  { id: "import-wallet", title: "Import Wallet", number: 5 },
+  { id: "import-wallet", title: "Import Wallet", number: 4 },
 ];
 
 export default function ProviderRegisterMultistep() {
@@ -39,6 +49,18 @@ export default function ProviderRegisterMultistep() {
   const [isChecking, setIsChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [privateKeyContent, setPrivateKeyContent] = useState<string>("");
+
+  // Provider Information (first step of provider-config)
+  const [domainName, setDomainName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [email, setEmail] = useState("");
+
+  // DNS verification (provider-config)
+  const [dnsVerifyStatus, setDnsVerifyStatus] = useState<"idle" | "verifying" | "success" | "error">("idle");
+  const [dnsVerifyMessage, setDnsVerifyMessage] = useState<string>("");
+
+  // Provider Attributes
+  const [attributes, setAttributes] = useState<AttributeRow[]>(DEFAULT_ATTRIBUTES);
 
   const getCurrentStepIndex = () => STEPS.findIndex(s => s.id === currentStep);
   const isStepCompleted = (step: Step) => completedSteps.has(step);
@@ -123,6 +145,16 @@ export default function ProviderRegisterMultistep() {
     }
   };
 
+  // Handle Enter key press to activate Next button
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (canProceed() && !isChecking) {
+        handleNext();
+      }
+    }
+  };
+
   const canProceed = () => {
     switch (currentStep) {
       case "server-access":
@@ -141,9 +173,39 @@ export default function ProviderRegisterMultistep() {
           }
         }
         return true; // Sub-step 2 always allows proceeding
+      case "provider-config":
+        return domainName.trim() !== "" && organizationName.trim() !== "";
+      case "provider-attributes":
+        return attributes.some((a) => a.key.trim() !== "" && a.value.trim() !== "");
       default:
         return true;
     }
+  };
+
+  const resetProviderInfo = () => {
+    setDomainName("");
+    setOrganizationName("");
+    setEmail("");
+    setDnsVerifyStatus("idle");
+    setDnsVerifyMessage("");
+  };
+
+  const addAttribute = () => {
+    setAttributes((prev) => [...prev, { key: "", value: "" }]);
+  };
+
+  const removeAttribute = (index: number) => {
+    setAttributes((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateAttribute = (index: number, field: "key" | "value", value: string) => {
+    setAttributes((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
+    );
+  };
+
+  const resetAttributes = () => {
+    setAttributes([...DEFAULT_ATTRIBUTES]);
   };
 
   // Validate IPv4 address
@@ -283,6 +345,53 @@ export default function ProviderRegisterMultistep() {
     }
   };
 
+  // Verify DNS configuration (resolve domain to public IP)
+  const verifyDnsConfiguration = async (): Promise<void> => {
+    const domain = domainName.trim();
+    if (!domain) {
+      setDnsVerifyStatus("error");
+      setDnsVerifyMessage("Please enter a domain name first.");
+      return;
+    }
+
+    setDnsVerifyStatus("verifying");
+    setDnsVerifyMessage("");
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL
+        ? `${import.meta.env.VITE_API_URL}/v1/verify/dns`
+        : "http://localhost:7002/v1/verify/dns";
+
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: [domain] }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const publicIps = data.public_ips ?? [];
+        const entry = Array.isArray(publicIps) ? publicIps.find((r: Record<string, string>) => domain in r) : null;
+        const ip = entry ? (entry as Record<string, string>)[domain] : null;
+        if (ip) {
+          setDnsVerifyStatus("success");
+          setDnsVerifyMessage(`${domain} resolves to ${ip}`);
+        } else {
+          setDnsVerifyStatus("error");
+          setDnsVerifyMessage("No public IP returned for this domain.");
+        }
+      } else {
+        const err = await response.json().catch(() => ({ error: { message: "Failed to verify DNS" } }));
+        setDnsVerifyStatus("error");
+        setDnsVerifyMessage(err.error?.message ?? err.message ?? "Failed to verify DNS.");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unable to reach the verification server.";
+      setDnsVerifyStatus("error");
+      setDnsVerifyMessage(msg);
+    }
+  };
+
   // Handle key file change
   const handleKeyFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -375,6 +484,7 @@ export default function ProviderRegisterMultistep() {
                     type="text"
                     value={publicIP}
                     onChange={(e) => setPublicIP(e.target.value)}
+                    onKeyDown={handleKeyDown}
                     placeholder="Enter a valid IPv4 address"
                     className="mt-1"
                   />
@@ -447,6 +557,7 @@ export default function ProviderRegisterMultistep() {
                         setSshPassword(e.target.value);
                         setCheckError(null);
                       }}
+                      onKeyDown={handleKeyDown}
                       className="mt-1"
                     />
                   </div>
@@ -474,6 +585,7 @@ export default function ProviderRegisterMultistep() {
                         type="password"
                         value={passphrase}
                         onChange={(e) => setPassphrase(e.target.value)}
+                        onKeyDown={handleKeyDown}
                         className="mt-1"
                         placeholder="Enter passphrase if your key is encrypted"
                       />
@@ -512,27 +624,210 @@ export default function ProviderRegisterMultistep() {
       case "provider-config":
         return (
           <div className="space-y-6">
-            <p className="text-sm text-muted-foreground">
-              Provider configuration step content will go here.
-            </p>
+            <div>
+              <h3 className="text-lg font-semibold mb-1">Provider Information</h3>
+              <p className="text-sm text-muted-foreground">
+                Hostname will be displayed publicly to the Console.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Email may be used for notifications.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="domainName">Domain Name</Label>
+                <div className="flex gap-2 mt-1 items-start">
+                  <Input
+                    id="domainName"
+                    type="text"
+                    value={domainName}
+                    onChange={(e) => {
+                      setDomainName(e.target.value);
+                      setDnsVerifyStatus("idle");
+                      setDnsVerifyMessage("");
+                    }}
+                    onKeyDown={handleKeyDown}
+                    placeholder="example.com"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={verifyDnsConfiguration}
+                    disabled={dnsVerifyStatus === "verifying" || !domainName.trim()}
+                    className="shrink-0"
+                  >
+                    {dnsVerifyStatus === "verifying" ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin shrink-0" />
+                        Verifying…
+                      </>
+                    ) : (
+                      "Verify DNS"
+                    )}
+                  </Button>
+                </div>
+                {dnsVerifyStatus === "success" && dnsVerifyMessage && (
+                  <p className="text-sm text-green-600 dark:text-green-400 mt-1.5 flex items-center gap-1.5">
+                    <CheckCircle className="h-4 w-4 shrink-0" />
+                    {dnsVerifyMessage}
+                  </p>
+                )}
+                {dnsVerifyStatus === "error" && dnsVerifyMessage && (
+                  <p className="text-sm text-red-500 dark:text-red-400 mt-1.5 flex items-center gap-1.5">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    {dnsVerifyMessage}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="organizationName">Organization Name</Label>
+                <Input
+                  id="organizationName"
+                  type="text"
+                  value={organizationName}
+                  onChange={(e) => setOrganizationName(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Your Organization"
+                  className="mt-1"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="email">Email Address (Optional)</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="your@email.com"
+                  className="mt-1"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={resetProviderInfo}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  Reset
+                </Button>
+              </div>
+            </div>
+
+            {/* Required Ports */}
+            <div className="rounded-lg border p-4 space-y-3 mt-6">
+              <h3 className="text-lg font-semibold">Required Ports</h3>
+              <p className="text-sm text-muted-foreground">
+                The following ports must be open on your control machine for the provider to function properly:
+              </p>
+              <div className="overflow-hidden rounded-md border text-sm">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="px-4 py-2 text-left font-semibold">Port</th>
+                      <th className="px-4 py-2 text-left font-semibold">Purpose</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    <tr><td className="px-4 py-2">80</td><td className="px-4 py-2 text-muted-foreground">HTTP traffic</td></tr>
+                    <tr><td className="px-4 py-2">443</td><td className="px-4 py-2 text-muted-foreground">HTTPS traffic</td></tr>
+                    <tr><td className="px-4 py-2">8443</td><td className="px-4 py-2 text-muted-foreground">Kubernetes API server</td></tr>
+                    <tr><td className="px-4 py-2">8444</td><td className="px-4 py-2 text-muted-foreground">Provider services</td></tr>
+                    <tr><td className="px-4 py-2">30000-32676</td><td className="px-4 py-2 text-muted-foreground">Kubernetes NodePort services</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex gap-2 rounded-lg border border-amber-200/80 bg-amber-50/80 dark:bg-amber-950/20 dark:border-amber-800/50 p-3">
+                <Info className="h-5 w-5 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-sm text-amber-800 dark:text-amber-200">
+                  Please configure your firewall to allow incoming traffic on these ports. Port availability will be verified automatically when services are deployed.
+                </p>
+              </div>
+            </div>
           </div>
         );
 
       case "provider-attributes":
         return (
           <div className="space-y-6">
-            <p className="text-sm text-muted-foreground">
-              Provider attributes step content will go here.
-            </p>
-          </div>
-        );
+            <div>
+              <h3 className="text-lg font-semibold mb-1">Provider Attributes</h3>
+              <p className="text-sm text-muted-foreground">
+                Attributes chosen here will be displayed publicly to the Console. It will be used for filtering and querying providers during bid process.
+              </p>
+            </div>
 
-      case "provider-pricing":
-        return (
-          <div className="space-y-6">
-            <p className="text-sm text-muted-foreground">
-              Provider pricing step content will go here.
-            </p>
+            <div className="space-y-4">
+              <Label className="text-base font-semibold">Attributes</Label>
+              <div className="space-y-3">
+                {attributes.map((row, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Select
+                      value={row.key || "_placeholder"}
+                      onValueChange={(v) => updateAttribute(index, "key", v === "_placeholder" ? "" : v)}
+                    >
+                      <SelectTrigger className="flex-1 min-w-[140px]">
+                        <SelectValue placeholder="Select key" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="_placeholder" disabled>
+                          Select key
+                        </SelectItem>
+                        {ATTRIBUTE_KEYS.map((k) => (
+                          <SelectItem key={k} value={k}>
+                            {k}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      placeholder="Value"
+                      value={row.value}
+                      onChange={(e) => updateAttribute(index, "value", e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive shrink-0"
+                      onClick={() => removeAttribute(index)}
+                      aria-label="Remove attribute"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addAttribute}
+                className="mt-2"
+              >
+                + Add Attribute
+              </Button>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={resetAttributes}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  Reset
+                </Button>
+              </div>
+            </div>
           </div>
         );
 
