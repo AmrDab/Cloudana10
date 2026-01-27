@@ -407,6 +407,7 @@ export default function ProviderRegisterMultistep() {
                     value={sshUsername}
                     onChange={(e) => setSshUsername(e.target.value)}
                     className="mt-1"
+                    readOnly
                   />
                   <p className="text-xs text-muted-foreground mt-1">
                     The username must be 'root' for proper setup.
