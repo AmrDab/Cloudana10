@@ -259,8 +259,27 @@ export default function ProviderRegister() {
   
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500 pt-10">
+      {/* Notice: ProviderRegistry contract not available */}
+      <Card className="border-yellow-500/50 bg-yellow-500/10">
+        <CardContent className="pt-6">
+          <div className="flex items-start gap-3">
+            <Server className="h-5 w-5 text-yellow-500 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-yellow-400 mb-2">Provider Registration Temporarily Unavailable</h3>
+              <p className="text-sm text-yellow-300/80">
+                The ProviderRegistry smart contract is not yet deployed. Provider registration functionality will be available once the contract is built and deployed.
+                <br />
+                <span className="text-xs text-yellow-400/60 mt-1 block">
+                  Currently focusing on workload registration. You can still register workloads using the Workload Registry.
+                </span>
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      
       {/* Registration Form */}
-      <Card className="glass-card border-primary/20">
+      <Card className="glass-card border-primary/20 opacity-50 pointer-events-none">
         <CardHeader>
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">

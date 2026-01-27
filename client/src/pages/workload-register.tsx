@@ -215,8 +215,8 @@ export default function WorkloadRegister() {
     // Convert form data to ResourceRequirements
     const requirements: ResourceRequirements = {
       cpu: BigInt(formData.cpu),
-      memoryBytes: BigInt(formData.memory),  // Updated field name
-      storageBytes: BigInt(formData.storage), // Updated field name
+      memory: BigInt(formData.memory),
+      storage: BigInt(formData.storage),
       storageClasses: formData.storageClasses,
       requiresGPU: formData.requiresGPU,
       gpuCount: BigInt(formData.gpuCount || "0"),

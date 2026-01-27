@@ -7,11 +7,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Check, ChevronRight } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { Check, ChevronRight, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
+import { useAccount } from "wagmi";
+import { keccak256, toHex } from "viem";
+import { useToast } from "@/hooks/use-toast";
 import { sendDeployment, type Deployment } from "@/lib/deployment";
 import { parseDeployToJson, validateSDL } from "@/lib/sdl";
+import {
+  useCreateWorkload,
+  type ResourceRequirements,
+} from "@/lib/contracts";
 import {
   type BuildType,
   type DeploymentEditTemplate,
@@ -35,8 +42,107 @@ interface DeploymentEditProps {
   onDeploy: (updated: DeploymentEditTemplate & { name?: string; deploy?: string }) => void;
 }
 
+// Helper function to convert storage size to bytes
+function storageToBytes(size: number | undefined | null, unit: StorageUnit | undefined | null): bigint {
+  const multipliers: Record<StorageUnit, number> = {
+    Mi: 1024 * 1024,
+    Gi: 1024 * 1024 * 1024,
+    Ti: 1024 * 1024 * 1024 * 1024,
+  };
+  
+  // Ensure size is a valid number
+  const numSize = size != null && !isNaN(Number(size)) ? Number(size) : 0;
+  if (numSize < 0 || !isFinite(numSize)) {
+    console.warn("Invalid size value:", size, "using default 0");
+    return BigInt(0);
+  }
+  
+  // Ensure unit is valid
+  const safeUnit = (unit && unit in multipliers) ? unit : "Gi";
+  const multiplier = multipliers[safeUnit];
+  
+  // Calculate result and ensure it's a valid number
+  const result = numSize * multiplier;
+  if (!isFinite(result) || isNaN(result)) {
+    console.warn("Invalid calculation result:", result, "using default 0");
+    return BigInt(0);
+  }
+  
+  return BigInt(Math.floor(result));
+}
+
+// Helper function to convert deployment config to ResourceRequirements
+function convertToResourceRequirements(
+  deployJson: string,
+  builderConfig: ReturnType<typeof deployToBuilderConfig> & { cpu?: number; memory?: number; memoryUnit?: StorageUnit; ephemeralStorage?: number; ephemeralUnit?: StorageUnit; persistentStorages?: Array<{ size: number; unit: StorageUnit; type?: string }>; hasGpu?: boolean; gpuModels?: Array<{ vendor?: string; model?: string; memory?: string; interface?: string; count?: number }> }
+): ResourceRequirements {
+  // Convert CPU (units to millicores - assuming 1 unit = 1000 millicores)
+  const cpuValue = builderConfig.cpu ?? 1;
+  const cpuNum = typeof cpuValue === "number" && !isNaN(cpuValue) && isFinite(cpuValue) ? cpuValue : 1;
+  const cpuMillicores = cpuNum * 1000;
+  
+  // Convert memory to bytes - ensure we have valid values
+  const memoryValue = builderConfig.memory ?? 1;
+  const memoryUnitValue = builderConfig.memoryUnit || "Gi";
+  const memoryBytes = storageToBytes(memoryValue, memoryUnitValue);
+  
+  // Calculate total storage (ephemeral + persistent)
+  const ephemeralStorageValue = builderConfig.ephemeralStorage ?? 10;
+  const ephemeralUnitValue = builderConfig.ephemeralUnit || "Gi";
+  const ephemeralBytes = storageToBytes(ephemeralStorageValue, ephemeralUnitValue);
+  
+  const persistentBytes = (builderConfig.persistentStorages || []).reduce(
+    (sum, p) => {
+      const pSize = p.size ?? 0;
+      const pUnit = p.unit || "Gi";
+      return sum + storageToBytes(pSize, pUnit);
+    },
+    BigInt(0)
+  );
+  const totalStorageBytes = ephemeralBytes + persistentBytes;
+  
+  // Extract storage classes from persistent storages
+  const storageClasses = (builderConfig.persistentStorages || [])
+    .map((p) => p.type || "NVMe")
+    .filter((value, index, self) => self.indexOf(value) === index); // unique
+  
+  // GPU info
+  const requiresGPU = builderConfig.hasGpu || false;
+  const gpuCountValue = builderConfig.gpuModels?.reduce((sum, g) => {
+    const count = typeof g.count === "number" && !isNaN(g.count) ? g.count : 1;
+    return sum + Math.max(1, count);
+  }, 0) || 0;
+  const gpuCount = typeof gpuCountValue === "number" && !isNaN(gpuCountValue) && isFinite(gpuCountValue) ? gpuCountValue : 0;
+  
+  const gpuAttributes = (builderConfig.gpuModels || []).map((g) => {
+    const attrs: string[] = [];
+    if (g.vendor) attrs.push(`vendor:${g.vendor}`);
+    if (g.model) attrs.push(`model:${g.model}`);
+    if (g.memory) attrs.push(`memory:${g.memory}`);
+    if (g.interface) attrs.push(`interface:${g.interface}`);
+    return attrs.join(",");
+  });
+  
+  // Ensure all BigInt conversions have valid numbers
+  return {
+    cpu: BigInt(Math.max(0, cpuMillicores)),
+    memory: memoryBytes,
+    storage: totalStorageBytes,
+    storageClasses: storageClasses.length > 0 ? storageClasses : ["NVMe"],
+    requiresGPU,
+    gpuCount: BigInt(Math.max(0, gpuCount)),
+    gpuAttributes: gpuAttributes.length > 0 ? gpuAttributes : [],
+    requiresEdge: false, // Default to false, can be enhanced later
+    regions: [], // Default empty, can be enhanced later
+    maxLatency: BigInt(100), // Default 100ms, can be enhanced later
+  };
+}
+
 export default function DeploymentEdit({ template, onBack, onDeploy }: DeploymentEditProps) {
   const [, setLocation] = useLocation();
+  const { address, isConnected } = useAccount();
+  const { toast } = useToast();
+  const { create, hash, isPending: isCreatingWorkload, isSuccess, error, reset } = useCreateWorkload();
   const [editableTitle, setEditableTitle] = useState(template.name || "");
   const [editableDeployConfig, setEditableDeployConfig] = useState(template.deploy || "");
   const [editMode, setEditMode] = useState<"builder" | "yaml">("yaml");
@@ -191,6 +297,40 @@ export default function DeploymentEdit({ template, onBack, onDeploy }: Deploymen
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editMode]);
+
+  // Handle successful workload creation
+  useEffect(() => {
+    if (isSuccess && hash && pendingDeploy) {
+      toast({
+        title: "Workload registered successfully!",
+        description: "Your deployment has been registered on-chain.",
+      });
+      
+      // Continue with the original deployment flow
+      const deployment: Deployment = {
+        ...pendingDeploy.payload,
+        id: "new deployment",
+      };
+      sendDeployment(deployment);
+      onDeploy(pendingDeploy.payload);
+      setConfirmOpen(false);
+      setPendingDeploy(null);
+      reset();
+      setLocation("/deployment-completion");
+    }
+  }, [isSuccess, hash, pendingDeploy, toast, reset, onDeploy, setLocation]);
+
+  // Handle errors
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Transaction failed",
+        description: error.message || "Failed to register workload on-chain",
+        variant: "destructive",
+      });
+      reset();
+    }
+  }, [error, toast, reset]);
 
   const handleCreateDeploy = useCallback(() => {
     const deploy = editableDeployConfig || template.deploy || "";
@@ -362,21 +502,107 @@ export default function DeploymentEdit({ template, onBack, onDeploy }: Deploymen
             </Button>
             <Button
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
-              onClick={() => {
-                if (pendingDeploy) {
-                  const deployment: Deployment = {
-                    ...pendingDeploy.payload,
-                    id: "new deployment",
-                  };
-                  sendDeployment(deployment);
-                  onDeploy(pendingDeploy.payload);
-                  setConfirmOpen(false);
-                  setPendingDeploy(null);
-                  setLocation("/deployment-completion");
+              disabled={isCreatingWorkload || !isConnected}
+              onClick={async () => {
+                // Prevent double-clicks and ensure we're not already processing
+                if (isCreatingWorkload || !pendingDeploy) return;
+                
+                if (!isConnected || !address) {
+                  toast({
+                    title: "Wallet not connected",
+                    description: "Please connect your wallet to continue",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                
+                try {
+                  // Generate manifest hash from deployment config
+                  const deployConfig = pendingDeploy.payload.deploy || "";
+                  if (!deployConfig) {
+                    throw new Error("Deployment config is empty");
+                  }
+                  
+                  const manifestHash = keccak256(toHex(deployConfig));
+                  
+                  // Parse deployment config to get builder config
+                  const parsed = JSON.parse(deployConfig) as Record<string, unknown>;
+                  const config = deployToBuilderConfig(parsed);
+                  
+                  // Validate config has required fields
+                  if (!config || typeof config !== "object") {
+                    throw new Error("Invalid deployment configuration");
+                  }
+                  
+                  // Convert deployment config to ResourceRequirements
+                  const requirements = convertToResourceRequirements(
+                    deployConfig,
+                    config
+                  );
+                  
+                  // Validate requirements before calling contract - check all required fields
+                  if (
+                    !requirements ||
+                    requirements.cpu === undefined ||
+                    requirements.memory === undefined ||
+                    requirements.storage === undefined ||
+                    requirements.storageClasses === undefined ||
+                    requirements.requiresGPU === undefined ||
+                    requirements.gpuCount === undefined ||
+                    requirements.gpuAttributes === undefined ||
+                    requirements.requiresEdge === undefined ||
+                    requirements.regions === undefined ||
+                    requirements.maxLatency === undefined
+                  ) {
+                    console.error("Invalid requirements:", requirements);
+                    throw new Error("Failed to convert deployment config to resource requirements");
+                  }
+                  
+                  // Validate BigInt values are valid
+                  if (
+                    typeof requirements.cpu !== "bigint" ||
+                    typeof requirements.memory !== "bigint" ||
+                    typeof requirements.storage !== "bigint" ||
+                    typeof requirements.gpuCount !== "bigint" ||
+                    typeof requirements.maxLatency !== "bigint"
+                  ) {
+                    console.error("Invalid BigInt values in requirements:", requirements);
+                    throw new Error("Resource requirements contain invalid BigInt values");
+                  }
+                  
+                  console.log("Creating workload with requirements:", {
+                    cpu: requirements.cpu.toString(),
+                    memory: requirements.memory.toString(),
+                    storage: requirements.storage.toString(),
+                    requiresGPU: requirements.requiresGPU,
+                    gpuCount: requirements.gpuCount.toString(),
+                    storageClasses: requirements.storageClasses,
+                    gpuAttributes: requirements.gpuAttributes,
+                    requiresEdge: requirements.requiresEdge,
+                    regions: requirements.regions,
+                    maxLatency: requirements.maxLatency.toString(),
+                  });
+                  
+                  // Call smart contract to create workload
+                  create(manifestHash, requirements);
+                } catch (err) {
+                  console.error("Error creating workload:", err);
+                  toast({
+                    title: "Error",
+                    description: err instanceof Error ? err.message : "Failed to create workload",
+                    variant: "destructive",
+                  });
                 }
               }}
             >
-              Continue
+              {isCreatingWorkload ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Continue"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

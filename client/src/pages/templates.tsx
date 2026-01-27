@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useEffect } from "react";
 const TEMPLATES_API_URL = import.meta.env.VITE_API_URL 
   ? `${import.meta.env.VITE_API_URL}/v1/templates`
   : "http://localhost:7002/v1/templates";
@@ -125,13 +126,20 @@ export function useAllTemplates() {
       }
     },
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
-    refetchInterval: 1000 * 60,
-    refetchIntervalInBackground: true,
+    refetchInterval: false, // Disable automatic refetching - templates don't change frequently
+    refetchOnWindowFocus: false, // Don't refetch when window regains focus
+    refetchOnMount: false, // Don't refetch on component mount if data exists
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 
-  console.log("templatesData:", data, "isLoading:", isLoading, "error:", error);
+  // Only log when data actually changes (not on every render)
+  useEffect(() => {
+    if (data) {
+      console.log("Templates loaded:", data.length, "categories");
+    }
+  }, [data]);
+  
   return { data, isLoading, error };
 }
 

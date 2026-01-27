@@ -3,7 +3,8 @@
 
 import { readContract, getPublicClient } from "@wagmi/core";
 import { wagmiConfig } from "@/lib/wagmi-config";
-import { ProviderRegistryAbi, CONTRACT_ADDRESSES } from "@shared/contracts";
+// NOTE: ProviderRegistry contract is not built yet - using mock data
+// import { ProviderRegistryAbi, CONTRACT_ADDRESSES } from "@shared/contracts";
 import type { Address } from "viem";
 
 export interface ProviderMetadata {
@@ -190,7 +191,6 @@ export function getPinataGatewayUrl(cid: string): string {
   const PUBLIC_GATEWAY = "gateway.pinata.cloud";
   return `https://${PUBLIC_GATEWAY}/ipfs/${cid}`;
 }
-
 // Export types for use in components
 export interface ProviderNode {
   pubKeyHash: string;
@@ -203,156 +203,161 @@ export interface ProviderNode {
 }
 
 /**
- * Get all registered providers from the blockchain
- * Uses contract's getAllProviderKeys() function (no events needed)
- * Follows the same reliable pattern as getMyProviders()
+ * Get all registered providers
+ * 
+ * NOTE: ProviderRegistry contract is not built yet - returning mock/static data
+ * When ProviderRegistry is available, this will read from the blockchain contract
+ * 
+ * For now, returns mock providers for development/testing purposes
  */
 export async function getAllProviders(): Promise<any[]> {
   try {
-    console.log('[API] Fetching all providers from blockchain...');
+    console.log('[API] ProviderRegistry contract not available - returning mock providers');
     
-    const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
-    const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
+    // Mock provider data for development
+    // In production, when ProviderRegistry is available, uncomment the contract code below:
+    // const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
+    // const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
+    // 
+    // const pubKeyHashes = await readContract(wagmiConfig, {
+    //   address: PROVIDER_REGISTRY_ADDRESS,
+    //   abi: ProviderRegistryAbi,
+    //   functionName: "getAllProviderKeys",
+    //   chainId: CHAIN_ID,
+    // }) as `0x${string}`[];
+    // 
+    // const providers = await Promise.all(
+    //   pubKeyHashes.map(async (pubKeyHash, index) => {
+    //     const providerDetails = await readContract(wagmiConfig, {
+    //       address: PROVIDER_REGISTRY_ADDRESS,
+    //       abi: ProviderRegistryAbi,
+    //       functionName: "providers",
+    //       args: [pubKeyHash],
+    //       chainId: CHAIN_ID,
+    //     }) as any;
+    //     
+    //     let metadata = null;
+    //     if (providerDetails[2]) {
+    //       try {
+    //         metadata = await fetchFromIPFS(providerDetails[2] as string);
+    //       } catch (ipfsErr) {
+    //         console.warn(`[API] Failed to fetch IPFS metadata for ${pubKeyHash}:`, ipfsErr);
+    //       }
+    //     }
+    //     
+    //     return {
+    //       id: `provider-${index}-${pubKeyHash}`,
+    //       pubKeyHash,
+    //       providerkey: pubKeyHash,
+    //       ipfsCID: providerDetails[2],
+    //       bondAmount: providerDetails[3]?.toString() || "0",
+    //       registeredAt: Number(providerDetails[4] || 0),
+    //       status: Number(providerDetails[5] || 0),
+    //       owner: providerDetails[0],
+    //       ownerAddress: providerDetails[0],
+    //       ...metadata,
+    //     };
+    //   })
+    // );
+    // 
+    // return providers.filter((p) => p !== null).sort((a, b) => b.registeredAt - a.registeredAt);
     
-    // Call the contract's getAllProviderKeys function to get all pubKeyHashes
-    const pubKeyHashes = await readContract(wagmiConfig, {
-      address: PROVIDER_REGISTRY_ADDRESS,
-      abi: ProviderRegistryAbi,
-      functionName: "getAllProviderKeys",
-      chainId: CHAIN_ID,
-    }) as `0x${string}`[];
+    // Mock providers for development
+    const mockProviders = [
+      {
+        id: 'provider-mock-1',
+        pubKeyHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+        providerkey: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+        name: 'Mock Provider 1',
+        description: 'High-performance compute node for testing',
+        ipfsCID: '',
+        bondAmount: '1000000000000000000000', // 1000 CLD
+        registeredAt: Math.floor(Date.now() / 1000) - 86400, // 1 day ago
+        status: 1, // Active
+        owner: '0x0000000000000000000000000000000000000000',
+        ownerAddress: '0x0000000000000000000000000000000000000000',
+      },
+      {
+        id: 'provider-mock-2',
+        pubKeyHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        providerkey: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        name: 'Mock Provider 2',
+        description: 'GPU-accelerated compute node',
+        ipfsCID: '',
+        bondAmount: '2000000000000000000000', // 2000 CLD
+        registeredAt: Math.floor(Date.now() / 1000) - 172800, // 2 days ago
+        status: 1, // Active
+        owner: '0x0000000000000000000000000000000000000000',
+        ownerAddress: '0x0000000000000000000000000000000000000000',
+      },
+    ];
     
-    console.log(`[API] Found ${pubKeyHashes.length} total providers`);
-    
-    // Fetch full details for each provider (same pattern as getMyProviders)
-    const providers = await Promise.all(
-      pubKeyHashes.map(async (pubKeyHash, index) => {
-        try {
-          // Get provider details from contract using public providers mapping
-          const providerDetails = await readContract(wagmiConfig, {
-            address: PROVIDER_REGISTRY_ADDRESS,
-            abi: ProviderRegistryAbi,
-            functionName: "providers",
-            args: [pubKeyHash],
-            chainId: CHAIN_ID,
-          }) as any;
-          
-          // Skip if provider doesn't exist (owner is zero address)
-          if (!providerDetails[0] || providerDetails[0] === '0x0000000000000000000000000000000000000000') {
-            return null;
-          }
-          
-          // Fetch IPFS metadata
-          let metadata = null;
-          if (providerDetails[2]) {
-            try {
-              metadata = await fetchFromIPFS(providerDetails[2] as string);
-            } catch (ipfsErr) {
-              console.warn(`[API] Failed to fetch IPFS metadata for ${pubKeyHash}:`, ipfsErr);
-            }
-          }
-          
-          // Return complete provider data
-          return {
-            id: `provider-${index}-${pubKeyHash}`,
-            pubKeyHash,
-            providerkey: pubKeyHash,
-            ipfsCID: providerDetails[2],
-            bondAmount: providerDetails[3]?.toString() || "0",
-            registeredAt: Number(providerDetails[4] || 0),
-            status: Number(providerDetails[5] || 0),
-            owner: providerDetails[0],
-            ownerAddress: providerDetails[0],
-            // Spread IPFS metadata (name, description, hardware specs, etc.)
-            ...metadata,
-          };
-        } catch (err) {
-          console.warn(`[API] Failed to fetch details for provider ${pubKeyHash}:`, err);
-          return null;
-        }
-      })
-    );
-    
-    // Filter out null values (failed fetches) and sort by registration time (most recent first)
-    const validProviders = providers
-      .filter((p): p is NonNullable<typeof p> => p !== null)
-      .sort((a, b) => b.registeredAt - a.registeredAt);
-    
-    console.log(`[API] Successfully loaded ${validProviders.length} providers with metadata`);
-    return validProviders;
+    console.log(`[API] Returning ${mockProviders.length} mock providers`);
+    return mockProviders;
   } catch (error) {
-    console.error('[API] Error fetching all providers:', error);
+    console.error('[API] Error fetching providers:', error);
     return [];
   }
 }
 
 /**
- * Get providers registered by the current user from the blockchain
- * Returns full provider details with IPFS metadata
+ * Get providers registered by the current user
+ * 
+ * NOTE: ProviderRegistry contract is not built yet - returning empty array
+ * When ProviderRegistry is available, this will read from the blockchain contract
  */
 export async function getMyProviders(ownerAddress: Address): Promise<any[]> {
   try {
-    console.log('[API] Fetching my providers for:', ownerAddress);
+    console.log('[API] ProviderRegistry contract not available - returning empty providers for:', ownerAddress);
     
-    const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
-    const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
+    // When ProviderRegistry is available, uncomment this:
+    // const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
+    // const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
+    // 
+    // const pubKeyHashes = await readContract(wagmiConfig, {
+    //   address: PROVIDER_REGISTRY_ADDRESS,
+    //   abi: ProviderRegistryAbi,
+    //   functionName: "getMyProviders",
+    //   args: [ownerAddress],
+    //   chainId: CHAIN_ID,
+    // }) as `0x${string}`[];
+    // 
+    // const providers = await Promise.all(
+    //   pubKeyHashes.map(async (pubKeyHash) => {
+    //     const providerDetails = await readContract(wagmiConfig, {
+    //       address: PROVIDER_REGISTRY_ADDRESS,
+    //       abi: ProviderRegistryAbi,
+    //       functionName: "providers",
+    //       args: [pubKeyHash],
+    //       chainId: CHAIN_ID,
+    //     }) as any;
+    //     
+    //     let metadata = null;
+    //     if (providerDetails[2]) {
+    //       metadata = await fetchFromIPFS(providerDetails[2] as string);
+    //     }
+    //     
+    //     return {
+    //       pubKeyHash,
+    //       providerkey: pubKeyHash,
+    //       ipfsCID: providerDetails[2],
+    //       bondAmount: providerDetails[3]?.toString() || "0",
+    //       registeredAt: Number(providerDetails[4] || 0),
+    //       status: Number(providerDetails[5] || 0),
+    //       owner: providerDetails[0],
+    //       ownerAddress: providerDetails[0],
+    //       ...metadata,
+    //     };
+    //   })
+    // );
+    // 
+    // return providers.filter((p) => p !== null);
     
-    // Call the contract's getMyProviders function to get pubKeyHashes
-    const pubKeyHashes = await readContract(wagmiConfig, {
-      address: PROVIDER_REGISTRY_ADDRESS,
-      abi: ProviderRegistryAbi,
-      functionName: "getMyProviders",
-      args: [ownerAddress],
-      chainId: CHAIN_ID,
-    }) as `0x${string}`[];
-    
-    console.log(`[API] Found ${pubKeyHashes.length} provider keys`);
-    
-    // Fetch full details for each provider including IPFS metadata
-    const providers = await Promise.all(
-      pubKeyHashes.map(async (pubKeyHash) => {
-        try {
-          // Get provider details from contract using public providers mapping
-          const providerDetails = await readContract(wagmiConfig, {
-            address: PROVIDER_REGISTRY_ADDRESS,
-            abi: ProviderRegistryAbi,
-            functionName: "providers",
-            args: [pubKeyHash],
-            chainId: CHAIN_ID,
-          }) as any;
-          
-          // Fetch IPFS metadata
-          let metadata = null;
-          console.log('providerDetails from Contract', providerDetails);
-          if (providerDetails[2]) {
-            metadata = await fetchFromIPFS(providerDetails[2] as string);
-          }
-          console.log('providerDetails from IPFS', metadata);
-          return {
-            pubKeyHash,
-            providerkey: pubKeyHash,
-            ipfsCID: providerDetails[2],
-            bondAmount: providerDetails[3]?.toString() || "0",
-            registeredAt: Number(providerDetails[4] || 0),
-            status: Number(providerDetails[5] || 0),
-            owner: providerDetails[0],
-            ownerAddress: providerDetails[0],
-            // Spread IPFS metadata
-            ...metadata,
-          };
-        } catch (err) {
-          console.warn(`[API] Failed to fetch details for provider ${pubKeyHash}:`, err);
-          return null;
-        }
-      })
-    );
-    
-    // Filter out null values (failed fetches)
-    const validProviders = providers.filter((p) => p !== null);
-    console.log(`[API] Successfully loaded ${validProviders.length} providers with metadata`);
-    return validProviders;
+    // Return empty array until ProviderRegistry is available
+    return [];
   } catch (error) {
     console.error('[API] Error fetching my providers:', error);
     return [];
   }
 }
+

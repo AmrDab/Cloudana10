@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { AddressDisplay } from "@/components/ui/address-display";
 import { RefreshCw, Database, Globe } from "lucide-react";
 import { useState } from "react";
-import { CLD_TOKEN_ADDRESS, PROVIDER_REGISTRY_ADDRESS, JOB_ESCROW_ADDRESS } from "@/lib/contracts";
+import { CLD_TOKEN_ADDRESS, WORKLOAD_REGISTRY_ADDRESS } from "@/lib/contracts";
 
 export default function DebugPanel() {
   const [lastSync, setLastSync] = useState(new Date().toLocaleTimeString());
@@ -51,11 +51,7 @@ export default function DebugPanel() {
             </div>
             <div className="space-y-2">
               <span className="text-xs text-muted-foreground uppercase tracking-wider block">Provider Registry</span>
-              <AddressDisplay address={PROVIDER_REGISTRY_ADDRESS} truncate={false} />
-            </div>
-            <div className="space-y-2">
-              <span className="text-xs text-muted-foreground uppercase tracking-wider block">Job Escrow</span>
-              <AddressDisplay address={JOB_ESCROW_ADDRESS} truncate={false} />
+              <AddressDisplay address={WORKLOAD_REGISTRY_ADDRESS} truncate={false} />
             </div>
           </CardContent>
         </Card>

@@ -19,7 +19,10 @@ import {
   useCLDTokenBalance,
   useCLDTokenAllowance,
   useApproveCLDToken,
-  hexToBytes32
+  useCreateWorkload,
+  WORKLOAD_REGISTRY_ADDRESS,
+  hexToBytes32,
+  type ResourceRequirements
 } from "@/lib/contracts";
 import { getAllProviders } from "@/lib/api";
 import { useUserJobs } from "@/hooks/useUserJobs";
@@ -76,31 +79,33 @@ export default function UserDashboard() {
   const balance = tokenBalance && typeof tokenBalance === 'bigint' ? parseFloat(formatEther(tokenBalance)) : 0;
 
   // Token approval
-  const { approve, isPending: isApproving, isSuccess: isApproved, hash: approveHash } = useApproveCLDToken();
+  const { approve, isPending: isApproving, isSuccess: isApproved, hash: approveHash, reset: resetApprove } = useApproveCLDToken();
 
-  // Create job
+  // Create workload hook
+  const { create: createWorkload, isPending: isCreating, isSuccess: isWorkloadCreated, hash: createHash, error: createError, reset: resetCreate } = useCreateWorkload();
+
   // Check if approval is needed - only when connected
-  const { data: allowance } = useCLDTokenAllowance(isConnected ? address : undefined, isConnected ? JOB_ESCROW_ADDRESS : undefined);
+  const { data: allowance } = useCLDTokenAllowance(isConnected ? address : undefined, isConnected ? WORKLOAD_REGISTRY_ADDRESS : undefined);
   const needsApproval = isConnected && budget && allowance && typeof allowance === 'bigint' ? parseFloat(formatEther(allowance)) < parseFloat(budget) : true;
 
   // Show success/error messages
   useEffect(() => {
-    if (isJobCreated && createHash) {
+    if (isWorkloadCreated && createHash) {
       toast({
-        title: "Job Created Successfully",
-        description: "Your job has been created and funded.",
+        title: "Workload Created Successfully",
+        description: "Your workload has been created and registered.",
       });
       setSelectedProvider("");
       setBudget("");
       refetchJobs();
       resetCreate();
     }
-  }, [isJobCreated, createHash, toast, refetchJobs, resetCreate]);
+  }, [isWorkloadCreated, createHash, toast, refetchJobs, resetCreate]);
 
   useEffect(() => {
     if (createError) {
       toast({
-        title: "Failed to Create Job",
+        title: "Failed to Create Workload",
         description: createError.message || "Transaction failed",
         variant: "destructive",
       });
@@ -108,28 +113,43 @@ export default function UserDashboard() {
     }
   }, [createError, toast, resetCreate]);
 
-  useEffect(() => {
-    if (isWithdrawn && withdrawHash) {
-      toast({
-        title: "Withdrawal Successful!",
-        description: "Your refund has been transferred to your wallet.",
-      });
-      resetWithdraw();
-    }
-  }, [isWithdrawn, withdrawHash, toast, resetWithdraw]);
-
-  useEffect(() => {
-    if (withdrawError) {
-      toast({
-        title: "Withdrawal Failed",
-        description: withdrawError.message || "Failed to withdraw refund",
-        variant: "destructive",
-      });
-      resetWithdraw();
-    }
-  }, [withdrawError, toast, resetWithdraw]);
-
   // Dashboard is always visible, but interactive features require wallet connection
+
+  // Helper function to generate manifestHash from deployment config
+  const generateManifestHash = (providerPubKeyHash: string, budget: string): string => {
+    // Generate a deterministic hash from provider and budget
+    // In production, this should hash the actual deployment manifest
+    const data = `${providerPubKeyHash}-${budget}-${Date.now()}`;
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+    return Array.from(new Uint8Array(dataBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
+
+  // Helper function to create ResourceRequirements from budget
+  const createResourceRequirements = (budget: string): ResourceRequirements => {
+    // Convert budget to resource requirements
+    // These are default values - in production, these should come from the deployment manifest
+    const budgetNum = parseFloat(budget) || 0;
+    // Estimate resources based on budget (simplified - in production use actual manifest)
+    const cpuUnits = BigInt(Math.floor(budgetNum * 100)); // Example: 1 CLD = 100 CPU units
+    const memoryBytes = BigInt(Math.floor(budgetNum * 1024 * 1024 * 1024)); // Example: 1 CLD = 1GB
+    const storageBytes = BigInt(Math.floor(budgetNum * 1024 * 1024 * 1024 * 2)); // Example: 1 CLD = 2GB storage
+
+    return {
+      cpu: cpuUnits,
+      memory: memoryBytes,
+      storage: storageBytes,
+      storageClasses: ["default"],
+      requiresGPU: false,
+      gpuCount: BigInt(0),
+      gpuAttributes: [],
+      requiresEdge: false,
+      regions: [],
+      maxLatency: BigInt(0),
+    };
+  };
 
   const handleCreateJob = async () => {
     if (!selectedProvider || !budget) {
@@ -152,26 +172,16 @@ export default function UserDashboard() {
 
     // Check if approval is needed
     if (needsApproval) {
-      approve(JOB_ESCROW_ADDRESS, budget);
+      approve(WORKLOAD_REGISTRY_ADDRESS, budget);
       return;
     }
 
-    // Create job
-    const providerPubKeyHash = selectedProvider; // Assuming selectedProvider is the pubKeyHash
-    create(providerPubKeyHash, budget);
-  };
-
-  const handleWithdrawRefund = () => {
-    if (refundAmount === 0) {
-      toast({
-        title: "No Refund Available",
-        description: "You don't have any refund credits to withdraw.",
-        variant: "destructive",
-      });
-      return;
-    }
-    resetWithdraw();
-    withdrawRefund();
+    // Create workload with manifestHash and ResourceRequirements
+    const providerPubKeyHash = selectedProvider;
+    const manifestHash = generateManifestHash(providerPubKeyHash, budget);
+    const requirements = createResourceRequirements(budget);
+    
+    createWorkload(manifestHash, requirements);
   };
 
   return (
@@ -187,18 +197,14 @@ export default function UserDashboard() {
             providers={providers}
             providersLoading={providersLoading}
             balance={balance}
-            refundAmount={refundAmount}
             jobs={jobs}
             jobsLoading={jobsLoading}
             handleCreateJob={handleCreateJob}
-            handleWithdrawRefund={handleWithdrawRefund}
             isCreating={isCreating}
             isApproving={isApproving}
-            isWithdrawing={isWithdrawing}
             needsApproval={needsApproval}
             approveHash={approveHash}
             createHash={createHash}
-            withdrawHash={withdrawHash}
             setLocation={setLocation}
             address={address}
             setActiveView={setActiveView}
@@ -260,18 +266,14 @@ function HomeViewContent({
   providers,
   providersLoading,
   balance,
-  refundAmount,
   jobs,
   jobsLoading,
   handleCreateJob,
-  handleWithdrawRefund,
   isCreating,
   isApproving,
-  isWithdrawing,
   needsApproval,
   approveHash,
   createHash,
-  withdrawHash,
   setLocation,
   address,
   setActiveView,
@@ -284,24 +286,21 @@ function HomeViewContent({
   providers: any[];
   providersLoading: boolean;
   balance: number;
-  refundAmount: number;
   jobs: any[];
   jobsLoading: boolean;
   handleCreateJob: () => void;
-  handleWithdrawRefund: () => void;
   isCreating: boolean;
   isApproving: boolean;
-  isWithdrawing: boolean;
   needsApproval: boolean;
   approveHash?: `0x${string}`;
   createHash?: `0x${string}`;
-  withdrawHash?: `0x${string}`;
   setLocation: (path: string) => void;
   address?: `0x${string}`;
   setActiveView?: (view: ViewType) => void;
   isConnected: boolean;
 }) {
-  const activeDeploymentsCount = jobs.filter(j => j.status === 0).length;
+  // WorkloadStatus: 0 = Pending, 1 = Active, 2 = Terminated
+  const activeDeploymentsCount = jobs.filter(j => j.status === 1).length; // Active workloads
   const totalSpentInDeployments = jobs.reduce((sum, job) => sum + parseFloat(formatEther(job.spent)), 0);
   
   // Calculate USD equivalent (mock - in production, fetch from price oracle)
@@ -425,7 +424,8 @@ function DeploymentsView({
   setShowTemplateSelection: (show: boolean) => void;
 }) {
 
-  const activeDeployments = jobs.filter(j => j.status === 0);
+  // WorkloadStatus: 0 = Pending, 1 = Active, 2 = Terminated
+  const activeDeployments = jobs.filter(j => j.status === 1); // Active workloads
   const allDeployments = jobs;
 
   return (
@@ -557,10 +557,17 @@ function DeploymentsView({
                   </TableCell>
                 </TableRow>
               ) : allDeployments.map((deployment) => {
-                const deposited = parseFloat(formatEther(deployment.deposited));
-                const spent = parseFloat(formatEther(deployment.spent));
-                const remaining = parseFloat(formatEther(deployment.remaining));
-                const isActive = deployment.status === 0;
+                // WorkloadStatus: 0 = Pending, 1 = Active, 2 = Terminated
+                const statusLabels = ['PENDING', 'ACTIVE', 'TERMINATED'];
+                const statusLabel = statusLabels[deployment.status] || 'UNKNOWN';
+                const isActive = deployment.status === 1; // Active status
+                const isPending = deployment.status === 0;
+                
+                // For WorkloadRegistry, we don't have deposited/spent/remaining
+                // Show N/A or use manifest hash for identification
+                const manifestHashDisplay = deployment.manifestHash 
+                  ? `${deployment.manifestHash.slice(0, 10)}...${deployment.manifestHash.slice(-8)}`
+                  : 'N/A';
                 
                 return (
                   <TableRow key={deployment.jobId.toString()} className="hover:bg-white/5 border-white/10 transition-colors">
@@ -570,17 +577,22 @@ function DeploymentsView({
                       </span>
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-xs">
-                      {deployment.pubKeyHash.slice(0, 10)}...{deployment.pubKeyHash.slice(-8)}
+                      {deployment.pubKeyHash ? (
+                        `${deployment.pubKeyHash.slice(0, 10)}...${deployment.pubKeyHash.slice(-8)}`
+                      ) : (
+                        'No provider'
+                      )}
                     </TableCell>
-                    <TableCell>{deposited.toFixed(2)} CLD</TableCell>
-                    <TableCell>{spent.toFixed(2)} CLD</TableCell>
-                    <TableCell>{remaining.toFixed(2)} CLD</TableCell>
+                    <TableCell className="text-muted-foreground">N/A</TableCell>
+                    <TableCell className="text-muted-foreground">N/A</TableCell>
+                    <TableCell className="text-muted-foreground">N/A</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={
                         isActive ? 'border-green-500/50 text-green-400 bg-green-500/10' :
+                        isPending ? 'border-yellow-500/50 text-yellow-400 bg-yellow-500/10' :
                         'border-white/20 text-muted-foreground bg-white/5'
                       }>
-                        {isActive ? 'ACTIVE' : 'CLOSED'}
+                        {statusLabel}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">

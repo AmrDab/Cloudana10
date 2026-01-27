@@ -27,7 +27,7 @@ import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { useWallet } from "@/context/wallet-context";
 import { getAddressExplorerUrl } from "@/lib/transaction-utils";
-import { useCLDTokenBalance, useUserRefundCredit } from "@/lib/contracts";
+import { useCLDTokenBalance} from "@/lib/contracts";
 import { formatEther } from "viem";
 import { useUserJobs } from "@/hooks/useUserJobs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,12 +51,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { isConnected, userAddress } = useWallet();
   const [copied, setCopied] = useState(false);
   
-  // Get CLD token balance and refund credit for wallet tooltip
+  // Get CLD token balance for wallet tooltip
   const { data: tokenBalance } = useCLDTokenBalance(isConnected ? (userAddress as `0x${string}`) : undefined);
-  const { data: refundCredit } = useUserRefundCredit(isConnected ? (userAddress as `0x${string}`) : undefined);
   
   const cldBalance = tokenBalance && typeof tokenBalance === 'bigint' ? parseFloat(formatEther(tokenBalance)) : 0;
-  const refundAmount = refundCredit && typeof refundCredit === 'bigint' ? parseFloat(formatEther(refundCredit)) : 0;
   
   const displayAddress = userAddress 
     ? `${userAddress.slice(0, 6)}...${userAddress.slice(-10)}`
@@ -369,10 +367,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                         <div>
                           <div className="text-xs text-muted-foreground mb-1">CLD Balance</div>
                           <div className="text-lg font-bold">{cldBalance.toFixed(2)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-muted-foreground mb-1">Refund Credits</div>
-                          <div className="text-lg font-bold text-green-400">{refundAmount.toFixed(2)}</div>
                         </div>
                       </div>
                       

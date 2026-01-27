@@ -11,6 +11,11 @@ export const NETWORK = baseSepolia;
 export const CLD_TOKEN_ADDRESS = CONTRACT_ADDRESSES.contracts.CLDToken as Address;
 export const WORKLOAD_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.WorkloadRegistry as Address;
 
+// NOTE: ProviderRegistry contract is not built yet
+// When available, uncomment:
+// export const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
+export const PROVIDER_REGISTRY_ADDRESS = "0x0000000000000000000000000000000000000000" as Address; // Placeholder - contract not built
+
 // Helper to convert string to bytes32
 export function stringToBytes32(str: string): `0x${string}` {
   const hash = str.startsWith("0x") ? str.slice(2) : str;
@@ -124,8 +129,8 @@ export function useApproveCLDToken() {
 
 export interface ResourceRequirements {
   cpu: bigint;
-  memoryBytes: bigint;  // Changed from 'memory' (reserved keyword in Solidity)
-  storageBytes: bigint; // Changed from 'storage' (reserved keyword in Solidity)
+  memory: bigint;
+  storage: bigint;
   storageClasses: string[];
   requiresGPU: boolean;
   gpuCount: bigint;
@@ -198,11 +203,42 @@ export function useCreateWorkload() {
     // Convert manifestHash string to bytes32
     const manifestHashBytes32 = hexToBytes32(manifestHash);
     
+    // Map TypeScript interface to ABI structure (ABI expects memoryBytes and storageBytes)
+    const abiRequirements = {
+      cpu: requirements.cpu,
+      memoryBytes: requirements.memory, // Map memory to memoryBytes
+      storageBytes: requirements.storage, // Map storage to storageBytes
+      storageClasses: requirements.storageClasses,
+      requiresGPU: requirements.requiresGPU,
+      gpuCount: requirements.gpuCount,
+      gpuAttributes: requirements.gpuAttributes,
+      requiresEdge: requirements.requiresEdge,
+      regions: requirements.regions,
+      maxLatency: requirements.maxLatency,
+    };
+    
+    // Validate all required fields are present and valid
+    if (
+      abiRequirements.cpu === undefined ||
+      abiRequirements.memoryBytes === undefined ||
+      abiRequirements.storageBytes === undefined ||
+      abiRequirements.storageClasses === undefined ||
+      abiRequirements.requiresGPU === undefined ||
+      abiRequirements.gpuCount === undefined ||
+      abiRequirements.gpuAttributes === undefined ||
+      abiRequirements.requiresEdge === undefined ||
+      abiRequirements.regions === undefined ||
+      abiRequirements.maxLatency === undefined
+    ) {
+      console.error('[useCreateWorkload] Invalid requirements:', abiRequirements);
+      throw new Error('Invalid resource requirements: missing required fields');
+    }
+    
     writeContract({
       address: WORKLOAD_REGISTRY_ADDRESS,
       abi: WorkloadRegistryAbi,
       functionName: "createWorkload",
-      args: [manifestHashBytes32, requirements],
+      args: [manifestHashBytes32, abiRequirements],
     });
   };
 
@@ -243,11 +279,26 @@ export function useUpdateWorkload() {
   const update = (workloadId: bigint, manifestHash: string, requirements: ResourceRequirements) => {
     reset();
     const manifestHashBytes32 = hexToBytes32(manifestHash);
+    
+    // Map TypeScript interface to ABI structure (ABI expects memoryBytes and storageBytes)
+    const abiRequirements = {
+      cpu: requirements.cpu,
+      memoryBytes: requirements.memory, // Map memory to memoryBytes
+      storageBytes: requirements.storage, // Map storage to storageBytes
+      storageClasses: requirements.storageClasses,
+      requiresGPU: requirements.requiresGPU,
+      gpuCount: requirements.gpuCount,
+      gpuAttributes: requirements.gpuAttributes,
+      requiresEdge: requirements.requiresEdge,
+      regions: requirements.regions,
+      maxLatency: requirements.maxLatency,
+    };
+    
     writeContract({
       address: WORKLOAD_REGISTRY_ADDRESS,
       abi: WorkloadRegistryAbi,
       functionName: "updateWorkload",
-      args: [workloadId, manifestHashBytes32, requirements],
+      args: [workloadId, manifestHashBytes32, abiRequirements],
     });
   };
 
@@ -322,5 +373,43 @@ export function useTerminateWorkload() {
     isSuccess,
     error: writeError || confirmError,
     reset,
+  };
+}
+
+// ============== Provider Registry Hooks (Stubs - Contract Not Built Yet) ==============
+// NOTE: ProviderRegistry contract is not built yet - these are placeholder hooks
+// When ProviderRegistry is available, implement these hooks properly
+
+export function useRegisterProvider() {
+  return {
+    register: () => {
+      console.warn('[useRegisterProvider] ProviderRegistry contract not available');
+    },
+    hash: undefined,
+    isPending: false,
+    isSuccess: false,
+    error: new Error('ProviderRegistry contract is not built yet'),
+    reset: () => {},
+  };
+}
+
+export function useProviderRegistryBondInfo() {
+  return {
+    data: {
+      minBond: BigInt(0),
+      maxBond: BigInt(0),
+    },
+  };
+}
+
+export function useMyProviders(user?: Address) {
+  return {
+    data: [],
+  };
+}
+
+export function useProviderInfo(pubKeyHash?: string) {
+  return {
+    data: null,
   };
 }
