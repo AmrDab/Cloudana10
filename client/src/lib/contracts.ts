@@ -1,7 +1,7 @@
 // Contract interaction utilities and hooks for DePIN system
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseEther, formatEther, type Address } from "viem";
-import { CONTRACT_ADDRESSES, CLDTokenAbi, ProviderRegistryAbi, JobEscrowAbi } from "@shared/contracts";
+import { CONTRACT_ADDRESSES, CLDTokenAbi, WorkloadRegistryAbi } from "@shared/contracts";
 import { baseSepolia } from "@reown/appkit/networks";
 
 export const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
@@ -9,8 +9,7 @@ export const NETWORK = baseSepolia;
 
 // Contract addresses
 export const CLD_TOKEN_ADDRESS = CONTRACT_ADDRESSES.contracts.CLDToken as Address;
-export const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
-export const JOB_ESCROW_ADDRESS = CONTRACT_ADDRESSES.contracts.JobEscrow as Address;
+export const WORKLOAD_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.WorkloadRegistry as Address;
 
 // Helper to convert string to bytes32
 export function stringToBytes32(str: string): `0x${string}` {
@@ -120,52 +119,67 @@ export function useApproveCLDToken() {
   };
 }
 
-// ============== Provider Registry Hooks ==============
 
-export function useProviderRegistryBondInfo() {
+// ============== Workload Registry Hooks ==============
+
+export interface ResourceRequirements {
+  cpu: bigint;
+  memoryBytes: bigint;  // Changed from 'memory' (reserved keyword in Solidity)
+  storageBytes: bigint; // Changed from 'storage' (reserved keyword in Solidity)
+  storageClasses: string[];
+  requiresGPU: boolean;
+  gpuCount: bigint;
+  gpuAttributes: string[];
+  requiresEdge: boolean;
+  regions: string[];
+  maxLatency: bigint;
+}
+
+export function useWorkloadInfo(workloadId?: bigint) {
   return useReadContract({
-    address: PROVIDER_REGISTRY_ADDRESS,
-    abi: ProviderRegistryAbi,
-    functionName: "getBondInfo",
+    address: WORKLOAD_REGISTRY_ADDRESS,
+    abi: WorkloadRegistryAbi,
+    functionName: "workloads",
+    args: workloadId !== undefined ? [workloadId] : undefined,
     chainId: CHAIN_ID,
     query: {
+      enabled: workloadId !== undefined && WORKLOAD_REGISTRY_ADDRESS !== "0x0000000000000000000000000000000000000000",
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
+    },
+  });
+}
+
+export function useUserWorkloads(user?: Address) {
+  return useReadContract({
+    address: WORKLOAD_REGISTRY_ADDRESS,
+    abi: WorkloadRegistryAbi,
+    functionName: "getUserWorkloads",
+    args: user ? [user] : undefined,
+    chainId: CHAIN_ID,
+    query: {
+      enabled: !!user && WORKLOAD_REGISTRY_ADDRESS !== "0x0000000000000000000000000000000000000000",
+      refetchInterval: 5000, // Refetch every 5 seconds
+      staleTime: 3000, // Data considered fresh for 3 seconds
+    },
+  });
+}
+
+export function useWorkloadCount() {
+  return useReadContract({
+    address: WORKLOAD_REGISTRY_ADDRESS,
+    abi: WorkloadRegistryAbi,
+    functionName: "getWorkloadCount",
+    chainId: CHAIN_ID,
+    query: {
+      enabled: WORKLOAD_REGISTRY_ADDRESS !== "0x0000000000000000000000000000000000000000",
       refetchInterval: 10000, // Refetch every 10 seconds
       staleTime: 5000, // Data considered fresh for 5 seconds
     },
   });
 }
 
-export function useMyProviders(owner?: Address) {
-  return useReadContract({
-    address: PROVIDER_REGISTRY_ADDRESS,
-    abi: ProviderRegistryAbi,
-    functionName: "getMyProviders",
-    args: owner ? [owner] : undefined,
-    chainId: CHAIN_ID,
-    query: {
-      enabled: !!owner,
-      refetchInterval: 5000, // Refetch every 5 seconds
-      staleTime: 3000, // Data considered fresh for 3 seconds
-    },
-  });
-}
-
-export function useProviderInfo(pubKeyHash?: string) {
-  return useReadContract({
-    address: PROVIDER_REGISTRY_ADDRESS,
-    abi: ProviderRegistryAbi,
-    functionName: "getProvider",
-    args: pubKeyHash ? [hexToBytes32(pubKeyHash)] : undefined,
-    chainId: CHAIN_ID,
-    query: {
-      enabled: !!pubKeyHash,
-      refetchInterval: 5000, // Refetch every 5 seconds
-      staleTime: 3000, // Data considered fresh for 3 seconds
-    },
-  });
-}
-
-export function useRegisterProvider() {
+export function useCreateWorkload() {
   const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
     hash,
@@ -176,27 +190,28 @@ export function useRegisterProvider() {
     },
   });
 
-  const register = (pubKeyHash: string, ipfsCID: string) => {
+  const create = (manifestHash: string, requirements: ResourceRequirements) => {
     // Reset any previous errors before new transaction
     reset();
-    console.log('[useRegisterProvider] Initiating registration...');
+    console.log('[useCreateWorkload] Initiating workload creation...');
+    
+    // Convert manifestHash string to bytes32
+    const manifestHashBytes32 = hexToBytes32(manifestHash);
+    
     writeContract({
-      address: PROVIDER_REGISTRY_ADDRESS,
-      abi: ProviderRegistryAbi,
-      functionName: "registerProvider",
-      args: [hexToBytes32(pubKeyHash), ipfsCID],
+      address: WORKLOAD_REGISTRY_ADDRESS,
+      abi: WorkloadRegistryAbi,
+      functionName: "createWorkload",
+      args: [manifestHashBytes32, requirements],
     });
   };
 
   // Comprehensive loading state: active from submission through confirmation
-  // - isWritePending: true while submitting transaction to wallet/network
-  // - !!hash && !isSuccess && !confirmError: true when transaction submitted but not yet confirmed
-  // - isConfirming: true while actively waiting for block confirmation
   const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
 
   // Debug logging
   if (hash || isWritePending) {
-    console.log('[useRegisterProvider] State:', {
+    console.log('[useCreateWorkload] State:', {
       hash: hash ? hash.slice(0, 10) + '...' : 'none',
       isWritePending,
       isConfirming,
@@ -205,117 +220,6 @@ export function useRegisterProvider() {
       isPending,
     });
   }
-
-  return {
-    register,
-    hash,
-    isPending,
-    isSuccess,
-    error: writeError || confirmError,
-    reset,
-  };
-}
-
-export function useUpdateProviderStatus() {
-  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
-    hash,
-    query: {
-      enabled: !!hash,
-    },
-  });
-
-  const updateStatus = (pubKeyHash: string, status: 0 | 1 | 2) => {
-    reset();
-    writeContract({
-      address: PROVIDER_REGISTRY_ADDRESS,
-      abi: ProviderRegistryAbi,
-      functionName: "updateProviderStatus",
-      args: [hexToBytes32(pubKeyHash), status],
-    });
-  };
-
-  // Comprehensive loading state: active from submission through confirmation
-  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
-
-  return {
-    updateStatus,
-    hash,
-    isPending,
-    isSuccess,
-    error: writeError || confirmError,
-    reset,
-  };
-}
-
-// ============== Job Escrow Hooks ==============
-
-export function useJobInfo(jobId?: bigint) {
-  return useReadContract({
-    address: JOB_ESCROW_ADDRESS,
-    abi: JobEscrowAbi,
-    functionName: "jobs",
-    args: jobId !== undefined ? [jobId] : undefined,
-    chainId: CHAIN_ID,
-    query: {
-      enabled: jobId !== undefined,
-      refetchInterval: 5000, // Refetch every 5 seconds
-      staleTime: 3000, // Data considered fresh for 3 seconds
-    },
-  });
-}
-
-export function useProviderCredit(provider?: Address) {
-  return useReadContract({
-    address: JOB_ESCROW_ADDRESS,
-    abi: JobEscrowAbi,
-    functionName: "providerCredit",
-    args: provider ? [provider] : undefined,
-    chainId: CHAIN_ID,
-    query: {
-      enabled: !!provider,
-      refetchInterval: 5000, // Refetch every 5 seconds
-      staleTime: 3000, // Data considered fresh for 3 seconds
-    },
-  });
-}
-
-export function useUserRefundCredit(user?: Address) {
-  return useReadContract({
-    address: JOB_ESCROW_ADDRESS,
-    abi: JobEscrowAbi,
-    functionName: "userRefundCredit",
-    args: user ? [user] : undefined,
-    chainId: CHAIN_ID,
-    query: {
-      enabled: !!user,
-      refetchInterval: 5000, // Refetch every 5 seconds
-      staleTime: 3000, // Data considered fresh for 3 seconds
-    },
-  });
-}
-
-export function useCreateJob() {
-  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
-    hash,
-    query: {
-      enabled: !!hash,
-    },
-  });
-
-  const create = (pubKeyHash: string, budgetAmount: string) => {
-    reset();
-    writeContract({
-      address: JOB_ESCROW_ADDRESS,
-      abi: JobEscrowAbi,
-      functionName: "createJob",
-      args: [hexToBytes32(pubKeyHash), parseEther(budgetAmount)],
-    });
-  };
-
-  // Comprehensive loading state: active from submission through confirmation
-  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
 
   return {
     create,
@@ -327,7 +231,7 @@ export function useCreateJob() {
   };
 }
 
-export function useDepositToJob() {
+export function useUpdateWorkload() {
   const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
     hash,
@@ -336,21 +240,21 @@ export function useDepositToJob() {
     },
   });
 
-  const deposit = (jobId: bigint, amount: string) => {
+  const update = (workloadId: bigint, manifestHash: string, requirements: ResourceRequirements) => {
     reset();
+    const manifestHashBytes32 = hexToBytes32(manifestHash);
     writeContract({
-      address: JOB_ESCROW_ADDRESS,
-      abi: JobEscrowAbi,
-      functionName: "deposit",
-      args: [jobId, parseEther(amount)],
+      address: WORKLOAD_REGISTRY_ADDRESS,
+      abi: WorkloadRegistryAbi,
+      functionName: "updateWorkload",
+      args: [workloadId, manifestHashBytes32, requirements],
     });
   };
 
-  // Comprehensive loading state: active from submission through confirmation
   const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
 
   return {
-    deposit,
+    update,
     hash,
     isPending,
     isSuccess,
@@ -359,7 +263,7 @@ export function useDepositToJob() {
   };
 }
 
-export function useCloseJob() {
+export function useScaleWorkload() {
   const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
     hash,
@@ -368,21 +272,20 @@ export function useCloseJob() {
     },
   });
 
-  const close = (jobId: bigint) => {
+  const scale = (workloadId: bigint, newReplicas: bigint) => {
     reset();
     writeContract({
-      address: JOB_ESCROW_ADDRESS,
-      abi: JobEscrowAbi,
-      functionName: "closeJob",
-      args: [jobId],
+      address: WORKLOAD_REGISTRY_ADDRESS,
+      abi: WorkloadRegistryAbi,
+      functionName: "scaleWorkload",
+      args: [workloadId, newReplicas],
     });
   };
 
-  // Comprehensive loading state: active from submission through confirmation
   const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
 
   return {
-    close,
+    scale,
     hash,
     isPending,
     isSuccess,
@@ -391,7 +294,7 @@ export function useCloseJob() {
   };
 }
 
-export function useWithdrawProvider() {
+export function useTerminateWorkload() {
   const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
     hash,
@@ -400,53 +303,20 @@ export function useWithdrawProvider() {
     },
   });
 
-  const withdraw = () => {
+  const terminate = (workloadId: bigint) => {
     reset();
     writeContract({
-      address: JOB_ESCROW_ADDRESS,
-      abi: JobEscrowAbi,
-      functionName: "withdrawProvider",
-      args: [],
+      address: WORKLOAD_REGISTRY_ADDRESS,
+      abi: WorkloadRegistryAbi,
+      functionName: "terminateWorkload",
+      args: [workloadId],
     });
   };
 
-  // Comprehensive loading state: active from submission through confirmation
   const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
 
   return {
-    withdraw,
-    hash,
-    isPending,
-    isSuccess,
-    error: writeError || confirmError,
-    reset,
-  };
-}
-
-export function useWithdrawUserRefund() {
-  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({ 
-    hash,
-    query: {
-      enabled: !!hash,
-    },
-  });
-
-  const withdraw = () => {
-    reset();
-    writeContract({
-      address: JOB_ESCROW_ADDRESS,
-      abi: JobEscrowAbi,
-      functionName: "withdrawUserRefund",
-      args: [],
-    });
-  };
-
-  // Comprehensive loading state: active from submission through confirmation
-  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
-
-  return {
-    withdraw,
+    terminate,
     hash,
     isPending,
     isSuccess,

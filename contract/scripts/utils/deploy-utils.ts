@@ -3,13 +3,12 @@ import * as fs from "fs";
 import * as path from "path";
 
 // Helper function to wait for a specified number of milliseconds
-function delay(ms: number) {
+export function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-
 // Helper function to deploy with retry logic
-async function deployWithRetry(
+export async function deployWithRetry(
   contractFactory: ethers.ContractFactory,
   args: any[],
   label: string,
@@ -133,7 +132,7 @@ async function deployWithRetry(
 }
 
 // Helper function to send transaction with retry logic
-async function sendTransactionWithRetry(
+export async function sendTransactionWithRetry(
   contract: ethers.Contract,
   methodName: string,
   args: any[],
@@ -196,16 +195,8 @@ async function sendTransactionWithRetry(
   throw new Error(`Failed to send transaction after ${maxRetries} attempts`);
 }
 
-async function main() {
-  const [deployer] = await ethers.getSigners();
-  
-  const TEAM_WALLET = process.env.TEAM_WALLET || deployer.address;
-  const TREASURY_WALLET = process.env.TREASURY_WALLET || deployer.address;
-
-  console.log("Deploying contracts with account:", deployer.address);
-  console.log("Account balance:", (await ethers.provider.getBalance(deployer.address)).toString());
-  
-  // Check for pending transactions and wait for them to clear
+// Helper function to check for pending transactions
+export async function waitForPendingTransactions(deployer: ethers.Signer) {
   console.log("\nChecking for pending transactions...");
   for (let i = 0; i < 30; i++) {
     const pendingNonce = await ethers.provider.getTransactionCount(deployer.address, "pending");
@@ -213,7 +204,7 @@ async function main() {
     
     if (pendingNonce === confirmedNonce) {
       console.log(`No pending transactions. Ready to deploy (nonce: ${confirmedNonce}).`);
-      break;
+      return;
     }
     
     console.log(`Waiting for ${pendingNonce - confirmedNonce} pending transaction(s) to clear... (${i + 1}/30)`);
@@ -223,159 +214,62 @@ async function main() {
       throw new Error(`Timeout: Pending transactions did not clear after 90 seconds. Please try again later.`);
     }
   }
-  
-  // Wait a bit before starting deployment to ensure network is ready
-  await delay(1000);
-
-  // Deploy CLDToken
-  // const CLDToken = await ethers.getContractFactory("CLDToken");
-  // const cldToken = await deployWithRetry(CLDToken, [TREASURY_WALLET, TEAM_WALLET], "CLDToken", deployer);
-  const cldTokenAddress = "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2";
-  //const cldTokenAddress = await cldToken.getAddress();
-  // console.log("CLDToken deployed to:", cldTokenAddress);
-  // // Add a small delay between deployments
-  // await delay(1000);
-
-  // Deploy providerRegistry
-  const providerRegistryContract = await ethers.getContractFactory("ProviderRegistry");
-  const providerRegistry = await deployWithRetry(
-    providerRegistryContract,
-    [cldTokenAddress, TEAM_WALLET, TREASURY_WALLET],
-    "ProviderRegistry",
-    deployer
-  );
-  const providerRegistryAddress = await providerRegistry.getAddress();
-  console.log("Team Wallet:", TEAM_WALLET);
-  console.log("Treasury Wallet:", TREASURY_WALLET);
-
-  // Add a small delay between deployments
-  await delay(1000);
-
-  // Deploy JobEscrow
-  // const JobEscrow = await ethers.getContractFactory("JobEscrow");
-  // const jobEscrow = await deployWithRetry(
-  //   JobEscrow,
-  //   [cldTokenAddress, providerRegistryAddress],
-  //   "JobEscrow",
-  //   deployer
-  // );
-  // const jobEscrowAddress = await jobEscrow.getAddress();
-
-  // // Grant roles
-  // console.log("\nGranting roles...");
-  // const MINTER_ROLE = await cldToken.MINTER_ROLE();
-  // await sendTransactionWithRetry(cldToken, "grantRole", [MINTER_ROLE, deployer.address], deployer);
-  // console.log("Granted MINTER_ROLE to deployer");
-
-  // const VALIDATOR_ADDRESS = process.env.VALIDATOR_ADDRESS || deployer.address;
-  // const VALIDATOR_ROLE = await jobEscrow.VALIDATOR_ROLE();
-  // await sendTransactionWithRetry(jobEscrow, "grantRole", [VALIDATOR_ROLE, VALIDATOR_ADDRESS], deployer);
-  // console.log(`Granted VALIDATOR_ROLE to ${VALIDATOR_ADDRESS}`);
-
-  // // Get network info
-  // const network = await ethers.provider.getNetwork();
-  // const chainId = Number(network.chainId);
-  // const networkName = network.name === "unknown" ? "baseSepolia" : network.name;
-
-  // // Prepare addresses object
-  // const addresses = {
-  //   chainId,
-  //   network: networkName,
-  //   contracts: {
-  //     CLDToken: cldTokenAddress,
-  //     ProviderRegistry: providerRegistryAddress,
-  //     JobEscrow: jobEscrowAddress,
-  //   },
-  //   roles: {
-  //     minter: deployer.address,
-  //     validator: VALIDATOR_ADDRESS,
-  //   },
-  // };
-
-  // // Write addresses to shared folder
-  // const sharedDir = path.join(__dirname, "../../shared");
-  // if (!fs.existsSync(sharedDir)) {
-  //   fs.mkdirSync(sharedDir, { recursive: true });
-  // }
-
-  // const addressesFile = path.join(sharedDir, `addresses.${networkName}.json`);
-  // fs.writeFileSync(addressesFile, JSON.stringify(addresses, null, 2));
-  // console.log(`\nAddresses written to ${addressesFile}`);
-
-  // // Export ABIs
-  // const abiDir = path.join(sharedDir, "abi");
-  // if (!fs.existsSync(abiDir)) {
-  //   fs.mkdirSync(abiDir, { recursive: true });
-  // }
-
-  // // Read compiled artifacts
-  // const artifactsPath = path.join(__dirname, "../artifacts/contracts");
-  // const cldTokenAbi = JSON.parse(
-  //   fs.readFileSync(path.join(artifactsPath, "CLDToken.sol/CLDToken.json"), "utf8")
-  // ).abi;
-  // const providerRegistryAbi = JSON.parse(
-  //   fs.readFileSync(
-  //     path.join(artifactsPath, "ProviderRegistry.sol/ProviderRegistry.json"),
-  //     "utf8"
-  //   )
-  // ).abi;
-  // const jobEscrowAbi = JSON.parse(
-  //   fs.readFileSync(path.join(artifactsPath, "JobEscrow.sol/JobEscrow.json"), "utf8")
-  // ).abi;
-
-  // fs.writeFileSync(path.join(abiDir, "CLDToken.json"), JSON.stringify(cldTokenAbi, null, 2));
-  // fs.writeFileSync(
-  //   path.join(abiDir, "ProviderRegistry.json"),
-  //   JSON.stringify(providerRegistryAbi, null, 2)
-  // );
-  // fs.writeFileSync(path.join(abiDir, "JobEscrow.json"), JSON.stringify(jobEscrowAbi, null, 2));
-  // console.log(`ABIs exported to ${abiDir}`);
-
-  // // Write EIP-712 schema
-  // const eip712Dir = path.join(sharedDir, "eip712");
-  // if (!fs.existsSync(eip712Dir)) {
-  //   fs.mkdirSync(eip712Dir, { recursive: true });
-  // }
-
-  // const eip712Schema = {
-  //   domain: {
-  //     name: "CloudanaJobEscrow",
-  //     version: "1",
-  //     chainId: chainId,
-  //     verifyingContract: jobEscrowAddress,
-  //   },
-  //   types: {
-  //     UsageReport: [
-  //       { name: "jobId", type: "uint256" },
-  //       { name: "user", type: "address" },
-  //       { name: "provider", type: "address" },
-  //       { name: "grossCost", type: "uint256" },
-  //       { name: "providerEarn", type: "uint256" },
-  //       { name: "nonce", type: "uint256" },
-  //       { name: "deadline", type: "uint256" },
-  //     ],
-  //   },
-  // };
-
-  // fs.writeFileSync(
-  //   path.join(eip712Dir, "usageReport.json"),
-  //   JSON.stringify(eip712Schema, null, 2)
-  // );
-  // console.log(`EIP-712 schema written to ${path.join(eip712Dir, "usageReport.json")}`);
-
-  console.log("\n=== Deployment Summary ===");
-  // console.log("CLDToken:", cldTokenAddress);
-  // console.log("JobEscrow:", jobEscrowAddress);
-  console.log("providerRegistry:", providerRegistryAddress);
-  // console.log("Team Wallet:", TEAM_WALLET);
-  // console.log("Treasury Wallet:", TREASURY_WALLET);
-  // console.log("Validator:", VALIDATOR_ADDRESS);
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+// Helper function to save contract address and ABI
+export async function saveContractInfo(
+  contractName: string,
+  contractAddress: string,
+  networkName: string,
+  chainId: number
+) {
+  const sharedDir = path.join(__dirname, "../../../shared");
+  if (!fs.existsSync(sharedDir)) {
+    fs.mkdirSync(sharedDir, { recursive: true });
+  }
 
+  // Update addresses file
+  const addressesFile = path.join(sharedDir, `addresses.${networkName}.json`);
+  let addresses: any = {};
+  
+  if (fs.existsSync(addressesFile)) {
+    addresses = JSON.parse(fs.readFileSync(addressesFile, "utf8"));
+  } else {
+    addresses = {
+      chainId,
+      network: networkName,
+      contracts: {},
+    };
+  }
+  
+  if (!addresses.contracts) {
+    addresses.contracts = {};
+  }
+  
+  addresses.contracts[contractName] = contractAddress;
+  addresses.chainId = chainId;
+  addresses.network = networkName;
+  
+  fs.writeFileSync(addressesFile, JSON.stringify(addresses, null, 2));
+  console.log(`Addresses updated in ${addressesFile}`);
+
+  // Export ABI
+  const abiDir = path.join(sharedDir, "abi");
+  if (!fs.existsSync(abiDir)) {
+    fs.mkdirSync(abiDir, { recursive: true });
+  }
+
+  const artifactsPath = path.join(__dirname, "../../artifacts/contracts");
+  const contractAbi = JSON.parse(
+    fs.readFileSync(
+      path.join(artifactsPath, `${contractName}.sol/${contractName}.json`),
+      "utf8"
+    )
+  ).abi;
+
+  fs.writeFileSync(
+    path.join(abiDir, `${contractName}.json`),
+    JSON.stringify(contractAbi, null, 2)
+  );
+  console.log(`${contractName} ABI exported to ${abiDir}`);
+}

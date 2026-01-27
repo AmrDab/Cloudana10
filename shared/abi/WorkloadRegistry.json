@@ -1,0 +1,1391 @@
+[
+  {
+    "inputs": [],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "AccessControlBadConfirmation",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "neededRole",
+        "type": "bytes32"
+      }
+    ],
+    "name": "AccessControlUnauthorizedAccount",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "instanceId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "InstanceAdded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "instanceId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum WorkloadLib.InstanceStatus",
+        "name": "newStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "InstanceStatusUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "previousAdminRole",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "newAdminRole",
+        "type": "bytes32"
+      }
+    ],
+    "name": "RoleAdminChanged",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "sender",
+        "type": "address"
+      }
+    ],
+    "name": "RoleGranted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "sender",
+        "type": "address"
+      }
+    ],
+    "name": "RoleRevoked",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "owner",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "manifestHash",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "cpu",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "memoryBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "storageBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "storageClasses",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresGPU",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gpuCount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "gpuAttributes",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresEdge",
+            "type": "bool"
+          },
+          {
+            "internalType": "string[]",
+            "name": "regions",
+            "type": "string[]"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxLatency",
+            "type": "uint256"
+          }
+        ],
+        "indexed": false,
+        "internalType": "struct WorkloadLib.ResourceRequirements",
+        "name": "requirements",
+        "type": "tuple"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "WorkloadCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "instanceId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "WorkloadPlaced",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldReplicas",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newReplicas",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "WorkloadScaled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "WorkloadTerminated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "newManifestHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "WorkloadUpdated",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "DEFAULT_ADMIN_ROLE",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_WORKLOADS_PER_QUERY",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "ORCHESTRATOR_ROLE",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "instanceId",
+        "type": "uint256"
+      }
+    ],
+    "name": "addInstance",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "manifestHash",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "cpu",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "memoryBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "storageBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "storageClasses",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresGPU",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gpuCount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "gpuAttributes",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresEdge",
+            "type": "bool"
+          },
+          {
+            "internalType": "string[]",
+            "name": "regions",
+            "type": "string[]"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxLatency",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct WorkloadLib.ResourceRequirements",
+        "name": "requirements",
+        "type": "tuple"
+      }
+    ],
+    "name": "createWorkload",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "instanceId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getInstance",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "provider",
+            "type": "address"
+          },
+          {
+            "internalType": "enum WorkloadLib.InstanceStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint256",
+            "name": "placedAt",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct WorkloadLib.Instance",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      }
+    ],
+    "name": "getRoleAdmin",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      }
+    ],
+    "name": "getUserWorkloads",
+    "outputs": [
+      {
+        "internalType": "uint256[]",
+        "name": "",
+        "type": "uint256[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "offset",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "limit",
+        "type": "uint256"
+      }
+    ],
+    "name": "getUserWorkloadsPaginated",
+    "outputs": [
+      {
+        "internalType": "uint256[]",
+        "name": "result",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "bool",
+        "name": "hasMore",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getWorkload",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "manifestHash",
+            "type": "bytes32"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "cpu",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "memoryBytes",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "storageBytes",
+                "type": "uint256"
+              },
+              {
+                "internalType": "string[]",
+                "name": "storageClasses",
+                "type": "string[]"
+              },
+              {
+                "internalType": "bool",
+                "name": "requiresGPU",
+                "type": "bool"
+              },
+              {
+                "internalType": "uint256",
+                "name": "gpuCount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "string[]",
+                "name": "gpuAttributes",
+                "type": "string[]"
+              },
+              {
+                "internalType": "bool",
+                "name": "requiresEdge",
+                "type": "bool"
+              },
+              {
+                "internalType": "string[]",
+                "name": "regions",
+                "type": "string[]"
+              },
+              {
+                "internalType": "uint256",
+                "name": "maxLatency",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct WorkloadLib.ResourceRequirements",
+            "name": "requirements",
+            "type": "tuple"
+          },
+          {
+            "internalType": "enum WorkloadLib.WorkloadStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint256",
+            "name": "createdAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "updatedAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "replicas",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "id",
+                "type": "uint256"
+              },
+              {
+                "internalType": "address",
+                "name": "provider",
+                "type": "address"
+              },
+              {
+                "internalType": "enum WorkloadLib.InstanceStatus",
+                "name": "status",
+                "type": "uint8"
+              },
+              {
+                "internalType": "uint256",
+                "name": "placedAt",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct WorkloadLib.Instance[]",
+            "name": "instances",
+            "type": "tuple[]"
+          }
+        ],
+        "internalType": "struct WorkloadLib.Workload",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getWorkloadCount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getWorkloadInstances",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "provider",
+            "type": "address"
+          },
+          {
+            "internalType": "enum WorkloadLib.InstanceStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint256",
+            "name": "placedAt",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct WorkloadLib.Instance[]",
+        "name": "",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256[]",
+        "name": "workloadIds",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "getWorkloadsBatch",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "manifestHash",
+            "type": "bytes32"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "cpu",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "memoryBytes",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "storageBytes",
+                "type": "uint256"
+              },
+              {
+                "internalType": "string[]",
+                "name": "storageClasses",
+                "type": "string[]"
+              },
+              {
+                "internalType": "bool",
+                "name": "requiresGPU",
+                "type": "bool"
+              },
+              {
+                "internalType": "uint256",
+                "name": "gpuCount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "string[]",
+                "name": "gpuAttributes",
+                "type": "string[]"
+              },
+              {
+                "internalType": "bool",
+                "name": "requiresEdge",
+                "type": "bool"
+              },
+              {
+                "internalType": "string[]",
+                "name": "regions",
+                "type": "string[]"
+              },
+              {
+                "internalType": "uint256",
+                "name": "maxLatency",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct WorkloadLib.ResourceRequirements",
+            "name": "requirements",
+            "type": "tuple"
+          },
+          {
+            "internalType": "enum WorkloadLib.WorkloadStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint256",
+            "name": "createdAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "updatedAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "replicas",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "id",
+                "type": "uint256"
+              },
+              {
+                "internalType": "address",
+                "name": "provider",
+                "type": "address"
+              },
+              {
+                "internalType": "enum WorkloadLib.InstanceStatus",
+                "name": "status",
+                "type": "uint8"
+              },
+              {
+                "internalType": "uint256",
+                "name": "placedAt",
+                "type": "uint256"
+              }
+            ],
+            "internalType": "struct WorkloadLib.Instance[]",
+            "name": "instances",
+            "type": "tuple[]"
+          }
+        ],
+        "internalType": "struct WorkloadLib.Workload[]",
+        "name": "",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "grantRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "hasRole",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextWorkloadId",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "instanceId",
+        "type": "uint256"
+      }
+    ],
+    "name": "recordPlacement",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "callerConfirmation",
+        "type": "address"
+      }
+    ],
+    "name": "renounceRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "revokeRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "newReplicas",
+        "type": "uint256"
+      }
+    ],
+    "name": "scaleWorkload",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes4",
+        "name": "interfaceId",
+        "type": "bytes4"
+      }
+    ],
+    "name": "supportsInterface",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      }
+    ],
+    "name": "terminateWorkload",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "instanceId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum WorkloadLib.InstanceStatus",
+        "name": "newStatus",
+        "type": "uint8"
+      }
+    ],
+    "name": "updateInstanceStatus",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "newManifestHash",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "cpu",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "memoryBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "storageBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "storageClasses",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresGPU",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gpuCount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "gpuAttributes",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresEdge",
+            "type": "bool"
+          },
+          {
+            "internalType": "string[]",
+            "name": "regions",
+            "type": "string[]"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxLatency",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct WorkloadLib.ResourceRequirements",
+        "name": "newRequirements",
+        "type": "tuple"
+      }
+    ],
+    "name": "updateWorkload",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "userWorkloadIndex",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "userWorkloads",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "workloadId",
+        "type": "uint256"
+      }
+    ],
+    "name": "workloadExists",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "workloads",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "id",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "owner",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "manifestHash",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "cpu",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "memoryBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "storageBytes",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "storageClasses",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresGPU",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gpuCount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "gpuAttributes",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "requiresEdge",
+            "type": "bool"
+          },
+          {
+            "internalType": "string[]",
+            "name": "regions",
+            "type": "string[]"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxLatency",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct WorkloadLib.ResourceRequirements",
+        "name": "requirements",
+        "type": "tuple"
+      },
+      {
+        "internalType": "enum WorkloadLib.WorkloadStatus",
+        "name": "status",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "createdAt",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "updatedAt",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "replicas",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

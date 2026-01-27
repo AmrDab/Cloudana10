@@ -3,10 +3,15 @@
   "version": "1.0.0",
   "description": "Cloudana MVP testnet smart contracts",
   "scripts": {
+    "clean": "hardhat clean",
     "compile": "hardhat compile",
+    "export-abi:cld": "ts-node scripts/cld-token/export-abi.ts",
+    "export-abi:work": "ts-node scripts/workload-registry/export-abi.ts",
     "test": "hardhat test",
-    "deploy": "hardhat run scripts/deploy.ts --network baseSepolia",
-    "verify": "hardhat run scripts/verify.ts --network baseSepolia"
+    "deploy:cld": "hardhat run scripts/cld-token/deploy.ts --network baseSepolia",
+    "deploy:work": "hardhat run scripts/workload-registry/deploy.ts --network baseSepolia",
+    "verify:cld": "hardhat run scripts/cld-token/verify.ts --network baseSepolia",
+    "verify:work": "hardhat run scripts/workload-registry/verify.ts --network baseSepolia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",

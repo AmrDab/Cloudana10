@@ -18,13 +18,7 @@ import { getAllTemplates, type Template, type TemplateCategory } from "./templat
 import { 
   useCLDTokenBalance,
   useCLDTokenAllowance,
-  useUserRefundCredit, 
-  useCreateJob, 
-  useWithdrawUserRefund,
-  useCloseJob,
-  useDepositToJob,
   useApproveCLDToken,
-  JOB_ESCROW_ADDRESS,
   hexToBytes32
 } from "@/lib/contracts";
 import { getAllProviders } from "@/lib/api";
@@ -81,19 +75,10 @@ export default function UserDashboard() {
   const { data: tokenBalance } = useCLDTokenBalance(isConnected ? address : undefined);
   const balance = tokenBalance && typeof tokenBalance === 'bigint' ? parseFloat(formatEther(tokenBalance)) : 0;
 
-  // Get user refund credit - only when connected
-  const { data: refundCredit } = useUserRefundCredit(isConnected ? address : undefined);
-  const refundAmount = refundCredit && typeof refundCredit === 'bigint' ? parseFloat(formatEther(refundCredit)) : 0;
-
   // Token approval
   const { approve, isPending: isApproving, isSuccess: isApproved, hash: approveHash } = useApproveCLDToken();
 
   // Create job
-  const { create, hash: createHash, isPending: isCreating, isSuccess: isJobCreated, error: createError, reset: resetCreate } = useCreateJob();
-
-  // Withdraw refund
-  const { withdraw: withdrawRefund, hash: withdrawHash, isPending: isWithdrawing, isSuccess: isWithdrawn, error: withdrawError, reset: resetWithdraw } = useWithdrawUserRefund();
-
   // Check if approval is needed - only when connected
   const { data: allowance } = useCLDTokenAllowance(isConnected ? address : undefined, isConnected ? JOB_ESCROW_ADDRESS : undefined);
   const needsApproval = isConnected && budget && allowance && typeof allowance === 'bigint' ? parseFloat(formatEther(allowance)) < parseFloat(budget) : true;
