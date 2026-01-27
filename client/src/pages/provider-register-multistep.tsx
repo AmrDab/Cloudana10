@@ -141,8 +141,15 @@ export default function ProviderRegisterMultistep() {
         keyfileData = await processKeyfile(privateKeyFile);
       }
 
+      // Generate action_id before calling build-provider API
+      const actionId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `local-action-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
       // Build request payload (no wallet sent to build-provider API)
       const buildRequest = {
+        action_id: actionId,
         nodes: [
           {
             hostname: publicIP,
@@ -201,14 +208,14 @@ export default function ProviderRegisterMultistep() {
       }
 
       const data = await response.json();
-      const actionId = data.action_id;
+      const returnedActionId = data.action_id || actionId;
 
-      if (!actionId) {
+      if (!returnedActionId) {
         throw new Error("No action ID returned from build provider API");
       }
 
       // Navigate to build cluster page with action_id
-      setLocation(`/provider/register/build-cluster?action_id=${actionId}`);
+      setLocation(`/provider/register/build-cluster?action_id=${returnedActionId}`);
     } catch (error: any) {
       console.error("Error starting build provider:", error);
       setBuildError(error.message || "Failed to start build provider. Please try again.");

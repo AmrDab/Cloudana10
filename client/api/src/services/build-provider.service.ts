@@ -24,9 +24,10 @@ export class BuildProviderService {
     console.log("[BuildProviderService] buildProvider handled locally with input:", JSON.stringify(input, null, 2));
 
     const action_id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
+      input.action_id ??
+      (typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
-        : `local-action-${Date.now()}`;
+        : `local-action-${Date.now()}`);
 
     // Create a synthetic action with a single "local_build" task
     const now = new Date().toISOString();

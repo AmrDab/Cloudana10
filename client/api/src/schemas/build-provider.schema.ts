@@ -66,6 +66,7 @@ export type Provider = z.infer<typeof ProviderSchema>;
 
 // Build Provider Request Schema
 export const BuildProviderRequestSchema = z.object({
+  action_id: z.string().uuid().optional(),
   nodes: z.array(NodeSchema).min(1, "At least one node is required"),
   provider: ProviderSchema,
 });
