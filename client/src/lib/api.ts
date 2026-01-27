@@ -191,6 +191,65 @@ export function getPinataGatewayUrl(cid: string): string {
   const PUBLIC_GATEWAY = "gateway.pinata.cloud";
   return `https://${PUBLIC_GATEWAY}/ipfs/${cid}`;
 }
+
+/** Workload manifest metadata stored on IPFS (uploaded at workload registration) */
+export interface WorkloadManifestFromIPFS {
+  name: string;
+  description?: string;
+  manifest: string; // YAML/JSON workload definition
+  requirements?: {
+    cpu: string;
+    memory: string;
+    storage: string;
+    storageClasses: string[];
+    requiresGPU: boolean;
+    gpuCount: string;
+    gpuAttributes: string[];
+    requiresEdge: boolean;
+    regions: string[];
+    maxLatency: string;
+  };
+  createdAt?: string;
+}
+
+const WORKLOAD_CID_STORAGE_KEY = "cloudana_workload_cid";
+
+/** Persist IPFS CID for a workload so we can fetch manifest later (on-chain we only store hash of CID) */
+export function setWorkloadCID(workloadId: number | bigint, cid: string): void {
+  try {
+    const key = `${WORKLOAD_CID_STORAGE_KEY}_${String(workloadId)}`;
+    localStorage.setItem(key, cid);
+  } catch (e) {
+    console.warn("[IPFS] Failed to store workload CID", e);
+  }
+}
+
+/** Get persisted IPFS CID for a workload, if any */
+export function getWorkloadCID(workloadId: number | bigint): string | null {
+  try {
+    const key = `${WORKLOAD_CID_STORAGE_KEY}_${String(workloadId)}`;
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch workload manifest from IPFS by CID.
+ * Returns the JSON object (name, description, manifest YAML/JSON, requirements, createdAt).
+ */
+export async function fetchWorkloadManifestFromIPFS(cid: string): Promise<WorkloadManifestFromIPFS | null> {
+  try {
+    const url = `https://ipfs.io/ipfs/${cid}`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) return null;
+    const data = (await res.json()) as WorkloadManifestFromIPFS;
+    return data;
+  } catch (e) {
+    console.warn("[IPFS] Failed to fetch workload manifest", cid, e);
+    return null;
+  }
+}
 // Export types for use in components
 export interface ProviderNode {
   pubKeyHash: string;

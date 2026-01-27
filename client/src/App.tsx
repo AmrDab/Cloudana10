@@ -11,7 +11,6 @@ import ProviderRegisterStaged from "@/pages/provider-register-staged";
 import ProviderRegisterMultistep from "@/pages/provider-register-multistep";
 import ProviderBuildCluster from "@/pages/provider-build-cluster";
 import ProviderListPage from "@/pages/provider-list";
-import WorkloadRegister from "@/pages/workload-register";
 import ProviderDetailPageWrapper from "@/pages/provider-detail-wrapper";
 import ProviderRawPageWrapper from "@/pages/provider-raw-wrapper";
 import UserDashboard from "@/pages/user-dashboard";
@@ -22,6 +21,7 @@ import GpuPricingPage from "@/pages/pricing/gpus";
 import GpusOnDemandPage from "@/pages/pricing/gpus-on-demand";
 import UsageCalculatorPage from "@/pages/pricing/usage-calculator";
 import ProviderCalculatorPage from "@/pages/pricing/provider-calculator";
+import WorkloadRegister from "@/pages/workload-register";
 
 function Router() {
   return (
@@ -37,6 +37,7 @@ function Router() {
         <Route path="/providers/:owner" component={ProviderDetailPageWrapper} />
         <Route path="/providers" component={ProviderListPage} />
         <Route path="/job/:id" component={JobDetailPageWrapper} />
+        <Route path="/workload/register" component={WorkloadRegister} />
         <Route path="/deployment-completion" component={DeploymentCom} />
         <Route path="/pricing/gpus" component={GpuPricingPage} />
         <Route path="/pricing/gpus-on-demand" component={GpusOnDemandPage} />

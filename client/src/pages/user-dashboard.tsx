@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
-import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Rocket, FileText, ArrowLeft, X } from "lucide-react";
+import { Plus, ExternalLink, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Rocket, FileText, ArrowLeft, X, Check, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -26,6 +26,8 @@ import {
 } from "@/lib/contracts";
 import { getAllProviders } from "@/lib/api";
 import { useUserJobs } from "@/hooks/useUserJobs";
+import { useWorkloadDetails } from "@/hooks/useWorkloadDetails";
+import { DeploymentSpecs } from "@/components/deployment-specs";
 import { TxLink } from "@/components/ui/tx-link";
 import ProvidersExplorer from "@/pages/providers-explorer";
 import NewDeployment from "@/pages/new-deployment/index";
@@ -528,12 +530,11 @@ function DeploymentsView({
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-white/5 border-white/10">
-                <TableHead>Deployment ID</TableHead>
-                <TableHead>Provider</TableHead>
-                <TableHead>Deposited</TableHead>
-                <TableHead>Spent</TableHead>
-                <TableHead>Remaining</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead className="text-center">Specs</TableHead>
+                <TableHead className="text-center">Name</TableHead>
+                <TableHead className="text-center">DSEQ</TableHead>
+                <TableHead className="text-center">Cost and balance</TableHead>
+                <TableHead className="text-center">Leases</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -541,68 +542,27 @@ function DeploymentsView({
               {jobsLoading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
+                    <TableCell><Skeleton className="h-8 w-32" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                    <TableCell><Skeleton className="h-5 w-16" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                     <TableCell><Skeleton className="h-8 w-20" /></TableCell>
                   </TableRow>
                 ))
               ) : allDeployments.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
                     No deployments yet. Create your first deployment to get started.
                   </TableCell>
                 </TableRow>
-              ) : allDeployments.map((deployment) => {
-                // WorkloadStatus: 0 = Pending, 1 = Active, 2 = Terminated
-                const statusLabels = ['PENDING', 'ACTIVE', 'TERMINATED'];
-                const statusLabel = statusLabels[deployment.status] || 'UNKNOWN';
-                const isActive = deployment.status === 1; // Active status
-                const isPending = deployment.status === 0;
-                
-                // For WorkloadRegistry, we don't have deposited/spent/remaining
-                // Show N/A or use manifest hash for identification
-                const manifestHashDisplay = deployment.manifestHash 
-                  ? `${deployment.manifestHash.slice(0, 10)}...${deployment.manifestHash.slice(-8)}`
-                  : 'N/A';
-                
-                return (
-                  <TableRow key={deployment.jobId.toString()} className="hover:bg-white/5 border-white/10 transition-colors">
-                    <TableCell className="font-mono font-medium text-primary">
-                      <span className="cursor-pointer hover:underline" onClick={() => setLocation(`/job/${deployment.jobId}`)}>
-                        #{deployment.jobId.toString()}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-xs">
-                      {deployment.pubKeyHash ? (
-                        `${deployment.pubKeyHash.slice(0, 10)}...${deployment.pubKeyHash.slice(-8)}`
-                      ) : (
-                        'No provider'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">N/A</TableCell>
-                    <TableCell className="text-muted-foreground">N/A</TableCell>
-                    <TableCell className="text-muted-foreground">N/A</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={
-                        isActive ? 'border-green-500/50 text-green-400 bg-green-500/10' :
-                        isPending ? 'border-yellow-500/50 text-yellow-400 bg-yellow-500/10' :
-                        'border-white/20 text-muted-foreground bg-white/5'
-                      }>
-                        {statusLabel}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => setLocation(`/job/${deployment.jobId}`)}>
-                        View <ExternalLink className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              ) : allDeployments.map((deployment) => (
+                <DeploymentTableRow
+                  key={deployment.jobId.toString()}
+                  deployment={deployment}
+                  onView={() => setLocation(`/job/${deployment.jobId}`)}
+                />
+              ))}
             </TableBody>
           </Table>
         </CardContent>
@@ -910,5 +870,169 @@ function TemplatesView({
 // Providers View Component (uses ProvidersExplorer)
 function ProvidersView() {
   return <ProvidersExplorer />;
+}
+
+// Deployment Table Row Component
+function DeploymentTableRow({
+  deployment,
+  onView,
+}: {
+  deployment: any;
+  onView: () => void;
+}) {
+  const workloadId = deployment.jobId ? BigInt(deployment.jobId) : undefined;
+  const { data: workloadDetails, isLoading: detailsLoading } = useWorkloadDetails(workloadId);
+  const [copiedDseq, setCopiedDseq] = useState(false);
+  const [copiedProvider, setCopiedProvider] = useState(false);
+
+  // WorkloadStatus: 0 = Pending, 1 = Active, 2 = Terminated
+  const statusLabels = ['PENDING', 'ACTIVE', 'TERMINATED'];
+  const statusLabel = statusLabels[deployment.status] || 'UNKNOWN';
+  const isActive = deployment.status === 1;
+  const isPending = deployment.status === 0;
+
+  // Extract resource requirements
+  const requirements = workloadDetails?.requirements;
+  const cpuAmount = requirements ? Number(requirements.cpu) : 0;
+  const memoryAmount = requirements ? requirements.memoryBytes : BigInt(0);
+  const storageAmount = requirements ? requirements.storageBytes : BigInt(0);
+  const gpuAmount = requirements && requirements.requiresGPU ? Number(requirements.gpuCount) : 0;
+
+  // Calculate cost (mock - in production, fetch from pricing oracle)
+  const cldToUsd = 0.1; // Mock conversion rate
+  const hourlyCost = requirements
+    ? (cpuAmount / 1000 * 0.01 + Number(memoryAmount) / (1024 * 1024 * 1024) * 0.001 + Number(storageAmount) / (1024 * 1024 * 1024) * 0.0001 + gpuAmount * 0.1) * cldToUsd
+    : 0;
+  const balance = 0; // Not tracked in WorkloadRegistry - show 0 for now
+
+  // Deployment name
+  const deploymentName = `Deployment-${deployment.jobId.toString().slice(-6)}`;
+
+  // DSEQ (Deployment Sequence ID) - using jobId
+  const dseq = deployment.jobId.toString();
+
+  const handleCopyDseq = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(dseq);
+      setCopiedDseq(true);
+      setTimeout(() => setCopiedDseq(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy DSEQ:', err);
+    }
+  };
+
+  const handleCopyProvider = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!deployment.pubKeyHash) return;
+    try {
+      await navigator.clipboard.writeText(deployment.pubKeyHash);
+      setCopiedProvider(true);
+      setTimeout(() => setCopiedProvider(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy provider:', err);
+    }
+  };
+
+  return (
+    <TableRow className="hover:bg-white/5 border-white/10 transition-colors">
+      {/* Specs */}
+      <TableCell>
+        <div className="flex items-center justify-center">
+          {detailsLoading ? (
+            <Skeleton className="h-6 w-32" />
+          ) : (
+            <DeploymentSpecs
+              cpuAmount={cpuAmount}
+              memoryAmount={memoryAmount}
+              storageAmount={storageAmount}
+              gpuAmount={gpuAmount}
+            />
+          )}
+        </div>
+      </TableCell>
+
+      {/* Name */}
+      <TableCell className="text-center">
+        <div className="font-medium">{deploymentName}</div>
+      </TableCell>
+
+      {/* DSEQ */}
+      <TableCell className="text-center">
+        <div className="flex items-center justify-center gap-1">
+          <span className="font-mono text-sm">{dseq}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={handleCopyDseq}
+            title={copiedDseq ? "Copied!" : "Copy DSEQ"}
+          >
+            {copiedDseq ? (
+              <Check className="h-3 w-3 text-green-500" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+          </Button>
+        </div>
+      </TableCell>
+
+      {/* Cost and balance */}
+      <TableCell className="text-center">
+        <div className="flex flex-col items-center gap-1">
+          {hourlyCost > 0 && (
+            <div className="text-sm font-mono">${hourlyCost.toFixed(2)} / hour</div>
+          )}
+          {balance > 0 && (
+            <div className="text-xs text-muted-foreground">Balance: ${balance.toFixed(2)}</div>
+          )}
+          {balance === 0 && hourlyCost > 0 && (
+            <div className="text-xs text-yellow-500 flex items-center gap-1">
+              <span>⚠</span>
+              <span>No balance</span>
+            </div>
+          )}
+        </div>
+      </TableCell>
+
+      {/* Leases */}
+      <TableCell className="text-center">
+        <div className="flex items-center justify-center gap-2">
+          {deployment.pubKeyHash ? (
+            <>
+              <div className="flex items-center gap-1">
+                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500' : isPending ? 'bg-yellow-500' : 'bg-gray-500'}`} />
+                <span className="text-xs font-mono max-w-[120px] truncate">
+                  {deployment.pubKeyHash.slice(0, 10)}...{deployment.pubKeyHash.slice(-8)}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5"
+                  onClick={handleCopyProvider}
+                  title={copiedProvider ? "Copied!" : "Copy provider"}
+                >
+                  {copiedProvider ? (
+                    <Check className="h-3 w-3 text-green-500" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">No provider</span>
+          )}
+        </div>
+      </TableCell>
+
+      {/* Actions */}
+      <TableCell className="text-right">
+        <Button variant="ghost" size="sm" onClick={onView}>
+          View <ExternalLink className="ml-2 h-3 w-3" />
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
 }
 

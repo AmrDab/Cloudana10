@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,9 +25,9 @@ import {
   useWorkloadCount,
   type ResourceRequirements,
   WORKLOAD_REGISTRY_ADDRESS,
+  ipfsCIDToBytes32,
 } from "@/lib/contracts";
-import { getPinataGatewayUrl } from "@/lib/api";
-import { keccak256, toHex } from "viem";
+import { getPinataGatewayUrl, setWorkloadCID } from "@/lib/api";
 
 const REGIONS = ["us-east", "us-west", "eu-west", "eu-central", "asia-pacific", "global"] as const;
 const STORAGE_CLASSES = ["ssd", "hdd", "nvme", "ephemeral"] as const;
@@ -77,104 +77,71 @@ export default function WorkloadRegister() {
   // Contract hooks
   const { create, hash, isPending, isSuccess, error, reset } = useCreateWorkload();
   const { data: userWorkloads } = useUserWorkloads(address);
-  const { data: workloadCount } = useWorkloadCount();
+  const { data: workloadCount, refetch: refetchWorkloadCount } = useWorkloadCount();
+  const lastSubmittedCidRef = useRef<string | null>(null);
   
-  // Generate manifest hash from content
-  useEffect(() => {
-    if (manifestContent) {
-      try {
-        const hash = keccak256(toHex(manifestContent));
-        setFormData(prev => ({ ...prev, manifestHash: hash }));
-      } catch (err) {
-        console.error("Error generating manifest hash:", err);
-      }
-    }
-  }, [manifestContent]);
-  
-  // Upload manifest to IPFS
-  const handleUploadToIPFS = async () => {
-    if (!manifestContent.trim()) {
-      toast({
-        title: "Error",
-        description: "Please provide manifest content",
-        variant: "destructive",
-      });
-      return;
+  // Upload manifest to IPFS automatically
+  const uploadToIPFS = async (): Promise<string> => {
+    const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
+    if (!PINATA_JWT) {
+      throw new Error('PINATA_JWT environment variable is not set');
     }
     
-    setIsUploadingIPFS(true);
-    try {
-      const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
-      if (!PINATA_JWT) {
-        throw new Error('PINATA_JWT environment variable is not set');
-      }
-      
-      const workloadMetadata = {
-        name: formData.name || "workload-manifest",
-        description: formData.description || "",
-        manifest: manifestContent,
-        requirements: {
-          cpu: formData.cpu,
-          memory: formData.memory,
-          storage: formData.storage,
-          storageClasses: formData.storageClasses,
-          requiresGPU: formData.requiresGPU,
-          gpuCount: formData.gpuCount,
-          gpuAttributes: formData.gpuAttributes,
-          requiresEdge: formData.requiresEdge,
-          regions: formData.regions,
-          maxLatency: formData.maxLatency,
-        },
-        createdAt: new Date().toISOString(),
-      };
-      
-      const response = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${PINATA_JWT}`,
-        },
-        body: JSON.stringify({
-          pinataContent: workloadMetadata,
-          pinataMetadata: {
-            name: `workload-${formData.name || 'manifest'}-${Date.now()}`,
-            keyvalues: {
-              type: 'workload-manifest',
-              network: 'cloudana',
-              timestamp: new Date().toISOString(),
-            }
-          },
-          pinataOptions: {
-            cidVersion: 1,
-          }
-        }),
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`Pinata API error (${response.status}): ${errorData}`);
-      }
-      
-      const result = await response.json();
-      const cid = result.IpfsHash;
-      
-      setIpfsCID(cid);
-      toast({
-        title: "Success",
-        description: "Manifest uploaded to IPFS",
-      });
-    } catch (err: any) {
-      toast({
-        title: "Error",
-        description: err.message || "Failed to upload to IPFS",
-        variant: "destructive",
-      });
-    } finally {
-      setIsUploadingIPFS(false);
+    if (!manifestContent.trim()) {
+      throw new Error('Manifest content is required');
     }
+    
+    const workloadMetadata = {
+      name: formData.name || "workload-manifest",
+      description: formData.description || "",
+      manifest: manifestContent,
+      requirements: {
+        cpu: formData.cpu,
+        memory: formData.memory,
+        storage: formData.storage,
+        storageClasses: formData.storageClasses,
+        requiresGPU: formData.requiresGPU,
+        gpuCount: formData.gpuCount,
+        gpuAttributes: formData.gpuAttributes,
+        requiresEdge: formData.requiresEdge,
+        regions: formData.regions,
+        maxLatency: formData.maxLatency,
+      },
+      createdAt: new Date().toISOString(),
+    };
+    
+    const response = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${PINATA_JWT}`,
+      },
+      body: JSON.stringify({
+        pinataContent: workloadMetadata,
+        pinataMetadata: {
+          name: `workload-${formData.name || 'manifest'}-${Date.now()}`,
+          keyvalues: {
+            type: 'workload-manifest',
+            network: 'cloudana',
+            timestamp: new Date().toISOString(),
+          }
+        },
+        pinataOptions: {
+          cidVersion: 1,
+        }
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.text();
+      throw new Error(`Pinata API error (${response.status}): ${errorData}`);
+    }
+    
+    const result = await response.json();
+    return result.IpfsHash;
   };
   
-  // Handle form submission
+  // Handle form submission - automatically uploads to IPFS then registers
   const handleSubmit = async () => {
     if (!isConnected || !address) {
       toast({
@@ -185,10 +152,10 @@ export default function WorkloadRegister() {
       return;
     }
     
-    if (!formData.manifestHash) {
+    if (!manifestContent.trim()) {
       toast({
         title: "Error",
-        description: "Please provide manifest content or hash",
+        description: "Please provide manifest content",
         variant: "destructive",
       });
       return;
@@ -212,59 +179,89 @@ export default function WorkloadRegister() {
       return;
     }
     
-    // Convert form data to ResourceRequirements
-    const requirements: ResourceRequirements = {
-      cpu: BigInt(formData.cpu),
-      memory: BigInt(formData.memory),
-      storage: BigInt(formData.storage),
-      storageClasses: formData.storageClasses,
-      requiresGPU: formData.requiresGPU,
-      gpuCount: BigInt(formData.gpuCount || "0"),
-      gpuAttributes: formData.gpuAttributes,
-      requiresEdge: formData.requiresEdge,
-      regions: formData.regions,
-      maxLatency: BigInt(formData.maxLatency),
-    };
+    setIsUploadingIPFS(true);
     
     try {
-      create(formData.manifestHash, requirements);
+      // Step 1: Upload to IPFS automatically
+      toast({
+        title: "Uploading to IPFS...",
+        description: "Please wait while we upload your workload metadata to IPFS",
+      });
+      
+      const cid = await uploadToIPFS();
+      setIpfsCID(cid);
+      
+      // Step 2: Convert IPFS CID to bytes32 hash
+      const manifestHash = ipfsCIDToBytes32(cid);
+      
+      // Step 3: Convert form data to ResourceRequirements
+      const requirements: ResourceRequirements = {
+        cpu: BigInt(formData.cpu),
+        memory: BigInt(formData.memory),
+        storage: BigInt(formData.storage),
+        storageClasses: formData.storageClasses,
+        requiresGPU: formData.requiresGPU,
+        gpuCount: BigInt(formData.gpuCount || "0"),
+        gpuAttributes: formData.gpuAttributes,
+        requiresEdge: formData.requiresEdge,
+        regions: formData.regions,
+        maxLatency: BigInt(formData.maxLatency),
+      };
+      
+      // Step 4: Register workload on-chain (persist cid so we can fetch manifest later)
+      lastSubmittedCidRef.current = cid;
+      toast({
+        title: "Registering workload...",
+        description: `IPFS CID: ${cid.slice(0, 20)}...`,
+      });
+      
+      create(manifestHash, requirements);
     } catch (err: any) {
+      setIsUploadingIPFS(false);
       toast({
         title: "Error",
-        description: err.message || "Failed to create workload",
+        description: err.message || "Failed to upload to IPFS or register workload",
         variant: "destructive",
       });
     }
   };
   
-  // Show success message
+  // Show success message and persist workload CID for manifest fetch
   useEffect(() => {
-    if (isSuccess && hash) {
-      toast({
-        title: "Success",
-        description: "Workload registered successfully!",
-      });
-      reset();
-      // Reset form
-      setFormData({
-        name: "",
-        description: "",
-        manifestHash: "",
-        cpu: "1000",
-        memory: "1073741824",
-        storage: "10737418240",
-        storageClasses: [],
-        requiresGPU: false,
-        gpuCount: "0",
-        gpuAttributes: [],
-        requiresEdge: false,
-        regions: [],
-        maxLatency: "100",
-      });
-      setManifestContent("");
-      setIpfsCID("");
-    }
-  }, [isSuccess, hash, toast, reset]);
+    if (!isSuccess || !hash) return;
+    const cid = lastSubmittedCidRef.current;
+    lastSubmittedCidRef.current = null;
+    refetchWorkloadCount().then((result) => {
+      const count = result.data;
+      if (count != null && cid) {
+        const newWorkloadId = Number(count) - 1;
+        setWorkloadCID(newWorkloadId, cid);
+      }
+    });
+    setIsUploadingIPFS(false);
+    toast({
+      title: "Success",
+      description: "Workload registered successfully!",
+    });
+    reset();
+    setFormData({
+      name: "",
+      description: "",
+      manifestHash: "",
+      cpu: "1000",
+      memory: "1073741824",
+      storage: "10737418240",
+      storageClasses: [],
+      requiresGPU: false,
+      gpuCount: "0",
+      gpuAttributes: [],
+      requiresEdge: false,
+      regions: [],
+      maxLatency: "100",
+    });
+    setManifestContent("");
+    setIpfsCID("");
+  }, [isSuccess, hash, toast, reset, refetchWorkloadCount]);
   
   // Show error message
   useEffect(() => {
@@ -364,33 +361,24 @@ export default function WorkloadRegister() {
                 rows={8}
                 className="font-mono text-sm"
               />
-              <div className="mt-2 flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleUploadToIPFS}
-                  disabled={isUploadingIPFS || !manifestContent.trim()}
-                >
-                  {isUploadingIPFS ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Uploading...
-                    </>
-                  ) : (
-                    "Upload to IPFS"
-                  )}
-                </Button>
-                {ipfsCID && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Manifest will be automatically uploaded to IPFS when you register the workload
+              </p>
+              {ipfsCID && (
+                <div className="mt-2 flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">
                     IPFS CID: {ipfsCID}
                   </span>
-                )}
-              </div>
-              {formData.manifestHash && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Manifest Hash: {formData.manifestHash.slice(0, 20)}...
-                </p>
+                  <a
+                    href={getPinataGatewayUrl(ipfsCID)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-500 hover:underline"
+                    title="View metadata on IPFS"
+                  >
+                    View on IPFS
+                  </a>
+                </div>
               )}
             </div>
           </CardContent>
@@ -656,10 +644,10 @@ export default function WorkloadRegister() {
             disabled={isPending || !formData.manifestHash || WORKLOAD_REGISTRY_ADDRESS === "0x0000000000000000000000000000000000000000"}
             size="lg"
           >
-            {isPending ? (
+            {isPending || isUploadingIPFS ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Registering...
+                {isUploadingIPFS ? "Uploading to IPFS..." : "Registering..."}
               </>
             ) : (
               <>

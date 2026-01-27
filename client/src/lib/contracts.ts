@@ -1,6 +1,6 @@
 // Contract interaction utilities and hooks for DePIN system
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther, formatEther, type Address } from "viem";
+import { parseEther, formatEther, keccak256, toHex, type Address } from "viem";
 import { CONTRACT_ADDRESSES, CLDTokenAbi, WorkloadRegistryAbi } from "@shared/contracts";
 import { baseSepolia } from "@reown/appkit/networks";
 
@@ -32,6 +32,14 @@ export function hexToBytes32(hex: string): `0x${string}` {
   // Pad or truncate to 64 hex characters (32 bytes)
   const padded = hex.padEnd(64, "0").slice(0, 64);
   return `0x${padded}` as `0x${string}`;
+}
+
+// Helper to convert IPFS CID string to bytes32
+// IPFS CIDs are variable length, so we hash the CID string to get a deterministic bytes32 value
+// This allows the contract to store a reference to the IPFS content
+export function ipfsCIDToBytes32(cid: string): `0x${string}` {
+  // Hash the CID string to get a deterministic bytes32 value
+  return keccak256(toHex(cid)) as `0x${string}`;
 }
 
 // Generate random public key hash (for demo purposes)

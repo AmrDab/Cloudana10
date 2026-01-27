@@ -97,7 +97,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const rawLocation = location;
   const currentPath = location.split("#")[0];
+  // Normalize hash for comparison: strip leading "#" so "home" and "#home" both match
+  const currentHashNormalized = (currentHash || (typeof window !== "undefined" ? window.location.hash : "")).replace(/^#/, "");
+  // When on /job/:id or /workload/register, treat as User > Deployments for sidebar active state
+  const effectivePath = currentPath.startsWith("/job") || currentPath === "/workload/register" ? "/user" : currentPath;
+  const effectiveHash = currentPath.startsWith("/job") || currentPath === "/workload/register"
+    ? "deployments"
+    : currentPath === "/user" && !currentHashNormalized
+      ? "home"
+      : currentHashNormalized;
   const showQuickStats =
     currentPath.startsWith("/user") ||
     currentPath === "/provider" ||
@@ -181,29 +191,27 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   // Only the exact matching item is selected. Parents are never selected when a child matches.
   const isItemActive = (item: NavItem): boolean => {
     if (item.children) return false;
-    const currentPath = location.split('#')[0];
-    const hash = currentHash || (typeof window !== "undefined" ? window.location.hash : "");
     const itemPath = item.path.split('#')[0];
     const itemHash = item.path.includes('#') ? item.path.split('#')[1] : null;
     
+    const pathMatches = effectivePath === itemPath;
+    
     if (itemHash) {
-      return currentPath === itemPath && hash === `#${itemHash}`;
+      return pathMatches && effectiveHash === itemHash;
     }
-    return location === item.path;
+    return pathMatches && !effectiveHash;
   };
 
   const hasActiveDescendant = (item: NavItem): boolean => {
     if (!item.children) return false;
     return item.children.some((child) => {
-      const currentPath = location.split('#')[0];
-      const hash = currentHash || (typeof window !== "undefined" ? window.location.hash : "");
       const childPath = child.path.split('#')[0];
       const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
-      
+      const pathMatches = effectivePath === childPath;
       if (childHash) {
-        return currentPath === childPath && hash === `#${childHash}`;
+        return pathMatches && effectiveHash === childHash;
       }
-      return location === child.path || hasActiveDescendant(child);
+      return pathMatches && !effectiveHash;
     });
   };
 
@@ -467,17 +475,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                           <div className="ml-4 mt-1 space-y-1">
                             {item.children.map((child) => {
                               const [path, hash] = child.path.split('#');
-                              const isChildActive = (() => {
-                                const currentPath = location.split('#')[0];
-                                const hashValue = currentHash || (typeof window !== "undefined" ? window.location.hash : "");
-                                const childPath = child.path.split('#')[0];
-                                const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
-                                
-                                if (childHash) {
-                                  return currentPath === childPath && hashValue === `#${childHash}`;
-                                }
-                                return location === child.path;
-                              })();
+                              const childPath = child.path.split('#')[0];
+                              const childHash = child.path.includes('#') ? child.path.split('#')[1] : null;
+                              const isChildActive = childHash
+                                ? effectivePath === childPath && effectiveHash === childHash
+                                : effectivePath === childPath && !effectiveHash;
                               
                               return (
                                 <div
