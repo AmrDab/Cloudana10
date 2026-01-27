@@ -66,13 +66,10 @@ export default function ProviderRegisterStaged() {
         return isConnected && hasEnoughBalance;
       case "requirements":
         return true; // Just needs confirmation
-      case "network": {
-        const hasSSHConnection = sshConnectionStatus === "success";
+      case "network":
         return publicIP !== "" && 
                Object.values(portsOpen).every(v => v) &&
-               (sshAuthMethod === "password" ? sshPassword !== "" : sshKeyContent !== "") &&
-               hasSSHConnection;
-      }
+               (sshAuthMethod === "password" ? sshPassword !== "" : sshKeyContent !== "");
       case "configuration":
         return domainName !== "" && organizationName !== "";
       case "attributes":
@@ -82,7 +79,46 @@ export default function ProviderRegisterStaged() {
     }
   };
 
-  // Test SSH connection
+  // Process SSH keyfile similar to akash-console implementation
+  const processKeyfile = (keyfile: string): string | null => {
+    if (!keyfile) return null;
+
+    try {
+      // If keyfile already has data: prefix, it's already in the correct format
+      if (keyfile.startsWith("data:")) {
+        return keyfile;
+      }
+
+      // Determine the keyfile type based on content
+      let mimeType = "application/octet-stream";
+
+      // Check for OpenSSH format
+      if (keyfile.includes("-----BEGIN") && keyfile.includes("PRIVATE KEY-----")) {
+        if (keyfile.includes("-----BEGIN RSA PRIVATE KEY-----")) {
+          mimeType = "application/x-pem-file";
+        } else if (keyfile.includes("-----BEGIN OPENSSH PRIVATE KEY-----")) {
+          mimeType = "application/x-openssh-key";
+        } else {
+          mimeType = "application/x-pem-file"; // Generic PEM format for other types
+        }
+      } else if (keyfile.includes("PuTTY-User-Key-File")) {
+        mimeType = "application/x-putty-private-key";
+      }
+
+      // If it's already base64 but missing prefix, add it with the detected MIME type
+      if (keyfile.match(/^[A-Za-z0-9+/=]+$/)) {
+        return `data:${mimeType};base64,${keyfile}`;
+      } else {
+        // Otherwise encode it to base64 with the detected MIME type
+        return `data:${mimeType};base64,${btoa(keyfile)}`;
+      }
+    } catch (error) {
+      console.error("Error encoding keyfile:", error);
+      throw new Error("Failed to process keyfile. The keyfile content could not be encoded properly.");
+    }
+  };
+
+  // Test SSH connection using backend API (similar to akash-console)
   const testSSHConnection = async (): Promise<boolean> => {
     if (!publicIP || !sshPort) {
       setSshConnectionStatus("error");
@@ -107,50 +143,59 @@ export default function ProviderRegisterStaged() {
     setSshErrorMessage("");
 
     try {
-      // In a real implementation, this would call a backend API to test SSH connection
-      // For now, we'll simulate a connection test
-      // TODO: Replace with actual API call to backend
-      const response = await fetch("/api/v1/test-ssh", {
+      // Process keyfile similar to akash-console
+      const encodedKeyfile = sshAuthMethod === "key" && sshKeyContent ? processKeyfile(sshKeyContent) : null;
+
+      // Call backend API endpoint for SSH verification (similar to akash-console's /verify/control-machine)
+      const apiUrl = import.meta.env.VITE_API_URL 
+        ? `${import.meta.env.VITE_API_URL}/v1/verify/ssh`
+        : "http://localhost:7002/v1/verify/ssh";
+
+      const response = await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          host: publicIP,
-          port: parseInt(sshPort),
-          authMethod: sshAuthMethod,
-          password: sshAuthMethod === "password" ? sshPassword : undefined,
-          privateKey: sshAuthMethod === "key" ? sshKeyContent : undefined,
+          hostname: publicIP,
+          port: parseInt(sshPort) || 22,
+          username: "root", // Default username, can be made configurable
+          password: sshAuthMethod === "password" ? sshPassword : null,
+          keyfile: encodedKeyfile,
+          passphrase: null, // Can be added if needed
         }),
       });
 
       if (response.ok) {
-        setSshConnectionStatus("success");
-        setSshErrorMessage("");
-        return true;
+        const data = await response.json();
+        if (data.status?.toLowerCase() === "success" || response.status === 200) {
+          setSshConnectionStatus("success");
+          setSshErrorMessage("");
+          return true;
+        } else {
+          setSshConnectionStatus("error");
+          setSshErrorMessage(data.message || "Failed to verify SSH connection");
+          return false;
+        }
       } else {
-        const error = await response.json().catch(() => ({ message: "SSH connection failed" }));
+        const error = await response.json().catch(() => ({ 
+          message: "SSH connection failed",
+          detail: { error: { message: "Failed to connect via SSH" } }
+        }));
         setSshConnectionStatus("error");
-        setSshErrorMessage(error.message || "Failed to connect via SSH");
+        setSshErrorMessage(
+          error.detail?.error?.message || 
+          error.message || 
+          "Failed to connect via SSH. Please check your credentials and try again."
+        );
         return false;
       }
-    } catch (error) {
-      // If API endpoint doesn't exist, simulate a basic check
-      // In production, this should be handled by a backend service
-      console.warn("SSH test endpoint not available, simulating connection check");
-      
-      // Simulate connection check (remove this in production)
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Basic validation: check if IP format is valid
-      const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-      if (ipRegex.test(publicIP) && parseInt(sshPort) > 0 && parseInt(sshPort) <= 65535) {
-        setSshConnectionStatus("success");
-        setSshErrorMessage("");
-        return true;
-      } else {
-        setSshConnectionStatus("error");
-        setSshErrorMessage("Invalid IP address or port format");
-        return false;
-      }
+    } catch (error: any) {
+      console.error("SSH connection test error:", error);
+      setSshConnectionStatus("error");
+      setSshErrorMessage(
+        error.message || 
+        "Failed to verify SSH connection. Please ensure the backend API is available."
+      );
+      return false;
     } finally {
       setIsCheckingSSH(false);
     }
