@@ -104,7 +104,7 @@ function getSystemInfoScript(): string {
 set -e
 cpu_info=$(lscpu | grep '^CPU(s):' | awk '{print $2}')
 memory_total=$(free -h | grep Mem | awk '{print $2}')
-gpu_count=$(lspci -nn | grep -Ei 'vga|3d' | sed -nE 's/.*\[(10de:[0-9a-f]+)\].*/\1/p' | wc -l)
+gpu_count=$(lspci -nn | grep -Ei 'vga|3d' | sed -nE 's/.*\[(10de:[0-9a-f]+)\].*/\\1/p' | wc -l)
 os_info=$(lsb_release -d 2>/dev/null | cut -f2 || echo "Unknown")
 storage_data=$(df -h | awk 'NR>1 {print "{\\"path\\":\\""$6"\\",\\"size\\":\\""$2"\\",\\"available\\":\\""$4"\\"}"}' | paste -sd,)
 
