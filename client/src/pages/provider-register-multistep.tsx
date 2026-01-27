@@ -62,6 +62,15 @@ export default function ProviderRegisterMultistep() {
   // Provider Attributes
   const [attributes, setAttributes] = useState<AttributeRow[]>(DEFAULT_ATTRIBUTES);
 
+  // Wallet state (for import-wallet step)
+  const [walletKeyId, setWalletKeyId] = useState("");
+  const [walletPhrase, setWalletPhrase] = useState("");
+  const [walletImportMode, setWalletImportMode] = useState<"auto" | "manual">("auto");
+
+  // Build provider state
+  const [isBuilding, setIsBuilding] = useState(false);
+  const [buildError, setBuildError] = useState<string | null>(null);
+
   const getCurrentStepIndex = () => STEPS.findIndex(s => s.id === currentStep);
   const isStepCompleted = (step: Step) => completedSteps.has(step);
   const isStepActive = (step: Step) => currentStep === step;
@@ -96,7 +105,7 @@ export default function ProviderRegisterMultistep() {
             setCurrentStep(STEPS[currentIndex + 1].id);
             setServerAccessSubStep(1); // Reset for potential future use
           } else {
-            setLocation("/provider/register/final");
+            setLocation("/provider/register/build-cluster");
           }
         } catch (error: any) {
           setCheckError(error.message || "Validation failed. Please check your configuration.");
@@ -116,8 +125,94 @@ export default function ProviderRegisterMultistep() {
       // Move to next step
       setCurrentStep(STEPS[currentIndex + 1].id);
     } else {
-      // All steps completed - navigate to final registration
-      setLocation("/provider/register/final");
+      // All steps completed - call build-provider API and navigate to Build Cluster
+      await startBuildProvider();
+    }
+  };
+
+  // Start build provider process
+  const startBuildProvider = async () => {
+    setBuildError(null);
+
+    try {
+      // Process keyfile if using keyfile auth
+      let keyfileData: string | null = null;
+      if (credentialMethod === "keyfile" && privateKeyFile) {
+        keyfileData = await processKeyfile(privateKeyFile);
+      }
+
+      // Build request payload (no wallet sent to build-provider API)
+      const buildRequest = {
+        nodes: [
+          {
+            hostname: publicIP,
+            username: sshUsername,
+            port: parseInt(port) || 22,
+            password: credentialMethod === "password" ? sshPassword : null,
+            keyfile: keyfileData,
+            passphrase: credentialMethod === "keyfile" && passphrase ? passphrase : null,
+            install_gpu_drivers: false, // TODO: Add UI for this
+          },
+        ],
+        provider: {
+          attributes: attributes.filter((a) => a.key.trim() !== "" && a.value.trim() !== ""),
+          pricing: {
+            cpu: null,
+            memory: null,
+            storage: null,
+            gpu: null,
+            persistentStorage: null,
+            ipScalePrice: null,
+            endpointBidPrice: null,
+          },
+          config: {
+            domain: domainName || null,
+            organization: organizationName || null,
+            email: email || null,
+          },
+        },
+      };
+
+      const apiUrl = import.meta.env.VITE_API_URL
+        ? `${import.meta.env.VITE_API_URL}/v1/build-provider`
+        : "http://localhost:7002/v1/build-provider";
+
+      // Get auth token from environment variable or localStorage
+      const authToken = import.meta.env.VITE_AUTH_TOKEN || localStorage.getItem("auth_token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
+      }
+
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(buildRequest),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({
+          error: { message: "Failed to start build provider" },
+        }));
+        throw new Error(errorData.error?.message || "Failed to start build provider");
+      }
+
+      const data = await response.json();
+      const actionId = data.action_id;
+
+      if (!actionId) {
+        throw new Error("No action ID returned from build provider API");
+      }
+
+      // Navigate to build cluster page with action_id
+      setLocation(`/provider/register/build-cluster?action_id=${actionId}`);
+    } catch (error: any) {
+      console.error("Error starting build provider:", error);
+      setBuildError(error.message || "Failed to start build provider. Please try again.");
+      setIsBuilding(false);
     }
   };
 
@@ -177,6 +272,8 @@ export default function ProviderRegisterMultistep() {
         return domainName.trim() !== "" && organizationName.trim() !== "";
       case "provider-attributes":
         return attributes.some((a) => a.key.trim() !== "" && a.value.trim() !== "");
+      case "import-wallet":
+        return !isBuilding;
       default:
         return true;
     }
@@ -834,9 +931,99 @@ export default function ProviderRegisterMultistep() {
       case "import-wallet":
         return (
           <div className="space-y-6">
-            <p className="text-sm text-muted-foreground">
-              Import wallet step content will go here.
-            </p>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="walletKeyId" className="text-base font-semibold">
+                  Wallet Key ID <span className="text-red-500">*</span>
+                </Label>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Enter the key ID for your wallet. This is required to import your wallet.
+                </p>
+                <Input
+                  id="walletKeyId"
+                  type="text"
+                  placeholder="Enter wallet key ID"
+                  value={walletKeyId}
+                  onChange={(e) => {
+                    setWalletKeyId(e.target.value);
+                    setBuildError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                      e.preventDefault();
+                      if (canProceed() && !isBuilding) {
+                        handleNext();
+                      }
+                    }
+                  }}
+                  className="max-w-md"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="walletImportMode" className="text-base font-semibold">
+                  Import Mode
+                </Label>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Select how you want to import your wallet.
+                </p>
+                <Select
+                  value={walletImportMode}
+                  onValueChange={(value: "auto" | "manual") => {
+                    setWalletImportMode(value);
+                    setBuildError(null);
+                  }}
+                >
+                  <SelectTrigger className="max-w-md">
+                    <SelectValue placeholder="Select import mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="manual">Manual</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="walletPhrase" className="text-base font-semibold">
+                  Wallet Phrase (Optional)
+                </Label>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Enter your wallet mnemonic phrase if you want to import an existing wallet. Leave empty to create a new wallet.
+                </p>
+                <Input
+                  id="walletPhrase"
+                  type="text"
+                  placeholder="Enter wallet mnemonic phrase (12 or 24 words)"
+                  value={walletPhrase}
+                  onChange={(e) => {
+                    setWalletPhrase(e.target.value);
+                    setBuildError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                      e.preventDefault();
+                      if (canProceed() && !isBuilding) {
+                        handleNext();
+                      }
+                    }
+                  }}
+                  className="max-w-md"
+                />
+              </div>
+
+              {buildError && (
+                <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-md">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-destructive">Build Error</p>
+                      <p className="text-sm text-destructive/80 mt-1">{buildError}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         );
 
@@ -916,13 +1103,18 @@ export default function ProviderRegisterMultistep() {
         )}
         <Button
           onClick={handleNext}
-          disabled={!canProceed() || isChecking}
+          disabled={!canProceed() || isChecking || isBuilding}
           className="bg-red-500 hover:bg-red-600 text-white"
         >
           {isChecking ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Checking...
+            </>
+          ) : isBuilding ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Starting build...
             </>
           ) : (
             "Next"

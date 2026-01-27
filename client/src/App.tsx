@@ -9,6 +9,7 @@ import LandingPage from "@/pages/landing";
 import ProviderRegister from "@/pages/provider-register";
 import ProviderRegisterStaged from "@/pages/provider-register-staged";
 import ProviderRegisterMultistep from "@/pages/provider-register-multistep";
+import ProviderBuildCluster from "@/pages/provider-build-cluster";
 import ProviderListPage from "@/pages/provider-list";
 import ProviderDetailPageWrapper from "@/pages/provider-detail-wrapper";
 import ProviderRawPageWrapper from "@/pages/provider-raw-wrapper";
@@ -29,6 +30,7 @@ function Router() {
         <Route path="/user" component={UserDashboard} />
         <Route path="/provider" component={ProviderRegisterStaged} />
         <Route path="/provider/register" component={ProviderRegisterMultistep} />
+        <Route path="/provider/register/build-cluster" component={ProviderBuildCluster} />
         <Route path="/provider/register/final" component={ProviderRegister} />
         <Route path="/providers/:owner/raw" component={ProviderRawPageWrapper} />
         <Route path="/providers/:owner" component={ProviderDetailPageWrapper} />
