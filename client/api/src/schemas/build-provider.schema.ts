@@ -64,11 +64,20 @@ export const ProviderSchema = z.object({
 
 export type Provider = z.infer<typeof ProviderSchema>;
 
+// Wallet (required for prepare provider config / install akash provider)
+export const WalletSchema = z.object({
+  address: z.string().min(1, "Wallet address is required"),
+  key_password: z.string().min(1, "Key password is required"),
+});
+
+export type Wallet = z.infer<typeof WalletSchema>;
+
 // Build Provider Request Schema
 export const BuildProviderRequestSchema = z.object({
   action_id: z.string().uuid().optional(),
   nodes: z.array(NodeSchema).min(1, "At least one node is required"),
   provider: ProviderSchema,
+  wallet: WalletSchema.optional(), // Required for full provider build (prepare config + install provider)
 });
 
 export type BuildProviderRequest = z.infer<typeof BuildProviderRequestSchema>;

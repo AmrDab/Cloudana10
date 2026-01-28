@@ -184,6 +184,7 @@ export default function ProviderBuildCluster() {
   const [error, setError] = useState<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isPollingRef = useRef(false);
+  const runningLogPreRef = useRef<HTMLPreElement | null>(null);
 
   const apiUrl = import.meta.env.VITE_API_URL 
     ? `${import.meta.env.VITE_API_URL}/v1`
@@ -195,7 +196,7 @@ export default function ProviderBuildCluster() {
     
     try {
       isPollingRef.current = true;
-      const response = await fetch(`${apiUrl}/status/${actionId}`);
+      const response = await fetch(`${apiUrl}/build-provider-status/${actionId}`);
       
       if (!response.ok) {
         if (response.status === 404) {
@@ -207,7 +208,10 @@ export default function ProviderBuildCluster() {
 
       const data = await response.json();
       
-      // Update startedAt from backend
+      // Update build-level status and startedAt from backend
+      if (data.status === "completed" || data.status === "failed" || data.status === "running" || data.status === "pending") {
+        setBuildStatus(data.status);
+      }
       if (data.start_time && !startedAt) {
         setStartedAt(parseDate(data.start_time));
       }
@@ -262,9 +266,9 @@ export default function ProviderBuildCluster() {
     }
   };
 
-  // Fetch logs for a specific task
-  const fetchTaskLogs = async (taskId: string) => {
-    if (stepLogs[taskId] || isLoadingLogs[taskId]) return;
+  // Fetch logs for a specific task (force = true skips cache for live-tailing running steps)
+  const fetchTaskLogs = async (taskId: string, force = false) => {
+    if (!force && (stepLogs[taskId]?.length || isLoadingLogs[taskId])) return;
 
     setIsLoadingLogs((prev) => ({ ...prev, [taskId]: true }));
 
@@ -291,37 +295,62 @@ export default function ProviderBuildCluster() {
     }
   };
 
-  // Poll for status updates
+  // Poll for status updates (faster when build is running for real-time step updates)
   useEffect(() => {
     if (!actionId) {
       setError("No action ID provided. Cannot fetch build status.");
       return;
     }
 
-    // Initial fetch
     fetchBuildStatus();
-
-    // Poll every 2 seconds
-    pollingIntervalRef.current = setInterval(() => {
-      fetchBuildStatus();
-    }, 2000);
+    const intervalMs = buildStatus === "running" ? 1000 : 2000;
+    pollingIntervalRef.current = setInterval(fetchBuildStatus, intervalMs);
 
     return () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
     };
-  }, [actionId]);
+  }, [actionId, buildStatus]);
 
   // Fetch logs when step is expanded
   useEffect(() => {
     if (expandedStepId) {
       const step = steps.find((s) => s.id === expandedStepId);
-      if (step?.taskId && !stepLogs[step.taskId]) {
+      if (step?.taskId) {
         fetchTaskLogs(step.taskId);
       }
     }
   }, [expandedStepId, steps]);
+
+  // Auto-expand the current running step so install log is visible in real time
+  useEffect(() => {
+    const runningStep = steps.find((s) => s.status === "running");
+    if (runningStep && expandedStepId !== runningStep.id) {
+      setExpandedStepId(runningStep.id);
+    }
+  }, [steps]);
+
+  // Auto-fetch logs for any running step in real time: immediate first fetch, then poll every 600ms
+  useEffect(() => {
+    const running = steps.filter((s) => s.status === "running" && s.taskId);
+    if (running.length === 0) return;
+    // Fetch immediately when a step becomes running so logs appear without delay
+    running.forEach((s) => s.taskId && fetchTaskLogs(s.taskId, true));
+    const t = setInterval(() => {
+      running.forEach((s) => s.taskId && fetchTaskLogs(s.taskId, true));
+    }, 600);
+    return () => clearInterval(t);
+  }, [steps]);
+
+  // Auto-scroll running step log to bottom when new lines arrive
+  useEffect(() => {
+    const runningStep = steps.find((s) => s.status === "running");
+    if (!runningStep?.taskId || !stepLogs[runningStep.taskId]?.length) return;
+    const pre = runningLogPreRef.current;
+    if (pre) requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
+  }, [steps, stepLogs]);
 
   const toggleStep = (stepId: string) => {
     setExpandedStepId((prev) => (prev === stepId ? null : stepId));
@@ -374,6 +403,11 @@ export default function ProviderBuildCluster() {
             const endedDate = step.endTime ? parseDate(step.endTime) : null;
             const logs = step.taskId ? stepLogs[step.taskId] : undefined;
             const isLoading = step.taskId ? isLoadingLogs[step.taskId] : false;
+            const showLogTail =
+              (step.status === "running" || step.status === "completed" || step.status === "failed") &&
+              (logs?.length || isLoading);
+            const tailN = step.status === "running" ? 24 : 6;
+            const logTailLines = logs?.length ? logs.slice(-tailN) : [];
 
             return (
               <li
@@ -417,6 +451,21 @@ export default function ProviderBuildCluster() {
                   </div>
                 </button>
 
+                {showLogTail && !isExpanded && (
+                  <div className="pl-6 pr-1 pb-2">
+                    <pre className="bg-zinc-900 dark:bg-zinc-950 text-zinc-100 text-xs p-3 rounded border border-zinc-700/50 overflow-auto max-h-[140px] whitespace-pre-wrap font-mono">
+                      {isLoading && !logs?.length ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Waiting for logs…
+                        </span>
+                      ) : (
+                        logTailLines.join("\n") || "No output yet."
+                      )}
+                    </pre>
+                  </div>
+                )}
+
                 {isExpanded && (
                   <div className="pb-4 pt-1 px-1">
                     <h3 className="text-base font-semibold mb-1">{step.label}</h3>
@@ -435,7 +484,14 @@ export default function ProviderBuildCluster() {
                         Not started yet
                       </p>
                     )}
-                    <pre className="bg-zinc-900 dark:bg-zinc-950 text-zinc-100 text-xs p-4 rounded-lg overflow-auto max-h-[320px] whitespace-pre-wrap font-mono border border-zinc-700/50">
+                    <pre
+                      ref={(el) => {
+                        if (isExpanded && step.status === "running") runningLogPreRef.current = el;
+                      }}
+                      className={`bg-zinc-900 dark:bg-zinc-950 text-zinc-100 text-xs p-4 rounded-lg overflow-auto whitespace-pre-wrap font-mono border border-zinc-700/50 ${
+                        step.status === "running" ? "max-h-[420px]" : "max-h-[320px]"
+                      }`}
+                    >
                       {isLoading ? (
                         <div className="flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin" />

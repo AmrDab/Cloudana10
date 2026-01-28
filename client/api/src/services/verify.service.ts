@@ -111,21 +111,31 @@ storage_data=$(df -h | awk 'NR>1 {print "{\\"path\\":\\""$6"\\",\\"size\\":\\""$
 echo "{\\"cpu\\":$cpu_info,\\"memory\\":\\"$memory_total\\",\\"storage_data\\":[$storage_data],\\"os\\":\\"$os_info\\",\\"gpus\\":$gpu_count}"`;
 }
 
-// Check if port is open
-function checkPort(host: string, port: number, timeout: number = 5000): Promise<boolean> {
+// Check if port is open (connection timeout: Node's createConnection ignores timeout option, so we use a timer)
+const PORT_CHECK_TIMEOUT_MS = 10_000;
+
+function checkPort(host: string, port: number, timeoutMs: number = PORT_CHECK_TIMEOUT_MS): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = createConnection({ host, port, timeout }, () => {
-      socket.destroy();
-      resolve(true);
+    let settled = false;
+    const done = (open: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket.destroy();
+      } catch {
+        /* ignore */
+      }
+      resolve(open);
+    };
+
+    const timer = setTimeout(() => done(false), timeoutMs);
+    const socket = createConnection({ host, port }, () => {
+      done(true);
     });
 
     socket.on("error", () => {
-      resolve(false);
-    });
-
-    socket.on("timeout", () => {
-      socket.destroy();
-      resolve(false);
+      done(false);
     });
   });
 }

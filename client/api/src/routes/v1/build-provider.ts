@@ -9,6 +9,26 @@ import {
   BuildProviderStatusResponseSchema,
   BuildProviderLogsResponseSchema,
 } from "../../schemas/build-provider.schema.js";
+import { ApplicationError } from "../../types/k3s.js";
+
+function isApplicationError(e: unknown): e is ApplicationError {
+  return e instanceof ApplicationError;
+}
+
+function errorResponse(c: { json: (body: unknown, status: number) => Response }, error: unknown) {
+  if (isApplicationError(error)) {
+    const status = error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500;
+    return c.json(
+      { status: "error", error: { message: error.payload.message, error_code: error.errorCode } },
+      status
+    );
+  }
+  const msg = error instanceof Error ? error.message : "Internal server error";
+  return c.json(
+    { status: "error", error: { message: msg, error_code: "PRV_001" } },
+    500
+  );
+}
 
 const buildProviderService = new BuildProviderService();
 
@@ -86,46 +106,7 @@ buildProviderRouter.openapi(buildProviderRoute, async (c) => {
     return c.json(result, 200);
   } catch (error) {
     console.error("[API] Error building provider:", error);
-
-    if (error instanceof Error) {
-      // Check if it's a validation or known error
-      if (error.message.includes("HTTP 400") || error.message.includes("invalid")) {
-        return c.json(
-          {
-            status: "error",
-            error: {
-              message: error.message,
-              error_code: "PRV_001",
-            },
-          },
-          400
-        );
-      }
-
-      if (error.message.includes("HTTP 401") || error.message.includes("Unauthorized")) {
-        return c.json(
-          {
-            status: "error",
-            error: {
-              message: "Unauthorized - invalid or missing authentication token",
-              error_code: "AUTH_001",
-            },
-          },
-          401
-        );
-      }
-    }
-
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to build provider",
-          error_code: "PRV_001",
-        },
-      },
-      500
-    );
+    return errorResponse(c, error);
   }
 });
 
@@ -169,32 +150,13 @@ buildProviderRouter.openapi(getBuildProviderStatusRoute, async (c) => {
     return c.json(result, 200);
   } catch (error) {
     console.error("Error getting build provider status:", error);
-
-    if (error instanceof Error) {
-      if (error.message.includes("HTTP 404") || error.message.includes("not found")) {
-        return c.json(
-          {
-            status: "error",
-            error: {
-              message: "Action not found",
-              error_code: "PRV_004",
-            },
-          },
-          404
-        );
-      }
+    if (isApplicationError(error) && error.statusCode === 404) {
+      return c.json(
+        { status: "error", error: { message: error.payload.message, error_code: error.errorCode } },
+        404
+      );
     }
-
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to get build provider status",
-          error_code: "PRV_002",
-        },
-      },
-      500
-    );
+    return errorResponse(c, error);
   }
 });
 
@@ -260,45 +222,7 @@ buildProviderRouter.openapi(updateProviderAttributesRoute, async (c) => {
     return c.json(result, 200);
   } catch (error) {
     console.error("Error updating provider attributes:", error);
-
-    if (error instanceof Error) {
-      if (error.message.includes("HTTP 400") || error.message.includes("invalid")) {
-        return c.json(
-          {
-            status: "error",
-            error: {
-              message: error.message,
-              error_code: "PRV_003",
-            },
-          },
-          400
-        );
-      }
-
-      if (error.message.includes("HTTP 401") || error.message.includes("Unauthorized")) {
-        return c.json(
-          {
-            status: "error",
-            error: {
-              message: "Unauthorized - invalid or missing authentication token",
-              error_code: "AUTH_001",
-            },
-          },
-          401
-        );
-      }
-    }
-
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to update provider attributes",
-          error_code: "PRV_003",
-        },
-      },
-      500
-    );
+    return errorResponse(c, error);
   }
 });
 
@@ -342,31 +266,12 @@ buildProviderRouter.openapi(getBuildProviderLogsRoute, async (c) => {
     return c.json(result, 200);
   } catch (error) {
     console.error("Error getting build provider logs:", error);
-
-    if (error instanceof Error) {
-      if (error.message.includes("HTTP 404") || error.message.includes("not found")) {
-        return c.json(
-          {
-            status: "error",
-            error: {
-              message: "Task not found",
-              error_code: "PRV_005",
-            },
-          },
-          404
-        );
-      }
+    if (isApplicationError(error) && error.statusCode === 404) {
+      return c.json(
+        { status: "error", error: { message: error.payload.message, error_code: error.errorCode } },
+        404
+      );
     }
-
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to get task logs",
-          error_code: "PRV_003",
-        },
-      },
-      500
-    );
+    return errorResponse(c, error);
   }
 });

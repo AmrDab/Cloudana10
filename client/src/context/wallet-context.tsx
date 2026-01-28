@@ -40,8 +40,22 @@ interface WalletContextType {
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
+/** Remove Reown AppKit font preloads to avoid "preloaded but not used" console warnings.
+ * The font still loads normally when the wallet modal is opened. */
+function removeReownFontPreloads() {
+  if (typeof document === 'undefined') return;
+  document.querySelectorAll<HTMLLinkElement>('link[rel="preload"][href*="fonts.reown.com"]').forEach((el) => el.remove());
+}
+
 function WalletContextProvider({ children }: { children: ReactNode }) {
   const { address, isConnected, chain } = useAccount();
+
+  // Drop Reown font preloads so the browser doesn't warn when the modal isn't open yet
+  useEffect(() => {
+    removeReownFontPreloads();
+    const t = window.setTimeout(removeReownFontPreloads, 150);
+    return () => clearTimeout(t);
+  }, []);
   const { disconnect: wagmiDisconnect } = useDisconnect();
   const { data: balanceData } = useBalance({ 
     address,

@@ -348,8 +348,12 @@ export default function ProviderRegisterMultistep() {
     });
   };
 
+  const VERIFY_REQUEST_TIMEOUT_MS = 45_000; // Allow API time (e.g. 30s SSH timeout + buffer)
+
   // Check SSH connection
   const checkSSHConnection = async (): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), VERIFY_REQUEST_TIMEOUT_MS);
     try {
       const apiUrl = import.meta.env.VITE_API_URL 
         ? `${import.meta.env.VITE_API_URL}/v1/verify/control-machine`
@@ -371,8 +375,9 @@ export default function ProviderRegisterMultistep() {
           keyfile: keyfileData,
           passphrase: credentialMethod === "keyfile" && passphrase ? passphrase : null,
         }),
+        signal: controller.signal,
       });
-
+      clearTimeout(timeoutId);
       if (response.ok) {
         const data = await response.json();
         if (data.status?.toLowerCase() === "success" || response.status === 200) {
@@ -392,7 +397,12 @@ export default function ProviderRegisterMultistep() {
         );
       }
     } catch (error: any) {
-      // Handle network/connection errors
+      clearTimeout(timeoutId);
+      if (error?.name === "AbortError") {
+        throw new Error(
+          "Verification timed out. Check that the server is reachable and the verification API is running."
+        );
+      }
       if (error instanceof TypeError || error.message?.includes("Failed to fetch") || error.message?.includes("NetworkError")) {
         throw new Error(
           "Connection error: Unable to reach the verification server. Please ensure the API server is running and accessible."
@@ -407,6 +417,8 @@ export default function ProviderRegisterMultistep() {
 
   // Check port
   const checkPort = async (): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), VERIFY_REQUEST_TIMEOUT_MS);
     try {
       const apiUrl = import.meta.env.VITE_API_URL 
         ? `${import.meta.env.VITE_API_URL}/v1/verify/open-ports`
@@ -419,8 +431,9 @@ export default function ProviderRegisterMultistep() {
           public_ip: publicIP,
           ports: [parseInt(port) || 22],
         }),
+        signal: controller.signal,
       });
-
+      clearTimeout(timeoutId);
       if (response.ok) {
         const data = await response.json();
         const portNum = parseInt(port) || 22;
@@ -436,7 +449,12 @@ export default function ProviderRegisterMultistep() {
         throw new Error(error.message || "Failed to check port status");
       }
     } catch (error: any) {
-      // Handle network/connection errors
+      clearTimeout(timeoutId);
+      if (error?.name === "AbortError") {
+        throw new Error(
+          "Port check timed out. Check that the server is reachable and the verification API is running."
+        );
+      }
       if (error instanceof TypeError || error.message?.includes("Failed to fetch") || error.message?.includes("NetworkError")) {
         throw new Error(
           "Connection error: Unable to reach the verification server. Please ensure the API server is running and accessible."
