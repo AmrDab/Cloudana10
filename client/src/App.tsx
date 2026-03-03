@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { Switch, Route } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
-import { WalletProvider } from "@/context/wallet-context";
+import { WalletProvider } from "@/context/wallet-context-minimal";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import NotFound from "@/pages/not-found";

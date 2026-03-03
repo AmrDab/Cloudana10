@@ -1,5 +1,24 @@
-@import "tailwindcss";
+/* All CSS imports disabled for minimal testing */
+/*
 @import "tw-animate-css";
+@import "./styles/cloudana-enterprise.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@custom-variant dark (&:is(.dark *));
+*/
+
+/* Basic reset only */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
 
 @custom-variant dark (&:is(.dark *));
 

@@ -1,0 +1,260 @@
+/* CLOUDANA ENTERPRISE DESIGN SYSTEM */
+/* Transforms MVP to Enterprise-Grade UI */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+
+@custom-variant dark (&:is(.dark *));
+
+/* ENTERPRISE COLOR SYSTEM */
+:root {
+  /* Brand Colors - Professional Indigo + Cyan */
+  --brand-indigo-50: #eef2ff;
+  --brand-indigo-100: #e0e7ff;
+  --brand-indigo-500: #6366f1;
+  --brand-indigo-600: #4f46e5;
+  --brand-indigo-700: #4338ca;
+  --brand-indigo-900: #312e81;
+  
+  --brand-cyan-50: #ecfeff;
+  --brand-cyan-100: #cffafe;
+  --brand-cyan-500: #06b6d4;
+  --brand-cyan-600: #0891b2;
+  --brand-cyan-700: #0e7490;
+  
+  /* Accent Colors - AI/ML Purple, Success Green, Warning Amber */
+  --accent-purple-500: #8b5cf6;
+  --accent-purple-600: #7c3aed;
+  --accent-emerald-500: #10b981;
+  --accent-emerald-600: #059669;
+  --accent-amber-500: #f59e0b;
+  --accent-amber-600: #d97706;
+  --accent-rose-500: #f43f5e;
+  --accent-rose-600: #e11d48;
+  
+  /* 4-Layer Dark Theme Hierarchy */
+  --bg-depth-0: #0a0a0f; /* Deepest - body background */
+  --bg-depth-1: #11111a; /* Cards, modals */
+  --bg-depth-2: #1a1a27; /* Elevated elements */  
+  --bg-depth-3: #222230; /* Highest - popovers */
+  
+  /* Text Hierarchy */
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #64748b;
+  --text-quaternary: #475569;
+  
+  /* Enterprise Borders & Effects */
+  --border-subtle: rgba(148, 163, 184, 0.08);
+  --border-default: rgba(148, 163, 184, 0.12);
+  --border-emphasis: rgba(148, 163, 184, 0.18);
+  
+  --glow-indigo: 0 0 20px rgba(99, 102, 241, 0.3);
+  --glow-cyan: 0 0 20px rgba(6, 182, 212, 0.3);
+  --glow-purple: 0 0 20px rgba(139, 92, 246, 0.3);
+  
+  /* Updated Tailwind Variables */
+  --background: 224 71% 4%; /* Deep Space Blue - keeping existing */
+  --foreground: 210 40% 98%;
+  --card: 224 71% 6%;
+  --card-foreground: 210 40% 98%;
+  --popover: 224 71% 8%; /* Slightly lighter for depth */
+  --popover-foreground: 210 40% 98%;
+  --primary: 239 84% 67%; /* Indigo primary */
+  --primary-foreground: 224 71% 4%;
+  --secondary: 188 78% 41%; /* Cyan secondary */
+  --secondary-foreground: 224 71% 4%;
+  --muted: 217 33% 12%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 239 84% 67%;
+  --accent-foreground: 224 71% 4%;
+  --destructive: 348 83% 47%; /* Rose destructive */
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 15%;
+  --input: 217 33% 15%;
+  --ring: 239 84% 67%;
+  --radius: 0.75rem; /* Slightly larger radius for enterprise feel */
+}
+
+/* TYPOGRAPHY SCALE */
+@theme inline {
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  
+  /* Enhanced text sizes */
+  --text-hero: 4.5rem; /* 72px */
+  --text-display-lg: 3.75rem; /* 60px */
+  --text-display: 3rem; /* 48px */
+  --text-heading-lg: 2.25rem; /* 36px */
+  --text-heading: 1.875rem; /* 30px */
+  --text-title: 1.5rem; /* 24px */
+  --text-body-lg: 1.125rem; /* 18px */
+  --text-body: 1rem; /* 16px */
+  --text-caption: 0.875rem; /* 14px */
+  --text-micro: 0.75rem; /* 12px */
+  --text-tiny: 0.625rem; /* 10px */
+}
+
+/* ENTERPRISE COMPONENT STYLES */
+
+/* Enhanced Buttons with Glow Effects */
+.btn-primary-glow {
+  @apply bg-gradient-to-r from-indigo-600 to-indigo-500 text-white font-semibold;
+  @apply border border-indigo-400/30 rounded-xl px-6 py-3 transition-all duration-300;
+  @apply hover:shadow-[0_0_30px_rgba(99,102,241,0.4)] hover:scale-[1.02];
+  @apply focus:ring-2 focus:ring-indigo-500/50 focus:ring-offset-2 focus:ring-offset-gray-900;
+}
+
+.btn-secondary-glow {
+  @apply bg-gradient-to-r from-cyan-600 to-cyan-500 text-white font-semibold;
+  @apply border border-cyan-400/30 rounded-xl px-6 py-3 transition-all duration-300;
+  @apply hover:shadow-[0_0_30px_rgba(6,182,212,0.4)] hover:scale-[1.02];
+}
+
+.btn-ghost-enterprise {
+  @apply bg-white/5 backdrop-blur-sm border border-white/10 text-gray-300 font-medium;
+  @apply rounded-xl px-6 py-3 transition-all duration-300;
+  @apply hover:bg-white/10 hover:border-white/20 hover:text-white;
+}
+
+/* Glass Morphism Cards */
+.card-glass {
+  @apply bg-gray-900/40 backdrop-blur-xl border border-white/10;
+  @apply rounded-2xl shadow-2xl shadow-black/20;
+}
+
+.card-gradient {
+  @apply bg-gradient-to-br from-indigo-600/10 via-purple-600/5 to-cyan-600/10;
+  @apply border border-indigo-500/20 backdrop-blur-sm rounded-2xl;
+  @apply shadow-[0_8px_32px_rgba(99,102,241,0.12)];
+}
+
+.card-hover-lift {
+  @apply transition-all duration-300 hover:scale-[1.02];
+  @apply hover:shadow-[0_12px_48px_rgba(0,0,0,0.3)];
+}
+
+/* Professional Form Inputs */
+.input-enterprise {
+  @apply bg-gray-900/50 border border-gray-700/50 text-gray-100 placeholder-gray-400;
+  @apply rounded-xl px-4 py-3 font-medium transition-all duration-200;
+  @apply focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 focus:bg-gray-900/70;
+  @apply hover:border-gray-600/50;
+}
+
+/* Status Badges with Pulse */
+.badge-success {
+  @apply inline-flex items-center gap-2 bg-emerald-500/10 text-emerald-400;
+  @apply border border-emerald-500/20 rounded-full px-3 py-1 text-sm font-medium;
+}
+
+.badge-warning {
+  @apply inline-flex items-center gap-2 bg-amber-500/10 text-amber-400;
+  @apply border border-amber-500/20 rounded-full px-3 py-1 text-sm font-medium;
+}
+
+.badge-error {
+  @apply inline-flex items-center gap-2 bg-rose-500/10 text-rose-400;
+  @apply border border-rose-500/20 rounded-full px-3 py-1 text-sm font-medium;
+}
+
+.badge-pulse::before {
+  content: '';
+  @apply w-2 h-2 bg-current rounded-full animate-pulse mr-1;
+}
+
+/* Navigation Enhancements */
+.nav-item-active {
+  @apply bg-indigo-600/20 text-indigo-300 border border-indigo-500/30;
+  @apply shadow-[0_0_20px_rgba(99,102,241,0.2)] backdrop-blur-sm;
+}
+
+.nav-item-hover {
+  @apply transition-all duration-200 hover:bg-white/5 hover:text-gray-200;
+  @apply hover:border-white/10 rounded-lg;
+}
+
+/* Data Table Enhancements */
+.table-enterprise {
+  @apply bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl overflow-hidden;
+}
+
+.table-row-hover {
+  @apply transition-all duration-200 hover:bg-indigo-600/5 hover:shadow-lg;
+  @apply border-b border-gray-800/30;
+}
+
+/* Metric Cards */
+.metric-card {
+  @apply bg-gradient-to-br from-gray-900/50 to-gray-800/30 backdrop-blur-sm;
+  @apply border border-gray-700/50 rounded-2xl p-6 transition-all duration-300;
+  @apply hover:border-indigo-500/30 hover:shadow-[0_8px_32px_rgba(99,102,241,0.1)];
+}
+
+/* Animation Keyframes */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.3); }
+  50% { box-shadow: 0 0 40px rgba(99, 102, 241, 0.5); }
+}
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 3s ease infinite;
+}
+
+/* Enterprise Layout Utilities */
+.container-enterprise {
+  @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+}
+
+.section-spacing {
+  @apply py-12 md:py-16 lg:py-20;
+}
+
+.grid-enterprise {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8;
+}
+
+/* Responsive Breakpoints Enhancement */
+@media (max-width: 768px) {
+  .mobile-stack {
+    @apply flex flex-col space-y-4;
+  }
+  
+  .mobile-full {
+    @apply w-full;
+  }
+}
+
+/* Text Glow Effects */
+.text-glow-indigo {
+  text-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
+}
+
+.text-glow-white {
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+}

@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import App from "./App";
+import App from "./App-minimal";
 import "./index.css";
 
 // Suppress non-critical 403 errors from network image fetches (chain logos)
