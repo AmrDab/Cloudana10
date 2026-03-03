@@ -8,7 +8,9 @@
     "build": "vite build",
     "start": "vite build && vite preview --port 7001",
     "preview": "vite preview",
-    "check": "tsc"
+    "check": "tsc",
+    "dev:local": "vite dev --host 0.0.0.0 --port 5002",
+    "preview:local": "vite preview --host 0.0.0.0 --port 5002"
   },
   "dependencies": {
     "@cosmjs/math": "^0.38.1",

@@ -13,20 +13,13 @@ import { TxLink } from "@/components/ui/tx-link";
 import { AddressDisplay } from "@/components/ui/address-display";
 import { Server, Copy, Check, Loader2, Flame, Cpu, HardDrive, Network, MapPin, CheckCircle, ExternalLink } from "lucide-react";
 import {
-  useCLDTokenBalance,
-  useCLDTokenAllowance,
-  useApproveCLDToken,
   useRegisterProvider,
   generatePubKeyHash,
   PROVIDER_REGISTRY_ADDRESS,
   CLD_TOKEN_ADDRESS,
-  useProviderRegistryBondInfo,
   useMyProviders,
-  useProviderInfo,
 } from "@/lib/contracts";
 import { uploadToIPFS, generatePubKeyHash as generatePubKey, getPinataGatewayUrl, type ProviderMetadata, type ProviderNode } from "@/lib/api";
-import { formatEther } from "viem";
-import { formatDistanceToNow } from "date-fns";
 
 const REGIONS = ["Helsinki", "EU", "Global"] as const;
 const HARDWARE_TIERS = [
@@ -75,11 +68,7 @@ export default function ProviderRegister() {
   const [copiedPubKey, setCopiedPubKey] = useState(false);
   
   // Contract hooks
-  const { data: balance, isLoading: balanceLoading } = useCLDTokenBalance(address);
-  const { data: allowance, isLoading: allowanceLoading } = useCLDTokenAllowance(address, PROVIDER_REGISTRY_ADDRESS);
-  const { approve, hash: approveHash, isPending: isApproving, isSuccess: isApproved, reset: resetApprove } = useApproveCLDToken();
   const { register, hash: registerHash, isPending: isRegistering, isSuccess: isRegistered, error, reset: resetRegister } = useRegisterProvider();
-  const { data: bondInfo } = useProviderRegistryBondInfo();
   const { data: myProviderKeys } = useMyProviders(address);
   
   // Auto-generate pubKeyHash when name changes
@@ -97,16 +86,6 @@ export default function ProviderRegister() {
     }
   }, [myProviderKeys]);
   
-  // Show success message after approval (data will auto-refresh)
-  useEffect(() => {
-    if (isApproved && approveHash) {
-      toast({
-        title: "Approval Successful!",
-        description: "Token approval has been confirmed. You can now register your provider.",
-      });
-    }
-  }, [isApproved, approveHash]);
-
   // Show success message after registration (keep form data for potential reuse)
   useEffect(() => {
     if (isRegistered && address && registerHash) {
@@ -129,7 +108,6 @@ export default function ProviderRegister() {
   
   const resetForm = () => {
     // Clear any transaction errors
-    resetApprove();
     resetRegister();
     
     // Reset form fields
@@ -218,13 +196,6 @@ export default function ProviderRegister() {
     }
   };
   
-  const handleApprove = () => {
-    if (!bondInfo) return;
-    const bondAmount = formatEther(bondInfo as bigint);
-    console.log('[ProviderRegister] Calling approve...');
-    approve(PROVIDER_REGISTRY_ADDRESS, bondAmount);
-  };
-  
   const handleRegister = () => {
     if (!pubKeyHash || !ipfsCID) return;
     console.log('[ProviderRegister] Calling register...', { isRegistering });
@@ -233,20 +204,16 @@ export default function ProviderRegister() {
 
   // Debug logging for loading states
   useEffect(() => {
-    if (isApproving || isRegistering) {
-      console.log('[ProviderRegister] Loading states:', { isApproving, isRegistering, approveHash, registerHash });
+    if (isRegistering) {
+      console.log('[ProviderRegister] Loading states:', { isRegistering, registerHash });
     }
-  }, [isApproving, isRegistering, approveHash, registerHash]);
+  }, [isRegistering, registerHash]);
   
-  const balanceValue = balance && typeof balance === 'bigint' ? parseFloat(formatEther(balance)) : 0;
-  const allowanceValue = allowance && typeof allowance === 'bigint' ? parseFloat(formatEther(allowance)) : 0;
-  const bondAmount = bondInfo && typeof bondInfo === 'bigint' ? parseFloat(formatEther(bondInfo)) : 1000;
-  const needsApproval = allowanceValue < bondAmount;
-  const hasEnoughBalance = balanceValue >= bondAmount;
+  const bondAmount = 0;
   const remainingQuota = 10 - myProviders.length;
   
   const canPrepare = name && !isPrepared && remainingQuota > 0;
-  const canRegister = isPrepared && hasEnoughBalance && !needsApproval && remainingQuota > 0;
+  const canRegister = isPrepared && remainingQuota > 0;
   
   if (!isConnected) {
     return (
@@ -259,27 +226,8 @@ export default function ProviderRegister() {
   
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500 pt-10">
-      {/* Notice: ProviderRegistry contract not available */}
-      <Card className="border-yellow-500/50 bg-yellow-500/10">
-        <CardContent className="pt-6">
-          <div className="flex items-start gap-3">
-            <Server className="h-5 w-5 text-yellow-500 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="font-semibold text-yellow-400 mb-2">Provider Registration Temporarily Unavailable</h3>
-              <p className="text-sm text-yellow-300/80">
-                The ProviderRegistry smart contract is not yet deployed. Provider registration functionality will be available once the contract is built and deployed.
-                <br />
-                <span className="text-xs text-yellow-400/60 mt-1 block">
-                  Currently focusing on workload registration. You can still register workloads using the Workload Registry.
-                </span>
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      
       {/* Registration Form */}
-      <Card className="glass-card border-primary/20 opacity-50 pointer-events-none">
+      <Card className="glass-card border-primary/20">
         <CardHeader>
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -324,8 +272,8 @@ export default function ProviderRegister() {
                   </div>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Bond Amount:</span>
-                  <span className="font-bold">{bondAmount} CLD</span>
+                  <span className="text-muted-foreground">MVP Bond Requirement:</span>
+                  <span className="font-bold">None (0 CLD)</span>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -709,12 +657,12 @@ export default function ProviderRegister() {
           {/* Bond Info */}
           <div className="p-4 rounded-lg bg-muted/50 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Total Bond:</span>
+              <span className="text-sm font-medium">MVP Bond:</span>
               <span className="text-lg font-bold">{bondAmount} CLD</span>
             </div>
             <div className="text-xs text-muted-foreground space-y-1">
-              <div>🏛️ Treasury (80%): {(bondAmount * 0.8).toFixed(0)} CLD</div>
-              <div>👥 Team (20%): {(bondAmount * 0.2).toFixed(0)} CLD</div>
+              <div>🎉 Early-bird promotions may include optional CLD incentives.</div>
+              <div>🔒 Mandatory bonding is disabled for MVP onboarding.</div>
             </div>
             <div className="pt-2 border-t border-white/5">
               <p className="text-xs text-muted-foreground mb-2">Registry Contract:</p>
@@ -729,16 +677,8 @@ export default function ProviderRegister() {
           {/* Balance & Allowance */}
           <div className="space-y-3">
             <div className="flex justify-between text-sm">
-              <span>Your Balance:</span>
-              <span className={hasEnoughBalance ? "text-green-500" : "text-red-500"}>
-                {balanceLoading ? "Loading..." : `${balanceValue.toFixed(2)} CLD`}
-              </span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span>Allowance:</span>
-              <span className={!needsApproval ? "text-green-500" : "text-yellow-500"}>
-                {allowanceLoading ? "Loading..." : `${allowanceValue.toFixed(2)} CLD`}
-              </span>
+              <span>Registration Cost:</span>
+              <span className="text-green-500">0 CLD (MVP)</span>
             </div>
             <div className="flex justify-between text-sm">
               <span>Remaining Quota:</span>
@@ -799,29 +739,6 @@ export default function ProviderRegister() {
                 </>
               )}
               
-              {isPrepared && needsApproval && (
-                <Button
-                  onClick={handleApprove}
-                  disabled={isApproving || isApproved}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  {isApproving ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {approveHash ? "Confirming Approval..." : "Waiting for Wallet..."}
-                    </>
-                  ) : isApproved ? (
-                    <>
-                      <Check className="mr-2 h-4 w-4" />
-                      Approved
-                    </>
-                  ) : (
-                    "Approve Tokens"
-                  )}
-                </Button>
-              )}
-              
               {(canRegister || (isPrepared && remainingQuota === 0)) && (
                 <Button
                   onClick={handleRegister}
@@ -873,10 +790,6 @@ export default function ProviderRegister() {
           )}
           
           {/* Transaction Success Links */}
-          {approveHash && isApproved && (
-            <TxLink hash={approveHash} label="Token approval confirmed" />
-          )}
-          
           {registerHash && isRegistered && (
             <TxLink hash={registerHash} label="Provider registration confirmed" />
           )}

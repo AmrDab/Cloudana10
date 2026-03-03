@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import { usePublicClient } from 'wagmi';
-import { CHAIN_ID } from '@/lib/contracts';
-// NOTE: ProviderRegistry contract is not built yet - this hook is disabled
-// import { ProviderRegistryAbi } from '@shared/contracts';
+import { usePublicClient, useWatchContractEvent } from 'wagmi';
+import { CHAIN_ID, PROVIDER_REGISTRY_ADDRESS } from '@/lib/contracts';
+import { ProviderRegistryAbi } from '@shared/contracts';
 
 export interface ProviderEvent {
   id: string;
@@ -13,6 +12,9 @@ export interface ProviderEvent {
   ipfsCID: string;
   bondAmount: string;
   bondAmountFormatted: string;
+  region: string;
+  hardwareTier: number;
+  capacity: number;
   blockNumber: number;
   transactionHash: string;
   timestamp: string;
@@ -20,6 +22,7 @@ export interface ProviderEvent {
 
 interface UseProviderEventsOptions {
   enabled?: boolean;
+  loadHistorical?: boolean;
   onNewProvider?: (provider: ProviderEvent) => void;
 }
 
@@ -27,45 +30,21 @@ interface UseProviderEventsReturn {
   providers: ProviderEvent[];
   loading: boolean;
   error: string | null;
+  connected: boolean;
   refetch: () => Promise<void>;
 }
 
-/**
- * Real-time hook for listening to ProviderRegistered events directly from blockchain
- * 
- * DePIN Architecture: Direct blockchain connection - no backend needed
- * 
- * Benefits:
- * - True decentralization
- * - No backend server required
- * - Direct on-chain data
- * - Real-time event listening via wagmi
- * 
- * @example
- * ```tsx
- * const { providers, loading } = useProviderEvents({
- *   onNewProvider: (provider) => {
- *     toast.success(`New provider: ${provider.ipfsCID}`);
- *   }
- * });
- * ```
- */
-export function useProviderEvents(
-  options: UseProviderEventsOptions = {}
-): UseProviderEventsReturn {
-  const {
-    enabled = true,
-    onNewProvider
-  } = options;
+export function useProviderEvents(options: UseProviderEventsOptions = {}): UseProviderEventsReturn {
+  const { enabled = true, loadHistorical = true, onNewProvider } = options;
 
   const [providers, setProviders] = useState<ProviderEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
   const [seenTxHashes] = useState(new Set<string>());
 
   const publicClient = usePublicClient({ chainId: CHAIN_ID });
 
-  // Format event data for display
   const formatProviderEvent = useCallback((data: {
     owner: string;
     pubKeyHash: string;
@@ -76,7 +55,7 @@ export function useProviderEvents(
     timestamp?: bigint;
   }): ProviderEvent => {
     const bondAmountFormatted = (Number(data.bondAmount) / 1e18).toFixed(2);
-    
+
     return {
       id: `${data.transactionHash}-${data.blockNumber}`,
       owner: data.owner,
@@ -86,148 +65,104 @@ export function useProviderEvents(
       ipfsCID: data.ipfsCID,
       bondAmount: data.bondAmount.toString(),
       bondAmountFormatted,
+      region: 'Global',
+      hardwareTier: 0,
+      capacity: 1,
       blockNumber: Number(data.blockNumber),
       transactionHash: data.transactionHash,
-      timestamp: data.timestamp ? new Date(Number(data.timestamp) * 1000).toLocaleString() : new Date().toLocaleString()
+      timestamp: data.timestamp ? new Date(Number(data.timestamp) * 1000).toLocaleString() : new Date().toLocaleString(),
     };
   }, []);
 
-  // Add provider with deduplication
   const addProvider = useCallback((provider: ProviderEvent) => {
     if (seenTxHashes.has(provider.transactionHash)) {
-      return; // Already processed
+      return;
     }
-    
+
     seenTxHashes.add(provider.transactionHash);
     setProviders(prev => [provider, ...prev]);
-    
+
     if (onNewProvider) {
       onNewProvider(provider);
     }
   }, [onNewProvider, seenTxHashes]);
 
-  // NOTE: ProviderRegistry contract is not built yet - event watching is disabled
-  // When ProviderRegistry is available, uncomment this:
-  // useWatchContractEvent({
-  //   address: PROVIDER_REGISTRY_ADDRESS,
-  //   abi: ProviderRegistryAbi,
-  //   eventName: 'ProviderRegistered',
-  //   chainId: CHAIN_ID,
-  //   enabled,
-  //   onLogs(logs) {
-  //     logs.forEach((log: any) => {
-  //       console.log('[useProviderEvents] 🎉 New provider registered:', log);
-  //       
-  //       const formatted = formatProviderEvent({
-  //         owner: log.args.owner,
-  //         pubKeyHash: log.args.pubKeyHash,
-  //         ipfsCID: log.args.ipfsCID,
-  //         bondAmount: log.args.bondAmount,
-  //         blockNumber: log.blockNumber,
-  //         transactionHash: log.transactionHash,
-  //       });
-  //       
-  //       addProvider(formatted);
-  //     });
-  //   },
-  // });
+  useWatchContractEvent({
+    address: PROVIDER_REGISTRY_ADDRESS,
+    abi: ProviderRegistryAbi,
+    eventName: 'ProviderRegistered',
+    chainId: CHAIN_ID,
+    enabled,
+    onLogs(logs) {
+      setConnected(true);
+      logs.forEach((log: any) => {
+        const formatted = formatProviderEvent({
+          owner: log.args.owner,
+          pubKeyHash: log.args.pubKeyHash,
+          ipfsCID: log.args.ipfsCID,
+          bondAmount: log.args.bondAmount ?? 0n,
+          blockNumber: log.blockNumber,
+          transactionHash: log.transactionHash,
+        });
 
-  // Load historical events on mount
-  useEffect(() => {
-    if (!enabled || !publicClient) {
-      return;
-    }
+        addProvider(formatted);
+      });
+    },
+  });
 
-    const loadHistoricalEvents = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+  const loadHistoricalEvents = useCallback(async () => {
+    if (!enabled || !publicClient) return;
 
-        // NOTE: ProviderRegistry contract is not built yet - returning empty array
-        console.log('[useProviderEvents] ProviderRegistry contract not available - returning empty providers list');
-        
-        // When ProviderRegistry is available, uncomment this:
-        // const logs = await publicClient.getContractEvents({
-        //   address: PROVIDER_REGISTRY_ADDRESS,
-        //   abi: ProviderRegistryAbi,
-        //   eventName: 'ProviderRegistered',
-        //   fromBlock: 'earliest',
-        //   toBlock: 'latest',
-        // });
-        // 
-        // console.log(`[useProviderEvents] ✓ Loaded ${logs.length} historical providers`);
-        // 
-        // const formattedProviders = logs.map((log: any) => {
-        //   const formatted = formatProviderEvent({
-        //     owner: log.args.owner,
-        //     pubKeyHash: log.args.pubKeyHash,
-        //     ipfsCID: log.args.ipfsCID,
-        //     bondAmount: log.args.bondAmount,
-        //     blockNumber: log.blockNumber,
-        //     transactionHash: log.transactionHash,
-        //   });
-        //   
-        //   seenTxHashes.add(formatted.transactionHash);
-        //   return formatted;
-        // });
-        // 
-        // setProviders(formattedProviders.reverse()); // Most recent first
-        
-        setProviders([]); // Return empty array until ProviderRegistry is available
-      } catch (err: any) {
-        console.error('[useProviderEvents] Error fetching historical:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadHistoricalEvents();
-  }, [enabled, publicClient, formatProviderEvent, seenTxHashes]);
-
-  // Manual refetch
-  const refetch = useCallback(async () => {
-    if (!publicClient) return;
-    
     try {
       setLoading(true);
-      // NOTE: ProviderRegistry contract is not built yet - returning empty array
-      console.log('[useProviderEvents] ProviderRegistry contract not available - refetch returns empty');
-      
-      // When ProviderRegistry is available, uncomment this:
-      // const logs = await publicClient.getContractEvents({
-      //   address: PROVIDER_REGISTRY_ADDRESS,
-      //   abi: ProviderRegistryAbi,
-      //   eventName: 'ProviderRegistered',
-      //   fromBlock: 'earliest',
-      //   toBlock: 'latest',
-      // });
-      // 
-      // const formattedProviders = logs.map((log: any) => 
-      //   formatProviderEvent({
-      //     owner: log.args.owner,
-      //     pubKeyHash: log.args.pubKeyHash,
-      //     ipfsCID: log.args.ipfsCID,
-      //     bondAmount: log.args.bondAmount,
-      //     blockNumber: log.blockNumber,
-      //     transactionHash: log.transactionHash,
-      //   })
-      // );
-      // 
-      // setProviders(formattedProviders.reverse());
-      
-      setProviders([]); // Return empty array until ProviderRegistry is available
+      setError(null);
+
+      const logs = await publicClient.getContractEvents({
+        address: PROVIDER_REGISTRY_ADDRESS,
+        abi: ProviderRegistryAbi,
+        eventName: 'ProviderRegistered',
+        fromBlock: 'earliest',
+        toBlock: 'latest',
+      });
+
+      const formattedProviders = logs.map((log: any) => {
+        const formatted = formatProviderEvent({
+          owner: log.args.owner,
+          pubKeyHash: log.args.pubKeyHash,
+          ipfsCID: log.args.ipfsCID,
+          bondAmount: log.args.bondAmount ?? 0n,
+          blockNumber: log.blockNumber,
+          transactionHash: log.transactionHash,
+        });
+
+        seenTxHashes.add(formatted.transactionHash);
+        return formatted;
+      });
+
+      setProviders(formattedProviders.reverse());
+      setConnected(true);
     } catch (err: any) {
+      console.error('[useProviderEvents] Error fetching historical:', err);
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [publicClient, formatProviderEvent]);
+  }, [enabled, publicClient, formatProviderEvent, seenTxHashes]);
+
+  useEffect(() => {
+    if (loadHistorical) {
+      loadHistoricalEvents();
+    } else {
+      setLoading(false);
+      setConnected(!!publicClient);
+    }
+  }, [loadHistorical, loadHistoricalEvents, publicClient]);
 
   return {
     providers,
     loading,
     error,
-    refetch
+    connected,
+    refetch: loadHistoricalEvents,
   };
 }

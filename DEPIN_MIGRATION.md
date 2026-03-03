@@ -3,6 +3,8 @@
 ## Overview
 Successfully migrated the Cloudana MVP from a traditional backend-based architecture to a true DePIN (Decentralized Physical Infrastructure Network) system. All backend logic, database, and WebSocket functionality have been removed. The system now operates entirely through direct smart contract interaction and IPFS for metadata storage.
 
+> **MVP Update:** Provider bond requirement has been disabled to improve onboarding. CLD incentives can be used as optional early-bird promotions.
+
 ## Architecture Changes
 
 ### Before (Centralized Backend)
@@ -30,7 +32,7 @@ User → Frontend → Smart Contract (on-chain)
   - `owner`: Wallet address of the provider
   - `pubKeyHash`: Public key hash of the node (unique identifier)
   - `ipfsCID`: IPFS CID containing full node metadata
-  - `bondAmount`: Bond amount (1000 CLD)
+  - `bondAmount`: Historical field (0 CLD required in current MVP)
   - `registeredAt`: Registration timestamp
   - `status`: Current status (Registered/Active/Inactive)
 
@@ -94,14 +96,13 @@ hexToBytes32(hex: string): `0x${string}`
 1. User fills in provider details (name, hardware specs, location, etc.)
 2. Click "Prepare & Upload to IPFS" → Uploads metadata to IPFS, gets CID
 3. Auto-generates `pubKeyHash` for the node
-4. Shows transaction details (pubKeyHash, IPFS CID, bond amount)
-5. Approve CLD tokens if needed
-6. Click "Register Provider" → Calls smart contract with (pubKeyHash, ipfsCID)
-7. Transaction confirmed → Provider registered on-chain
+4. Shows transaction details (pubKeyHash, IPFS CID)
+5. Click "Register Provider" → Calls smart contract with (pubKeyHash, ipfsCID)
+6. Transaction confirmed → Provider registered on-chain
 
 **Key Features**:
 - All detailed metadata stored in IPFS (off-chain)
-- Only essential data on-chain (owner, pubKeyHash, CID, bond, status)
+- Only essential data on-chain (owner, pubKeyHash, CID, status; bond disabled for MVP)
 - Direct contract interaction, no backend
 - Real-time event listening via wagmi
 
@@ -145,7 +146,7 @@ hexToBytes32(hex: string): `0x${string}`
 - Owner wallet address
 - Public key hash (node identifier)
 - IPFS CID (metadata pointer)
-- Bond amount
+- Bond requirement disabled in MVP (0 CLD)
 - Registration timestamp
 - Status
 
@@ -208,13 +209,12 @@ export async function fetchFromIPFS(cid: string): Promise<ProviderMetadata | nul
 - [ ] Deploy updated smart contracts to testnet
 - [ ] Test provider registration flow
   - [ ] Metadata upload to IPFS
-  - [ ] Token approval
   - [ ] On-chain registration
 - [ ] Test provider listing (historical events)
 - [ ] Test real-time event listening
 - [ ] Test provider dashboard
 - [ ] Test multiple providers per wallet (max 10)
-- [ ] Test bond amount calculation
+- [ ] Verify registration flow without bond or token approval
 - [ ] Test status updates
 
 ## Next Steps
@@ -255,7 +255,7 @@ VITE_PINATA_GATEWAY=your_gateway_url
 ## Migration Complete ✅
 
 All 6 steps completed:
-1. ✅ Updated ProviderRegistry.sol - simplified to store only CID, pubKeyHash, bond, status
+1. ✅ Updated ProviderRegistry.sol - simplified to store only CID, pubKeyHash, bond/status primitives (bond now disabled in MVP policy)
 2. ✅ Removed backend server files (websocket, db, routes, event listener)
 3. ✅ Updated frontend hooks to interact directly with smart contract
 4. ✅ Updated provider-register.tsx flow for direct contract interaction

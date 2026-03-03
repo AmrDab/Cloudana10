@@ -26,7 +26,7 @@ This is a **true DePIN application** with:
 - **Hardhat** - Development & deployment
 
 ### Storage
-- **On-chain**: Owner, pubKeyHash, IPFS CID, bond, status
+- **On-chain**: Owner, pubKeyHash, IPFS CID, status (bonding disabled in MVP)
 - **IPFS**: Full node metadata (hardware specs, location, etc.)
 
 ## 🚀 Quick Start
@@ -47,6 +47,16 @@ npm run dev
 ```
 
 Visit `http://localhost:5002`
+
+### Local Access (Quick Link)
+
+```bash
+# Recommended local dev access
+npm run dev:local
+```
+
+Open: `http://localhost:5002`  
+Same-machine fallback: `http://127.0.0.1:5002`
 
 ### Smart Contract Deployment
 
@@ -85,9 +95,9 @@ cloudana-mvp/
 ### Provider Registration
 1. Fill in node details (hardware specs, location, etc.)
 2. Upload metadata to IPFS
-3. Approve CLD token bond (1000 CLD)
-4. Register on-chain with pubKeyHash + IPFS CID
-5. Start earning from compute jobs
+3. Register on-chain with pubKeyHash + IPFS CID (0 CLD bond in MVP)
+4. Start earning from compute jobs
+5. Optional CLD early-bird promotions may be offered
 
 ### Direct Contract Interaction
 - No API calls to backend
@@ -107,9 +117,10 @@ cloudana-mvp/
 - **Initial Supply**: 1,000,000 CLD
 - **Distribution**: 80% Treasury, 20% Team
 
-### Provider Bond
-- **Amount**: 1000 CLD per node
-- **Fee Split**: 80% Treasury, 20% Team
+### Provider Bond (MVP)
+- **Amount**: 0 CLD required in MVP
+- **Policy**: Bonding is disabled to accelerate provider onboarding
+- **Incentives**: CLD can be used as optional early-bird promotions
 - **Max Nodes**: 10 per wallet
 
 ## 🔗 Smart Contracts
@@ -122,7 +133,6 @@ Minimal on-chain registry storing:
 - Owner address
 - Public key hash (node ID)
 - IPFS CID (metadata pointer)
-- Bond amount
 - Status (Registered/Active/Inactive)
 
 ### JobEscrow

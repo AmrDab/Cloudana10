@@ -1,7 +1,7 @@
 // Contract interaction utilities and hooks for DePIN system
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseEther, formatEther, keccak256, toHex, type Address } from "viem";
-import { CONTRACT_ADDRESSES, CLDTokenAbi, WorkloadRegistryAbi } from "@shared/contracts";
+import { CONTRACT_ADDRESSES, CLDTokenAbi, WorkloadRegistryAbi, ProviderRegistryAbi } from "@shared/contracts";
 import { baseSepolia } from "@reown/appkit/networks";
 
 export const CHAIN_ID = CONTRACT_ADDRESSES.chainId;
@@ -11,10 +11,9 @@ export const NETWORK = baseSepolia;
 export const CLD_TOKEN_ADDRESS = CONTRACT_ADDRESSES.contracts.CLDToken as Address;
 export const WORKLOAD_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.WorkloadRegistry as Address;
 
-// NOTE: ProviderRegistry contract is not built yet
-// When available, uncomment:
-// export const PROVIDER_REGISTRY_ADDRESS = CONTRACT_ADDRESSES.contracts.ProviderRegistry as Address;
-export const PROVIDER_REGISTRY_ADDRESS = "0x0000000000000000000000000000000000000000" as Address; // Placeholder - contract not built
+export const PROVIDER_REGISTRY_ADDRESS = (
+  CONTRACT_ADDRESSES.contracts.ProviderRegistry || "0xc3D4f33d7b686A3c6edf1d69869D29AB6F7b5CFF"
+) as Address;
 
 // Helper to convert string to bytes32
 export function stringToBytes32(str: string): `0x${string}` {
@@ -384,40 +383,73 @@ export function useTerminateWorkload() {
   };
 }
 
-// ============== Provider Registry Hooks (Stubs - Contract Not Built Yet) ==============
-// NOTE: ProviderRegistry contract is not built yet - these are placeholder hooks
-// When ProviderRegistry is available, implement these hooks properly
+// ============== Provider Registry Hooks ==============
 
 export function useRegisterProvider() {
-  return {
-    register: () => {
-      console.warn('[useRegisterProvider] ProviderRegistry contract not available');
+  const { writeContract, data: hash, isPending: isWritePending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, error: confirmError } = useWaitForTransactionReceipt({
+    hash,
+    query: {
+      enabled: !!hash,
+      retry: 3,
+      retryDelay: 1000,
     },
-    hash: undefined,
-    isPending: false,
-    isSuccess: false,
-    error: new Error('ProviderRegistry contract is not built yet'),
-    reset: () => {},
+  });
+
+  const register = (pubKeyHash: string, ipfsCID: string) => {
+    reset();
+    writeContract({
+      address: PROVIDER_REGISTRY_ADDRESS,
+      abi: ProviderRegistryAbi,
+      functionName: "registerProvider",
+      args: [hexToBytes32(pubKeyHash), ipfsCID],
+    });
+  };
+
+  const isPending = isWritePending || isConfirming || (!!hash && !isSuccess && !confirmError);
+
+  return {
+    register,
+    hash,
+    isPending,
+    isSuccess,
+    error: writeError || confirmError,
+    reset,
   };
 }
 
 export function useProviderRegistryBondInfo() {
   return {
-    data: {
-      minBond: BigInt(0),
-      maxBond: BigInt(0),
-    },
+    data: BigInt(0),
   };
 }
 
 export function useMyProviders(user?: Address) {
-  return {
-    data: [],
-  };
+  return useReadContract({
+    address: PROVIDER_REGISTRY_ADDRESS,
+    abi: ProviderRegistryAbi,
+    functionName: "getMyProviders",
+    args: user ? [user] : undefined,
+    chainId: CHAIN_ID,
+    query: {
+      enabled: !!user && PROVIDER_REGISTRY_ADDRESS !== "0x0000000000000000000000000000000000000000",
+      refetchInterval: 10000,
+      staleTime: 5000,
+    },
+  });
 }
 
 export function useProviderInfo(pubKeyHash?: string) {
-  return {
-    data: null,
-  };
+  return useReadContract({
+    address: PROVIDER_REGISTRY_ADDRESS,
+    abi: ProviderRegistryAbi,
+    functionName: "getProvider",
+    args: pubKeyHash ? [hexToBytes32(pubKeyHash)] : undefined,
+    chainId: CHAIN_ID,
+    query: {
+      enabled: !!pubKeyHash && PROVIDER_REGISTRY_ADDRESS !== "0x0000000000000000000000000000000000000000",
+      refetchInterval: 10000,
+      staleTime: 5000,
+    },
+  });
 }
