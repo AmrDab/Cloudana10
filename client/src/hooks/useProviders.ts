@@ -1,0 +1,287 @@
+/**
+ * Provider list/detail hooks with mock fallback when contracts are not deployed.
+ */
+
+import { useQuery } from "@tanstack/react-query";
+import { useAccount } from "wagmi";
+import {
+  getAllProviders,
+  getMyProviders,
+  getProviderByDeviceId,
+} from "@/lib/api";
+import { mapApiProviderToClient, mapApiProviderToDetail, type ApiProvider } from "@/lib/map-provider";
+import type { ClientProviderList, ClientProviderDetail } from "@/lib/provider-types";
+
+const MOCK_PROVIDERS: ApiProvider[] = [
+  {
+    owner: "0x1111111111111111111111111111111111111111",
+    ownerAddress: "0x1111111111111111111111111111111111111111",
+    providerkey: "0x1111111111111111111111111111111111111111",
+    name: "Cloudana Demo East",
+    region: "us-east-1",
+    country: "USA",
+    city: "Virginia",
+    cpuModel: "AMD EPYC 7763",
+    cpuCores: 32,
+    gpuModel: "NVIDIA A100",
+    gpuCount: 4,
+    gpuMemory: "80GB",
+    ramTotal: "256 GB",
+    storageTotal: "2 TB NVMe",
+    capacity: 1,
+    hardwareTier: 2,
+    status: 1,
+    ipLat: "37.5",
+    ipLon: "-77.5",
+    ipRegion: "us-east-1",
+    ipCountry: "USA",
+    ipCountryCode: "US",
+    hostUri: "provider-east.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana Inc",
+  },
+  {
+    owner: "0x2222222222222222222222222222222222222222",
+    ownerAddress: "0x2222222222222222222222222222222222222222",
+    providerkey: "0x2222222222222222222222222222222222222222",
+    name: "Cloudana Demo West",
+    region: "us-west-2",
+    country: "USA",
+    city: "Oregon",
+    cpuModel: "Intel Xeon Platinum 8480",
+    cpuCores: 64,
+    gpuModel: "NVIDIA H100",
+    gpuCount: 8,
+    gpuMemory: "80GB",
+    ramTotal: "512 GB",
+    storageTotal: "4 TB NVMe",
+    capacity: 2,
+    hardwareTier: 2,
+    status: 1,
+    ipLat: "45.5",
+    ipLon: "-122.6",
+    ipRegion: "us-west-2",
+    ipCountry: "USA",
+    ipCountryCode: "US",
+    hostUri: "provider-west.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana Inc",
+  },
+  {
+    owner: "0x3333333333333333333333333333333333333333",
+    ownerAddress: "0x3333333333333333333333333333333333333333",
+    providerkey: "0x3333333333333333333333333333333333333333",
+    name: "Cloudana Demo EU",
+    region: "eu-west-1",
+    country: "Germany",
+    city: "Frankfurt",
+    cpuModel: "AMD EPYC 7543",
+    cpuCores: 48,
+    gpuModel: "NVIDIA L40S",
+    gpuCount: 4,
+    gpuMemory: "48GB",
+    ramTotal: "384 GB",
+    storageTotal: "3 TB NVMe",
+    capacity: 1,
+    hardwareTier: 1,
+    status: 1,
+    ipLat: "50.1",
+    ipLon: "8.68",
+    ipRegion: "eu-west-1",
+    ipCountry: "Germany",
+    ipCountryCode: "DE",
+    hostUri: "provider-eu.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana EU",
+  },
+  {
+    owner: "0x4444444444444444444444444444444444444444",
+    ownerAddress: "0x4444444444444444444444444444444444444444",
+    providerkey: "0x4444444444444444444444444444444444444444",
+    name: "Tokyo Compute Node",
+    region: "ap-northeast-1",
+    country: "Japan",
+    city: "Tokyo",
+    cpuModel: "Intel Xeon Gold 6338",
+    cpuCores: 40,
+    gpuModel: "NVIDIA RTX 4090",
+    gpuCount: 6,
+    gpuMemory: "24GB",
+    ramTotal: "192 GB",
+    storageTotal: "1.5 TB NVMe",
+    capacity: 1,
+    hardwareTier: 1,
+    status: 1,
+    ipLat: "35.68",
+    ipLon: "139.69",
+    ipRegion: "ap-northeast-1",
+    ipCountry: "Japan",
+    ipCountryCode: "JP",
+    hostUri: "provider-tokyo.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana Asia",
+  },
+  {
+    owner: "0x5555555555555555555555555555555555555555",
+    ownerAddress: "0x5555555555555555555555555555555555555555",
+    providerkey: "0x5555555555555555555555555555555555555555",
+    name: "Singapore Data Center",
+    region: "ap-southeast-1",
+    country: "Singapore",
+    city: "Singapore",
+    cpuModel: "AMD EPYC 7713",
+    cpuCores: 56,
+    gpuModel: "NVIDIA A6000",
+    gpuCount: 4,
+    gpuMemory: "48GB",
+    ramTotal: "256 GB",
+    storageTotal: "2 TB NVMe",
+    capacity: 1,
+    hardwareTier: 1,
+    status: 1,
+    ipLat: "1.35",
+    ipLon: "103.82",
+    ipRegion: "ap-southeast-1",
+    ipCountry: "Singapore",
+    ipCountryCode: "SG",
+    hostUri: "provider-singapore.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana Asia",
+  },
+  {
+    owner: "0x6666666666666666666666666666666666666666",
+    ownerAddress: "0x6666666666666666666666666666666666666666",
+    providerkey: "0x6666666666666666666666666666666666666666",
+    name: "London Cloud Node",
+    region: "eu-west-2",
+    country: "United Kingdom",
+    city: "London",
+    cpuModel: "Intel Xeon Gold 6348",
+    cpuCores: 56,
+    gpuModel: "NVIDIA RTX A6000",
+    gpuCount: 4,
+    gpuMemory: "48GB",
+    ramTotal: "256 GB",
+    storageTotal: "2 TB NVMe",
+    capacity: 1,
+    hardwareTier: 1,
+    status: 1,
+    ipLat: "51.51",
+    ipLon: "-0.13",
+    ipRegion: "eu-west-2",
+    ipCountry: "United Kingdom",
+    ipCountryCode: "GB",
+    hostUri: "provider-london.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana UK",
+  },
+  {
+    owner: "0x7777777777777777777777777777777777777777",
+    ownerAddress: "0x7777777777777777777777777777777777777777",
+    providerkey: "0x7777777777777777777777777777777777777777",
+    name: "Sydney Compute Hub",
+    region: "ap-southeast-2",
+    country: "Australia",
+    city: "Sydney",
+    cpuModel: "AMD EPYC 7543",
+    cpuCores: 48,
+    gpuModel: "NVIDIA L40S",
+    gpuCount: 4,
+    gpuMemory: "48GB",
+    ramTotal: "192 GB",
+    storageTotal: "1.5 TB NVMe",
+    capacity: 1,
+    hardwareTier: 1,
+    status: 1,
+    ipLat: "-33.87",
+    ipLon: "151.21",
+    ipRegion: "ap-southeast-2",
+    ipCountry: "Australia",
+    ipCountryCode: "AU",
+    hostUri: "provider-sydney.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana Oceania",
+  },
+  {
+    owner: "0x8888888888888888888888888888888888888888",
+    ownerAddress: "0x8888888888888888888888888888888888888888",
+    providerkey: "0x8888888888888888888888888888888888888888",
+    name: "São Paulo Node",
+    region: "sa-east-1",
+    country: "Brazil",
+    city: "São Paulo",
+    cpuModel: "Intel Xeon Gold 6330",
+    cpuCores: 40,
+    gpuModel: "NVIDIA RTX 4090",
+    gpuCount: 4,
+    gpuMemory: "24GB",
+    ramTotal: "128 GB",
+    storageTotal: "1 TB NVMe",
+    capacity: 1,
+    hardwareTier: 1,
+    status: 1,
+    ipLat: "-23.55",
+    ipLon: "-46.63",
+    ipRegion: "sa-east-1",
+    ipCountry: "Brazil",
+    ipCountryCode: "BR",
+    hostUri: "provider-saopaulo.cloudana.network",
+    website: "https://cloudana.network",
+    email: "support@cloudana.network",
+    organization: "Cloudana South America",
+  },
+];
+
+async function fetchAllProviders(): Promise<ClientProviderList[]> {
+  const raw = await getAllProviders();
+  if (raw.length > 0) {
+    return raw.map((p: ApiProvider, i: number) => mapApiProviderToClient(p, i));
+  }
+  return MOCK_PROVIDERS.map((p, i) => mapApiProviderToClient(p, i));
+}
+
+async function fetchMyProviders(owner: string): Promise<ClientProviderList[]> {
+  const raw = await getMyProviders(owner as `0x${string}`);
+  return raw.map((p: ApiProvider, i: number) => mapApiProviderToClient(p, i));
+}
+
+export function useProviderList() {
+  return useQuery({
+    queryKey: ["providers"],
+    queryFn: fetchAllProviders,
+    staleTime: 2_000,
+    refetchOnMount: "always", // Always refetch when component mounts (ensures fresh data after registration)
+  });
+}
+
+export function useMyProviders() {
+  const { address, isConnected } = useAccount();
+  return useQuery({
+    queryKey: ["myProviders", address],
+    queryFn: () => (address ? fetchMyProviders(address) : Promise.resolve([])),
+    enabled: !!address && isConnected,
+    staleTime: 2_000,
+    refetchOnMount: "always", // Always refetch when component mounts (ensures fresh data after registration)
+  });
+}
+
+/** Provider detail by deviceId (unique key). Uses chain + IPFS metadata. */
+export function useProviderDetail(deviceId: string) {
+  return useQuery({
+    queryKey: ["providerDetail", deviceId],
+    queryFn: async (): Promise<ClientProviderDetail | null> => {
+      const p = await getProviderByDeviceId(deviceId);
+      if (!p) return null;
+      return mapApiProviderToDetail(p as ApiProvider, 0);
+    },
+    enabled: !!deviceId,
+    staleTime: 2_000,
+  });
+}

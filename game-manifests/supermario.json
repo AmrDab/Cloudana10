@@ -1,0 +1,141 @@
+{
+  "buildTimestamp": "2026-02-13T15:24:41.742Z",
+  "sdlSource": "deploy.yaml",
+  "workloadId": "1",
+  "instanceId": "1",
+  "namespace": "workload-1-1",
+  "resourceRequirements": {
+    "cpu": "1",
+    "memoryBytes": "536870912",
+    "storageBytes": "1073741824",
+    "gpuCount": "0"
+  },
+  "parsedSDL": {
+    "version": "2.0",
+    "services": [
+      {
+        "name": "supermario",
+        "image": "pengbai/docker-supermario",
+        "expose": [
+          {
+            "port": 8080,
+            "as": 80,
+            "global": true
+          }
+        ],
+        "resources": {
+          "cpu": {
+            "units": 1
+          },
+          "memory": {
+            "size": "512Mi"
+          },
+          "storage": [
+            {
+              "size": "512Mi",
+              "persistent": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "k8sManifest": {
+    "namespace": "workload-1-1",
+    "resources": [
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "supermario",
+          "namespace": "workload-1-1",
+          "labels": {
+            "cloudana.workload": "1",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "supermario"
+          }
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "cloudana.service": "supermario"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "cloudana.workload": "1",
+                "cloudana.instance": "1",
+                "app.kubernetes.io/managed-by": "cloudana",
+                "cloudana.service": "supermario"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "name": "supermario",
+                  "image": "pengbai/docker-supermario",
+                  "imagePullPolicy": "IfNotPresent",
+                  "resources": {
+                    "requests": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    },
+                    "limits": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    }
+                  },
+                  "ports": [
+                    {
+                      "containerPort": 8080,
+                      "protocol": "TCP"
+                    }
+                  ],
+                  "securityContext": {
+                    "runAsNonRoot": false,
+                    "allowPrivilegeEscalation": false
+                  }
+                }
+              ],
+              "restartPolicy": "Always"
+            }
+          },
+          "strategy": {
+            "type": "RollingUpdate"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "supermario",
+          "namespace": "workload-1-1",
+          "labels": {
+            "cloudana.workload": "1",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "supermario"
+          }
+        },
+        "spec": {
+          "type": "NodePort",
+          "selector": {
+            "cloudana.service": "supermario"
+          },
+          "ports": [
+            {
+              "name": "port-8080",
+              "port": 80,
+              "targetPort": 8080,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

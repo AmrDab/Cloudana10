@@ -1,0 +1,268 @@
+{
+  "buildTimestamp": "2026-02-13T15:24:55.828Z",
+  "sdlSource": "deploy.yaml",
+  "workloadId": "6",
+  "instanceId": "1",
+  "namespace": "workload-6-1",
+  "resourceRequirements": {
+    "cpu": "2",
+    "memoryBytes": "1073741824",
+    "storageBytes": "1073741824",
+    "gpuCount": "0"
+  },
+  "parsedSDL": {
+    "version": "2.0",
+    "services": [
+      {
+        "name": "mongo",
+        "image": "library/mongo:latest",
+        "expose": [
+          {
+            "port": 27017,
+            "as": 27017,
+            "global": false
+          }
+        ],
+        "resources": {
+          "cpu": {
+            "units": 1
+          },
+          "memory": {
+            "size": "512Mi"
+          },
+          "storage": [
+            {
+              "size": "128Mi",
+              "persistent": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "snake",
+        "image": "harish1551/snake-game:latest",
+        "env": [
+          "DB_HOST=mongo"
+        ],
+        "expose": [
+          {
+            "port": 8000,
+            "as": 80,
+            "global": true
+          }
+        ],
+        "resources": {
+          "cpu": {
+            "units": 1
+          },
+          "memory": {
+            "size": "512Mi"
+          },
+          "storage": [
+            {
+              "size": "128Mi",
+              "persistent": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "k8sManifest": {
+    "namespace": "workload-6-1",
+    "resources": [
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "mongo",
+          "namespace": "workload-6-1",
+          "labels": {
+            "cloudana.workload": "6",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "mongo"
+          }
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "cloudana.service": "mongo"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "cloudana.workload": "6",
+                "cloudana.instance": "1",
+                "app.kubernetes.io/managed-by": "cloudana",
+                "cloudana.service": "mongo"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "name": "mongo",
+                  "image": "library/mongo:latest",
+                  "imagePullPolicy": "IfNotPresent",
+                  "resources": {
+                    "requests": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    },
+                    "limits": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    }
+                  },
+                  "ports": [
+                    {
+                      "containerPort": 27017,
+                      "protocol": "TCP"
+                    }
+                  ],
+                  "securityContext": {
+                    "runAsNonRoot": false,
+                    "allowPrivilegeEscalation": false
+                  }
+                }
+              ],
+              "restartPolicy": "Always"
+            }
+          },
+          "strategy": {
+            "type": "RollingUpdate"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "mongo",
+          "namespace": "workload-6-1",
+          "labels": {
+            "cloudana.workload": "6",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "mongo"
+          }
+        },
+        "spec": {
+          "type": "NodePort",
+          "selector": {
+            "cloudana.service": "mongo"
+          },
+          "ports": [
+            {
+              "name": "port-27017",
+              "port": 27017,
+              "targetPort": 27017,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "snake",
+          "namespace": "workload-6-1",
+          "labels": {
+            "cloudana.workload": "6",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "snake"
+          }
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "cloudana.service": "snake"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "cloudana.workload": "6",
+                "cloudana.instance": "1",
+                "app.kubernetes.io/managed-by": "cloudana",
+                "cloudana.service": "snake"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "name": "snake",
+                  "image": "harish1551/snake-game:latest",
+                  "imagePullPolicy": "IfNotPresent",
+                  "resources": {
+                    "requests": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    },
+                    "limits": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    }
+                  },
+                  "ports": [
+                    {
+                      "containerPort": 8000,
+                      "protocol": "TCP"
+                    }
+                  ],
+                  "securityContext": {
+                    "runAsNonRoot": false,
+                    "allowPrivilegeEscalation": false
+                  },
+                  "env": [
+                    {
+                      "name": "DB_HOST",
+                      "value": "mongo"
+                    }
+                  ]
+                }
+              ],
+              "restartPolicy": "Always"
+            }
+          },
+          "strategy": {
+            "type": "RollingUpdate"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "snake",
+          "namespace": "workload-6-1",
+          "labels": {
+            "cloudana.workload": "6",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "snake"
+          }
+        },
+        "spec": {
+          "type": "NodePort",
+          "selector": {
+            "cloudana.service": "snake"
+          },
+          "ports": [
+            {
+              "name": "port-8000",
+              "port": 80,
+              "targetPort": 8000,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

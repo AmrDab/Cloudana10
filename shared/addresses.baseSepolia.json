@@ -1,0 +1,17 @@
+{
+  "chainId": 84532,
+  "network": "baseSepolia",
+  "contracts": {
+    "CLDToken": "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2",
+    "WorkloadRegistry": "0x71a36e548a884019b4A60947551efB8229e2016a",
+    "ProviderRegistry": "0x1e7b0039bdC27cB6B1e83d96D5Ad839fD15Af94a",
+    "RewardContract": "0x427830A20C4752eb30C47e0d2572A457ebF4A8AD",
+    "POUWVerifier": "0xE2791574413d2bdE5B84848A99Aeb3B9f4d80682",
+    "StakingManager": "0xeEE91E1209995Fc9fE9183330b1872AfAb7C8661",
+    "ChallengeManager": "0x54CA56081e358f89dafFd587F0241eA33BaEC597"
+  },
+  "roles": {
+    "minter": "0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A",
+    "validator": "0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A"
+  }
+}

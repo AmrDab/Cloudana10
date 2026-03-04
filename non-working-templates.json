@@ -1,0 +1,27 @@
+{
+  "total_templates": 311,
+  "working_count": 309,
+  "non_working_count": 2,
+  "success_rate": "99.4%",
+  "non_working_templates": [
+    {
+      "name": "teamspeak",
+      "path": "awesome-akash/teamspeak/deploy.yaml",
+      "issue_type": "invalid_yaml_syntax",
+      "error": "end of the stream or a document separator is expected (2:8)",
+      "root_cause": "Line 1 uses '--' instead of '---'",
+      "fix": "Change line 1 from '--' to '---'",
+      "ui_behavior": "YAML parser fails immediately"
+    },
+    {
+      "name": "pokt-network",
+      "path": "awesome-akash/pokt-network/deploy.yml",
+      "issue_type": "invalid_sdl_structure",
+      "error": "Missing profiles section",
+      "root_cause": "Profiles section incorrectly indented under services instead of root level",
+      "fix": "Unindent 'profiles' and 'deployment' to root level",
+      "ui_behavior": "Shows 'Could not read deployment summary' error"
+    }
+  ],
+  "note": "These are template bugs in awesome-akash repository, not UI code issues"
+}

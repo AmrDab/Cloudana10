@@ -1,0 +1,35 @@
+{
+  "name": "@cloudana/contracts",
+  "version": "1.0.0",
+  "description": "Cloudana MVP testnet smart contracts",
+  "scripts": {
+    "clean": "hardhat clean",
+    "compile": "hardhat compile",
+    "export-abi:cld": "ts-node scripts/cld-token/export-abi.ts",
+    "export-abi:work": "ts-node scripts/workload-registry/export-abi.ts",
+    "export-abi:provider": "ts-node scripts/provider-registry/export-abi.ts",
+    "export-abi:reward": "ts-node scripts/reward-contract/export-abi.ts",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/workload-registry/deploy.ts --network baseSepolia && hardhat run scripts/provider-registry/deploy.ts --network baseSepolia",
+    "deploy:cld": "hardhat run scripts/cld-token/deploy.ts --network baseSepolia",
+    "deploy:work": "hardhat run scripts/workload-registry/deploy.ts --network baseSepolia",
+    "deploy:provider": "hardhat run scripts/provider-registry/deploy.ts --network baseSepolia",
+    "deploy:reward": "hardhat run scripts/reward-contract/deploy.ts --network baseSepolia",
+    "verify:cld": "hardhat run scripts/cld-token/verify.ts --network baseSepolia",
+    "verify:work": "hardhat run scripts/workload-registry/verify.ts --network baseSepolia",
+    "verify:provider": "hardhat run scripts/provider-registry/verify.ts --network baseSepolia",
+    "verify:reward": "hardhat run scripts/reward-contract/verify.ts --network baseSepolia"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@typechain/ethers-v6": "^0.5.1",
+    "@typechain/hardhat": "^9.1.0",
+    "hardhat": "^2.19.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0",
+    "dotenv": "^16.3.1"
+  }
+}

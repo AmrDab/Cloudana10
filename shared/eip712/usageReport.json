@@ -1,0 +1,40 @@
+{
+  "domain": {
+    "name": "CloudanaJobEscrow",
+    "version": "1",
+    "chainId": 84532,
+    "verifyingContract": "0x5F2Be10E979B5Bf7ed1743807227c859990D2B07"
+  },
+  "types": {
+    "UsageReport": [
+      {
+        "name": "jobId",
+        "type": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address"
+      },
+      {
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "name": "grossCost",
+        "type": "uint256"
+      },
+      {
+        "name": "providerEarn",
+        "type": "uint256"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256"
+      }
+    ]
+  }
+}
