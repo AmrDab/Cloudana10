@@ -23,6 +23,8 @@ import GpusOnDemandPage from "@/pages/pricing/gpus-on-demand";
 import UsageCalculatorPage from "@/pages/pricing/usage-calculator";
 import ProviderCalculatorPage from "@/pages/pricing/provider-calculator";
 import WorkloadRegister from "@/pages/workload-register";
+import DocsPage from "@/pages/docs";
+import StatusPage from "@/pages/status";
 
 function RedirectToProviderRegister() {
   const [, setLocation] = useLocation();
@@ -56,6 +58,8 @@ function Router() {
         <Route path="/pricing/gpus-on-demand" component={GpusOnDemandPage} />
         <Route path="/pricing/usage" component={UsageCalculatorPage} />
         <Route path="/pricing/provider" component={ProviderCalculatorPage} />
+        <Route path="/docs" component={DocsPage} />
+        <Route path="/status" component={StatusPage} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />
       </Switch>

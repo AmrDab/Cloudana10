@@ -180,7 +180,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         { label: "Provider Calculator", path: "/pricing/provider", icon: TrendingUp, show: true },
       ],
     },
-    { label: "Debug", path: "/debug", icon: Terminal, show: true },
+    { label: "Debug", path: "/debug", icon: Terminal, show: import.meta.env.DEV },
   ];
 
   const toggleExpanded = (path: string) => {
@@ -554,23 +554,37 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <main className="flex-1 container mx-auto px-4 py-8">{children}</main>
 
         <footer className="border-t border-white/5 bg-black/20 py-8 mt-auto">
-          <div className="container mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-muted-foreground">
-            <div className="flex flex-col gap-1">
-              <span className="font-semibold text-foreground">Cloudana MVP Testnet</span>
-              <span>
-                Current Network: <span className="text-primary/80">Base Sepolia (84532)</span>
-              </span>
+          <div className="container mx-auto px-4 space-y-4 text-xs text-muted-foreground">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-foreground">Cloudana Testnet</span>
+                <span>
+                  Current Network: <span className="text-primary/80">Base Sepolia (84532)</span>
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                <Link href="/docs" className="hover:text-primary transition-colors">
+                  Documentation
+                </Link>
+                <a href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
+                  Explorer
+                </a>
+                <Link href="/status" className="hover:text-primary transition-colors">
+                  Status
+                </Link>
+                <a href="https://twitter.com/Cloudana10" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
+                  Twitter
+                </a>
+                <a href="https://github.com/cloudana-io" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
+                  GitHub
+                </a>
+                <a href="https://discord.gg/cloudana" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
+                  Discord
+                </a>
+              </div>
             </div>
-            <div className="flex items-center gap-6">
-              <a href="#" className="hover:text-primary transition-colors">
-                Documentation
-              </a>
-              <a href="#" className="hover:text-primary transition-colors">
-                Explorer
-              </a>
-              <a href="#" className="hover:text-primary transition-colors">
-                Status
-              </a>
+            <div className="border-t border-white/5 pt-4 text-center md:text-left">
+              <span>© 2026 Cloudana. All rights reserved.</span>
             </div>
           </div>
         </footer>
