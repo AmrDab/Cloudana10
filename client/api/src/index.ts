@@ -12,6 +12,7 @@ import { orchestrationRouter } from "./routes/v1/orchestration.js";
 import workloadStatusRouter from "./routes/v1/workload-status.js";
 import providerLogsRouter from "./routes/v1/provider-logs.js";
 import { deployRouter } from "./routes/v1/deploy.js";
+import { paymentsRouter } from "./routes/v1/payments.js";
 import { startOrchestratorLoop } from "./services/orchestrator-loop.service.js";
 import { startOrchestratorEventDriven } from "./services/orchestrator-event.service.js";
 import { startWorkloadStatusPolling } from "./services/workload-status-poller.service.js";
@@ -51,6 +52,7 @@ app.route("/v1", orchestrationRouter);
 app.route("/v1", workloadStatusRouter);
 app.route("/v1", providerLogsRouter);
 app.route("/v1", deployRouter);
+app.route("/v1", paymentsRouter);
 
 // OpenAPI JSON endpoint
 app.get("/v1/doc", (c) => {

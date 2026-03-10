@@ -14,6 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatEther, parseEther } from "viem";
 import { useAllTemplates, type Template, type TemplateCategory } from "./templates";
+import { BalanceDisplay } from "@/components/payments/BalanceDisplay";
 
 import { 
   useCLDTokenBalance,
@@ -338,6 +339,9 @@ function HomeViewContent({
           </CardContent>
         </Card>
       </div>
+
+      {/* Credit Balance + Add Funds */}
+      <BalanceDisplay className="lg:col-span-2" />
     </>
   );
 }
