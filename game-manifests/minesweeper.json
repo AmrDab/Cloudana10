@@ -1,0 +1,141 @@
+{
+  "buildTimestamp": "2026-02-13T15:24:48.520Z",
+  "sdlSource": "deploy.yaml",
+  "workloadId": "4",
+  "instanceId": "1",
+  "namespace": "workload-4-1",
+  "resourceRequirements": {
+    "cpu": "1",
+    "memoryBytes": "536870912",
+    "storageBytes": "1073741824",
+    "gpuCount": "0"
+  },
+  "parsedSDL": {
+    "version": "2.0",
+    "services": [
+      {
+        "name": "minesweeper",
+        "image": "creepto/minesweeper",
+        "expose": [
+          {
+            "port": 3000,
+            "as": 80,
+            "global": true
+          }
+        ],
+        "resources": {
+          "cpu": {
+            "units": 1
+          },
+          "memory": {
+            "size": "512Mi"
+          },
+          "storage": [
+            {
+              "size": "512Mi",
+              "persistent": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "k8sManifest": {
+    "namespace": "workload-4-1",
+    "resources": [
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "minesweeper",
+          "namespace": "workload-4-1",
+          "labels": {
+            "cloudana.workload": "4",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "minesweeper"
+          }
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "cloudana.service": "minesweeper"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "cloudana.workload": "4",
+                "cloudana.instance": "1",
+                "app.kubernetes.io/managed-by": "cloudana",
+                "cloudana.service": "minesweeper"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "name": "minesweeper",
+                  "image": "creepto/minesweeper",
+                  "imagePullPolicy": "IfNotPresent",
+                  "resources": {
+                    "requests": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    },
+                    "limits": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    }
+                  },
+                  "ports": [
+                    {
+                      "containerPort": 3000,
+                      "protocol": "TCP"
+                    }
+                  ],
+                  "securityContext": {
+                    "runAsNonRoot": false,
+                    "allowPrivilegeEscalation": false
+                  }
+                }
+              ],
+              "restartPolicy": "Always"
+            }
+          },
+          "strategy": {
+            "type": "RollingUpdate"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "minesweeper",
+          "namespace": "workload-4-1",
+          "labels": {
+            "cloudana.workload": "4",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "minesweeper"
+          }
+        },
+        "spec": {
+          "type": "NodePort",
+          "selector": {
+            "cloudana.service": "minesweeper"
+          },
+          "ports": [
+            {
+              "name": "port-3000",
+              "port": 80,
+              "targetPort": 3000,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

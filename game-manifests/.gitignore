@@ -1,0 +1,4 @@
+# Ignore test/temporary manifests
+*-test.json
+*-tmp.json
+*.log

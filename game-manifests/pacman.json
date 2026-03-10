@@ -1,0 +1,141 @@
+{
+  "buildTimestamp": "2026-02-13T15:24:48.217Z",
+  "sdlSource": "deploy.yaml",
+  "workloadId": "3",
+  "instanceId": "1",
+  "namespace": "workload-3-1",
+  "resourceRequirements": {
+    "cpu": "1",
+    "memoryBytes": "536870912",
+    "storageBytes": "1073741824",
+    "gpuCount": "0"
+  },
+  "parsedSDL": {
+    "version": "2.0",
+    "services": [
+      {
+        "name": "pacman",
+        "image": "yuravorobei/pacman-web",
+        "expose": [
+          {
+            "port": 80,
+            "as": 80,
+            "global": true
+          }
+        ],
+        "resources": {
+          "cpu": {
+            "units": 1
+          },
+          "memory": {
+            "size": "512Mi"
+          },
+          "storage": [
+            {
+              "size": "512Mi",
+              "persistent": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "k8sManifest": {
+    "namespace": "workload-3-1",
+    "resources": [
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "pacman",
+          "namespace": "workload-3-1",
+          "labels": {
+            "cloudana.workload": "3",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "pacman"
+          }
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "cloudana.service": "pacman"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "cloudana.workload": "3",
+                "cloudana.instance": "1",
+                "app.kubernetes.io/managed-by": "cloudana",
+                "cloudana.service": "pacman"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "name": "pacman",
+                  "image": "yuravorobei/pacman-web",
+                  "imagePullPolicy": "IfNotPresent",
+                  "resources": {
+                    "requests": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    },
+                    "limits": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    }
+                  },
+                  "ports": [
+                    {
+                      "containerPort": 80,
+                      "protocol": "TCP"
+                    }
+                  ],
+                  "securityContext": {
+                    "runAsNonRoot": false,
+                    "allowPrivilegeEscalation": false
+                  }
+                }
+              ],
+              "restartPolicy": "Always"
+            }
+          },
+          "strategy": {
+            "type": "RollingUpdate"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "pacman",
+          "namespace": "workload-3-1",
+          "labels": {
+            "cloudana.workload": "3",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "pacman"
+          }
+        },
+        "spec": {
+          "type": "NodePort",
+          "selector": {
+            "cloudana.service": "pacman"
+          },
+          "ports": [
+            {
+              "name": "port-80",
+              "port": 80,
+              "targetPort": 80,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

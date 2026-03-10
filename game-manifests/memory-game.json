@@ -1,0 +1,141 @@
+{
+  "buildTimestamp": "2026-02-13T15:24:49.567Z",
+  "sdlSource": "deploy.yaml",
+  "workloadId": "5",
+  "instanceId": "1",
+  "namespace": "workload-5-1",
+  "resourceRequirements": {
+    "cpu": "1",
+    "memoryBytes": "536870912",
+    "storageBytes": "2147483648",
+    "gpuCount": "0"
+  },
+  "parsedSDL": {
+    "version": "2.0",
+    "services": [
+      {
+        "name": "memorygame",
+        "image": "jungpilyu/memorygame",
+        "expose": [
+          {
+            "port": 80,
+            "as": 80,
+            "global": true
+          }
+        ],
+        "resources": {
+          "cpu": {
+            "units": 1
+          },
+          "memory": {
+            "size": "512Mi"
+          },
+          "storage": [
+            {
+              "size": "2Gi",
+              "persistent": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "k8sManifest": {
+    "namespace": "workload-5-1",
+    "resources": [
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "memorygame",
+          "namespace": "workload-5-1",
+          "labels": {
+            "cloudana.workload": "5",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "memorygame"
+          }
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "cloudana.service": "memorygame"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "cloudana.workload": "5",
+                "cloudana.instance": "1",
+                "app.kubernetes.io/managed-by": "cloudana",
+                "cloudana.service": "memorygame"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "name": "memorygame",
+                  "image": "jungpilyu/memorygame",
+                  "imagePullPolicy": "IfNotPresent",
+                  "resources": {
+                    "requests": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    },
+                    "limits": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    }
+                  },
+                  "ports": [
+                    {
+                      "containerPort": 80,
+                      "protocol": "TCP"
+                    }
+                  ],
+                  "securityContext": {
+                    "runAsNonRoot": false,
+                    "allowPrivilegeEscalation": false
+                  }
+                }
+              ],
+              "restartPolicy": "Always"
+            }
+          },
+          "strategy": {
+            "type": "RollingUpdate"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "memorygame",
+          "namespace": "workload-5-1",
+          "labels": {
+            "cloudana.workload": "5",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "memorygame"
+          }
+        },
+        "spec": {
+          "type": "NodePort",
+          "selector": {
+            "cloudana.service": "memorygame"
+          },
+          "ports": [
+            {
+              "name": "port-80",
+              "port": 80,
+              "targetPort": 80,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

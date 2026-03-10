@@ -1,0 +1,141 @@
+{
+  "buildTimestamp": "2026-02-13T15:24:46.525Z",
+  "sdlSource": "deploy.yaml",
+  "workloadId": "2",
+  "instanceId": "1",
+  "namespace": "workload-2-1",
+  "resourceRequirements": {
+    "cpu": "1",
+    "memoryBytes": "536870912",
+    "storageBytes": "1073741824",
+    "gpuCount": "0"
+  },
+  "parsedSDL": {
+    "version": "2.0",
+    "services": [
+      {
+        "name": "tetris",
+        "image": "bsord/tetris",
+        "expose": [
+          {
+            "port": 80,
+            "as": 80,
+            "global": true
+          }
+        ],
+        "resources": {
+          "cpu": {
+            "units": 1
+          },
+          "memory": {
+            "size": "512Mi"
+          },
+          "storage": [
+            {
+              "size": "512Mi",
+              "persistent": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "k8sManifest": {
+    "namespace": "workload-2-1",
+    "resources": [
+      {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "tetris",
+          "namespace": "workload-2-1",
+          "labels": {
+            "cloudana.workload": "2",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "tetris"
+          }
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "cloudana.service": "tetris"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "cloudana.workload": "2",
+                "cloudana.instance": "1",
+                "app.kubernetes.io/managed-by": "cloudana",
+                "cloudana.service": "tetris"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "name": "tetris",
+                  "image": "bsord/tetris",
+                  "imagePullPolicy": "IfNotPresent",
+                  "resources": {
+                    "requests": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    },
+                    "limits": {
+                      "cpu": "1m",
+                      "memory": "512Mi"
+                    }
+                  },
+                  "ports": [
+                    {
+                      "containerPort": 80,
+                      "protocol": "TCP"
+                    }
+                  ],
+                  "securityContext": {
+                    "runAsNonRoot": false,
+                    "allowPrivilegeEscalation": false
+                  }
+                }
+              ],
+              "restartPolicy": "Always"
+            }
+          },
+          "strategy": {
+            "type": "RollingUpdate"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "tetris",
+          "namespace": "workload-2-1",
+          "labels": {
+            "cloudana.workload": "2",
+            "cloudana.instance": "1",
+            "app.kubernetes.io/managed-by": "cloudana",
+            "cloudana.service": "tetris"
+          }
+        },
+        "spec": {
+          "type": "NodePort",
+          "selector": {
+            "cloudana.service": "tetris"
+          },
+          "ports": [
+            {
+              "name": "port-80",
+              "port": 80,
+              "targetPort": 80,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
