@@ -1,5 +1,5 @@
 import { Suspense, useEffect, lazy } from "react";
-import { Switch, Route, useLocation } from "wouter";
+import { Router as WouterRouter, Switch, Route, useLocation } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import { WalletProvider } from "@/context/wallet-context";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -35,7 +35,7 @@ function RedirectToProviderRegister() {
   return null;
 }
 
-function Router() {
+function AppRouter() {
   const [location] = useLocation();
   const isHomeRoute = location === "/" || location.startsWith("/?");
 
@@ -77,10 +77,12 @@ function App() {
   return (
     <ErrorBoundary>
       <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
-        <WalletProvider>
-          <Router />
-          <Toaster />
-        </WalletProvider>
+        <WouterRouter base="/control">
+          <WalletProvider>
+            <AppRouter />
+            <Toaster />
+          </WalletProvider>
+        </WouterRouter>
       </Suspense>
     </ErrorBoundary>
   );
