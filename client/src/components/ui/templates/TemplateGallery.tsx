@@ -2,8 +2,10 @@
 import type { ChangeEventHandler } from "react";
 import { useEffect, useState } from "react";
 import { MdSearchOff } from "react-icons/md";
-import { Button, buttonVariants, Input, Spinner } from "@akashnetwork/ui/components";
-import { cn } from "@akashnetwork/ui/utils";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 import { FilterList, Xmark } from "iconoir-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -98,20 +100,20 @@ export const TemplateGallery: React.FunctionComponent = () => {
   };
 
   const searchBar = (
-    <Input
-      value={searchTerms}
-      onChange={onSearchChange}
-      label="Search"
-      className="w-full"
-      type="text"
-      endIcon={
-        !!searchTerms && (
-          <Button size="icon" variant="text" onClick={onClearSearch}>
-            <Xmark className="text-xs" />
-          </Button>
-        )
-      }
-    />
+    <div className="relative w-full">
+      <Input
+        value={searchTerms}
+        onChange={onSearchChange}
+        placeholder="Search"
+        className="w-full pr-9"
+        type="text"
+      />
+      {!!searchTerms && (
+        <Button size="icon" variant="ghost" onClick={onClearSearch} className="absolute right-0 top-0 h-full w-9">
+          <Xmark className="text-xs" />
+        </Button>
+      )}
+    </div>
   );
 
   return (
@@ -216,7 +218,7 @@ export const TemplateGallery: React.FunctionComponent = () => {
 
           {isLoadingTemplates && (
             <div className="mt-8 flex items-center justify-center">
-              <Spinner size="large" />
+              <Spinner className="size-8" />
             </div>
           )}
 

@@ -1,7 +1,18 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Button, buttonVariants, Card, CardContent, Popup } from "@akashnetwork/ui/components";
-import { cn } from "@akashnetwork/ui/utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Bin, Edit, Rocket } from "iconoir-react";
 import { useAtom } from "jotai";
 import Link from "next/link";
@@ -77,34 +88,22 @@ export const UserTemplate: React.FunctionComponent<Props> = ({ id, template }) =
     <Layout>
       <CustomNextSeo title={`${template.title}`} url={`${domainName}${UrlService.template(id)}`} description={getShortText(template.description || "", 140)} />
 
-      <Popup
-        fullWidth
-        variant="custom"
-        actions={[
-          {
-            label: "Close",
-            color: "primary",
-            variant: "text",
-            side: "left",
-            onClick: onDeleteClose
-          },
-          {
-            label: "Confirm",
-            color: "secondary",
-            variant: "default",
-            side: "right",
-            isLoading: isDeleting,
-            onClick: onDeleteTemplate
-          }
-        ]}
-        onClose={onDeleteClose}
-        maxWidth="xs"
-        enableCloseOnBackdropClick
-        open={isShowingDelete}
-        title="Delete template"
-      >
-        Are you sure you want to delete template: "{template.title}"?
-      </Popup>
+      <AlertDialog open={isShowingDelete} onOpenChange={open => !open && onDeleteClose()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete template</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete template: "{template.title}"?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={onDeleteClose}>Close</AlertDialogCancel>
+            <AlertDialogAction onClick={onDeleteTemplate} disabled={isDeleting}>
+              {isDeleting ? "Deleting..." : "Confirm"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="mb-6 flex items-baseline">
         <Title className="m-0">{template.title}</Title>
@@ -148,7 +147,7 @@ export const UserTemplate: React.FunctionComponent<Props> = ({ id, template }) =
 
         <Link
           href={UrlService.sdlBuilder(template.id)}
-          className={cn(buttonVariants({ variant: "text", size: "sm" }))}
+          className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
           onClick={() => {
             analyticsService.track("click_edit_sdl_template", {
               category: "sdl_builder",

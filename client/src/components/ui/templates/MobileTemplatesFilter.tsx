@@ -1,8 +1,8 @@
 "use client";
 import type { ReactNode } from "react";
 import React from "react";
-import { Button, buttonVariants } from "@akashnetwork/ui/components";
-import { cn } from "@akashnetwork/ui/utils";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import Drawer from "@mui/material/Drawer";
 import { Xmark } from "iconoir-react";
 

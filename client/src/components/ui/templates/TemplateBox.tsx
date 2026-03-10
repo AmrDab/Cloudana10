@@ -1,11 +1,14 @@
 "use client";
-import { Avatar, AvatarFallback, AvatarImage, cardClasses, CardContent, CardHeader } from "@akashnetwork/ui/components";
-import { cn } from "@akashnetwork/ui/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { CardContent, CardHeader } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { MediaImage } from "iconoir-react";
 import Link from "next/link";
 
 import type { TemplateOutputSummaryWithCategory } from "@src/queries/useTemplateQuery";
 import { UrlService } from "@src/utils/urlUtils";
+
+const cardClasses = "rounded-xl border bg-card text-card-foreground shadow";
 
 type Props = {
   template: TemplateOutputSummaryWithCategory;

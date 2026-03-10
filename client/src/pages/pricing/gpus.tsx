@@ -132,19 +132,19 @@ export interface Gpus {
     interface: string;
     availability: { total: number; available: number };
     providerAvailability: { total: number; available: number };
-    price: {
-      min: number;
-      max: number;
-      avg: number;
-      med: number;
-      weightedAverage: number;
-    };
+    price?: {
+      min?: number | null;
+      max?: number | null;
+      avg?: number | null;
+      med?: number | null;
+      weightedAverage?: number | null;
+    } | null;
   }>;
   time?: number;
 }
 
-export const formatPrice = (price: number) => {
-  return price ? `$${price.toFixed(2)}` : "--";
+export const formatPrice = (price: number | null | undefined) => {
+  return price != null && price > 0 ? `$${price.toFixed(2)}` : "--";
 };
 
 const modelTexts: Record<string, string> = {
@@ -323,18 +323,18 @@ export default function GpuPricingPage() {
                   <div className="flex justify-between border-b pb-1.5 text-lg">
                     <span className="text-lg font-semibold md:text-base">Average price:</span>
                     <span className="font-semibold">
-                      {formatPrice(model.price.weightedAverage)}
+                      {formatPrice(model.price?.weightedAverage)}
                     </span>
                   </div>
                   <HoverCard openDelay={200} closeDelay={200}>
                     <HoverCardTrigger className="flex items-center justify-between pt-1.5">
                       <div className="flex items-center justify-center gap-1">
                         <span className="text-sm font-medium text-muted-foreground">
-                          Min: {formatPrice(model.price.min)}
+                          Min: {formatPrice(model.price?.min)}
                         </span>
                         <span className="text-sm font-medium text-muted-foreground">-</span>
                         <span className="text-sm font-medium text-muted-foreground">
-                          Max: {formatPrice(model.price.max)}
+                          Max: {formatPrice(model.price?.max)}
                         </span>
                       </div>
                       <Info size={12} className="text-muted-foreground" />
@@ -352,19 +352,19 @@ export default function GpuPricingPage() {
                             <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
                               <p className="text-base font-semibold text-foreground">Avg price:</p>
                               <div className="text-base font-bold">
-                                {formatPrice(model.price.weightedAverage)}/hr
+                                {formatPrice(model.price?.weightedAverage)}/hr
                               </div>
                             </div>
                             <div className="mt-2 flex items-center justify-between gap-2">
                               <div className="flex flex-col items-center justify-center gap-1">
                                 <h3 className="text-sm text-muted-foreground">
-                                  Max: <span>{formatPrice(model.price.max)}/hr</span>
+                                  Max: <span>{formatPrice(model.price?.max)}/hr</span>
                                 </h3>
                               </div>
                               <div>-</div>
                               <div className="flex flex-col items-center justify-center gap-1">
                                 <h3 className="text-sm text-muted-foreground">
-                                  Min: <span>{formatPrice(model.price.min)}/hr</span>
+                                  Min: <span>{formatPrice(model.price?.min)}/hr</span>
                                 </h3>
                               </div>
                             </div>

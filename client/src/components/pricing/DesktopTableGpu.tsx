@@ -145,10 +145,10 @@ export default function DesktopTableGpu({
                   <td className="border-y border-r p-0">
                     <div className="flex h-full flex-col divide-y divide-border">
                       <p className="h-full py-2 text-center text-sm text-muted-foreground">
-                        Min: <span className="ml-1 font-medium">{formatPrice(model.price.min)}</span>
+                        Min: <span className="ml-1 font-medium">{formatPrice(model.price?.min)}</span>
                       </p>
                       <p className="py-2 text-center text-sm text-muted-foreground">
-                        Max: <span className="ml-1 font-medium">{formatPrice(model.price.max)}</span>
+                        Max: <span className="ml-1 font-medium">{formatPrice(model.price?.max)}</span>
                       </p>
                     </div>
                   </td>
@@ -156,7 +156,7 @@ export default function DesktopTableGpu({
                     <HoverCard openDelay={200} closeDelay={200}>
                       <HoverCardTrigger className="relative flex items-center justify-center gap-1 py-2 text-base">
                         <span className="text-lg font-semibold">
-                          {formatPrice(model.price.weightedAverage)}
+                          {formatPrice(model.price?.weightedAverage)}
                         </span>
                         <Info
                           size={16}
@@ -176,19 +176,19 @@ export default function DesktopTableGpu({
                               <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
                                 <p className="text-base font-semibold">Avg price:</p>
                                 <div className="text-base font-bold">
-                                  {formatPrice(model.price.weightedAverage)}/hr
+                                  {formatPrice(model.price?.weightedAverage)}/hr
                                 </div>
                               </div>
                               <div className="mt-2 flex items-center justify-between gap-2">
                                 <div className="flex flex-col items-center justify-center gap-1">
                                   <h3 className="text-sm text-muted-foreground">
-                                    Max: <span>{formatPrice(model.price.max)}/hr</span>
+                                    Max: <span>{formatPrice(model.price?.max)}/hr</span>
                                   </h3>
                                 </div>
                                 <div>-</div>
                                 <div className="flex flex-col items-center justify-center gap-1">
                                   <h3 className="text-sm text-muted-foreground">
-                                    Min: <span>{formatPrice(model.price.min)}/hr</span>
+                                    Min: <span>{formatPrice(model.price?.min)}/hr</span>
                                   </h3>
                                 </div>
                               </div>

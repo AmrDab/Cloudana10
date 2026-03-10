@@ -2,8 +2,9 @@
 
 import type { FC } from "react";
 import { useCallback, useState } from "react";
-import { Button, buttonVariants, Tabs, TabsList, TabsTrigger } from "@akashnetwork/ui/components";
-import { cn } from "@akashnetwork/ui/utils";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import GitHubIcon from "@mui/icons-material/GitHub";
 import { NavArrowLeft, Rocket } from "iconoir-react";
 import Link from "next/link";
@@ -85,7 +86,7 @@ export const TemplateDetail: FC<TemplateDetailProps> = ({ template }) => {
           {activeTab === "README" && (
             <ViewPanel stickToBottom className="overflow-auto pb-12">
               <div className="container p-6 pt-0">
-                <Markdown hasHtml={template.id?.startsWith("akash-network-awesome-akash")}>{template.readme}</Markdown>
+                <Markdown hasHtml={false}>{template.readme}</Markdown>
               </div>
             </ViewPanel>
           )}
