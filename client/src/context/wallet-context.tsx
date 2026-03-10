@@ -22,6 +22,9 @@ createAppKit({
   projectId,
   features: {
     analytics: true,
+    email: true, // Email login
+    socials: ['google', 'x', 'discord', 'github', 'apple'], // Social logins
+    emailShowWallets: true, // Show wallet options after social login
   },
   themeMode: 'dark',
 });
