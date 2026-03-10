@@ -25,6 +25,8 @@ createAppKit({
     email: true, // Email login
     socials: ['google', 'x', 'discord', 'github', 'apple'], // Social logins
     emailShowWallets: true, // Show wallet options after social login
+    onramp: true, // Buy crypto with USD (Coinbase Pay)
+    swaps: true, // Swap tokens in-app
   },
   themeMode: 'dark',
 });
