@@ -18,6 +18,7 @@ import UserDashboard from "@/pages/user-dashboard";
 import DebugPanel from "@/pages/debug-panel";
 import JobDetailPageWrapper from "@/pages/job-detail-wrapper";
 import DeploymentCom from "@/pages/deployment-com";
+import PricingLandingPage from "@/pages/pricing/index";
 import GpuPricingPage from "@/pages/pricing/gpus";
 import GpusOnDemandPage from "@/pages/pricing/gpus-on-demand";
 import UsageCalculatorPage from "@/pages/pricing/usage-calculator";
@@ -54,6 +55,7 @@ function Router() {
         <Route path="/job/:id" component={JobDetailPageWrapper} />
         <Route path="/workload/register" component={WorkloadRegister} />
         <Route path="/deployment-completion" component={DeploymentCom} />
+        <Route path="/pricing" component={PricingLandingPage} />
         <Route path="/pricing/gpus" component={GpuPricingPage} />
         <Route path="/pricing/gpus-on-demand" component={GpusOnDemandPage} />
         <Route path="/pricing/usage" component={UsageCalculatorPage} />
