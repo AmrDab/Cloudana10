@@ -8,6 +8,7 @@ const DEFAULT_USAGE = {
   memory: 128,
   ephemeralStorage: 256,
   persistentStorage: 256,
+  egress: 500,
 };
 
 const MAX_VALUE = {
@@ -15,6 +16,7 @@ const MAX_VALUE = {
   memory: 1024,
   ephemeralStorage: 10240,
   persistentStorage: 10240,
+  egress: 10000,
 };
 
 const AKASH_DEFAULT_PRICE = {
@@ -22,6 +24,7 @@ const AKASH_DEFAULT_PRICE = {
   memory: 0.8,
   ephemeralStorage: 0.02,
   persistentStorage: 0.04,
+  egress: 0.01,
 };
 
 const AWS_DEFAULT_PRICE = {
@@ -29,6 +32,7 @@ const AWS_DEFAULT_PRICE = {
   memory: 1.2,
   ephemeralStorage: 0.03,
   persistentStorage: 0.04,
+  egress: 0.09,
 };
 
 const GCP_DEFAULT_PRICE = {
@@ -36,6 +40,7 @@ const GCP_DEFAULT_PRICE = {
   memory: 1,
   ephemeralStorage: 0.025,
   persistentStorage: 0.04,
+  egress: 0.085,
 };
 
 const AZURE_DEFAULT_PRICE = {
@@ -43,6 +48,7 @@ const AZURE_DEFAULT_PRICE = {
   memory: 1.1,
   ephemeralStorage: 0.02,
   persistentStorage: 0.044,
+  egress: 0.087,
 };
 
 export default function UsageCalculatorPage() {
@@ -50,6 +56,7 @@ export default function UsageCalculatorPage() {
   const [memory, setMemory] = useState<number>(DEFAULT_USAGE.memory);
   const [ephemeralStorage, setEphemeralStorage] = useState<number>(DEFAULT_USAGE.ephemeralStorage);
   const [persistentStorage, setPersistentStorage] = useState<number>(DEFAULT_USAGE.persistentStorage);
+  const [egress, setEgress] = useState<number>(DEFAULT_USAGE.egress);
 
   const [akashCost, setAkashCost] = useState<number>(0);
   const [awsCost, setAwsCost] = useState<number>(0);
@@ -58,35 +65,39 @@ export default function UsageCalculatorPage() {
   const [savingPercent, setSavingPercent] = useState<number>(0);
 
   useEffect(() => {
-    const akash = 
+    const akash =
       cpu * AKASH_DEFAULT_PRICE.cpu +
       memory * AKASH_DEFAULT_PRICE.memory +
       ephemeralStorage * AKASH_DEFAULT_PRICE.ephemeralStorage +
-      persistentStorage * AKASH_DEFAULT_PRICE.persistentStorage;
-    
-    const aws = 
+      persistentStorage * AKASH_DEFAULT_PRICE.persistentStorage +
+      egress * AKASH_DEFAULT_PRICE.egress;
+
+    const aws =
       cpu * AWS_DEFAULT_PRICE.cpu +
       memory * AWS_DEFAULT_PRICE.memory +
       ephemeralStorage * AWS_DEFAULT_PRICE.ephemeralStorage +
-      persistentStorage * AWS_DEFAULT_PRICE.persistentStorage;
-    
-    const gcp = 
+      persistentStorage * AWS_DEFAULT_PRICE.persistentStorage +
+      egress * AWS_DEFAULT_PRICE.egress;
+
+    const gcp =
       cpu * GCP_DEFAULT_PRICE.cpu +
       memory * GCP_DEFAULT_PRICE.memory +
       ephemeralStorage * GCP_DEFAULT_PRICE.ephemeralStorage +
-      persistentStorage * GCP_DEFAULT_PRICE.persistentStorage;
-    
-    const azure = 
+      persistentStorage * GCP_DEFAULT_PRICE.persistentStorage +
+      egress * GCP_DEFAULT_PRICE.egress;
+
+    const azure =
       cpu * AZURE_DEFAULT_PRICE.cpu +
       memory * AZURE_DEFAULT_PRICE.memory +
       ephemeralStorage * AZURE_DEFAULT_PRICE.ephemeralStorage +
-      persistentStorage * AZURE_DEFAULT_PRICE.persistentStorage;
+      persistentStorage * AZURE_DEFAULT_PRICE.persistentStorage +
+      egress * AZURE_DEFAULT_PRICE.egress;
 
     setAkashCost(akash);
     setAwsCost(aws);
     setGcpCost(gcp);
     setAzureCost(azure);
-  }, [cpu, memory, ephemeralStorage, persistentStorage]);
+  }, [cpu, memory, ephemeralStorage, persistentStorage, egress]);
 
   useEffect(() => {
     const maxCost = Math.max(...[awsCost, gcpCost, azureCost]);
@@ -212,6 +223,22 @@ export default function UsageCalculatorPage() {
                   onValueChange={(value) => setPersistentStorage(value[0])}
                 />
                 <p className="text-xs text-muted-foreground">Amount of persistent disk storage</p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label htmlFor="egress">Egress</Label>
+                  <span className="text-sm font-medium">{egress} GB</span>
+                </div>
+                <Slider
+                  id="egress"
+                  min={0}
+                  max={MAX_VALUE.egress}
+                  step={10}
+                  value={[egress]}
+                  onValueChange={(value) => setEgress(value[0])}
+                />
+                <p className="text-xs text-muted-foreground">Monthly outbound data transfer (Cloudana: $0.01/GB vs AWS: $0.09/GB — 89% cheaper)</p>
               </div>
             </div>
           </Card>

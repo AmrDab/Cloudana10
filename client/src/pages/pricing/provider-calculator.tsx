@@ -22,6 +22,8 @@ const MAX_VALUE = {
   ipPricing: 10,
   endpointInput: 100,
   endpointPricing: 1,
+  egressInput: 10000,
+  egressPricing: 0.1,
 };
 
 const STEP = {
@@ -40,6 +42,8 @@ const STEP = {
   ipPricing: 0.1,
   endpointInput: 1,
   endpointPricing: 0.01,
+  egressInput: 10,
+  egressPricing: 0.001,
 };
 
 export default function ProviderCalculatorPage() {
@@ -58,6 +62,8 @@ export default function ProviderCalculatorPage() {
   const [ipPricing, setIpPricing] = useState(1);
   const [endpointInput, setEndpointInput] = useState(1);
   const [endpointPricing, setEndpointPricing] = useState(1);
+  const [egressInput, setEgressInput] = useState(500);
+  const [egressPricing, setEgressPricing] = useState(0.01);
 
   const [CLDAverage, setCLDAverage] = useState(true);
   const [usdPrice, setUsdPrice] = useState(0);
@@ -71,6 +77,7 @@ export default function ProviderCalculatorPage() {
     gpuTotalPrice: 0,
     ipTotalPrice: 0,
     endpointTotalPrice: 0,
+    egressTotalPrice: 0,
     totalPrice: 0,
   });
 
@@ -115,6 +122,7 @@ export default function ProviderCalculatorPage() {
     const gpuTotalPrice = (gpuPricing * gpuInput) / (100 / leasePercentInput);
     const ipTotalPrice = (ipPricing * ipInput) / (100 / leasePercentInput);
     const endpointTotalPrice = (endpointInput * endpointPricing) / (100 / leasePercentInput);
+    const egressTotalPrice = (egressInput * egressPricing) / (100 / leasePercentInput);
 
     const totalPrice =
       cpuTotalPrice +
@@ -123,7 +131,8 @@ export default function ProviderCalculatorPage() {
       persistenStorageTotalPrice +
       gpuTotalPrice +
       ipTotalPrice +
-      endpointTotalPrice;
+      endpointTotalPrice +
+      egressTotalPrice;
 
     setUsdPrices({
       cpuTotalPrice,
@@ -133,6 +142,7 @@ export default function ProviderCalculatorPage() {
       gpuTotalPrice,
       ipTotalPrice,
       endpointTotalPrice,
+      egressTotalPrice,
       totalPrice,
     });
   }, [
@@ -150,6 +160,8 @@ export default function ProviderCalculatorPage() {
     ipPricing,
     endpointInput,
     endpointPricing,
+    egressInput,
+    egressPricing,
     leasePercentInput,
   ]);
 
@@ -233,6 +245,10 @@ export default function ProviderCalculatorPage() {
               <div className="flex justify-between">
                 <span className="text-sm">Endpoint Earnings</span>
                 <span className="font-semibold">${usdPrices.endpointTotalPrice.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-sm">Egress Earnings</span>
+                <span className="font-semibold">${usdPrices.egressTotalPrice.toFixed(2)}</span>
               </div>
             </div>
           </Card>
@@ -449,6 +465,33 @@ export default function ProviderCalculatorPage() {
                       step={STEP.endpointPricing}
                       value={[endpointPricing]}
                       onValueChange={(value) => setEndpointPricing(value[0])}
+                    />
+                  </div>
+
+                  <div className="space-y-2 border-t pt-4">
+                    <div className="flex justify-between items-center">
+                      <Label htmlFor="egress">Egress Bandwidth</Label>
+                      <span className="text-sm font-medium">{egressInput} GB</span>
+                    </div>
+                    <Slider
+                      id="egress"
+                      min={0}
+                      max={MAX_VALUE.egressInput}
+                      step={STEP.egressInput}
+                      value={[egressInput]}
+                      onValueChange={(value) => setEgressInput(value[0])}
+                    />
+                    <div className="flex justify-between items-center mt-2">
+                      <Label htmlFor="egressPricing" className="text-sm">Egress Pricing</Label>
+                      <span className="text-sm font-medium">${egressPricing.toFixed(3)} / GB</span>
+                    </div>
+                    <Slider
+                      id="egressPricing"
+                      min={0.001}
+                      max={MAX_VALUE.egressPricing}
+                      step={STEP.egressPricing}
+                      value={[egressPricing]}
+                      onValueChange={(value) => setEgressPricing(value[0])}
                     />
                   </div>
                 </div>

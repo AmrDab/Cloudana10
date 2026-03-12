@@ -1,10 +1,12 @@
 /**
  * Balance Service — CLD credit balance tracking for Cloudana users.
  *
- * Storage: in-memory (Map) with interfaces designed for MongoDB drop-in replacement.
+ * Storage: file-based JSON persistence (survives restarts).
  * Each balance entry maps a wallet address → { balance, transactions[] }.
  */
 
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { dirname, resolve } from "path";
 import { log } from "../lib/logger.js";
 
 const L = log.api;
@@ -34,11 +36,59 @@ export interface UserBalance {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// In-memory store (swap with MongoDB collections later)
+// File-backed persistent store
 // ─────────────────────────────────────────────────────────────────────────────
+
+const DATA_DIR = resolve(process.cwd(), "data");
+const BALANCES_FILE = resolve(DATA_DIR, "balances.json");
+const TRANSACTIONS_FILE = resolve(DATA_DIR, "transactions.json");
 
 const balanceStore = new Map<string, UserBalance>();
 const txStore = new Map<string, Transaction[]>();
+
+/** Load persisted data from disk on startup. */
+function loadFromDisk(): void {
+  try {
+    if (existsSync(BALANCES_FILE)) {
+      const raw = JSON.parse(readFileSync(BALANCES_FILE, "utf-8")) as Record<string, UserBalance>;
+      for (const [key, val] of Object.entries(raw)) {
+        balanceStore.set(key, { ...val, updatedAt: new Date(val.updatedAt) });
+      }
+      L.info(`[Balance] Loaded ${balanceStore.size} balances from disk`);
+    }
+    if (existsSync(TRANSACTIONS_FILE)) {
+      const raw = JSON.parse(readFileSync(TRANSACTIONS_FILE, "utf-8")) as Record<string, Transaction[]>;
+      for (const [key, txs] of Object.entries(raw)) {
+        txStore.set(key, txs.map((tx) => ({ ...tx, timestamp: new Date(tx.timestamp) })));
+      }
+      L.info(`[Balance] Loaded transactions for ${txStore.size} users from disk`);
+    }
+  } catch (err) {
+    L.error("[Balance] Failed to load persisted data, starting fresh:", err);
+  }
+}
+
+/** Persist current state to disk. */
+function saveToDisk(): void {
+  try {
+    if (!existsSync(DATA_DIR)) {
+      mkdirSync(DATA_DIR, { recursive: true });
+    }
+    writeFileSync(
+      BALANCES_FILE,
+      JSON.stringify(Object.fromEntries(balanceStore), null, 2),
+    );
+    writeFileSync(
+      TRANSACTIONS_FILE,
+      JSON.stringify(Object.fromEntries(txStore), null, 2),
+    );
+  } catch (err) {
+    L.error("[Balance] Failed to persist data to disk:", err);
+  }
+}
+
+// Load on module init
+loadFromDisk();
 
 function normalizeAddress(address: string): string {
   return address.toLowerCase().trim();
@@ -100,6 +150,8 @@ export async function creditBalance(
   userTxs.push(tx);
   txStore.set(key, userTxs);
 
+  saveToDisk();
+
   L.info(`[Balance] Credited ${amount} CLD to ${key} via ${source} (new balance: ${entry.balance})`);
 
   return { balance: entry, transaction: tx };
@@ -142,6 +194,8 @@ export async function debitBalance(
   const userTxs = txStore.get(key) ?? [];
   userTxs.push(tx);
   txStore.set(key, userTxs);
+
+  saveToDisk();
 
   L.info(`[Balance] Debited ${amount} CLD from ${key} for workload ${workloadId} (new balance: ${entry.balance})`);
 

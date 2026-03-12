@@ -7,3 +7,12 @@ vite.config.ts.*
 /contract/node_modules
 /client/api/node_modules
 /provider-node-server/node_modules
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.production
+!.env.example
+
+# Persisted runtime data
+/client/api/data/

@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 /** Base URL for template API (templates are served from backend MongoDB). */
-const getTemplatesApiBase = () =>
-  import.meta.env.VITE_API_URL
-    ? `${import.meta.env.VITE_API_URL}/v1/templates`
-    : "http://localhost:7002/v1/templates";
+const getTemplatesApiBase = () => {
+  const base = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
+  return `${base}/templates`;
+};
 
 
 export interface Template {

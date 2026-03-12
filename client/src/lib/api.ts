@@ -28,7 +28,7 @@ export interface PrepareRegistrationResponse {
  * Cap offered spec in UI to real_spec; register the user-agreed partial spec to IPFS/on-chain.
  */
 export async function getPrepareRegistration(deviceId: string): Promise<PrepareRegistrationResponse | null> {
-  const base = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/v1` : "http://localhost:7002/v1";
+  const base = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
   const url = `${base}/build-provider/prepare-registration/${encodeURIComponent(deviceId)}`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -562,7 +562,7 @@ async function enrichProviderWithIpfsMetadata(p: Record<string, unknown>): Promi
  */
 export async function getProviderStats(): Promise<Record<string, any>> {
   try {
-    const base = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/v1` : "http://localhost:7002/v1";
+    const base = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
     const url = `${base}/orchestration/provider-stats`;
     const res = await fetch(url);
     if (!res.ok) {

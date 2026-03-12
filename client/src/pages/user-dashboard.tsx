@@ -29,6 +29,7 @@ import { TxLink } from "@/components/ui/tx-link";
 import ProvidersExplorer from "@/pages/providers-explorer";
 import NewDeployment from "@/pages/new-deployment/index";
 import { devLoggers } from "@/lib/logger";
+import { OnboardingModal } from "@/components/onboarding/OnboardingModal";
 
 type ViewType = "home" | "deployments" | "templates" | "providers";
 const log = devLoggers.deploy;
@@ -44,6 +45,14 @@ export default function UserDashboard() {
   const [activeView, setActiveView] = useState<ViewType>(initialView);
   const [userMenuExpanded, setUserMenuExpanded] = useState(true); // User menu expanded by default
   const [showTemplateSelection, setShowTemplateSelection] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Show onboarding for first-time connected users
+  useEffect(() => {
+    if (isConnected && !localStorage.getItem("onboarding_complete")) {
+      setShowOnboarding(true);
+    }
+  }, [isConnected]);
 
   // Update view when hash changes; show deployments landing (Create card + My Deployments) when opening deployments
   useEffect(() => {
@@ -148,6 +157,7 @@ export default function UserDashboard() {
 
   return (
     <div className="flex gap-6 animate-in fade-in duration-500">
+      <OnboardingModal open={showOnboarding} onClose={() => setShowOnboarding(false)} />
       {/* Main Content */}
       <div className="flex-1 space-y-8 min-w-0">
         {activeView === "home" && (
