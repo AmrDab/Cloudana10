@@ -216,7 +216,7 @@ export default function LandingPage() {
             >
               Start Deploying — Free
             </Button>
-            <Link href="/pricing">
+            <Link href="/pricing/gpus">
               <Button 
                 variant="outline" 
                 size="lg" 

@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { FileText, ExternalLink, BookOpen, Wallet, Server, Code, Rocket, ChevronRight, Copy, Check } from "lucide-react";
+import { FileText, ExternalLink, BookOpen, Wallet, Server, Code, Rocket, ChevronRight, Copy, Check, FlaskConical, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-type DocSection = "getting-started" | "provider" | "contracts" | "api";
+type DocSection = "testnet" | "getting-started" | "provider" | "contracts" | "api";
 
 const CONTRACT_ADDRESSES = [
   { name: "CLDToken (ERC-20)", address: "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2" },
@@ -34,6 +34,7 @@ const API_ENDPOINTS = [
 ];
 
 const NAV_ITEMS: { id: DocSection; label: string; icon: React.ReactNode }[] = [
+  { id: "testnet", label: "Testnet Overview", icon: <FlaskConical className="h-4 w-4" /> },
   { id: "getting-started", label: "Getting Started", icon: <Rocket className="h-4 w-4" /> },
   { id: "provider", label: "Provider Onboarding", icon: <Server className="h-4 w-4" /> },
   { id: "contracts", label: "Contract Addresses", icon: <FileText className="h-4 w-4" /> },
@@ -55,6 +56,109 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
     </Button>
+  );
+}
+
+function TestnetSection() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <h2 className="text-2xl font-bold">Testnet Overview</h2>
+          <Badge variant="outline" className="text-yellow-400 border-yellow-500/30 text-xs">Live Now</Badge>
+        </div>
+        <p className="text-muted-foreground">Where Cloudana is today, and where it's heading.</p>
+      </div>
+
+      {/* Current state */}
+      <Card className="border-white/10">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <FlaskConical className="h-4 w-4 text-yellow-400" />
+            Phase 1 — Testnet (Now)
+          </CardTitle>
+          <CardDescription>Base Sepolia · Chain ID 84532</CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground space-y-3">
+          <p>Cloudana is live on testnet. You can connect a wallet, deploy workloads, and register as a provider today — using testnet CLD tokens with no real value.</p>
+
+          <div className="space-y-2">
+            <p className="font-medium text-foreground">What's working:</p>
+            <ul className="space-y-1 ml-2">
+              <li className="flex items-center gap-2"><Check className="h-3 w-3 text-green-500 shrink-0" /> Wallet connect (MetaMask, Coinbase, social login)</li>
+              <li className="flex items-center gap-2"><Check className="h-3 w-3 text-green-500 shrink-0" /> Workload deployment via Akash Network backend</li>
+              <li className="flex items-center gap-2"><Check className="h-3 w-3 text-green-500 shrink-0" /> Provider registration (datacenter)</li>
+              <li className="flex items-center gap-2"><Check className="h-3 w-3 text-green-500 shrink-0" /> On-chain contracts (CLD token, staking, registry)</li>
+              <li className="flex items-center gap-2"><Check className="h-3 w-3 text-green-500 shrink-0" /> Credit balance system (USD → CLD via Stripe)</li>
+              <li className="flex items-center gap-2"><Check className="h-3 w-3 text-green-500 shrink-0" /> Template gallery (Minecraft, WordPress, and more)</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-medium text-foreground">Testnet limitations:</p>
+            <ul className="space-y-1 ml-2">
+              <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-500/60 shrink-0 inline-block" /> CLD tokens have no real monetary value</li>
+              <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-500/60 shrink-0 inline-block" /> Stripe payments are in test mode (no real charges)</li>
+              <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-500/60 shrink-0 inline-block" /> Compute is routed through Akash Network (not native Cloudana providers yet)</li>
+              <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-500/60 shrink-0 inline-block" /> Home provider setup is in preview (coming soon)</li>
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Mainnet roadmap */}
+      <Card className="border-white/10">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Rocket className="h-4 w-4 text-primary" />
+            Phase 2 — Mainnet
+          </CardTitle>
+          <CardDescription>Target: Base Mainnet · Real CLD · Real compute</CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground space-y-3">
+          <p>Mainnet launches on Base with real CLD token value and live provider earnings.</p>
+
+          <div className="space-y-2">
+            <p className="font-medium text-foreground">What's coming:</p>
+            <ul className="space-y-1 ml-2">
+              <li className="flex items-center gap-2"><ArrowRight className="h-3 w-3 text-primary shrink-0" /> Native Cloudana provider network (no Akash dependency)</li>
+              <li className="flex items-center gap-2"><ArrowRight className="h-3 w-3 text-primary shrink-0" /> Real CLD token on Base Mainnet (chain ID 8453)</li>
+              <li className="flex items-center gap-2"><ArrowRight className="h-3 w-3 text-primary shrink-0" /> POUW (Proof of Useful Work) reward verification live</li>
+              <li className="flex items-center gap-2"><ArrowRight className="h-3 w-3 text-primary shrink-0" /> Home provider onboarding (Cloudana Relay, no Cloudflare dependency)</li>
+              <li className="flex items-center gap-2"><ArrowRight className="h-3 w-3 text-primary shrink-0" /> Fiat on-ramp (USD → CLD, no crypto knowledge needed)</li>
+              <li className="flex items-center gap-2"><ArrowRight className="h-3 w-3 text-primary shrink-0" /> SLA tiers and uptime-based reward multipliers</li>
+              <li className="flex items-center gap-2"><ArrowRight className="h-3 w-3 text-primary shrink-0" /> GPU marketplace with live bidding</li>
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Phase 3 teaser */}
+      <Card className="border-white/10">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Server className="h-4 w-4 text-purple-400" />
+            Phase 3 — Sovereign Chain
+          </CardTitle>
+          <CardDescription>Long-term vision</CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          <p>Cloudana migrates to its own sovereign L1 chain purpose-built for compute workloads — with sub-second finality, native POUW consensus, and direct hardware attestation. Base remains a settlement layer for CLD liquidity.</p>
+        </CardContent>
+      </Card>
+
+      <Card className="border-primary/20 bg-primary/5">
+        <CardContent className="p-4 text-sm flex items-start gap-2">
+          <ExternalLink className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
+          <span>
+            Follow progress on{" "}
+            <a href="https://twitter.com/Cloudana10" target="_blank" rel="noopener noreferrer" className="text-primary underline">@Cloudana10</a>
+            {" "}or join the{" "}
+            <a href="https://discord.gg/cloudana" target="_blank" rel="noopener noreferrer" className="text-primary underline">Discord</a>.
+          </span>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -280,7 +384,7 @@ function ApiSection() {
 }
 
 export default function DocsPage() {
-  const [activeSection, setActiveSection] = useState<DocSection>("getting-started");
+  const [activeSection, setActiveSection] = useState<DocSection>("testnet");
 
   return (
     <div className="max-w-5xl mx-auto py-8">
@@ -349,6 +453,7 @@ export default function DocsPage() {
 
         {/* Content */}
         <div className="flex-1 min-w-0">
+          {activeSection === "testnet" && <TestnetSection />}
           {activeSection === "getting-started" && <GettingStartedSection />}
           {activeSection === "provider" && <ProviderSection />}
           {activeSection === "contracts" && <ContractsSection />}
