@@ -150,7 +150,7 @@ export function StakePanel({ stakingManagerAddress, providerAddress, className }
               <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
               <span className="text-xs text-red-400">
                 <span className="font-bold">{activeChallenges} active challenge{activeChallenges > 1 ? "s" : ""}</span>
-                {" "}— unstaking locked until resolved
+                {" "}: unstaking locked until resolved
               </span>
             </div>
           )}

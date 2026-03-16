@@ -1,5 +1,5 @@
-// IPFS, DePIN utilities, and orchestrator API helpers for direct contract interaction
-// Orchestrator deploy routes: POST /v1/deploy, GET /v1/deployments/:id
+// IPFS and DePIN utilities for direct contract interaction
+// No backend needed - all data stored on-chain or IPFS
 import { devLoggers } from "@/lib/logger";
 
 import { getPublicClient } from "@wagmi/core";
@@ -28,7 +28,7 @@ export interface PrepareRegistrationResponse {
  * Cap offered spec in UI to real_spec; register the user-agreed partial spec to IPFS/on-chain.
  */
 export async function getPrepareRegistration(deviceId: string): Promise<PrepareRegistrationResponse | null> {
-  const base = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
+  const base = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/v1` : "http://localhost:7002/v1";
   const url = `${base}/build-provider/prepare-registration/${encodeURIComponent(deviceId)}`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -407,8 +407,9 @@ export function getPinataGatewayUrl(cid: string): string {
 
 /** Workload manifest metadata stored on IPFS (uploaded at workload registration) */
 export interface WorkloadManifestFromIPFS {
-  name: string;
+  name?: string;
   description?: string;
+  summary?: string;
   manifest: string; // YAML/JSON workload definition
   requirements?: {
     cpu: string;
@@ -438,8 +439,8 @@ export async function fetchWorkloadManifestFromIPFS(cid: string): Promise<Worklo
     const data = (await res.json()) as Record<string, unknown>;
     if (!data || typeof data !== "object") return null;
     // Already in expected shape (has .manifest string)
-    if (typeof (data as WorkloadManifestFromIPFS).manifest === "string") {
-      return data as WorkloadManifestFromIPFS;
+    if (typeof (data as unknown as WorkloadManifestFromIPFS).manifest === "string") {
+      return data as unknown as WorkloadManifestFromIPFS;
     }
     // Raw deploy JSON (services, profiles): normalize for display
     if (data.services != null || data.profiles != null) {
@@ -562,7 +563,7 @@ async function enrichProviderWithIpfsMetadata(p: Record<string, unknown>): Promi
  */
 export async function getProviderStats(): Promise<Record<string, any>> {
   try {
-    const base = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
+    const base = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/v1` : "http://localhost:7002/v1";
     const url = `${base}/orchestration/provider-stats`;
     const res = await fetch(url);
     if (!res.ok) {
@@ -608,7 +609,7 @@ export async function getAllProviders(): Promise<any[]> {
           args: [deviceId],
         }) as ContractProviderRaw;
         if (Number(raw?.status) === 0) return null;
-        const owner = (raw?.providerAddr ?? "") as string;
+        const owner = (raw?.providerAddr ?? "") as Address;
         const deviceIdString = (typeof deviceId === "string" ? deviceId : (deviceId as unknown as { toString: () => string })?.toString?.()) ?? "";
         const provider = mapContractProviderToApi(owner, raw, deviceIdString);
         await enrichProviderWithIpfsMetadata(provider);
@@ -616,10 +617,10 @@ export async function getAllProviders(): Promise<any[]> {
       })
     );
     const filtered = providers.filter((provider): provider is NonNullable<typeof provider> => provider != null);
-    
+
     // Fetch real-time stats from provider nodes
     const stats = await getProviderStats();
-    
+
     // Merge stats with provider data
     filtered.forEach((provider) => {
       const deviceId = provider.deviceId as string;
@@ -627,7 +628,7 @@ export async function getAllProviders(): Promise<any[]> {
         provider.realTimeStats = stats[deviceId];
       }
     });
-    
+
     devLoggers.api.log(`Loaded ${filtered.length} providers from chain (with real-time stats)`);
     return filtered;
   } catch (error) {
@@ -651,7 +652,7 @@ export async function getMyProviders(ownerAddress: Address): Promise<any[]> {
       args: [ownerAddress],
     }) as `0x${string}`[];
     if (!deviceIds?.length) return [];
-    
+
     const providers = await Promise.all(
       deviceIds.map(async (deviceId) => {
         const raw = await client.readContract({
@@ -661,7 +662,7 @@ export async function getMyProviders(ownerAddress: Address): Promise<any[]> {
           args: [deviceId],
         }) as ContractProviderRaw;
         if (Number(raw?.status) === 0) return null;
-        const owner = (raw?.providerAddr ?? ownerAddress) as string;
+        const owner = (raw?.providerAddr ?? ownerAddress) as Address;
         const deviceIdString = (typeof deviceId === "string" ? deviceId : (deviceId as unknown as { toString: () => string })?.toString?.()) ?? "";
         const provider = mapContractProviderToApi(owner, raw, deviceIdString);
         await enrichProviderWithIpfsMetadata(provider);
@@ -703,207 +704,11 @@ export async function getProviderByDeviceId(deviceId: string): Promise<any | nul
       args: [deviceId as `0x${string}`],
     }) as ContractProviderRaw;
     if (!raw || Number(raw?.status) === 0) return null;
-    const owner = (raw?.providerAddr ?? "") as string;
+    const owner = (raw?.providerAddr ?? "") as Address;
     const provider = mapContractProviderToApi(owner, raw, deviceId);
     await enrichProviderWithIpfsMetadata(provider);
     return provider;
   } catch {
     return null;
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Orchestrator Deploy API
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Base URL for the orchestrator (same as VITE_API_URL). */
-function getOrchestratorBase(): string {
-  const override = import.meta.env.VITE_ORCHESTRATOR_URL;
-  if (override) return override.replace(/\/+$/, "");
-  const api = import.meta.env.VITE_API_URL;
-  if (api) return api.replace(/\/+$/, "");
-  return "http://localhost:7002/v1";
-}
-
-/**
- * Options for deploying a workload.
- *
- * - `provider = "akash"` (or omitted) → deploy to Akash network
- * - `providerEndpoint = "https://my-node:4040"` → deploy directly to a Cloudana provider
- */
-export interface DeployWorkloadOptions {
-  /** SDL YAML string or JSON object representing the workload manifest. */
-  manifest: string | Record<string, unknown>;
-  /**
-   * Target provider.
-   * - `"akash"` or `undefined` → Akash network (requires AKASH_MNEMONIC on orchestrator)
-   * - Any other string → treated as a named provider (currently routed via providerEndpoint)
-   */
-  provider?: "akash" | string;
-  /** Direct HTTP endpoint of a Cloudana provider node (e.g. `https://provider.example.com:4040`). */
-  providerEndpoint?: string;
-  /** Optional human-readable name for this deployment. */
-  name?: string;
-}
-
-export interface DeployWorkloadResult {
-  status: "success" | "error";
-  /** "akash" or "cloudana" */
-  provider?: string;
-  /** Akash deployment ID (poll with getDeploymentStatus). */
-  deploymentId?: string;
-  /** Akash deployment sequence number. */
-  dseq?: string;
-  /** Akash wallet address that owns the deployment. */
-  owner?: string;
-  /** Akash network (mainnet/testnet). */
-  network?: string;
-  /** Cloudana workload/instance IDs. */
-  workloadId?: string;
-  instanceId?: string;
-  /** Provider endpoint used. */
-  providerEndpoint?: string;
-  /** Human-readable message from the orchestrator. */
-  message?: string;
-  /** Error description if status = "error". */
-  error?: string;
-  /** Raw result from provider node (Cloudana). */
-  result?: unknown;
-}
-
-/**
- * Deploy a workload via the orchestrator.
- *
- * Routes to Akash or a Cloudana provider node based on `options.provider`
- * and `options.providerEndpoint`.
- *
- * @example
- * // Deploy to Akash
- * const result = await deployWorkload({ manifest: mySDLYaml });
- *
- * @example
- * // Deploy to a specific Cloudana provider
- * const result = await deployWorkload({
- *   manifest: mySDLYaml,
- *   providerEndpoint: "https://provider.example.com:4040",
- * });
- */
-export async function deployWorkload(options: DeployWorkloadOptions): Promise<DeployWorkloadResult> {
-  const base = getOrchestratorBase();
-  const url = `${base}/deploy`;
-
-  devLoggers.api.info(`🚀 Deploying workload to ${options.providerEndpoint ? `Cloudana (${options.providerEndpoint})` : "Akash"}...`);
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        manifest: options.manifest,
-        provider: options.provider,
-        providerEndpoint: options.providerEndpoint,
-        name: options.name,
-      }),
-    });
-
-    const data = (await res.json()) as DeployWorkloadResult;
-
-    if (!res.ok) {
-      devLoggers.api.error(`❌ Deploy failed (HTTP ${res.status}): ${data.error ?? "unknown error"}`);
-    } else {
-      devLoggers.api.success(`✅ Deploy initiated: ${data.deploymentId ?? data.workloadId ?? "ok"}`);
-    }
-
-    return data;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLoggers.api.error(`💥 Deploy request failed: ${msg}`);
-    return { status: "error", error: msg };
-  }
-}
-
-// ─── Deployment status ─────────────────────────────────────────────────────
-
-export type AkashDeploymentStatus =
-  | "creating"
-  | "waiting_for_bids"
-  | "bid_accepted"
-  | "manifest_sent"
-  | "active"
-  | "failed"
-  | "closed";
-
-export interface DeploymentStatusResult {
-  id: string;
-  dseq?: string;
-  owner?: string;
-  status: AkashDeploymentStatus | string;
-  provider?: string;
-  providerEndpoint?: string;
-  gseq?: number;
-  oseq?: number;
-  sdl?: string;
-  createdAt: number;
-  updatedAt: number;
-  error?: string;
-  serviceUrl?: string;
-}
-
-/**
- * Get the status of a deployment by its ID (returned from deployWorkload).
- *
- * @param deploymentId - The deployment ID from deployWorkload().deploymentId
- */
-export async function getDeploymentStatus(deploymentId: string): Promise<DeploymentStatusResult | null> {
-  const base = getOrchestratorBase();
-  const url = `${base}/deployments/${encodeURIComponent(deploymentId)}`;
-
-  try {
-    const res = await fetch(url);
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      devLoggers.api.warn(`⚠️  getDeploymentStatus HTTP ${res.status}`);
-      return null;
-    }
-    const data = (await res.json()) as { status: string; deployment: DeploymentStatusResult };
-    return data.deployment ?? null;
-  } catch (err: unknown) {
-    devLoggers.api.error(`💥 getDeploymentStatus error: ${err instanceof Error ? err.message : err}`);
-    return null;
-  }
-}
-
-/**
- * List all Akash deployments tracked by the orchestrator.
- */
-export async function listDeployments(): Promise<DeploymentStatusResult[]> {
-  const base = getOrchestratorBase();
-  const url = `${base}/deployments`;
-
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = (await res.json()) as { status: string; deployments: DeploymentStatusResult[] };
-    return data.deployments ?? [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Close/terminate an active deployment.
- *
- * @param deploymentId - The deployment ID to close
- */
-export async function closeDeployment(deploymentId: string): Promise<{ success: boolean; error?: string }> {
-  const base = getOrchestratorBase();
-  const url = `${base}/deployments/${encodeURIComponent(deploymentId)}`;
-
-  try {
-    const res = await fetch(url, { method: "DELETE" });
-    const data = (await res.json()) as { status: string; error?: string };
-    return { success: data.status === "success", error: data.error };
-  } catch (err: unknown) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

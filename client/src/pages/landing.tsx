@@ -23,42 +23,42 @@ import {
 import { Link, useLocation } from "wouter";
 
 const stats = [
-  { value: "99.99%", label: "Uptime SLA", icon: Clock },
-  { value: "200+", label: "Global Nodes", icon: Globe },
-  { value: "70%", label: "Cost Savings", icon: DollarSign },
-  { value: "<50ms", label: "Avg Latency", icon: Gauge },
+  { value: "Live", label: "Base Sepolia", icon: Clock },
+  { value: "Open", label: "Provider Signups", icon: Globe },
+  { value: "~70%", label: "vs. AWS Pricing", icon: DollarSign },
+  { value: "POUW", label: "Consensus", icon: Gauge },
 ];
 
 const features = [
   {
     icon: Zap,
-    title: "Instant Provisioning",
-    description: "Deploy workloads in seconds. No waiting for VM spin-up — containers launch globally via smart contract coordination.",
+    title: "Fast Deployments",
+    description: "Pick a template or bring your own container. The orchestrator matches you to a provider and deploys in seconds.",
   },
   {
     icon: ShieldCheck,
-    title: "Verifiable Compute",
-    description: "Proof of Useful Work ensures cryptographic verification. You only pay for compute that's provably executed.",
+    title: "Proof of Useful Work",
+    description: "Providers prove they're doing real computation. Every workload is verified on-chain before rewards are paid out.",
   },
   {
     icon: Layers,
-    title: "Provider Agnostic",
-    description: "Any hardware, anywhere. From enterprise GPUs to edge Raspberry Pis — all unified under one protocol.",
+    title: "Any Hardware",
+    description: "Datacenter GPUs, home servers, spare laptops. If it runs Linux, it can join the network as a provider.",
   },
   {
     icon: DollarSign,
-    title: "70% Cheaper Than AWS",
-    description: "No middleman markup. Providers set competitive rates, you bid for the best price. Transparent on-chain pricing.",
+    title: "Cheaper Compute",
+    description: "No middleman markup. Providers set their own rates. On-chain pricing means no surprise bills.",
   },
   {
     icon: Lock,
-    title: "No Vendor Lock-in",
-    description: "Open protocol, portable workloads. Switch providers instantly without rewriting your stack.",
+    title: "No Lock-in",
+    description: "Standard containers, open protocol. Move your workloads between providers without changing your code.",
   },
   {
     icon: Globe,
-    title: "Global Edge Network",
-    description: "200+ nodes across 26 countries. Auto-scaling, geo-routing, and redundancy built into the protocol.",
+    title: "Decentralized Network",
+    description: "Providers run their own nodes. No single point of failure, no central authority controlling your infrastructure.",
   },
 ];
 
@@ -66,25 +66,25 @@ const useCases = [
   {
     icon: Bot,
     title: "AI/ML Inference",
-    description: "Deploy LLMs and ML models at the edge. Access A100s, H100s, RTX 4090s on-demand with <50ms latency.",
+    description: "Run LLMs and ML models on GPU providers. Access consumer and enterprise GPUs on-demand.",
     tag: "GPU Compute",
   },
   {
     icon: Cloud,
-    title: "Web Hosting",
-    description: "Edge-deployed, auto-scaling web apps. SSL and CDN auto-configured. One command deployment.",
+    title: "Web Apps",
+    description: "Deploy web applications and APIs. Containers are placed on the closest available provider.",
     tag: "Edge",
   },
   {
     icon: Database,
-    title: "Cloud Storage",
-    description: "S3-compatible, globally replicated storage. No egress fees, no surprise bills.",
+    title: "Databases",
+    description: "Run PostgreSQL, MongoDB, Redis, or any database as a container with persistent storage.",
     tag: "Storage",
   },
   {
     icon: Server,
-    title: "VPS & Containers",
-    description: "Spin up Linux containers or full VMs. SSH access, persistent storage, static IPs available.",
+    title: "Containers",
+    description: "Any Docker container works. Bring your own image or pick from the template gallery.",
     tag: "Compute",
   },
 ];
@@ -185,9 +185,9 @@ export default function LandingPage() {
           </h1>
 
           <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            Deploy AI models, web apps, and workloads to a global network of providers.
-            <span className="text-foreground font-medium"> 70% cheaper than AWS.</span>
-            {" "}Cryptographically verified.
+            Deploy containers to a decentralized network of providers.
+            <span className="text-foreground font-medium"> Pay less than AWS.</span>
+            {" "}Every workload verified on-chain.
           </p>
 
           {/* Stats Bar */}
@@ -214,7 +214,7 @@ export default function LandingPage() {
               className="h-14 px-8 text-lg rounded-full bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_40px_rgba(6,182,212,0.4)] hover:shadow-[0_0_60px_rgba(6,182,212,0.6)] transition-all duration-300 w-full sm:w-auto"
               data-testid="button-connect-wallet"
             >
-              Start Deploying — Free
+              Start Deploying
             </Button>
             <Link href="/pricing">
               <Button 
@@ -237,10 +237,10 @@ export default function LandingPage() {
       <section className="w-full max-w-6xl px-4 py-20">
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">
-            Everything you need to deploy at scale
+            How it works
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Built for developers who want cloud infrastructure without the complexity, lock-in, or surprise bills.
+            Providers supply hardware. Users deploy workloads. Smart contracts handle the rest.
           </p>
         </div>
 
@@ -272,7 +272,7 @@ export default function LandingPage() {
               Deploy anything, anywhere
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              From AI inference to web hosting, Cloudana handles your workloads with enterprise reliability.
+              Anything that runs in a Docker container can run on Cloudana.
             </p>
           </div>
 
@@ -313,7 +313,7 @@ export default function LandingPage() {
               Why developers choose Cloudana
             </h2>
             <p className="text-lg text-muted-foreground mb-8">
-              We're not just another cloud provider. We're building the infrastructure layer for a decentralized internet.
+              Traditional cloud locks you in. Cloudana is an open marketplace where anyone can provide or consume compute.
             </p>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -403,20 +403,20 @@ export default function LandingPage() {
       <section className="w-full max-w-6xl px-4 py-16">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
           <div>
-            <div className="text-4xl font-bold text-foreground">200+</div>
-            <div className="text-muted-foreground">Nodes Online</div>
+            <div className="text-4xl font-bold text-foreground">7</div>
+            <div className="text-muted-foreground">Smart Contracts</div>
           </div>
           <div>
-            <div className="text-4xl font-bold text-foreground">26</div>
-            <div className="text-muted-foreground">Countries</div>
+            <div className="text-4xl font-bold text-foreground">Base</div>
+            <div className="text-muted-foreground">Sepolia Testnet</div>
           </div>
           <div>
-            <div className="text-4xl font-bold text-foreground">99.99%</div>
-            <div className="text-muted-foreground">Uptime</div>
+            <div className="text-4xl font-bold text-foreground">POUW</div>
+            <div className="text-muted-foreground">Verified Compute</div>
           </div>
           <div>
-            <div className="text-4xl font-bold text-foreground">$0.002</div>
-            <div className="text-muted-foreground">Per Request</div>
+            <div className="text-4xl font-bold text-foreground">Free</div>
+            <div className="text-muted-foreground">Testnet Tokens</div>
           </div>
         </div>
       </section>

@@ -1,5 +1,5 @@
 import { Suspense, useEffect, lazy } from "react";
-import { Switch, Route, useLocation } from "wouter";
+import { Router as WouterRouter, Switch, Route, useLocation } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import { WalletProvider } from "@/context/wallet-context";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -18,14 +18,13 @@ import UserDashboard from "@/pages/user-dashboard";
 import DebugPanel from "@/pages/debug-panel";
 import JobDetailPageWrapper from "@/pages/job-detail-wrapper";
 import DeploymentCom from "@/pages/deployment-com";
-import PricingLandingPage from "@/pages/pricing/index";
 import GpuPricingPage from "@/pages/pricing/gpus";
 import GpusOnDemandPage from "@/pages/pricing/gpus-on-demand";
 import UsageCalculatorPage from "@/pages/pricing/usage-calculator";
 import ProviderCalculatorPage from "@/pages/pricing/provider-calculator";
 import WorkloadRegister from "@/pages/workload-register";
+import MiningDashboard from "@/pages/mining-dashboard";
 import DocsPage from "@/pages/docs";
-import StatusPage from "@/pages/status";
 
 function RedirectToProviderRegister() {
   const [, setLocation] = useLocation();
@@ -36,16 +35,23 @@ function RedirectToProviderRegister() {
   return null;
 }
 
-function Router() {
+function AppRouter() {
+  const [location] = useLocation();
+  const isHomeRoute = location === "/" || location.startsWith("/?");
+
+  if (isHomeRoute) {
+    return <LandingPage />;
+  }
+
   return (
     <AppLayout>
       <Switch>
-        <Route path="/" component={LandingPage} />
         <Route path="/user" component={UserDashboard} />
+        <Route path="/mining" component={MiningDashboard} />
         <Route path="/provider" component={ProviderRegisterPage} />
         <Route path="/provider/register" component={ProviderRegisterPage} />
         <Route path="/register" component={RedirectToProviderRegister} />
-        <Route path="/provider/register/build-cluster" component={ProviderBuildCluster} />
+        <Route path="/provider/register/build-cluster">{() => <ProviderBuildCluster />}</Route>
         <Route path="/provider/register/final" component={ProviderRegister} />
         <Route path="/providers/:owner/edit" component={ProviderUpdatePageWrapper} />
         <Route path="/providers/:owner/logs" component={lazy(() => import("./pages/provider-logs"))} />
@@ -55,13 +61,11 @@ function Router() {
         <Route path="/job/:id" component={JobDetailPageWrapper} />
         <Route path="/workload/register" component={WorkloadRegister} />
         <Route path="/deployment-completion" component={DeploymentCom} />
-        <Route path="/pricing" component={PricingLandingPage} />
         <Route path="/pricing/gpus" component={GpuPricingPage} />
         <Route path="/pricing/gpus-on-demand" component={GpusOnDemandPage} />
         <Route path="/pricing/usage" component={UsageCalculatorPage} />
         <Route path="/pricing/provider" component={ProviderCalculatorPage} />
         <Route path="/docs" component={DocsPage} />
-        <Route path="/status" component={StatusPage} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />
       </Switch>
@@ -73,10 +77,12 @@ function App() {
   return (
     <ErrorBoundary>
       <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
-        <WalletProvider>
-          <Router />
-          <Toaster />
-        </WalletProvider>
+        <WouterRouter base="/control">
+          <WalletProvider>
+            <AppRouter />
+            <Toaster />
+          </WalletProvider>
+        </WouterRouter>
       </Suspense>
     </ErrorBoundary>
   );

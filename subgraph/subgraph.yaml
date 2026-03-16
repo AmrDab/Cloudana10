@@ -1,0 +1,123 @@
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: CLDToken
+    network: base-sepolia
+    source:
+      address: "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2"
+      abi: CLDToken
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Transfer
+        - TokenHolder
+      abis:
+        - name: CLDToken
+          file: ../shared/abi/CLDToken.json
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+      file: ./src/cld-token.ts
+
+  - kind: ethereum
+    name: ProviderRegistry
+    network: base-sepolia
+    source:
+      address: "0x1e7b0039bdC27cB6B1e83d96D5Ad839fD15Af94a"
+      abi: ProviderRegistry
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Provider
+      abis:
+        - name: ProviderRegistry
+          file: ../shared/abi/ProviderRegistry.json
+      eventHandlers:
+        - event: ProviderRegistered(indexed bytes32,indexed address,string)
+          handler: handleProviderRegistered
+        - event: ProviderUpdated(indexed bytes32,string)
+          handler: handleProviderUpdated
+        - event: ProviderDeregistered(indexed bytes32)
+          handler: handleProviderDeregistered
+      file: ./src/provider-registry.ts
+
+  - kind: ethereum
+    name: WorkloadRegistry
+    network: base-sepolia
+    source:
+      address: "0x71a36e548a884019b4A60947551efB8229e2016a"
+      abi: WorkloadRegistry
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Workload
+      abis:
+        - name: WorkloadRegistry
+          file: ../shared/abi/WorkloadRegistry.json
+      eventHandlers:
+        - event: WorkloadRegistered(indexed uint256,indexed address,string)
+          handler: handleWorkloadRegistered
+        - event: WorkloadPlaced(indexed uint256,indexed address,uint256)
+          handler: handleWorkloadPlaced
+        - event: WorkloadDeregistered(indexed uint256)
+          handler: handleWorkloadDeregistered
+      file: ./src/workload-registry.ts
+
+  - kind: ethereum
+    name: RewardContract
+    network: base-sepolia
+    source:
+      address: "0x427830A20C4752eb30C47e0d2572A457ebF4A8AD"
+      abi: RewardContract
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Reward
+        - WorkloadFunding
+      abis:
+        - name: RewardContract
+          file: ../shared/abi/RewardContract.json
+      eventHandlers:
+        - event: WorkloadFunded(indexed uint256,indexed address,uint256)
+          handler: handleWorkloadFunded
+        - event: ProviderRewarded(indexed uint256,indexed address,uint256)
+          handler: handleProviderRewarded
+        - event: EarningsWithdrawn(indexed address,uint256)
+          handler: handleEarningsWithdrawn
+      file: ./src/reward-contract.ts
+
+  - kind: ethereum
+    name: POUWVerifier
+    network: base-sepolia
+    source:
+      address: "0xc15c61E35D6d73dEf14460a1C7010fd169eD2e7F"
+      abi: POUWVerifier
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - POUWCertificate
+        - MinerStats
+      abis:
+        - name: POUWVerifier
+          file: ../shared/abi/POUWVerifier.json
+      eventHandlers:
+        - event: CertificateSubmitted(indexed address,indexed bytes32,uint256,uint256,bytes32)
+          handler: handleCertificateSubmitted
+      file: ./src/pouw-verifier.ts

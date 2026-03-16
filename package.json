@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev --port 7003",
     "build": "vite build",
-    "start": "vite build && vite preview --port 7001",
+    "start": "vite build && vite preview --port 7003",
     "preview": "vite preview",
     "check": "tsc"
   },
@@ -50,6 +50,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "cobe": "^0.6.5",
     "date-fns": "^3.6.0",
     "dotenv": "^17.2.3",
     "embla-carousel-react": "^8.6.0",

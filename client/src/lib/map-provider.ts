@@ -36,6 +36,8 @@ export type ApiProvider = {
   website?: string;
   email?: string;
   organization?: string;
+  tier?: string;
+  deviceId?: string;
   [k: string]: unknown;
 };
 

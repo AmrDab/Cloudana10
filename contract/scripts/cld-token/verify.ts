@@ -1,5 +1,5 @@
 import { ethers } from "hardhat";
-import { verifyContract, loadAddresses, getNetworkName } from "../../utils/verify-utils";
+import { verifyContract, loadAddresses, getNetworkName } from "../utils/verify-utils";
 
 async function main() {
   const networkName = await getNetworkName();

@@ -812,7 +812,7 @@ export default function WorkloadRegister() {
                     !fundWorkloadId ||
                     !fundAmount ||
                     isFundPending ||
-                    (cldAllowance != null && cldAllowance < parseEther(fundAmount || "0"))
+                    (cldAllowance != null && (cldAllowance as bigint) < parseEther(fundAmount || "0"))
                   }
                   onClick={() => {
                     fund(BigInt(fundWorkloadId), fundAmount || "0");

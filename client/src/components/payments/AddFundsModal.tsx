@@ -1,4 +1,4 @@
-// Modal to add funds — choose amount and payment method
+// Modal to add funds: choose amount and payment method
 // Handles both Stripe card and on-chain CLD crypto flows
 import { useState, useCallback } from "react";
 import {
@@ -211,7 +211,7 @@ export function AddFundsModal({ open, onOpenChange, onSuccess }: AddFundsModalPr
                       Creating session…
                     </>
                   ) : (
-                    `Continue — $${amountUsd.toFixed(2)}`
+                    `Continue: $${amountUsd.toFixed(2)}`
                   )}
                 </Button>
               </>

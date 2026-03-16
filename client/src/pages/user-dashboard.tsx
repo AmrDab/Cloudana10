@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useAccount } from "wagmi";
-import { useLocation } from "wouter";
+import { useLocation, useParams } from "wouter";
 import { Plus, RefreshCw, Wallet as WalletIcon, Loader2, LayoutDashboard, Briefcase, Home, TrendingUp, Rocket, FileText, ArrowLeft, X, Check, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
@@ -37,11 +37,14 @@ const log = devLoggers.deploy;
 export default function UserDashboard() {
   const { address, isConnected } = useAccount();
   const [location, setLocation] = useLocation();
+  const params = useParams<{ section?: string }>();
   const { toast } = useToast();
-  
-  // Check URL hash for view (e.g., /user#templates)
+
+  // Support both /user/:section path and /user#section hash routing
+  const pathSection = params.section;
   const hashView = typeof window !== "undefined" && window.location.hash ? window.location.hash.slice(1) : null;
-  const initialView = (hashView && ["home", "deployments", "templates", "providers"].includes(hashView)) ? hashView as ViewType : "home";
+  const sectionFromUrl = pathSection || hashView;
+  const initialView = (sectionFromUrl && ["home", "deployments", "templates", "providers"].includes(sectionFromUrl)) ? sectionFromUrl as ViewType : "home";
   const [activeView, setActiveView] = useState<ViewType>(initialView);
   const [userMenuExpanded, setUserMenuExpanded] = useState(true); // User menu expanded by default
   const [showTemplateSelection, setShowTemplateSelection] = useState(false);
@@ -277,8 +280,8 @@ function HomeViewContent({
   const activeDeploymentsCount = jobs.filter(j => j.status === 1).length; // Active workloads
   const totalSpentInDeployments = jobs.reduce((sum, job) => sum + parseFloat(formatEther(job.spent)), 0);
   
-  // Calculate USD equivalent (mock - in production, fetch from price oracle)
-  const cldToUsd = 0.1; // Mock conversion rate
+  // Estimated USD equivalent; CLD is a testnet token with no real value
+  const cldToUsd = 0.1; // Estimated rate (testnet)
   const balanceUsd = balance * cldToUsd;
   // Calculate cost per hour (rough estimate based on total spent)
   // Assuming average deployment runs for some time, calculate hourly cost
@@ -312,7 +315,7 @@ function HomeViewContent({
       </div>
 
       {/* Account Info Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Active Deployments */}
         <Card className="bg-card/50 border-white/5 relative overflow-hidden">
           <div className="absolute top-4 right-4 opacity-20">
@@ -338,20 +341,20 @@ function HomeViewContent({
           </div>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Cost
+              Estimated Cost
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono">${totalCostPerHour.toFixed(2)} / hour</div>
-            <div className="text-xs text-muted-foreground mt-2">
-              ${totalCostPerMonth.toFixed(2)} / month
+            <div className="text-2xl font-bold font-mono" title="Estimated cost (testnet)">~${totalCostPerHour.toFixed(2)} / hr</div>
+            <div className="text-xs text-muted-foreground mt-2" title="Estimated cost (testnet)">
+              ~${totalCostPerMonth.toFixed(2)} / month
             </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Credit Balance + Add Funds */}
-      <BalanceDisplay className="lg:col-span-2" />
+      <BalanceDisplay />
     </>
   );
 }
@@ -415,8 +418,6 @@ function DeploymentsView({
 
   // Reset to page 1 when deployments change significantly
   useEffect(() => {
-    console.log("allDeployments: ", allDeployments);
-    console.log("allDeployments jobIds: ", allDeployments.map(d => d.jobId?.toString()));
     if (currentPage > totalPages && totalPages > 0) {
       setCurrentPage(1);
     }
@@ -624,7 +625,7 @@ function TemplatesView({
       <div className="mb-6">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Find your Template</h1>
         <p className="text-muted-foreground">
-          Jumpstart your app development process with our pre-built solutions.
+          Browse ready-to-deploy workload templates. Pick one and deploy in a few clicks.
         </p>
       </div>
 
@@ -872,10 +873,8 @@ function DeploymentTableRow({
   onView: () => void;
 }) {
   const workloadId = deployment.jobId !== undefined && deployment.jobId !== null ? BigInt(deployment.jobId) : undefined;
-  console.log(`DeploymentTableRow: jobId=${deployment.jobId}, workloadId=${workloadId}`);
   const { data: workloadDetails, isLoading: detailsLoading } = useWorkloadDetails(workloadId);
   const { data: manifestFromIPFS } = useWorkloadManifest(workloadId);
-  console.log(`DeploymentTableRow: workloadId=${workloadId}, manifestFromIPFS=`, manifestFromIPFS);
   const [copiedDseq, setCopiedDseq] = useState(false);
 
   // WorkloadStatus (contract): 0 = Inactive, 1 = Active
@@ -890,8 +889,8 @@ function DeploymentTableRow({
   const storageAmount = requirements ? BigInt(Number(requirements.storage ?? (requirements as Record<string, unknown>).storageBytes ?? 0) || 0) : BigInt(0);
   const gpuAmount = requirements && (requirements as Record<string, unknown>).requiresGPU ? Number((requirements as Record<string, unknown>).gpuCount ?? 0) : 0;
 
-  // Calculate cost (mock - in production, fetch from pricing oracle)
-  const cldToUsd = 0.1; // Mock conversion rate
+  // Estimated cost; CLD is a testnet token with no real value
+  const cldToUsd = 0.1; // Estimated rate (testnet)
   const hourlyCost = requirements
     ? (cpuAmount / 1000 * 0.01 + Number(memoryAmount) / (1024 * 1024 * 1024) * 0.001 + Number(storageAmount) / (1024 * 1024 * 1024) * 0.0001 + gpuAmount * 0.1) * cldToUsd
     : 0;
@@ -987,7 +986,7 @@ function DeploymentTableRow({
       {/* Est. cost (balance not tracked on-chain in MVP) */}
       <TableCell className="text-center">
         {hourlyCost > 0 ? (
-          <div className="text-sm font-mono" title="Estimated from resources">${hourlyCost.toFixed(2)} / hr</div>
+          <div className="text-sm font-mono" title="Estimated cost (testnet)">~${hourlyCost.toFixed(2)} / hr</div>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}

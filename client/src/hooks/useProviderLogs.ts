@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
 
 interface ProviderLog {
   timestamp: number;
@@ -89,7 +89,7 @@ export function useProviderLogs(providerAddress?: `0x${string}`) {
       if (options.category) params.set("category", options.category);
 
       const response = await fetch(
-        `${API_BASE}/v1/provider-logs/${providerAddress}?${params.toString()}`
+        `${API_BASE}/provider-logs/${providerAddress}?${params.toString()}`
       );
 
       if (!response.ok) {
@@ -137,7 +137,7 @@ export function useProviderDiagnostics(providerAddress?: `0x${string}`) {
 
     try {
       const response = await fetch(
-        `${API_BASE}/v1/provider-diagnostics/${providerAddress}?owner=${address}`
+        `${API_BASE}/provider-diagnostics/${providerAddress}?owner=${address}`
       );
 
       if (!response.ok) {
@@ -188,7 +188,7 @@ export function useProviderHealth(providerAddress?: `0x${string}`) {
 
     try {
       const response = await fetch(
-        `${API_BASE}/v1/provider-health/${providerAddress}?owner=${address}`
+        `${API_BASE}/provider-health/${providerAddress}?owner=${address}`
       );
 
       if (!response.ok) {

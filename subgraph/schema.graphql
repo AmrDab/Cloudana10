@@ -1,0 +1,99 @@
+type Transfer @entity {
+  id: ID!
+  from: Bytes!
+  to: Bytes!
+  amount: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+type TokenHolder @entity {
+  id: ID!  # wallet address
+  balance: BigInt!
+  totalTransferred: BigInt!
+  totalReceived: BigInt!
+  transferCount: BigInt!
+}
+
+type Provider @entity {
+  id: ID!  # deviceId (bytes32)
+  providerAddress: Bytes!
+  metadataUri: String!
+  status: String!
+  registeredAt: BigInt!
+  updatedAt: BigInt!
+  workloads: [Workload!]! @derivedFrom(field: "placementProvider")
+  rewards: [Reward!]! @derivedFrom(field: "provider")
+  certificates: [POUWCertificate!]! @derivedFrom(field: "provider")
+  totalRewards: BigInt!
+  totalCertificates: BigInt!
+}
+
+type Workload @entity {
+  id: ID!  # workloadId (uint256)
+  owner: Bytes!
+  metadataUri: String!
+  status: String!
+  registeredAt: BigInt!
+  placementProvider: Provider
+  placementInstanceId: BigInt
+  placedAt: BigInt
+  totalFunded: BigInt!
+  rewards: [Reward!]! @derivedFrom(field: "workload")
+}
+
+type WorkloadFunding @entity {
+  id: ID!
+  workload: Workload!
+  funder: Bytes!
+  amount: BigInt!
+  timestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type Reward @entity {
+  id: ID!
+  workload: Workload!
+  provider: Provider!
+  amount: BigInt!
+  timestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type POUWCertificate @entity {
+  id: ID!
+  provider: Provider!
+  deviceId: Bytes!
+  matrixSize: BigInt!
+  difficulty: BigInt!
+  transcriptHash: Bytes!
+  z: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+type MinerStats @entity {
+  id: ID!  # provider address
+  totalCertificates: BigInt!
+  totalDifficulty: BigInt!
+  lastSubmittedBlock: BigInt!
+}
+
+type WithdrawalEvent @entity {
+  id: ID!
+  provider: Bytes!
+  amount: BigInt!
+  timestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type GlobalStats @entity {
+  id: ID!
+  totalProviders: BigInt!
+  totalWorkloads: BigInt!
+  totalTransfers: BigInt!
+  totalCertificates: BigInt!
+  totalRewardsDistributed: BigInt!
+}

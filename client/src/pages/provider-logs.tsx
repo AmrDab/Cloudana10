@@ -312,7 +312,7 @@ export default function ProviderLogsPage({ params }: ProviderLogsPageProps) {
                     Info
                   </Button>
                 </div>
-                <Button variant="outline" size="sm" onClick={refreshLogs} disabled={logsLoading}>
+                <Button variant="outline" size="sm" onClick={() => refreshLogs()} disabled={logsLoading}>
                   <RefreshCw className={`h-4 w-4 mr-2 ${logsLoading ? "animate-spin" : ""}`} />
                   Refresh
                 </Button>

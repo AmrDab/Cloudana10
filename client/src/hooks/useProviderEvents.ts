@@ -16,17 +16,22 @@ export interface ProviderEvent {
   blockNumber: number;
   transactionHash: string;
   timestamp: string;
+  region?: string;
+  hardwareTier?: number;
+  capacity?: number;
 }
 
-interface UseProviderEventsOptions {
+export interface UseProviderEventsOptions {
   enabled?: boolean;
+  loadHistorical?: boolean;
   onNewProvider?: (provider: ProviderEvent) => void;
 }
 
-interface UseProviderEventsReturn {
+export interface UseProviderEventsReturn {
   providers: ProviderEvent[];
   loading: boolean;
   error: string | null;
+  connected: boolean;
   refetch: () => Promise<void>;
 }
 
@@ -228,6 +233,7 @@ export function useProviderEvents(
     providers,
     loading,
     error,
+    connected: !loading && !error,
     refetch
   };
 }

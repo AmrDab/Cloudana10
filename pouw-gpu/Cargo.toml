@@ -1,0 +1,51 @@
+[package]
+name = "cloudana-pouw-gpu"
+version = "0.1.0"
+edition = "2021"
+description = "GPU-accelerated cuPOW matrix multiplication for Cloudana mainnet providers"
+
+[[bin]]
+name = "pouw-miner"
+path = "src/main.rs"
+
+[lib]
+name = "pouw_gpu"
+path = "src/lib.rs"
+
+[dependencies]
+# GPU compute via CUDA (requires CUDA toolkit + NVIDIA GPU)
+cudarc = { version = "0.9", optional = true }
+
+# HTTP client for submitting certificates to orchestrator
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# SHA-256 for transcript hashing
+sha2 = "0.10"
+
+# Hex encoding
+hex = "0.4"
+
+# Random number generation
+rand = "0.8"
+
+# CLI args
+clap = { version = "4.0", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["cpu"]
+cpu = []          # Pure CPU fallback (always available)
+cuda = ["cudarc"] # NVIDIA GPU via CUDA (requires CUDA toolkit)
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

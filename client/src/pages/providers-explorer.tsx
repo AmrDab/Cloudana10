@@ -11,6 +11,7 @@ import { useState, useMemo } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
+import { ProviderGlobe } from "@/components/providers/ProviderGlobe";
 
 export default function ProvidersExplorer() {
   const { address, isConnected } = useAccount();
@@ -59,6 +60,11 @@ export default function ProvidersExplorer() {
           />
         </div>
       </div>
+
+      {/* 3D Globe */}
+      <Card className="border-white/5 bg-card/40 backdrop-blur-sm overflow-hidden">
+        <ProviderGlobe providers={allProviders} className="h-[350px]" />
+      </Card>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2">

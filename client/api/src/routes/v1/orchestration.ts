@@ -8,6 +8,10 @@ import { registerWorkloadForPolling } from "../../services/workload-status-polle
 
 export const orchestrationRouter = new OpenAPIHono();
 
+// Security: All orchestration routes require Bearer auth (enforced by global middleware in index.ts)
+type SecurityRequirement = Record<string, string[]>;
+const SECURITY_BEARER: SecurityRequirement[] = [{ BearerAuth: [] }];
+
 // GET /v1/orchestration/placement — list placement decisions + summary (optimized for no_workloads / no_providers / no_capacity)
 orchestrationRouter.get("/orchestration/placement", async (c) => {
   try {
@@ -47,6 +51,7 @@ const executePlacementRoute = createRoute({
   method: "post",
   path: "/orchestration/placement/execute",
   tags: ["Orchestration"],
+  security: SECURITY_BEARER,
   request: {},
   responses: {
     200: {

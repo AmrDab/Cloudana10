@@ -125,7 +125,8 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
 
           {/* Add Funds button */}
           <Button
-            className="w-full"
+            variant="outline"
+            className="w-full border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50"
             onClick={() => setModalOpen(true)}
             disabled={!isConnected}
           >

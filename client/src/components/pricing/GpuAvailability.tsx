@@ -27,7 +27,7 @@ export default function GpuAvailability({
         <div className="flex flex-col">
           <h1 className="text-2xl font-semibold">GPU Pricing and Availability</h1>
           <p className="text-sm text-muted-foreground">
-            We are able to access as many GPUs as you request —{" "}
+            We can access as many GPUs as you need.{" "}
             <Link href="/pricing/gpus-on-demand" className="text-primary underline hover:text-primary/80">
               Get a Custom Quote
             </Link>

@@ -12,7 +12,7 @@ module.exports = {
       name: 'cloudana-frontend',
       cwd: __dirname,
       script: 'npx',
-      args: ['vite', 'preview', '--port', '7001'],
+      args: ['vite', 'preview', '--port', '7003'],
       interpreter: 'none',
       env: {
         NODE_ENV: 'production',

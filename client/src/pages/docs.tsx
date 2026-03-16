@@ -75,12 +75,12 @@ function TestnetSection() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <FlaskConical className="h-4 w-4 text-yellow-400" />
-            Phase 1 — Testnet (Now)
+            Phase 1: Testnet (Now)
           </CardTitle>
           <CardDescription>Base Sepolia · Chain ID 84532</CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-3">
-          <p>Cloudana is live on testnet. You can connect a wallet, deploy workloads, and register as a provider today — using testnet CLD tokens with no real value.</p>
+          <p>Cloudana is live on testnet. You can connect a wallet, deploy workloads, and register as a provider today, using testnet CLD tokens with no real value.</p>
 
           <div className="space-y-2">
             <p className="font-medium text-foreground">What's working:</p>
@@ -111,7 +111,7 @@ function TestnetSection() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Rocket className="h-4 w-4 text-primary" />
-            Phase 2 — Mainnet
+            Phase 2: Mainnet
           </CardTitle>
           <CardDescription>Target: Base Mainnet · Real CLD · Real compute</CardDescription>
         </CardHeader>
@@ -138,12 +138,12 @@ function TestnetSection() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Server className="h-4 w-4 text-purple-400" />
-            Phase 3 — Sovereign Chain
+            Phase 3: Sovereign Chain
           </CardTitle>
           <CardDescription>Long-term vision</CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          <p>Cloudana migrates to its own sovereign L1 chain purpose-built for compute workloads — with sub-second finality, native POUW consensus, and direct hardware attestation. Base remains a settlement layer for CLD liquidity.</p>
+          <p>Cloudana migrates to its own sovereign L1 chain purpose-built for compute workloads, with sub-second finality, native POUW consensus, and direct hardware attestation. Base remains a settlement layer for CLD liquidity.</p>
         </CardContent>
       </Card>
 
@@ -199,8 +199,8 @@ function GettingStartedSection() {
           <CardContent className="text-sm text-muted-foreground space-y-2">
             <p>You need two tokens to use Cloudana on testnet:</p>
             <ul className="list-disc list-inside space-y-1 ml-2">
-              <li><strong>Base Sepolia ETH</strong> — for gas fees. Get from the <a href="https://www.alchemy.com/faucets/base-sepolia" target="_blank" rel="noopener noreferrer" className="text-primary underline">Alchemy faucet</a> or <a href="https://faucet.quicknode.com/base/sepolia" target="_blank" rel="noopener noreferrer" className="text-primary underline">QuickNode faucet</a>.</li>
-              <li><strong>CLD tokens</strong> — for workload deployment. Add funds via the dashboard using Stripe (card) or crypto deposit.</li>
+              <li><strong>Base Sepolia ETH</strong>, for gas fees. Get from the <a href="https://www.alchemy.com/faucets/base-sepolia" target="_blank" rel="noopener noreferrer" className="text-primary underline">Alchemy faucet</a> or <a href="https://faucet.quicknode.com/base/sepolia" target="_blank" rel="noopener noreferrer" className="text-primary underline">QuickNode faucet</a>.</li>
+              <li><strong>CLD tokens</strong>, for workload deployment. Add funds via the dashboard using Stripe (card) or crypto deposit.</li>
             </ul>
           </CardContent>
         </Card>

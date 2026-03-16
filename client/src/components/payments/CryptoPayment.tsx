@@ -1,4 +1,4 @@
-// Crypto payment component — approve + transfer CLD tokens to escrow
+// Crypto payment component: approve + transfer CLD tokens to escrow
 // Uses existing wagmi hooks from lib/contracts.ts
 import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
@@ -105,7 +105,7 @@ export function CryptoPayment({
           onSuccess?.(transferHash, amountCld);
         })
         .catch((err: Error) => {
-          // Backend recording failed — show error but tx is confirmed on-chain
+          // Backend recording failed; show error but tx is confirmed on-chain
           setError(`Deposit recorded on-chain but credit sync failed: ${err.message}. Please contact support with tx hash: ${transferHash}`);
           setStep("done");
         });
@@ -219,7 +219,7 @@ export function CryptoPayment({
         />
         {amountCld > 0 && (
           <p className="text-xs text-muted-foreground">
-            ≈ ${usdValue.toFixed(2)} USD
+            ~${usdValue.toFixed(2)} USD (estimated)
           </p>
         )}
         {amountCld > cldBalance && (

@@ -335,7 +335,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
         <p className="text-muted-foreground font-medium">Failed to load deployment details</p>
         <p className="text-sm text-muted-foreground">
           This usually means the workload was not found on-chain for this network (wrong chain or invalid workload ID).
-          It is not related to IPFS — manifest is loaded only after the deployment record is found.
+          It is not related to IPFS. The manifest is loaded only after the deployment record is found.
         </p>
         {detailsError && (
           <p className="text-sm text-destructive font-mono break-all">{detailsError.message}</p>
@@ -813,7 +813,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
                               <CardHeader className="pb-2">
                                 <CardTitle className="text-sm">Access URL (HostUri)</CardTitle>
                                 <CardDescription className="text-xs">
-                                  Public URL(s) from provider — open in browser to use the workload. No port-forward needed (NodePort).
+                                  Public URL(s) from provider. Open in browser to use the workload. No port-forward needed (NodePort).
                                 </CardDescription>
                               </CardHeader>
                               <CardContent className="space-y-3">
@@ -938,7 +938,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
                                                 )}
                                               </div>
                                               <p className="text-xs text-muted-foreground">
-                                                💡 NodePort {port.nodePort} — ensure provider firewall allows inbound on this port
+                                                💡 NodePort {port.nodePort}: ensure provider firewall allows inbound on this port
                                               </p>
                                             </div>
                                           );
@@ -1117,7 +1117,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
               from the blockchain. All deployment data will be removed.
               <br /><br />
               <strong>Note:</strong> Only inactive deployments can be deleted. This is different from
-              deactivating — deletion is permanent, while deactivation allows reactivation later.
+              deactivating. Deletion is permanent, while deactivation allows reactivation later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -71,6 +71,8 @@ export interface ClientProviderDetail extends ClientProviderList {
   networkProvider?: string;
   networkSpeedDown?: number;
   networkSpeedUp?: number;
+  bandwidth?: string;
+  networkType?: string;
   deploymentCount?: number;
   orderCount?: number;
   error?: string;

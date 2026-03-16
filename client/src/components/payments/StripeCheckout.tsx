@@ -1,4 +1,4 @@
-// Stripe checkout component — supports redirect and embedded Elements flows
+// Stripe checkout component: supports redirect and embedded Elements flows
 // Uses VITE_STRIPE_PUBLISHABLE_KEY from env
 import { useState, useEffect, useCallback } from "react";
 import { loadStripe } from "@stripe/stripe-js";
@@ -179,7 +179,7 @@ function RedirectCheckout({
           disabled={!session.url}
         >
           <ExternalLink className="mr-2 h-4 w-4" />
-          Continue to Stripe — ${amountUsd.toFixed(2)}
+          Continue to Stripe: ${amountUsd.toFixed(2)}
         </Button>
       )}
 

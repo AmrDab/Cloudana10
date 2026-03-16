@@ -280,7 +280,7 @@ export default function NewDeployment({
             {searchTerms && (
               <div className="flex items-center justify-between mb-4 pb-4 border-b border-white/5">
                 <p className="text-muted-foreground">
-                  Searching for: &quot;{searchTerms}&quot; — {filteredTemplates.length} results
+                  Searching for: &quot;{searchTerms}&quot; · {filteredTemplates.length} results
                 </p>
                 <Button variant="ghost" size="sm" onClick={() => setSearchTerms("")}>
                   Clear

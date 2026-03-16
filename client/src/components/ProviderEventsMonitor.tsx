@@ -112,8 +112,8 @@ export function ProviderEventsMonitor() {
                   <div className="flex-1 space-y-2">
                     {/* Header */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Badge className={`${getHardwareTierColor(provider.hardwareTier)} text-white`}>
-                        {getHardwareTierLabel(provider.hardwareTier)}
+                      <Badge className={`${getHardwareTierColor(provider.hardwareTier ?? 0)} text-white`}>
+                        {getHardwareTierLabel(provider.hardwareTier ?? 0)}
                       </Badge>
                       <Badge variant="outline">
                         {provider.region}

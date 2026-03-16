@@ -111,7 +111,7 @@ export default function PricingLandingPage() {
         </Badge>
         <h1 className="text-4xl font-bold tracking-tight">What are you building?</h1>
         <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-          Pick your workload type and we'll show you the right pricing — no surprises.
+          Pick your workload type and we'll show you the right pricing. No surprises.
         </p>
       </div>
 
@@ -243,7 +243,7 @@ export default function PricingLandingPage() {
         </div>
         <div className="space-y-1">
           <p className="text-2xl font-bold text-green-400">$0.00</p>
-          <p className="text-sm text-muted-foreground">egress fees — always, on every plan</p>
+          <p className="text-sm text-muted-foreground">egress fees, always, on every plan</p>
         </div>
         <div className="space-y-1">
           <p className="text-2xl font-bold text-green-400">Pay-as-you-go</p>

@@ -118,8 +118,8 @@ export default function ProviderRegister() {
   const [capacity, setCapacity] = useState([1]);
   
   // Full device info (for IPFS metadata)
-  const [name, setName] = useState("High-Performance Compute Node");
-  const [description, setDescription] = useState("Enterprise-grade compute server with GPU acceleration for AI/ML workloads and high-performance computing tasks.");
+  const [name, setName] = useState("My Compute Node");
+  const [description, setDescription] = useState("General-purpose compute server available for workloads on the Cloudana network.");
   const [cpuModel, setCpuModel] = useState("Intel Xeon E5-2686 v4");
   const [cpuCores, setCpuCores] = useState("16");
   const [cpuThreads, setCpuThreads] = useState("32");

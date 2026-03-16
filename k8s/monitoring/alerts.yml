@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerts
+  namespace: cloudana
+data:
+  alerts.yml: |
+    groups:
+      - name: cloudana-alerts
+        rules:
+          - alert: OrchestratorDown
+            expr: up{job="orchestrator"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Orchestrator is down"
+              description: "Cloudana orchestrator has been unreachable for 2+ minutes"
+
+          - alert: HighErrorRate
+            expr: rate(http_errors_total[5m]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High API error rate"
+              description: "Error rate exceeds 10% over the last 5 minutes"
+
+          - alert: HighLatency
+            expr: http_request_duration_ms{quantile="0.95"} > 5000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High API latency"
+              description: "p95 latency exceeds 5 seconds"
+
+          - alert: HighMemoryUsage
+            expr: process_rss_bytes > 512 * 1024 * 1024
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage"
+              description: "Process RSS exceeds 512MB"
+
+          - alert: NoWorkloadsPlaced
+            expr: increase(cloudana_workloads_placed_total[1h]) == 0 and increase(cloudana_workloads_created_total[1h]) > 0
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Workloads not being placed"
+              description: "Workloads are being created but none have been placed in the last hour"

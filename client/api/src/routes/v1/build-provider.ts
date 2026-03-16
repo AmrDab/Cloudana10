@@ -34,17 +34,16 @@ const buildProviderService = new BuildProviderService();
 
 export const buildProviderRouter = new OpenAPIHono();
 
-// Security: Bearer token required
+// Security: Bearer token required (enforced by global middleware in index.ts)
 type SecurityRequirement = Record<string, string[]>;
 const SECURITY_BEARER: SecurityRequirement[] = [{ BearerAuth: [] }];
-const SECURITY_NONE: SecurityRequirement[] = [];
 
 // POST /v1/build-provider
 const buildProviderRoute = createRoute({
   method: "post",
   path: "/build-provider",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     body: {
       content: {
@@ -115,7 +114,7 @@ const getBuildProviderStatusRoute = createRoute({
   method: "get",
   path: "/build-provider-status/{action_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE, // Can be changed to SECURITY_BEARER if auth is required
+  security: SECURITY_BEARER, // Can be changed to SECURITY_BEARER if auth is required
   request: {
     params: z.object({
       action_id: z.string().min(1, "Action ID is required"),
@@ -231,7 +230,7 @@ const getBuildProviderLogsRoute = createRoute({
   method: "get",
   path: "/build-provider/logs/{task_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE, // Can be changed to SECURITY_BEARER if auth is required
+  security: SECURITY_BEARER, // Can be changed to SECURITY_BEARER if auth is required
   request: {
     params: z.object({
       task_id: z.string().min(1, "Task ID is required"),
@@ -281,7 +280,7 @@ const getProviderNodeStatusRoute = createRoute({
   method: "get",
   path: "/build-provider/provider-node/status/{action_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     params: z.object({
       action_id: z.string().min(1, "Action ID is required"),
@@ -320,7 +319,7 @@ const startProviderNodeRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/start/{action_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     params: z.object({
       action_id: z.string().min(1, "Action ID is required"),
@@ -357,7 +356,7 @@ const stopProviderNodeRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/stop/{action_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     params: z.object({
       action_id: z.string().min(1, "Action ID is required"),
@@ -395,7 +394,7 @@ const providerNodeStatusByDeviceRoute = createRoute({
   method: "get",
   path: "/build-provider/provider-node/status-by-device/{device_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     params: z.object({
       device_id: z.string().min(1, "Device ID is required"),
@@ -433,7 +432,7 @@ const startProviderNodeByDeviceRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/start-by-device/{device_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     params: z.object({
       device_id: z.string().min(1, "Device ID is required"),
@@ -469,7 +468,7 @@ const stopProviderNodeByDeviceRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/stop-by-device/{device_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     params: z.object({
       device_id: z.string().min(1, "Device ID is required"),
@@ -506,7 +505,7 @@ const prepareRegistrationRoute = createRoute({
   method: "get",
   path: "/build-provider/prepare-registration/{device_id}",
   tags: ["Build Provider"],
-  security: SECURITY_NONE,
+  security: SECURITY_BEARER,
   request: {
     params: z.object({
       device_id: z.string().min(1, "Device ID is required"),

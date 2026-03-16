@@ -9,6 +9,7 @@ import RewardContractAbiData from "./abi/RewardContract.json";
 import POUWVerifierAbiData from "./abi/POUWVerifier.json";
 import StakingManagerAbiData from "./abi/StakingManager.json";
 import ChallengeManagerAbiData from "./abi/ChallengeManager.json";
+import ProviderMinterAbiData from "./abi/ProviderMinter.json";
 import addressesData from "./addresses.baseSepolia.json";
 import type { Abi } from "viem";
 
@@ -23,6 +24,7 @@ export interface ContractAddresses {
     POUWVerifier: string;
     StakingManager: string;
     ChallengeManager: string;
+    ProviderMinter: string;
   };
   roles?: {
     minter?: string;
@@ -42,4 +44,5 @@ export const RewardContractAbi = RewardContractAbiData as Abi;
 export const POUWVerifierAbi = POUWVerifierAbiData as Abi;
 export const StakingManagerAbi = StakingManagerAbiData as Abi;
 export const ChallengeManagerAbi = ChallengeManagerAbiData as Abi;
+export const ProviderMinterAbi = ProviderMinterAbiData as Abi;
 

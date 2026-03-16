@@ -57,7 +57,7 @@ export function PaymentMethodSelector({
         />
       </div>
 
-      {/* Amount Input (card only — for crypto the amount comes from the wallet tx) */}
+      {/* Amount Input (card only; for crypto the amount comes from the wallet tx) */}
       {selectedMethod === "card" && (
         <div className="space-y-2">
           <Label htmlFor="pay-amount">Amount (USD)</Label>

@@ -386,13 +386,15 @@ export default function ProviderRegisterMultistep() {
     const actionIdFromUrl = params?.get("action_id") ?? null;
     if (actionIdFromUrl !== buildActionId) return;
     setCurrentStep("provider-install");
-    setCompletedSteps(new Set(["server-access", "provider-config", "provider-attributes"]));
+    setCompletedSteps(new Set<Step>(["server-access", "provider-config", "provider-attributes"]));
   }, [buildActionId]);
 
   // When on step 4 (Provider Install) with action_id, if build is already completed with device_id, go to step 5 with device_id
   useEffect(() => {
     if (currentStep !== "provider-install" || !buildActionId) return;
-    const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002/v1"}/build-provider-status`;
+    const apiUrl = import.meta.env.VITE_API_URL
+      ? `${import.meta.env.VITE_API_URL}/v1/build-provider-status`
+      : "http://localhost:7002/v1/build-provider-status";
     fetch(`${apiUrl}/${buildActionId}`)
       .then((r) => r.json())
       .then((data: { status?: string; device_id?: string }) => {
@@ -409,7 +411,9 @@ export default function ProviderRegisterMultistep() {
   const loadDeviceIdFromBuild = useCallback(() => {
     if (!buildActionId) return;
     setLoadingDeviceId(true);
-    const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002/v1"}/build-provider-status`;
+    const apiUrl = import.meta.env.VITE_API_URL
+      ? `${import.meta.env.VITE_API_URL}/v1/build-provider-status`
+      : "http://localhost:7002/v1/build-provider-status";
     fetch(`${apiUrl}/${buildActionId}`)
       .then((r) => r.json())
       .then((data: { device_id?: string }) => {
@@ -535,7 +539,9 @@ export default function ProviderRegisterMultistep() {
         },
       };
 
-      const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002/v1"}/build-provider`;
+      const apiUrl = import.meta.env.VITE_API_URL
+        ? `${import.meta.env.VITE_API_URL}/v1/build-provider`
+        : "http://localhost:7002/v1/build-provider";
 
       // Get auth token from environment variable or localStorage
       const authToken = import.meta.env.VITE_AUTH_TOKEN || localStorage.getItem("auth_token");
@@ -714,7 +720,9 @@ export default function ProviderRegisterMultistep() {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), VERIFY_REQUEST_TIMEOUT_MS);
     try {
-      const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002/v1"}/verify/control-machine`;
+      const apiUrl = import.meta.env.VITE_API_URL 
+        ? `${import.meta.env.VITE_API_URL}/v1/verify/control-machine`
+        : "http://localhost:7002/v1/verify/control-machine";
 
       let keyfileData = null;
       if (credentialMethod === "keyfile" && privateKeyFile) {
@@ -777,7 +785,9 @@ export default function ProviderRegisterMultistep() {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), VERIFY_REQUEST_TIMEOUT_MS);
     try {
-      const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002/v1"}/verify/open-ports`;
+      const apiUrl = import.meta.env.VITE_API_URL 
+        ? `${import.meta.env.VITE_API_URL}/v1/verify/open-ports`
+        : "http://localhost:7002/v1/verify/open-ports";
 
       const response = await fetch(apiUrl, {
         method: "POST",
@@ -835,7 +845,9 @@ export default function ProviderRegisterMultistep() {
     setDnsVerifyMessage("");
 
     try {
-      const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002/v1"}/verify/dns`;
+      const apiUrl = import.meta.env.VITE_API_URL
+        ? `${import.meta.env.VITE_API_URL}/v1/verify/dns`
+        : "http://localhost:7002/v1/verify/dns";
 
       const response = await fetch(apiUrl, {
         method: "POST",

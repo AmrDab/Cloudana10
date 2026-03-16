@@ -238,7 +238,7 @@ export default function UsageCalculatorPage() {
                   value={[egress]}
                   onValueChange={(value) => setEgress(value[0])}
                 />
-                <p className="text-xs text-muted-foreground">Monthly outbound data transfer (Cloudana: $0.01/GB vs AWS: $0.09/GB — 89% cheaper)</p>
+                <p className="text-xs text-muted-foreground">Monthly outbound data transfer (Cloudana: $0.01/GB vs AWS: $0.09/GB, 89% cheaper)</p>
               </div>
             </div>
           </Card>

@@ -20,6 +20,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Droplets,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
@@ -180,6 +181,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         { label: "Provider Calculator", path: "/pricing/provider", icon: TrendingUp, show: true },
       ],
     },
+    { label: "Faucet", path: "/faucet", icon: Droplets, show: true },
+    { label: "Status", path: "/status", icon: Activity, show: true },
     { label: "Debug", path: "/debug", icon: Terminal, show: import.meta.env.DEV },
   ];
 
@@ -354,7 +357,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </div>
                     <div className="flex justify-between items-center" title="Spent is tracked when provider rewards are paid on-chain">
                       <span className="text-xs text-muted-foreground">Total Spent</span>
-                      <span className="text-sm font-mono font-semibold">{totalSpent > 0 ? `${totalSpent.toFixed(2)} CLD` : "—"}</span>
+                      <span className="text-sm font-mono font-semibold">{totalSpent > 0 ? `${totalSpent.toFixed(2)} CLD` : "0.00 CLD"}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">CLD Balance</span>
+                      <span className={cn("text-sm font-mono font-semibold", cldBalance === 0 && "text-amber-400")}>
+                        {cldBalance.toFixed(2)} CLD
+                      </span>
                     </div>
                   </div>
                 )}
@@ -379,71 +388,95 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <div className="flex-1" />
             <div className="flex items-center gap-3">
               {isConnected ? (
-                <HoverCard>
-                  <HoverCardTrigger asChild>
-                    <div className="cursor-pointer">
-                      <appkit-button />
+                <>
+                  {/* CLD Balance Badge - always visible */}
+                  <Link href={cldBalance === 0 ? "/faucet" : "/user"}>
+                    <div className={cn(
+                      "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer",
+                      cldBalance === 0
+                        ? "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                        : "border-white/10 bg-card/50 text-foreground hover:bg-card/80"
+                    )}>
+                      {cldBalance === 0 ? (
+                        <Droplets className="h-3.5 w-3.5" />
+                      ) : null}
+                      <span className="font-mono">{cldBalance.toFixed(2)}</span>
+                      <span className="text-xs text-muted-foreground">CLD</span>
                     </div>
-                  </HoverCardTrigger>
-                  <HoverCardContent side="top" align="end" className="w-72">
-                    <div className="space-y-4">
-                      {/* CLD Balance and Refund Credits */}
-                      <div className="space-y-3">
-                        <div>
-                          <div className="text-xs text-muted-foreground mb-1">CLD Balance</div>
-                          <div className="text-lg font-bold">{cldBalance.toFixed(2)}</div>
+                  </Link>
+                  <HoverCard>
+                    <HoverCardTrigger asChild>
+                      <div className="cursor-pointer">
+                        <appkit-button />
+                      </div>
+                    </HoverCardTrigger>
+                    <HoverCardContent side="top" align="end" className="w-72">
+                      <div className="space-y-4">
+                        {/* CLD Balance and Refund Credits */}
+                        <div className="space-y-3">
+                          <div>
+                            <div className="text-xs text-muted-foreground mb-1">CLD Balance</div>
+                            <div className="text-lg font-bold">{cldBalance.toFixed(2)} CLD</div>
+                          </div>
+                          {cldBalance === 0 && (
+                            <Link href="/faucet">
+                              <Button variant="outline" size="sm" className="w-full gap-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10">
+                                <Droplets className="h-3 w-3" /> Get Free Testnet CLD
+                              </Button>
+                            </Link>
+                          )}
                         </div>
-                      </div>
-                      
-                      {/* Divider */}
-                      <div className="border-t border-white/5" />
-                      
-                      {/* Account Header */}
-                      <div className="flex items-center gap-2">
-                        <Activity className="h-4 w-4" />
-                        <span className="font-medium">Account</span>
-                      </div>
-                      
-                      {/* Wallet Address */}
-                      <div className="space-y-2">
-                        <div className="text-xs text-muted-foreground">Wallet Address</div>
+
+                        {/* Divider */}
+                        <div className="border-t border-white/5" />
+
+                        {/* Account Header */}
                         <div className="flex items-center gap-2">
-                          <code className="font-mono text-sm bg-muted px-2 py-1 rounded flex-1">
-                            {displayAddress}
-                          </code>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={handleCopy}
-                            title={copied ? "Copied!" : "Copy address"}
-                          >
-                            {copied ? (
-                              <Check className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <Copy className="h-4 w-4" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={handleOpenExplorer}
-                            title="View on Base Sepolia explorer"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </Button>
+                          <Activity className="h-4 w-4" />
+                          <span className="font-medium">Account</span>
+                        </div>
+
+                        {/* Wallet Address */}
+                        <div className="space-y-2">
+                          <div className="text-xs text-muted-foreground">Wallet Address</div>
+                          <div className="flex items-center gap-2">
+                            <code className="font-mono text-sm bg-muted px-2 py-1 rounded flex-1">
+                              {displayAddress}
+                            </code>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={handleCopy}
+                              title={copied ? "Copied!" : "Copy address"}
+                            >
+                              {copied ? (
+                                <Check className="h-4 w-4 text-green-500" />
+                              ) : (
+                                <Copy className="h-4 w-4" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={handleOpenExplorer}
+                              title="View on Base Sepolia explorer"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Connected Status */}
+                        <div className="flex items-center gap-2 pt-2 border-t border-white/5">
+                          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                          <span className="text-sm text-muted-foreground">Connected</span>
                         </div>
                       </div>
-                      
-                      {/* Connected Status */}
-                      <div className="flex items-center gap-2 pt-2 border-t border-white/5">
-                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                        <span className="text-sm text-muted-foreground">Connected</span>
-                      </div>
-                    </div>
-                  </HoverCardContent>
-                </HoverCard>
+                    </HoverCardContent>
+                  </HoverCard>
+                </>
               ) : (
                 <appkit-button />
               )}

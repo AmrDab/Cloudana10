@@ -187,7 +187,7 @@ export function POUWStatus({
                   <TooltipContent className="max-w-64 text-xs">
                     <p className="font-semibold mb-1">Replay Attack Prevention</p>
                     <p>
-                      Seed = keccak256(jobId + blockHash + chainId). Unique per job — a
+                      Seed = keccak256(jobId + blockHash + chainId). Unique per job, so a
                       previously computed transcript is useless for any other job. This
                       implements σ-freshness from the POUW paper (§5).
                     </p>
@@ -230,8 +230,8 @@ export function POUWStatus({
                 }
                 <span>
                   {formatted?.difficultyMet
-                    ? "Difficulty target met — proof of work valid"
-                    : "Difficulty target NOT met — this proof is invalid"
+                    ? "Difficulty target met. Proof of work valid"
+                    : "Difficulty target NOT met. This proof is invalid"
                   }
                 </span>
               </div>

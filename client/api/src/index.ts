@@ -5,14 +5,20 @@ import { serve } from "@hono/node-server";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
 import { cors } from "hono/cors";
+import { authRouter } from "./routes/v1/auth.js";
 import { templatesRouter } from "./routes/v1/templates.js";
 import { verifyRouter } from "./routes/v1/verify.js";
 import { buildProviderRouter } from "./routes/v1/build-provider.js";
 import { orchestrationRouter } from "./routes/v1/orchestration.js";
+import { requireAuth } from "./middleware/auth.js";
+import { metricsMiddleware, serializeMetrics } from "./middleware/metrics.js";
 import workloadStatusRouter from "./routes/v1/workload-status.js";
 import providerLogsRouter from "./routes/v1/provider-logs.js";
 import { deployRouter } from "./routes/v1/deploy.js";
 import { paymentsRouter } from "./routes/v1/payments.js";
+import { faucetRouter } from "./routes/v1/faucet.js";
+import { pouwRouter } from "./routes/v1/pouw.js";
+import { hardwareScanRouter } from "./routes/v1/hardware-scan.js";
 import { startOrchestratorLoop } from "./services/orchestrator-loop.service.js";
 import { startOrchestratorEventDriven } from "./services/orchestrator-event.service.js";
 import { startWorkloadStatusPolling } from "./services/workload-status-poller.service.js";
@@ -32,6 +38,12 @@ app.use("*", cors({
   allowHeaders: ["Content-Type", "Authorization"],
 }));
 
+app.use("*", metricsMiddleware);
+
+// Protect sensitive endpoints with JWT auth
+app.use("/v1/build-provider/*", requireAuth);
+app.use("/v1/orchestration/*", requireAuth);
+
 // OpenAPI configuration
 app.openAPIRegistry.registerComponent("securitySchemes", "BearerAuth", {
   type: "http",
@@ -39,12 +51,30 @@ app.openAPIRegistry.registerComponent("securitySchemes", "BearerAuth", {
   bearerFormat: "JWT"
 });
 
-// Health check
-app.get("/health", (c) => {
-  return c.json({ status: "ok" });
+// Prometheus metrics endpoint
+app.get("/metrics", (c) => {
+  return c.text(serializeMetrics(), 200, {
+    "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+  });
+});
+
+// Enhanced health check
+app.get("/health", async (c) => {
+  const checks: Record<string, string> = {
+    api: "ok",
+    uptime: `${Math.floor(process.uptime())}s`,
+  };
+
+  return c.json({
+    status: "ok",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+    checks,
+  });
 });
 
 // API v1 routes
+app.route("/v1", authRouter);
 app.route("/v1", templatesRouter);
 app.route("/v1", verifyRouter);
 app.route("/v1", buildProviderRouter);
@@ -53,6 +83,9 @@ app.route("/v1", workloadStatusRouter);
 app.route("/v1", providerLogsRouter);
 app.route("/v1", deployRouter);
 app.route("/v1", paymentsRouter);
+app.route("/v1", faucetRouter);
+app.route("/v1", pouwRouter);
+app.route("/v1", hardwareScanRouter);
 
 // OpenAPI JSON endpoint
 app.get("/v1/doc", (c) => {
@@ -64,7 +97,7 @@ app.get("/v1/doc", (c) => {
       version: "1.0.0"
     },
     servers: [
-      { 
+      {
         url: `http://localhost:${PORT}`,
         description: "API Server"
       }

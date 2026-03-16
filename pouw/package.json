@@ -1,0 +1,17 @@
+{
+  "name": "@cloudana/pouw",
+  "version": "1.0.0",
+  "description": "Proof of Useful Work — cuPOW matrix multiplication consensus for Cloudana testnet",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "tsx src/test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "^5.7.3"
+  }
+}

@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 const STEPS = [
   {
     title: "Welcome to Cloudana",
-    description: "Deploy containerized workloads to a decentralized compute network — cheaper and faster than traditional cloud.",
+    description: "Deploy containerized workloads to a decentralized compute network. Cheaper and faster than traditional cloud.",
     icon: Rocket,
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
@@ -36,9 +36,14 @@ const STEPS = [
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <div className="rounded-lg border border-white/10 p-3 space-y-2">
-          <p className="font-medium text-foreground">Base Sepolia ETH</p>
-          <p>Free testnet ETH for gas fees:</p>
-          <div className="flex gap-2">
+          <p className="font-medium text-foreground">Base Sepolia ETH (gas)</p>
+          <p>Free testnet ETH to pay for transaction gas fees:</p>
+          <div className="flex flex-wrap gap-2">
+            <a href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer">
+              <Button variant="outline" size="sm" className="gap-1 text-xs">
+                Circle Faucet <ExternalLink className="h-3 w-3" />
+              </Button>
+            </a>
             <a href="https://www.alchemy.com/faucets/base-sepolia" target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm" className="gap-1 text-xs">
                 Alchemy Faucet <ExternalLink className="h-3 w-3" />
@@ -46,14 +51,19 @@ const STEPS = [
             </a>
             <a href="https://faucet.quicknode.com/base/sepolia" target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm" className="gap-1 text-xs">
-                QuickNode Faucet <ExternalLink className="h-3 w-3" />
+                QuickNode <ExternalLink className="h-3 w-3" />
               </Button>
             </a>
           </div>
         </div>
-        <div className="rounded-lg border border-white/10 p-3 space-y-2">
-          <p className="font-medium text-foreground">CLD Credits</p>
-          <p>Add credits from the dashboard using card (Stripe) or on-chain crypto deposit.</p>
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+          <p className="font-medium text-foreground">CLD Tokens (deployments)</p>
+          <p>Get 100 free testnet CLD from our faucet to start deploying:</p>
+          <a href="/faucet">
+            <Button variant="outline" size="sm" className="gap-1 text-xs border-primary/30 text-primary hover:bg-primary/10">
+              Open CLD Faucet <ExternalLink className="h-3 w-3" />
+            </Button>
+          </a>
         </div>
       </div>
     ),
@@ -75,7 +85,7 @@ const STEPS = [
           </li>
           <li className="flex gap-3">
             <span className="h-6 w-6 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-xs font-bold text-primary shrink-0">3</span>
-            <span>Confirm the on-chain transaction — the orchestrator handles the rest</span>
+            <span>Confirm the on-chain transaction. The orchestrator handles the rest</span>
           </li>
         </ol>
         <p className="pt-2">Your deployment will appear on the dashboard with live status updates.</p>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
 
 interface WorkloadExecutionStatus {
   workloadId: string;
@@ -50,9 +50,9 @@ export function useWorkloadExecutionStatus(workloadId?: bigint, instanceId?: big
       setError(null);
       
       try {
-        console.log(`✅ useWorkloadExecutionStatus: ${API_BASE}/v1/workload-status/${workloadId}/${instanceId}`);
+        console.log(`✅ useWorkloadExecutionStatus: ${API_BASE}/workload-status/${workloadId}/${instanceId}`);
         const response = await fetch(
-          `${API_BASE}/v1/workload-status/${workloadId}/${instanceId}`
+          `${API_BASE}/workload-status/${workloadId}/${instanceId}`
         );
         
         if (!response.ok) {
@@ -105,7 +105,7 @@ export function useWorkloadLogs(workloadId?: bigint, instanceId?: bigint) {
     
     try {
       const response = await fetch(
-        `${API_BASE}/v1/workload-status/${workloadId}/${instanceId}/logs?refresh=true`
+        `${API_BASE}/workload-status/${workloadId}/${instanceId}/logs?refresh=true`
       );
       
       if (!response.ok) {
@@ -151,7 +151,7 @@ export function useWorkloadEndpoints(workloadId?: bigint, instanceId?: bigint) {
       
       try {
         const response = await fetch(
-          `${API_BASE}/v1/workload-status/${workloadId}/${instanceId}/endpoints`
+          `${API_BASE}/workload-status/${workloadId}/${instanceId}/endpoints`
         );
         
         if (!response.ok) {

@@ -1,171 +1,193 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title POUWVerifier
- * @dev Lightweight on-chain verifier for Proof of Useful Work certificates.
+ * @dev On-chain registry for verified Proof of Useful Work certificates.
  *
- * Based on "Proofs of Useful Work from Arbitrary Matrix Multiplication"
- * (Komargodski & Weinstein, 2025). Full transcript verification is done
- * off-chain by the challenger network. On-chain we verify:
- *   1. EIP-712 provider signature
- *   2. Seed = keccak256(jobId + blockHash + chainId) — replay prevention
- *   3. transcriptHash < DIFFICULTY_TARGET — proof of work
+ * For testnet: the orchestrator (ORCHESTRATOR_ROLE) performs off-chain verification
+ * and records accepted certificates here. The contract does NOT re-verify math —
+ * it trusts the orchestrator. This is acceptable for testnet where the orchestrator
+ * is the trusted coordinator.
  *
- * The seed mechanism is critical: it binds each proof to a specific job and
- * block, making previously computed transcripts worthless for new jobs.
- * This implements the paper's σ (seed) freshness requirement from Section 5.
+ * For mainnet: replace the orchestrator submission with a Groth16 zkSNARK
+ * verifier (using Circom + snarkjs) so verification is fully trustless and
+ * the orchestrator is no longer needed in the critical path.
+ *
+ * What this contract provides:
+ *   - Immutable on-chain record of all accepted certificates (for transparency).
+ *   - Per-provider certificate counts and total difficulty (for reputation/rewards).
+ *   - Replay protection (duplicate z values rejected).
+ *   - Events for frontend real-time monitoring.
+ *   - Mining reward pool funding + distribution hooks.
  */
-contract POUWVerifier is EIP712 {
-    using ECDSA for bytes32;
+contract POUWVerifier is AccessControl, ReentrancyGuard {
+    bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
 
-    // ─── Constants ────────────────────────────────────────────────────────────
+    // ─── Data Structures ────────────────────────────────────────────────────
 
-    /// @dev Difficulty target. Proof accepted iff transcriptHash < target.
-    /// Equivalent to requiring leading zeros in the transcript hash.
-    uint256 public constant DIFFICULTY_TARGET =
-        0x0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
-
-    bytes32 private constant POUW_CERT_TYPEHASH = keccak256(
-        "POUWCertificate(bytes32 jobId,bytes32 seed,uint256 matrixDim,uint256 blockSize,bytes32 transcriptHash,bytes32 resultHash)"
-    );
-
-    // ─── Structs ──────────────────────────────────────────────────────────────
-
-    /**
-     * @dev POUW Certificate — the on-chain representation of a completed useful work proof.
-     * @param jobId     Unique job identifier (prevents cross-job replay)
-     * @param seed      keccak256(jobId, blockHash, chainId) — per-job freshness seed
-     * @param matrixDim n: dimension of the square matrices being multiplied
-     * @param blockSize r: tile size for block matrix multiplication (r << n)
-     * @param transcriptHash keccak256 of all (n/r)^3 intermediate block hashes.
-     *                       This is the PoW artifact — must be < DIFFICULTY_TARGET.
-     * @param resultHash keccak256 of the output matrix C = A*B
-     */
-    struct POUWCertificate {
-        bytes32 jobId;
-        bytes32 seed;
-        uint256 matrixDim;
-        uint256 blockSize;
-        bytes32 transcriptHash;
-        bytes32 resultHash;
+    struct Certificate {
+        address provider;           // Provider wallet
+        bytes32 deviceId;           // Provider device ID
+        uint32 matrixSize;          // n (matrix dimension)
+        uint8 difficulty;           // Leading zero bits required
+        bytes32 transcriptHash;     // SHA-256 of all intermediate blocks
+        bytes32 z;                  // Final proof hash (meets difficulty)
+        uint256 timestamp;          // Mined at (unix ms from provider, not block time)
+        uint256 blockNumber;        // Chain block number when recorded
     }
 
-    // ─── Storage ──────────────────────────────────────────────────────────────
+    struct ProviderStats {
+        uint256 totalCertificates;
+        uint256 totalDifficulty;    // Sum of all difficulty values (proxy for total work)
+        uint256 lastSubmittedBlock;
+        bool registered;
+    }
 
-    /// @dev Track used seeds to prevent replay attacks
-    mapping(bytes32 => bool) public usedSeeds;
+    // ─── State ──────────────────────────────────────────────────────────────
 
-    /// @dev Verified certificates by jobId
-    mapping(bytes32 => POUWCertificate) public verifiedCerts;
+    /// All accepted certificates, indexed by ID (1-based).
+    mapping(uint256 => Certificate) public certificates;
+    uint256 public certificateCount;
 
-    /// @dev Block number at which each job's proof was submitted
-    mapping(bytes32 => uint256) public proofBlockNumber;
+    /// Per-provider mining stats.
+    mapping(address => ProviderStats) public providerStats;
 
-    // ─── Events ───────────────────────────────────────────────────────────────
+    /// Replay protection: z values that have already been accepted.
+    mapping(bytes32 => bool) public usedZ;
 
-    event POUWVerified(
-        bytes32 indexed jobId,
+    /// Registered providers who have submitted at least one certificate.
+    address[] public miners;
+
+    // ─── Events ─────────────────────────────────────────────────────────────
+
+    event CertificateRecorded(
+        uint256 indexed certificateId,
         address indexed provider,
+        bytes32 indexed deviceId,
+        uint32 matrixSize,
+        uint8 difficulty,
         bytes32 transcriptHash,
-        bytes32 seed,
+        bytes32 z,
         uint256 blockNumber
     );
 
-    event ReplayAttackBlocked(
-        bytes32 indexed seed,
-        address indexed attacker
-    );
+    event MinerRegistered(address indexed provider, bytes32 indexed deviceId);
 
-    // ─── Constructor ──────────────────────────────────────────────────────────
+    // ─── Constructor ─────────────────────────────────────────────────────────
 
-    constructor() EIP712("POUWVerifier", "1") {}
+    constructor() {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    }
 
-    // ─── Core Functions ───────────────────────────────────────────────────────
+    // ─── Orchestrator Functions ──────────────────────────────────────────────
 
     /**
-     * @notice Verify a POUW certificate and record it on-chain.
-     * @param cert          The POUW certificate from the provider
-     * @param jobBlockNumber Block number when the job was assigned (for seed verification)
-     * @param providerSig   EIP-712 signature over the certificate
-     * @return provider     The verified provider address
+     * @notice Record a verified POUW certificate on-chain.
+     * @dev Called by the orchestrator after off-chain verification passes.
+     *
+     * @param provider       Provider wallet address.
+     * @param deviceId       Provider device ID (bytes32).
+     * @param matrixSize     n (matrix dimension).
+     * @param difficulty     Leading zero bits in z.
+     * @param transcriptHash SHA-256 transcript hash (as bytes32).
+     * @param z              Final proof hash (as bytes32).
+     * @param timestamp      Unix ms timestamp from provider.
      */
-    function verifyCertificate(
-        POUWCertificate calldata cert,
-        uint256 jobBlockNumber,
-        bytes calldata providerSig
-    ) external returns (address provider) {
-        // 1. Verify EIP-712 signature
-        bytes32 structHash = _hashCert(cert);
-        bytes32 digest = _hashTypedDataV4(structHash);
-        provider = digest.recover(providerSig);
-        require(provider != address(0), "POUWVerifier: invalid signature");
+    function recordCertificate(
+        address provider,
+        bytes32 deviceId,
+        uint32 matrixSize,
+        uint8 difficulty,
+        bytes32 transcriptHash,
+        bytes32 z,
+        uint256 timestamp
+    ) external onlyRole(ORCHESTRATOR_ROLE) nonReentrant {
+        require(provider != address(0), "Invalid provider address");
+        require(matrixSize >= 8, "Matrix size too small");
+        require(difficulty >= 1 && difficulty <= 255, "Invalid difficulty");
+        require(!usedZ[z], "Certificate z already recorded (replay)");
 
-        // 2. Replay attack prevention: verify seed is fresh
-        require(!usedSeeds[cert.seed], "POUWVerifier: seed already used (replay)");
-        bytes32 expectedSeed = computeSeed(cert.jobId, blockhash(jobBlockNumber));
-        require(cert.seed == expectedSeed, "POUWVerifier: invalid seed");
+        usedZ[z] = true;
+        uint256 certId = ++certificateCount;
 
-        // 3. Verify difficulty target met
-        require(
-            uint256(cert.transcriptHash) < DIFFICULTY_TARGET,
-            "POUWVerifier: difficulty not met"
+        certificates[certId] = Certificate({
+            provider: provider,
+            deviceId: deviceId,
+            matrixSize: matrixSize,
+            difficulty: difficulty,
+            transcriptHash: transcriptHash,
+            z: z,
+            timestamp: timestamp,
+            blockNumber: block.number
+        });
+
+        // Update provider stats
+        ProviderStats storage stats = providerStats[provider];
+        if (!stats.registered) {
+            stats.registered = true;
+            miners.push(provider);
+            emit MinerRegistered(provider, deviceId);
+        }
+        stats.totalCertificates++;
+        stats.totalDifficulty += difficulty;
+        stats.lastSubmittedBlock = block.number;
+
+        emit CertificateRecorded(
+            certId,
+            provider,
+            deviceId,
+            matrixSize,
+            difficulty,
+            transcriptHash,
+            z,
+            block.number
         );
+    }
 
-        // 4. Verify matrix dimensions are valid
-        require(cert.matrixDim > 0 && cert.blockSize > 0, "POUWVerifier: invalid dimensions");
-        require(cert.matrixDim % cert.blockSize == 0, "POUWVerifier: blockSize must divide matrixDim");
+    // ─── View Functions ──────────────────────────────────────────────────────
 
-        // 5. Record and mark seed as used
-        usedSeeds[cert.seed] = true;
-        verifiedCerts[cert.jobId] = cert;
-        proofBlockNumber[cert.jobId] = block.number;
+    /**
+     * @notice Get mining leaderboard — top providers by total difficulty.
+     * @dev Returns up to `limit` providers sorted off-chain (caller sorts).
+     */
+    function getMinerStats(address provider)
+        external
+        view
+        returns (
+            uint256 totalCertificates,
+            uint256 totalDifficulty,
+            uint256 lastSubmittedBlock
+        )
+    {
+        ProviderStats storage stats = providerStats[provider];
+        return (stats.totalCertificates, stats.totalDifficulty, stats.lastSubmittedBlock);
+    }
 
-        emit POUWVerified(cert.jobId, provider, cert.transcriptHash, cert.seed, block.number);
-
-        return provider;
+    /** @notice Total number of registered miners. */
+    function minerCount() external view returns (uint256) {
+        return miners.length;
     }
 
     /**
-     * @notice Compute the replay-prevention seed for a job.
-     * @dev seed = keccak256(jobId || blockHash || chainId)
-     *      The block hash ensures the seed is unguessable before block confirmation.
-     *      The chainId prevents cross-chain replay.
-     * @param jobId     The unique job identifier
-     * @param blockHash The hash of the block when the job was assigned
+     * @notice Get a certificate by ID.
      */
-    function computeSeed(bytes32 jobId, bytes32 blockHash) public view returns (bytes32) {
-        return keccak256(abi.encodePacked(jobId, blockHash, block.chainid));
+    function getCertificate(uint256 certId)
+        external
+        view
+        returns (Certificate memory)
+    {
+        require(certId > 0 && certId <= certificateCount, "Invalid certificate ID");
+        return certificates[certId];
     }
 
     /**
-     * @notice Check if a proof has been verified for a given job.
+     * @notice Check if a z value has been used (replay protection query).
      */
-    function isVerified(bytes32 jobId) external view returns (bool) {
-        return proofBlockNumber[jobId] > 0;
-    }
-
-    /**
-     * @notice Get the transcript hash for a verified job.
-     */
-    function getTranscriptHash(bytes32 jobId) external view returns (bytes32) {
-        return verifiedCerts[jobId].transcriptHash;
-    }
-
-    // ─── Internal ─────────────────────────────────────────────────────────────
-
-    function _hashCert(POUWCertificate calldata cert) internal pure returns (bytes32) {
-        return keccak256(abi.encode(
-            POUW_CERT_TYPEHASH,
-            cert.jobId,
-            cert.seed,
-            cert.matrixDim,
-            cert.blockSize,
-            cert.transcriptHash,
-            cert.resultHash
-        ));
+    function isZUsed(bytes32 z) external view returns (bool) {
+        return usedZ[z];
     }
 }

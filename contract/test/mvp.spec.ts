@@ -1,48 +1,74 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
-import { CLDToken, ProviderRegistry, JobEscrow } from "../typechain-types";
+import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import {
+  CLDToken,
+  ProviderRegistry,
+  WorkloadRegistry,
+  RewardContract,
+  POUWVerifier,
+} from "../typechain-types";
 
+/**
+ * Cloudana MVP Integration Tests
+ *
+ * End-to-end tests exercising the full contract stack:
+ *   CLDToken → ProviderRegistry → WorkloadRegistry → RewardContract → POUWVerifier
+ */
 describe("Cloudana MVP", function () {
   async function deployContracts() {
-    const [deployer, validator, user, providerOwner, treasury, team, other] = await ethers.getSigners();
+    const [deployer, orchestrator, user, providerOwner, treasury, team, other] =
+      await ethers.getSigners();
 
     // Deploy CLDToken
     const CLDTokenFactory = await ethers.getContractFactory("CLDToken");
     const cldToken = await CLDTokenFactory.deploy(treasury.address, team.address);
     await cldToken.waitForDeployment();
 
-    // Deploy ProviderRegistry
+    // Deploy ProviderRegistry (no constructor args)
     const ProviderRegistryFactory = await ethers.getContractFactory("ProviderRegistry");
-    const providerRegistry = await ProviderRegistryFactory.deploy(
-      await cldToken.getAddress(),
-      team.address,
-      treasury.address
-    );
+    const providerRegistry = await ProviderRegistryFactory.deploy();
     await providerRegistry.waitForDeployment();
 
-    // Deploy JobEscrow
-    const JobEscrowFactory = await ethers.getContractFactory("JobEscrow");
-    const jobEscrow = await JobEscrowFactory.deploy(
-      await cldToken.getAddress(),
-      await providerRegistry.getAddress()
-    );
-    await jobEscrow.waitForDeployment();
+    // Deploy WorkloadRegistry (no constructor args)
+    const WorkloadRegistryFactory = await ethers.getContractFactory("WorkloadRegistry");
+    const workloadRegistry = await WorkloadRegistryFactory.deploy();
+    await workloadRegistry.waitForDeployment();
 
-    // Grant roles
+    // Deploy RewardContract (takes settlement token address)
+    const RewardContractFactory = await ethers.getContractFactory("RewardContract");
+    const rewardContract = await RewardContractFactory.deploy(await cldToken.getAddress());
+    await rewardContract.waitForDeployment();
+
+    // Deploy POUWVerifier (no constructor args)
+    const POUWVerifierFactory = await ethers.getContractFactory("POUWVerifier");
+    const pouwVerifier = await POUWVerifierFactory.deploy();
+    await pouwVerifier.waitForDeployment();
+
+    // Grant MINTER_ROLE to deployer for test token distribution
     const MINTER_ROLE = await cldToken.MINTER_ROLE();
     await cldToken.grantRole(MINTER_ROLE, deployer.address);
 
-    const VALIDATOR_ROLE = await jobEscrow.VALIDATOR_ROLE();
-    await jobEscrow.grantRole(VALIDATOR_ROLE, validator.address);
+    // Grant ORCHESTRATOR_ROLE on WorkloadRegistry
+    const WR_ORCH_ROLE = await workloadRegistry.ORCHESTRATOR_ROLE();
+    await workloadRegistry.grantRole(WR_ORCH_ROLE, orchestrator.address);
+
+    // Grant ORCHESTRATOR_ROLE on RewardContract
+    const RC_ORCH_ROLE = await rewardContract.ORCHESTRATOR_ROLE();
+    await rewardContract.grantRole(RC_ORCH_ROLE, orchestrator.address);
+
+    // Grant ORCHESTRATOR_ROLE on POUWVerifier
+    const PV_ORCH_ROLE = await pouwVerifier.ORCHESTRATOR_ROLE();
+    await pouwVerifier.grantRole(PV_ORCH_ROLE, orchestrator.address);
 
     return {
       cldToken,
       providerRegistry,
-      jobEscrow,
+      workloadRegistry,
+      rewardContract,
+      pouwVerifier,
       deployer,
-      validator,
+      orchestrator,
       user,
       providerOwner,
       treasury,
@@ -50,6 +76,8 @@ describe("Cloudana MVP", function () {
       other,
     };
   }
+
+  // ─── CLDToken ──────────────────────────────────────────────────────────────
 
   describe("CLDToken", function () {
     it("Should deploy with correct initial supply distribution", async function () {
@@ -70,19 +98,16 @@ describe("Cloudana MVP", function () {
     });
 
     it("Should mint tokens with MINTER_ROLE", async function () {
-      const { cldToken, deployer, user } = await loadFixture(deployContracts);
+      const { cldToken, user } = await loadFixture(deployContracts);
       const amount = ethers.parseEther("1000");
-
       await cldToken.mint(user.address, amount);
       expect(await cldToken.balanceOf(user.address)).to.equal(amount);
     });
 
     it("Should reject minting without MINTER_ROLE", async function () {
       const { cldToken, user, other } = await loadFixture(deployContracts);
-      const amount = ethers.parseEther("1000");
-
       await expect(
-        cldToken.connect(other).mint(user.address, amount)
+        cldToken.connect(other).mint(user.address, ethers.parseEther("1000"))
       ).to.be.revertedWithCustomError(cldToken, "AccessControlUnauthorizedAccount");
     });
 
@@ -109,1189 +134,501 @@ describe("Cloudana MVP", function () {
 
     it("Should reject burnFrom with insufficient allowance", async function () {
       const { cldToken, user, other } = await loadFixture(deployContracts);
-      const mintAmount = ethers.parseEther("1000");
-      const burnAmount = ethers.parseEther("200");
-      const insufficientAllowance = ethers.parseEther("100");
-
-      await cldToken.mint(user.address, mintAmount);
-      await cldToken.connect(user).approve(other.address, insufficientAllowance);
+      await cldToken.mint(user.address, ethers.parseEther("1000"));
+      await cldToken.connect(user).approve(other.address, ethers.parseEther("100"));
       await expect(
-        cldToken.connect(other).burnFrom(user.address, burnAmount)
+        cldToken.connect(other).burnFrom(user.address, ethers.parseEther("200"))
       ).to.be.revertedWithCustomError(cldToken, "InsufficientAllowance");
     });
   });
 
+  // ─── ProviderRegistry ─────────────────────────────────────────────────────
+
   describe("ProviderRegistry", function () {
-    const STATIC_BOND = ethers.parseEther("1000");
-    const providerkey = ethers.id("test-provider-key-1");
-    const region = "Helsinki";
-    const hardwareTier = 1; // GPU-T1
-    const capacity = 5;
+    const deviceId = ethers.id("test-device-1");
+    const metadataUri = "ipfs://QmTestProvider123";
 
-    it("Should register provider with static bond", async function () {
-      const { cldToken, providerRegistry, providerOwner, team, treasury } = await loadFixture(
-        deployContracts
-      );
-
-      // Setup: mint tokens and approve
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-
-      // Register provider
-      const tx = await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-      const receipt = await tx.wait();
-
-      // Check event
-      const event = receipt?.logs.find((log: any) => {
-        try {
-          const parsed = providerRegistry.interface.parseLog(log);
-          return parsed?.name === "ProviderRegistered";
-        } catch {
-          return false;
-        }
-      });
-      expect(event).to.not.be.undefined;
-
-      // Check provider info
-      const providerInfo = await providerRegistry.getProvider(providerkey);
-      expect(providerInfo.owner).to.equal(providerOwner.address);
-      expect(providerInfo.providerkey).to.equal(providerkey);
-      expect(providerInfo.region).to.equal(region);
-      expect(providerInfo.hardwareTier).to.equal(hardwareTier);
-      expect(providerInfo.capacity).to.equal(capacity);
-      expect(providerInfo.bondAmount).to.equal(STATIC_BOND);
-      expect(providerInfo.status).to.equal(0); // Registered
-
-      // Check fee split (80% treasury, 20% team)
-      const expectedTreasury = (STATIC_BOND * 8000n) / 10000n;
-      const expectedTeam = (STATIC_BOND * 2000n) / 10000n;
-      expect(await cldToken.balanceOf(treasury.address)).to.be.gte(expectedTreasury);
-      expect(await cldToken.balanceOf(team.address)).to.be.gte(expectedTeam);
-    });
-
-    it("Should reject registration with insufficient balance", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      const insufficientAmount = STATIC_BOND - ethers.parseEther("1");
-      await cldToken.mint(providerOwner.address, insufficientAmount);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), insufficientAmount);
+    it("Should register a provider", async function () {
+      const { providerRegistry, providerOwner } = await loadFixture(deployContracts);
 
       await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(providerkey, region, hardwareTier, capacity)
-      ).to.be.revertedWithCustomError(providerRegistry, "InsufficientBalance");
+        providerRegistry.connect(providerOwner).registerProvider(deviceId, metadataUri)
+      ).to.emit(providerRegistry, "ProviderRegistered");
+
+      const provider = await providerRegistry.getProviderByDevice(deviceId);
+      expect(provider.providerAddr).to.equal(providerOwner.address);
+      expect(provider.deviceId).to.equal(deviceId);
+      expect(provider.metadataUri).to.equal(metadataUri);
+      expect(provider.status).to.equal(1); // Active
     });
 
-    it("Should reject registration with insufficient allowance", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      const insufficientAllowance = STATIC_BOND - ethers.parseEther("1");
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), insufficientAllowance);
+    it("Should reject duplicate device registration", async function () {
+      const { providerRegistry, providerOwner } = await loadFixture(deployContracts);
+      await providerRegistry.connect(providerOwner).registerProvider(deviceId, metadataUri);
 
       await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(providerkey, region, hardwareTier, capacity)
-      ).to.be.revertedWithCustomError(providerRegistry, "InsufficientAllowance");
+        providerRegistry.connect(providerOwner).registerProvider(deviceId, metadataUri)
+      ).to.be.revertedWith("Device already registered");
     });
 
-    it("Should reject registration with zero providerkey", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
+    it("Should reject registration with empty metadata", async function () {
+      const { providerRegistry, providerOwner } = await loadFixture(deployContracts);
+      await expect(
+        providerRegistry.connect(providerOwner).registerProvider(deviceId, "")
+      ).to.be.revertedWith("Metadata URI required");
+    });
 
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
+    it("Should update provider metadata", async function () {
+      const { providerRegistry, providerOwner } = await loadFixture(deployContracts);
+      await providerRegistry.connect(providerOwner).registerProvider(deviceId, metadataUri);
+
+      const newUri = "ipfs://QmUpdated456";
+      await providerRegistry.connect(providerOwner).updateProvider(deviceId, newUri);
+
+      const provider = await providerRegistry.getProviderByDevice(deviceId);
+      expect(provider.metadataUri).to.equal(newUri);
+    });
+
+    it("Should reject update from non-owner", async function () {
+      const { providerRegistry, providerOwner, other } = await loadFixture(deployContracts);
+      await providerRegistry.connect(providerOwner).registerProvider(deviceId, metadataUri);
 
       await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(ethers.ZeroHash, region, hardwareTier, capacity)
-      ).to.be.revertedWithCustomError(providerRegistry, "Invalidproviderkey");
+        providerRegistry.connect(other).updateProvider(deviceId, "ipfs://QmHack")
+      ).to.be.revertedWith("Not device owner");
     });
 
-    it("Should reject registration with empty region", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
+    it("Should deregister and reactivate provider", async function () {
+      const { providerRegistry, providerOwner } = await loadFixture(deployContracts);
+      await providerRegistry.connect(providerOwner).registerProvider(deviceId, metadataUri);
 
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
+      // Deregister → Inactive
+      await providerRegistry.connect(providerOwner).deregisterProvider(deviceId);
+      let provider = await providerRegistry.getProviderByDevice(deviceId);
+      expect(provider.status).to.equal(2); // Inactive
 
-      await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(providerkey, "", hardwareTier, capacity)
-      ).to.be.revertedWithCustomError(providerRegistry, "InvalidRegion");
+      // Activate → Active
+      await providerRegistry.connect(providerOwner).activateProvider(deviceId);
+      provider = await providerRegistry.getProviderByDevice(deviceId);
+      expect(provider.status).to.equal(1); // Active
     });
 
-    it("Should reject registration with invalid hardware tier", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
+    it("Should list devices by owner", async function () {
+      const { providerRegistry, providerOwner } = await loadFixture(deployContracts);
+      const device1 = ethers.id("device-1");
+      const device2 = ethers.id("device-2");
 
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
+      await providerRegistry.connect(providerOwner).registerProvider(device1, metadataUri);
+      await providerRegistry.connect(providerOwner).registerProvider(device2, metadataUri);
 
-      await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(providerkey, region, 3, capacity)
-      ).to.be.revertedWithCustomError(providerRegistry, "InvalidHardwareTier");
+      const devices = await providerRegistry.getProvidersByOwner(providerOwner.address);
+      expect(devices.length).to.equal(2);
+      expect(devices[0]).to.equal(device1);
+      expect(devices[1]).to.equal(device2);
     });
 
-    it("Should reject registration with invalid capacity (0)", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
+    it("Should return active providers", async function () {
+      const { providerRegistry, providerOwner, other } = await loadFixture(deployContracts);
+      const device1 = ethers.id("device-a");
+      const device2 = ethers.id("device-b");
 
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
+      await providerRegistry.connect(providerOwner).registerProvider(device1, metadataUri);
+      await providerRegistry.connect(other).registerProvider(device2, metadataUri);
 
-      await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(providerkey, region, hardwareTier, 0)
-      ).to.be.revertedWithCustomError(providerRegistry, "InvalidCapacity");
-    });
+      // Deregister device1
+      await providerRegistry.connect(providerOwner).deregisterProvider(device1);
 
-    it("Should reject registration with invalid capacity (>10)", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-
-      await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(providerkey, region, hardwareTier, 11)
-      ).to.be.revertedWithCustomError(providerRegistry, "InvalidCapacity");
-    });
-
-    it("Should reject duplicate provider registration", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND * 2n);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND * 2n);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-
-      await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(providerkey, region, hardwareTier, capacity)
-      ).to.be.revertedWithCustomError(providerRegistry, "ProviderAlreadyExists");
-    });
-
-    it("Should enforce max providers per owner", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      const MAX_PROVIDERS = await providerRegistry.MAX_PROVIDERS_PER_OWNER();
-      const totalBond = STATIC_BOND * (BigInt(MAX_PROVIDERS) + 1n);
-
-      await cldToken.mint(providerOwner.address, totalBond);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), totalBond);
-
-      // Register max providers
-      for (let i = 0; i < Number(MAX_PROVIDERS); i++) {
-        const key = ethers.id(`provider-${i}`);
-        await providerRegistry
-          .connect(providerOwner)
-          .registerProvider(key, region, hardwareTier, capacity);
-      }
-
-      // Try to register one more
-      const extraKey = ethers.id("extra-provider");
-      await expect(
-        providerRegistry
-          .connect(providerOwner)
-          .registerProvider(extraKey, region, hardwareTier, capacity)
-      ).to.be.revertedWithCustomError(providerRegistry, "MaxProvidersReached");
-    });
-
-    it("Should update provider status to Active", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .updateProviderStatus(providerkey, 1); // Active
-
-      const providerInfo = await providerRegistry.getProvider(providerkey);
-      expect(providerInfo.status).to.equal(1); // Active
-    });
-
-    it("Should update provider status to Inactive", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .updateProviderStatus(providerkey, 2); // Inactive
-
-      const providerInfo = await providerRegistry.getProvider(providerkey);
-      expect(providerInfo.status).to.equal(2); // Inactive
-    });
-
-    it("Should reject status update from non-owner", async function () {
-      const { cldToken, providerRegistry, providerOwner, other } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-
-      await expect(
-        providerRegistry.connect(other).updateProviderStatus(providerkey, 1)
-      ).to.be.revertedWithCustomError(providerRegistry, "NotProviderOwner");
-    });
-
-    it("Should allow admin to update provider status", async function () {
-      const { cldToken, providerRegistry, providerOwner, deployer } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-
-      await providerRegistry.connect(deployer).updateProviderStatus(providerkey, 1); // Active
-
-      const providerInfo = await providerRegistry.getProvider(providerkey);
-      expect(providerInfo.status).to.equal(1);
-    });
-
-    it("Should get all providers for an owner", async function () {
-      const { cldToken, providerRegistry, providerOwner } = await loadFixture(deployContracts);
-
-      await cldToken.mint(providerOwner.address, STATIC_BOND * 3n);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND * 3n);
-
-      const key1 = ethers.id("provider-1");
-      const key2 = ethers.id("provider-2");
-      const key3 = ethers.id("provider-3");
-
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(key1, region, hardwareTier, capacity);
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(key2, region, hardwareTier, capacity);
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(key3, region, hardwareTier, capacity);
-
-      const providers = await providerRegistry.getMyProviders(providerOwner.address);
-      expect(providers.length).to.equal(3);
-      expect(providers[0]).to.equal(key1);
-      expect(providers[1]).to.equal(key2);
-      expect(providers[2]).to.equal(key3);
-    });
-
-    it("Should reject getProvider for non-existent provider", async function () {
-      const { providerRegistry } = await loadFixture(deployContracts);
-      const nonExistentKey = ethers.id("non-existent");
-
-      await expect(
-        providerRegistry.getProvider(nonExistentKey)
-      ).to.be.revertedWithCustomError(providerRegistry, "ProviderNotFound");
+      const active = await providerRegistry.getActiveProviders();
+      expect(active.length).to.equal(1);
+      expect(active[0]).to.equal(device2);
     });
   });
 
-  describe("JobEscrow", function () {
-    const STATIC_BOND = ethers.parseEther("1000");
-    const providerkey = ethers.id("test-provider-key");
-    const region = "Helsinki";
-    const hardwareTier = 1;
-    const capacity = 5;
+  // ─── WorkloadRegistry ─────────────────────────────────────────────────────
 
-    async function setupProviderAndContracts() {
-      const contracts = await loadFixture(deployContracts);
-      const { cldToken, providerRegistry, providerOwner } = contracts;
+  describe("WorkloadRegistry", function () {
+    const metadataUri = "ipfs://QmWorkload123";
 
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-
-      // Set provider to Active
-      await providerRegistry
-        .connect(providerOwner)
-        .updateProviderStatus(providerkey, 1); // Active
-
-      return { ...contracts, cldToken, providerRegistry, providerOwner };
-    }
-
-    it("Should create job with active provider", async function () {
-      const { jobEscrow, user, cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-
-      const tx = await jobEscrow.connect(user).createJob(providerkey, budget);
-      const receipt = await tx.wait();
-
-      // Check event
-      const event = receipt?.logs.find((log: any) => {
-        try {
-          const parsed = jobEscrow.interface.parseLog(log);
-          return parsed?.name === "JobCreated";
-        } catch {
-          return false;
-        }
-      });
-      expect(event).to.not.be.undefined;
-
-      // Check job state
-      const job = await jobEscrow.jobs(0);
-      expect(job.user).to.equal(user.address);
-      expect(job.providerkey).to.equal(providerkey);
-      expect(job.deposited).to.equal(budget);
-      expect(job.spent).to.equal(0);
-      expect(job.nonce).to.equal(0);
-      expect(job.status).to.equal(0); // OPEN
-    });
-
-    it("Should create job with zero budget", async function () {
-      const { jobEscrow, user } = await setupProviderAndContracts();
-
-      const tx = await jobEscrow.connect(user).createJob(providerkey, 0);
-      const receipt = await tx.wait();
-
-      const job = await jobEscrow.jobs(0);
-      expect(job.deposited).to.equal(0);
-      expect(job.status).to.equal(0); // OPEN
-    });
-
-    it("Should reject job creation with non-existent provider", async function () {
-      const { jobEscrow, user, providerRegistry } = await loadFixture(deployContracts);
-      const nonExistentKey = ethers.id("non-existent");
-
-      // getProvider will revert with ProviderNotFound from ProviderRegistry
-      // This error bubbles up through JobEscrow.createJob
-      await expect(
-        jobEscrow.connect(user).createJob(nonExistentKey, ethers.parseEther("1000"))
-      ).to.be.revertedWithCustomError(providerRegistry, "ProviderNotFound");
-    });
-
-    it("Should reject job creation with inactive provider", async function () {
-      const { jobEscrow, user, cldToken, providerRegistry, providerOwner } = await loadFixture(
-        deployContracts
-      );
-      const STATIC_BOND = ethers.parseEther("1000");
-      const providerkey = ethers.id("test-provider-key");
-      const region = "Helsinki";
-      const hardwareTier = 1;
-      const capacity = 5;
-
-      // Register but don't activate
-      await cldToken.mint(providerOwner.address, STATIC_BOND);
-      await cldToken.connect(providerOwner).approve(await providerRegistry.getAddress(), STATIC_BOND);
-      await providerRegistry
-        .connect(providerOwner)
-        .registerProvider(providerkey, region, hardwareTier, capacity);
-      // Status remains Registered (0), not Active (1)
+    it("Should register a workload", async function () {
+      const { workloadRegistry, user } = await loadFixture(deployContracts);
 
       await expect(
-        jobEscrow.connect(user).createJob(providerkey, ethers.parseEther("1000"))
-      ).to.be.revertedWithCustomError(jobEscrow, "ProviderNotActive");
+        workloadRegistry.connect(user).registerWorkload(metadataUri)
+      ).to.emit(workloadRegistry, "WorkloadRegistered");
+
+      const workload = await workloadRegistry.getWorkload(0);
+      expect(workload.owner).to.equal(user.address);
+      expect(workload.metadataUri).to.equal(metadataUri);
+      expect(workload.status).to.equal(1); // Active
     });
 
-    it("Should deposit additional funds to job", async function () {
-      const { jobEscrow, user, cldToken } = await setupProviderAndContracts();
+    it("Should reject empty metadata URI", async function () {
+      const { workloadRegistry, user } = await loadFixture(deployContracts);
+      await expect(
+        workloadRegistry.connect(user).registerWorkload("")
+      ).to.be.revertedWith("Metadata URI required");
+    });
 
-      const initialBudget = ethers.parseEther("1000");
-      const additionalDeposit = ethers.parseEther("500");
+    it("Should update workload metadata", async function () {
+      const { workloadRegistry, user } = await loadFixture(deployContracts);
+      await workloadRegistry.connect(user).registerWorkload(metadataUri);
 
-      await cldToken.mint(user.address, initialBudget + additionalDeposit);
-      await cldToken
+      const newUri = "ipfs://QmUpdatedWorkload";
+      await workloadRegistry.connect(user).updateWorkload(0, newUri);
+
+      const workload = await workloadRegistry.getWorkload(0);
+      expect(workload.metadataUri).to.equal(newUri);
+    });
+
+    it("Should deregister and reactivate workload", async function () {
+      const { workloadRegistry, user } = await loadFixture(deployContracts);
+      await workloadRegistry.connect(user).registerWorkload(metadataUri);
+
+      await workloadRegistry.connect(user).deregisterWorkload(0);
+      let workload = await workloadRegistry.getWorkload(0);
+      expect(workload.status).to.equal(0); // Inactive
+
+      await workloadRegistry.connect(user).activateWorkload(0);
+      workload = await workloadRegistry.getWorkload(0);
+      expect(workload.status).to.equal(1); // Active
+    });
+
+    it("Should delete inactive workload", async function () {
+      const { workloadRegistry, user } = await loadFixture(deployContracts);
+      await workloadRegistry.connect(user).registerWorkload(metadataUri);
+
+      await workloadRegistry.connect(user).deregisterWorkload(0);
+      await workloadRegistry.connect(user).deleteWorkload(0);
+
+      const workload = await workloadRegistry.getWorkload(0);
+      expect(workload.owner).to.equal(ethers.ZeroAddress);
+    });
+
+    it("Should reject delete of active workload", async function () {
+      const { workloadRegistry, user } = await loadFixture(deployContracts);
+      await workloadRegistry.connect(user).registerWorkload(metadataUri);
+
+      await expect(
+        workloadRegistry.connect(user).deleteWorkload(0)
+      ).to.be.revertedWith("Workload must be inactive to delete");
+    });
+
+    it("Should record placement via orchestrator", async function () {
+      const { workloadRegistry, orchestrator, user, providerOwner } =
+        await loadFixture(deployContracts);
+
+      await workloadRegistry.connect(user).registerWorkload(metadataUri);
+
+      await expect(
+        workloadRegistry.connect(orchestrator).recordPlacement(0, providerOwner.address, 42)
+      ).to.emit(workloadRegistry, "WorkloadPlaced");
+
+      const workload = await workloadRegistry.getWorkload(0);
+      expect(workload.placementProvider).to.equal(providerOwner.address);
+      expect(workload.placementInstanceId).to.equal(42);
+    });
+
+    it("Should reject placement from non-orchestrator", async function () {
+      const { workloadRegistry, user, other } = await loadFixture(deployContracts);
+      await workloadRegistry.connect(user).registerWorkload(metadataUri);
+
+      await expect(
+        workloadRegistry.connect(other).recordPlacement(0, other.address, 1)
+      ).to.be.revertedWithCustomError(workloadRegistry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("Should track workloads by owner", async function () {
+      const { workloadRegistry, user } = await loadFixture(deployContracts);
+
+      await workloadRegistry.connect(user).registerWorkload("ipfs://QmA");
+      await workloadRegistry.connect(user).registerWorkload("ipfs://QmB");
+
+      const ids = await workloadRegistry.getWorkloadsByOwner(user.address);
+      expect(ids.length).to.equal(2);
+      expect(ids[0]).to.equal(0);
+      expect(ids[1]).to.equal(1);
+    });
+  });
+
+  // ─── RewardContract ────────────────────────────────────────────────────────
+
+  describe("RewardContract", function () {
+    it("Should fund a workload", async function () {
+      const { rewardContract, cldToken, user } = await loadFixture(deployContracts);
+      const amount = ethers.parseEther("500");
+
+      await cldToken.mint(user.address, amount);
+      await cldToken.connect(user).approve(await rewardContract.getAddress(), amount);
+
+      await expect(
+        rewardContract.connect(user).fundWorkload(1, amount)
+      ).to.emit(rewardContract, "WorkloadFunded");
+
+      expect(await rewardContract.workloadDeposits(1)).to.equal(amount);
+    });
+
+    it("Should reject funding with zero amount", async function () {
+      const { rewardContract, user } = await loadFixture(deployContracts);
+      await expect(
+        rewardContract.connect(user).fundWorkload(1, 0)
+      ).to.be.revertedWith("Amount must be > 0");
+    });
+
+    it("Should reward provider from workload deposit", async function () {
+      const { rewardContract, cldToken, orchestrator, user, providerOwner } =
+        await loadFixture(deployContracts);
+      const deposit = ethers.parseEther("500");
+      const reward = ethers.parseEther("200");
+
+      // User funds workload
+      await cldToken.mint(user.address, deposit);
+      await cldToken.connect(user).approve(await rewardContract.getAddress(), deposit);
+      await rewardContract.connect(user).fundWorkload(1, deposit);
+
+      // Orchestrator rewards provider
+      await expect(
+        rewardContract.connect(orchestrator).rewardProvider(providerOwner.address, 1, reward)
+      ).to.emit(rewardContract, "ProviderRewarded");
+
+      expect(await rewardContract.providerPendingRewards(providerOwner.address)).to.equal(reward);
+      expect(await rewardContract.workloadDeposits(1)).to.equal(deposit - reward);
+    });
+
+    it("Should reject reward from non-orchestrator", async function () {
+      const { rewardContract, cldToken, user, providerOwner } =
+        await loadFixture(deployContracts);
+      const deposit = ethers.parseEther("500");
+
+      await cldToken.mint(user.address, deposit);
+      await cldToken.connect(user).approve(await rewardContract.getAddress(), deposit);
+      await rewardContract.connect(user).fundWorkload(1, deposit);
+
+      await expect(
+        rewardContract.connect(user).rewardProvider(providerOwner.address, 1, deposit)
+      ).to.be.revertedWithCustomError(rewardContract, "AccessControlUnauthorizedAccount");
+    });
+
+    it("Should allow provider to withdraw earnings", async function () {
+      const { rewardContract, cldToken, orchestrator, user, providerOwner } =
+        await loadFixture(deployContracts);
+      const deposit = ethers.parseEther("500");
+      const reward = ethers.parseEther("200");
+
+      await cldToken.mint(user.address, deposit);
+      await cldToken.connect(user).approve(await rewardContract.getAddress(), deposit);
+      await rewardContract.connect(user).fundWorkload(1, deposit);
+      await rewardContract.connect(orchestrator).rewardProvider(providerOwner.address, 1, reward);
+
+      const balBefore = await cldToken.balanceOf(providerOwner.address);
+      await rewardContract.connect(providerOwner).withdrawEarnings();
+      const balAfter = await cldToken.balanceOf(providerOwner.address);
+
+      expect(balAfter - balBefore).to.equal(reward);
+      expect(await rewardContract.providerPendingRewards(providerOwner.address)).to.equal(0);
+    });
+
+    it("Should reject withdrawal with no pending rewards", async function () {
+      const { rewardContract, providerOwner } = await loadFixture(deployContracts);
+      await expect(
+        rewardContract.connect(providerOwner).withdrawEarnings()
+      ).to.be.revertedWith("No pending rewards");
+    });
+
+    it("Should batch reward providers", async function () {
+      const { rewardContract, cldToken, orchestrator, user, providerOwner, other } =
+        await loadFixture(deployContracts);
+      const deposit = ethers.parseEther("1000");
+
+      await cldToken.mint(user.address, deposit);
+      await cldToken.connect(user).approve(await rewardContract.getAddress(), deposit);
+      await rewardContract.connect(user).fundWorkload(1, deposit);
+
+      const r1 = ethers.parseEther("300");
+      const r2 = ethers.parseEther("200");
+
+      await rewardContract
+        .connect(orchestrator)
+        .batchRewardProviders(
+          [providerOwner.address, other.address],
+          [1, 1],
+          [r1, r2]
+        );
+
+      expect(await rewardContract.providerPendingRewards(providerOwner.address)).to.equal(r1);
+      expect(await rewardContract.providerPendingRewards(other.address)).to.equal(r2);
+      expect(await rewardContract.workloadDeposits(1)).to.equal(deposit - r1 - r2);
+    });
+
+    it("Should refund remaining workload deposit", async function () {
+      const { rewardContract, cldToken, orchestrator, user } =
+        await loadFixture(deployContracts);
+      const deposit = ethers.parseEther("500");
+
+      await cldToken.mint(user.address, deposit);
+      await cldToken.connect(user).approve(await rewardContract.getAddress(), deposit);
+      await rewardContract.connect(user).fundWorkload(1, deposit);
+
+      const balBefore = await cldToken.balanceOf(user.address);
+      await rewardContract.connect(orchestrator).refundWorkload(1, user.address);
+      const balAfter = await cldToken.balanceOf(user.address);
+
+      expect(balAfter - balBefore).to.equal(deposit);
+      expect(await rewardContract.workloadDeposits(1)).to.equal(0);
+    });
+  });
+
+  // ─── POUWVerifier ──────────────────────────────────────────────────────────
+
+  describe("POUWVerifier", function () {
+    const deviceId = ethers.id("miner-device-1");
+    const matrixSize = 64;
+    const difficulty = 10;
+    const transcriptHash = ethers.id("transcript-hash-abc");
+    const z = ethers.id("proof-z-value-1");
+
+    it("Should record a certificate", async function () {
+      const { pouwVerifier, orchestrator, providerOwner } = await loadFixture(deployContracts);
+
+      await expect(
+        pouwVerifier
+          .connect(orchestrator)
+          .recordCertificate(
+            providerOwner.address,
+            deviceId,
+            matrixSize,
+            difficulty,
+            transcriptHash,
+            z,
+            Date.now()
+          )
+      ).to.emit(pouwVerifier, "CertificateRecorded");
+
+      expect(await pouwVerifier.certificateCount()).to.equal(1);
+      expect(await pouwVerifier.isZUsed(z)).to.be.true;
+    });
+
+    it("Should reject duplicate z (replay protection)", async function () {
+      const { pouwVerifier, orchestrator, providerOwner } = await loadFixture(deployContracts);
+      const ts = Date.now();
+
+      await pouwVerifier
+        .connect(orchestrator)
+        .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, ts);
+
+      await expect(
+        pouwVerifier
+          .connect(orchestrator)
+          .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, ts)
+      ).to.be.revertedWith("Certificate z already recorded (replay)");
+    });
+
+    it("Should reject from non-orchestrator", async function () {
+      const { pouwVerifier, user, providerOwner } = await loadFixture(deployContracts);
+
+      await expect(
+        pouwVerifier
+          .connect(user)
+          .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, Date.now())
+      ).to.be.revertedWithCustomError(pouwVerifier, "AccessControlUnauthorizedAccount");
+    });
+
+    it("Should track per-provider stats", async function () {
+      const { pouwVerifier, orchestrator, providerOwner } = await loadFixture(deployContracts);
+
+      await pouwVerifier
+        .connect(orchestrator)
+        .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, Date.now());
+
+      const z2 = ethers.id("proof-z-value-2");
+      await pouwVerifier
+        .connect(orchestrator)
+        .recordCertificate(providerOwner.address, deviceId, matrixSize, 15, ethers.id("tx2"), z2, Date.now());
+
+      const [totalCerts, totalDiff] = await pouwVerifier.getMinerStats(providerOwner.address);
+      expect(totalCerts).to.equal(2);
+      expect(totalDiff).to.equal(difficulty + 15);
+      expect(await pouwVerifier.minerCount()).to.equal(1);
+    });
+  });
+
+  // ─── End-to-End Integration ────────────────────────────────────────────────
+
+  describe("End-to-End Flow", function () {
+    it("Should complete full provider→workload→reward→withdraw cycle", async function () {
+      const {
+        cldToken,
+        providerRegistry,
+        workloadRegistry,
+        rewardContract,
+        pouwVerifier,
+        orchestrator,
+        user,
+        providerOwner,
+      } = await loadFixture(deployContracts);
+
+      const deviceId = ethers.id("e2e-device");
+      const deposit = ethers.parseEther("1000");
+      const reward = ethers.parseEther("600");
+
+      // 1. Provider registers
+      await providerRegistry
+        .connect(providerOwner)
+        .registerProvider(deviceId, "ipfs://QmProviderSpec");
+
+      // 2. User registers workload
+      await workloadRegistry
         .connect(user)
-        .approve(await jobEscrow.getAddress(), initialBudget + additionalDeposit);
-
-      await jobEscrow.connect(user).createJob(providerkey, initialBudget);
-      await jobEscrow.connect(user).deposit(0, additionalDeposit);
-
-      const job = await jobEscrow.jobs(0);
-      expect(job.deposited).to.equal(initialBudget + additionalDeposit);
-    });
-
-    it("Should reject deposit from non-user", async function () {
-      const { jobEscrow, user, other, cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      await expect(
-        jobEscrow.connect(other).deposit(0, ethers.parseEther("100"))
-      ).to.be.revertedWithCustomError(jobEscrow, "UnauthorizedCloser");
-    });
-
-    it("Should reject deposit to closed job", async function () {
-      const { jobEscrow, user, cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-      await jobEscrow.connect(user).closeJob(0);
-
-      await expect(
-        jobEscrow.connect(user).deposit(0, ethers.parseEther("100"))
-      ).to.be.revertedWithCustomError(jobEscrow, "JobNotOpen");
-    });
-
-    it("Should submit usage report with EIP-712 signature", async function () {
-      const { jobEscrow, user, validator, cldToken, providerOwner } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      const grossCost = ethers.parseEther("100");
-      const providerEarn = ethers.parseEther("90");
-
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      // Build EIP-712 signature
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost,
-        providerEarn,
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-
-      // Submit usage report
-      await jobEscrow.submitUsageReport(report, signature);
-
-      // Verify state
-      const jobAfter = await jobEscrow.jobs(0);
-      expect(jobAfter.spent).to.equal(grossCost);
-      expect(jobAfter.nonce).to.equal(1n);
-
-      expect(await jobEscrow.providerCredit(providerOwner.address)).to.equal(providerEarn);
-      expect(await jobEscrow.userRefundCredit(user.address)).to.equal(grossCost - providerEarn);
-    });
-
-    it("Should reject usage report with invalid signature", async function () {
-      const { jobEscrow, user, other } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("90"),
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await other.signTypedData(domain, types, report);
-
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "InvalidSignature");
-    });
-
-    it("Should reject usage report with wrong nonce", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("90"),
-        nonce: 999, // Wrong nonce
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "InvalidNonce");
-    });
-
-    it("Should reject usage report with wrong user", async function () {
-      const { jobEscrow, user, other, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: other.address, // Wrong user
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("90"),
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "InvalidUser");
-    });
-
-    it("Should reject usage report with wrong providerkey", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: ethers.id("wrong-key"), // Wrong providerkey
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("90"),
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "InvalidProvider");
-    });
-
-    it("Should reject usage report with expired deadline", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const deadline = (await time.latest()) - 1; // Expired deadline
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("90"),
-        nonce: job.nonce,
-        deadline: BigInt(deadline),
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "DeadlineExceeded");
-    });
-
-    it("Should reject usage report with overspend", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: budget + ethers.parseEther("1"), // Overspend
-        providerEarn: budget,
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "InsufficientDeposit");
-    });
-
-    it("Should reject usage report with providerEarn > grossCost", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("101"), // Invalid: > grossCost
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "InvalidProviderEarn");
-    });
-
-    it("Should reject replay attack (nonce mismatch)", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("90"),
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-      await jobEscrow.submitUsageReport(report, signature);
-
-      // Try to replay with same signature
-      await expect(
-        jobEscrow.submitUsageReport(report, signature)
-      ).to.be.revertedWithCustomError(jobEscrow, "InvalidNonce");
-    });
-
-    it("Should close job and credit remaining refund", async function () {
-      const { jobEscrow, user } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      await jobEscrow.connect(user).closeJob(0);
-
-      const job = await jobEscrow.jobs(0);
-      expect(job.status).to.equal(1); // CLOSED
-      expect(await jobEscrow.userRefundCredit(user.address)).to.equal(budget);
-    });
-
-    it("Should allow provider owner to close job", async function () {
-      const { jobEscrow, user } = await loadFixture(deployContracts);
-      const { cldToken, providerOwner } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      await jobEscrow.connect(providerOwner).closeJob(0);
-
-      const job = await jobEscrow.jobs(0);
-      expect(job.status).to.equal(1); // CLOSED
-    });
-
-    it("Should allow admin to close job", async function () {
-      const { jobEscrow, user, deployer } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      await jobEscrow.connect(deployer).closeJob(0);
-
-      const job = await jobEscrow.jobs(0);
-      expect(job.status).to.equal(1); // CLOSED
-    });
-
-    it("Should reject close job from unauthorized address", async function () {
-      const { jobEscrow, user, other } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      await expect(
-        jobEscrow.connect(other).closeJob(0)
-      ).to.be.revertedWithCustomError(jobEscrow, "UnauthorizedCloser");
-    });
-
-    it("Should close job with partial spending", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      const grossCost = ethers.parseEther("300");
-      const providerEarn = ethers.parseEther("270");
-
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      // Submit usage report
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost,
-        providerEarn,
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-      await jobEscrow.submitUsageReport(report, signature);
-
-      // Close job
-      await jobEscrow.connect(user).closeJob(0);
-
-      const jobAfter = await jobEscrow.jobs(0);
-      expect(jobAfter.status).to.equal(1); // CLOSED
-      const remaining = budget - grossCost;
-      const refundFromUsage = grossCost - providerEarn;
-      const totalRefund = remaining + refundFromUsage;
-      expect(await jobEscrow.userRefundCredit(user.address)).to.equal(totalRefund);
-    });
-
-    it("Should withdraw provider credits", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken, providerOwner } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      const grossCost = ethers.parseEther("100");
-      const providerEarn = ethers.parseEther("90");
-
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      // Submit usage report
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost,
-        providerEarn,
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-      await jobEscrow.submitUsageReport(report, signature);
-
-      const balanceBefore = await cldToken.balanceOf(providerOwner.address);
-      await jobEscrow.connect(providerOwner).withdrawProvider();
-      const balanceAfter = await cldToken.balanceOf(providerOwner.address);
-
-      expect(balanceAfter - balanceBefore).to.equal(providerEarn);
-      expect(await jobEscrow.providerCredit(providerOwner.address)).to.equal(0);
-    });
-
-    it("Should reject provider withdrawal with no credit", async function () {
-      const { jobEscrow, providerOwner } = await loadFixture(deployContracts);
-      await setupProviderAndContracts();
-
-      await expect(
-        jobEscrow.connect(providerOwner).withdrawProvider()
-      ).to.be.revertedWithCustomError(jobEscrow, "NoCreditToWithdraw");
-    });
-
-    it("Should withdraw user refund credits", async function () {
-      const { jobEscrow, user, validator } = await loadFixture(deployContracts);
-      const { cldToken } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      const grossCost = ethers.parseEther("100");
-      const providerEarn = ethers.parseEther("90");
-
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      // Submit usage report
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      const job = await jobEscrow.jobs(0);
-      const report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost,
-        providerEarn,
-        nonce: job.nonce,
-        deadline: 0,
-      };
-
-      const signature = await validator.signTypedData(domain, types, report);
-      await jobEscrow.submitUsageReport(report, signature);
-
-      const refund = grossCost - providerEarn;
-      const balanceBefore = await cldToken.balanceOf(user.address);
-      await jobEscrow.connect(user).withdrawUserRefund();
-      const balanceAfter = await cldToken.balanceOf(user.address);
-
-      expect(balanceAfter - balanceBefore).to.equal(refund);
-      expect(await jobEscrow.userRefundCredit(user.address)).to.equal(0);
-    });
-
-    it("Should reject user refund withdrawal with no credit", async function () {
-      const { jobEscrow, user } = await loadFixture(deployContracts);
-      await setupProviderAndContracts();
-
-      await expect(
-        jobEscrow.connect(user).withdrawUserRefund()
-      ).to.be.revertedWithCustomError(jobEscrow, "NoCreditToWithdraw");
-    });
-
-    it("Should handle multiple usage reports", async function () {
-      const { jobEscrow, user, validator, cldToken, providerOwner } = await setupProviderAndContracts();
-
-      const budget = ethers.parseEther("1000");
-      await cldToken.mint(user.address, budget);
-      await cldToken.connect(user).approve(await jobEscrow.getAddress(), budget);
-      await jobEscrow.connect(user).createJob(providerkey, budget);
-
-      const domain = {
-        name: "CloudanaJobEscrow",
-        version: "1",
-        chainId: await ethers.provider.getNetwork().then((n) => Number(n.chainId)),
-        verifyingContract: await jobEscrow.getAddress(),
-      };
-
-      const types = {
-        UsageReport: [
-          { name: "jobId", type: "uint256" },
-          { name: "user", type: "address" },
-          { name: "providerkey", type: "bytes32" },
-          { name: "grossCost", type: "uint256" },
-          { name: "providerEarn", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-
-      // Submit first report
-      let job = await jobEscrow.jobs(0);
-      let report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("100"),
-        providerEarn: ethers.parseEther("90"),
-        nonce: job.nonce,
-        deadline: 0,
-      };
-      let signature = await validator.signTypedData(domain, types, report);
-      await jobEscrow.submitUsageReport(report, signature);
-
-      // Submit second report
-      job = await jobEscrow.jobs(0);
-      report = {
-        jobId: 0,
-        user: user.address,
-        providerkey: providerkey,
-        grossCost: ethers.parseEther("200"),
-        providerEarn: ethers.parseEther("180"),
-        nonce: job.nonce,
-        deadline: 0,
-      };
-      signature = await validator.signTypedData(domain, types, report);
-      await jobEscrow.submitUsageReport(report, signature);
+        .registerWorkload("ipfs://QmWorkloadManifest");
+
+      // 3. Orchestrator places workload on provider
+      await workloadRegistry
+        .connect(orchestrator)
+        .recordPlacement(0, providerOwner.address, 1);
+
+      // 4. User funds workload
+      await cldToken.mint(user.address, deposit);
+      await cldToken.connect(user).approve(await rewardContract.getAddress(), deposit);
+      await rewardContract.connect(user).fundWorkload(0, deposit);
+
+      // 5. Provider submits POUW certificate
+      const z = ethers.id("e2e-proof");
+      await pouwVerifier
+        .connect(orchestrator)
+        .recordCertificate(
+          providerOwner.address,
+          deviceId,
+          64,
+          12,
+          ethers.id("e2e-transcript"),
+          z,
+          Date.now()
+        );
+
+      // 6. Orchestrator rewards provider
+      await rewardContract
+        .connect(orchestrator)
+        .rewardProvider(providerOwner.address, 0, reward);
+
+      // 7. Provider withdraws earnings
+      const balBefore = await cldToken.balanceOf(providerOwner.address);
+      await rewardContract.connect(providerOwner).withdrawEarnings();
+      const balAfter = await cldToken.balanceOf(providerOwner.address);
+      expect(balAfter - balBefore).to.equal(reward);
+
+      // 8. Remaining deposit refunded to user
+      const remaining = deposit - reward;
+      const userBalBefore = await cldToken.balanceOf(user.address);
+      await rewardContract.connect(orchestrator).refundWorkload(0, user.address);
+      const userBalAfter = await cldToken.balanceOf(user.address);
+      expect(userBalAfter - userBalBefore).to.equal(remaining);
 
       // Verify final state
-      const jobAfter = await jobEscrow.jobs(0);
-      expect(jobAfter.spent).to.equal(ethers.parseEther("300"));
-      expect(jobAfter.nonce).to.equal(2n);
+      expect(await rewardContract.workloadDeposits(0)).to.equal(0);
+      expect(await rewardContract.providerPendingRewards(providerOwner.address)).to.equal(0);
+      expect(await pouwVerifier.certificateCount()).to.equal(1);
 
-      expect(await jobEscrow.providerCredit(providerOwner.address)).to.equal(ethers.parseEther("270"));
-      expect(await jobEscrow.userRefundCredit(user.address)).to.equal(ethers.parseEther("30"));
+      const workload = await workloadRegistry.getWorkload(0);
+      expect(workload.placementProvider).to.equal(providerOwner.address);
     });
   });
 });

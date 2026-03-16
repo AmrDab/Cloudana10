@@ -1,0 +1,61 @@
+version: "3.8"
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: client/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "7002:7002"
+    env_file:
+      - client/api/.env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/cloudana
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:7002
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - orchestrator
+
+  provider-node:
+    build:
+      context: .
+      dockerfile: provider-node-server/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "4040:4040"
+    env_file:
+      - provider-node-server/.env
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator:7002
+    volumes:
+      - /etc/rancher/k3s/k3s.yaml:/etc/rancher/k3s/k3s.yaml:ro
+    depends_on:
+      - orchestrator
+
+volumes:
+  mongo-data:

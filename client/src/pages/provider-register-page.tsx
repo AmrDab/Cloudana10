@@ -79,7 +79,7 @@ function ProviderTypeSelector({ onSelect }: { onSelect: (type: ProviderType) => 
             <div>
               <h3 className="text-lg font-semibold mb-1">Home Provider</h3>
               <p className="text-sm text-muted-foreground">
-                Personal machine, gaming PC, or spare hardware. Consumer internet, dynamic IP — no port forwarding needed.
+                Personal machine, gaming PC, or spare hardware. Consumer internet, dynamic IP. No port forwarding needed.
               </p>
             </div>
 
@@ -98,7 +98,7 @@ function ProviderTypeSelector({ onSelect }: { onSelect: (type: ProviderType) => 
       </div>
 
       <p className="text-center text-xs text-muted-foreground">
-        Not sure? Pick <strong>Home Provider</strong> — it works everywhere.
+        Not sure? Pick <strong>Home Provider</strong>. It works everywhere.
       </p>
     </div>
   );
@@ -110,7 +110,7 @@ function HomeProviderSetup({ onBack }: { onBack: () => void }) {
   const steps = [
     {
       title: "Install Cloudflare Tunnel",
-      description: "This creates a secure tunnel from your machine to the internet — no port forwarding or static IP needed.",
+      description: "This creates a secure tunnel from your machine to the internet. No port forwarding or static IP needed.",
       code: `# Install cloudflared
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
 chmod +x cloudflared
@@ -125,7 +125,7 @@ cloudflared tunnel login`,
       code: `# Create tunnel (replace 'my-provider' with your name)
 cloudflared tunnel create my-provider
 
-# Note the tunnel ID from the output — you'll need it next`,
+# Note the tunnel ID from the output. You'll need it next`,
     },
     {
       title: "Configure the tunnel",
@@ -210,7 +210,7 @@ cloudflared tunnel run my-provider`,
           </Button>
         ) : (
           <Button size="sm" className="bg-green-600 hover:bg-green-700">
-            <CheckCircle className="h-4 w-4 mr-1" /> Complete — Register Node
+            <CheckCircle className="h-4 w-4 mr-1" /> Complete: Register Node
           </Button>
         )}
       </div>
@@ -220,7 +220,7 @@ cloudflared tunnel run my-provider`,
           <Server className="h-4 w-4 mt-0.5 shrink-0 text-yellow-400" />
           <span>
             <strong className="text-yellow-300">Testnet note:</strong> Home provider support is in active development.
-            The steps above are a preview — full automated setup will be available before mainnet.
+            The steps above are a preview. Full automated setup will be available before mainnet.
           </span>
         </CardContent>
       </Card>
@@ -229,13 +229,14 @@ cloudflared tunnel run my-provider`,
 }
 
 export default function ProviderRegisterPage() {
-  const [providerType, setProviderType] = useState<ProviderType>(readProviderType);
+  // Always show the type selector first; let users pick their path each visit
+  const [providerType, setProviderType] = useState<ProviderType>(null);
   const [guideSeen, setGuideSeenState] = useState(readGuideSeen);
   const registerSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setGuideSeenState(readGuideSeen());
-    setProviderType(readProviderType());
+    // Don't restore provider type from localStorage; always show selector first
   }, []);
 
   const handleSelectType = (type: ProviderType) => {
@@ -281,7 +282,7 @@ export default function ProviderRegisterPage() {
         <HomeProviderSetup onBack={handleBack} />
       )}
 
-      {/* Datacenter flow — existing guided registration */}
+      {/* Datacenter flow - existing guided registration */}
       {providerType === "datacenter" && (
         <>
           <div className="flex items-center gap-2">

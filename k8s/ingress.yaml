@@ -1,0 +1,39 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloudana-ingress
+  namespace: cloudana
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - cloudana.cloud
+      secretName: cloudana-tls
+  rules:
+    - host: cloudana.cloud
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: orchestrator
+                port:
+                  number: 7002
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: orchestrator
+                port:
+                  number: 7002
