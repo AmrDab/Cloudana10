@@ -7,6 +7,7 @@ import type { PlacementDecision } from "./placement.service.js";
 import { getWorkloadManifestByWorkloadId } from "./ipfs.service.js";
 import { parseSDLFromMetadata, parseSDL } from "./sdl-parser.service.js";
 import { buildK8sManifest } from "./k8s-builder.service.js";
+import { deployToAkash, isAkashBridgeReady } from "./akash-bridge.service.js";
 import { log } from "../lib/logger.js";
 
 const DEPLOY_TIMEOUT_MS = Number(process.env.ORCHESTRATOR_DEPLOY_TIMEOUT_MS ?? 15_000);
@@ -173,6 +174,25 @@ export async function deployToProvider(decision: PlacementDecision): Promise<boo
     if (e instanceof Error && e.stack) {
       L.error(`   Stack: ${e.stack.split('\n').slice(0, 3).join('\n')}`);
     }
+
+    // ── Akash fallback: if direct provider fails, route to Akash ──
+    if (isAkashBridgeReady()) {
+      L.info(`🔄 Direct provider failed — falling back to Akash Network...`);
+      const parsedForAkash = parseSDLFromMetadata(manifestInfo.manifest as Record<string, unknown>);
+      if (parsedForAkash) {
+        const akashResult = await deployToAkash(
+          decision.workloadId.toString(),
+          decision.instanceId.toString(),
+          parsedForAkash,
+        );
+        if (akashResult.success) {
+          L.success(`✅ Workload deployed via Akash fallback (dseq=${akashResult.lease?.dseq})`);
+          return true;
+        }
+        L.error(`❌ Akash fallback also failed: ${akashResult.error}`);
+      }
+    }
+
     return false;
   }
 }
