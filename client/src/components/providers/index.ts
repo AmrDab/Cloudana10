@@ -1,4 +1,4 @@
-export { ProviderMap } from "./ProviderMap";
+export { ProviderGlobe } from "./ProviderGlobe";
 export { ProviderTable } from "./ProviderTable";
 export { ProviderTableRow } from "./ProviderTableRow";
 export { ProviderSummary } from "./ProviderSummary";

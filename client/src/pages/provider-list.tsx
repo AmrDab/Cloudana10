@@ -19,10 +19,11 @@ import { useDeregisterProvider, useActivateProvider } from "@/lib/contracts";
 import { useToast } from "@/hooks/use-toast";
 import { useMyProviders } from "@/hooks/useProviders";
 import type { ClientProviderList } from "@/lib/provider-types";
-import { ProviderMap } from "@/components/providers/ProviderMap";
+import { ProviderGlobe } from "@/components/providers/ProviderGlobe";
 import { ProviderTable } from "@/components/providers/ProviderTable";
 import { ProviderStatsDonutChart } from "@/components/providers/ProviderStatsDonutChart";
 import { AddressDisplay } from "@/components/ui/address-display";
+import { HardwareScanCard } from "@/components/providers/HardwareScanCard";
 
 /**
  * Provider dashboard: connected wallet's provider(s) by deviceId (one wallet can have many devices).
@@ -146,16 +147,21 @@ export default function ProviderListPage() {
                 />
               )}
             </div>
-            <div className="lg:col-span-3 min-h-[140px] rounded-lg overflow-hidden border border-white/10 bg-card/40">
+            <div className="lg:col-span-3 min-h-[480px] rounded-lg overflow-hidden border border-white/10 bg-card/40">
               {myProviderLoading ? (
-                <div className="h-full min-h-[140px] flex items-center justify-center p-6">
+                <div className="h-full min-h-[480px] flex items-center justify-center p-6">
                   <Skeleton className="h-full w-full rounded-md" />
                 </div>
               ) : (
-                <ProviderMap providers={ownerOnlyProviders} />
+                <ProviderGlobe providers={ownerOnlyProviders} />
               )}
             </div>
           </div>
+
+          {/* Hardware scan — only shown when provider has a registered endpoint */}
+          {endpoint && (
+            <HardwareScanCard endpoint={endpoint} deviceId={firstDeviceId} />
+          )}
 
           <div>
             <div className="flex flex-wrap items-center justify-between gap-4 pt-2">

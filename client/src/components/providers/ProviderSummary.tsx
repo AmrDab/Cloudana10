@@ -5,7 +5,7 @@ import { LabelValue } from "./LabelValue";
 import { CopyableTruncated } from "./CopyableTruncated";
 import { Uptime } from "./Uptime";
 import { FavoriteButton } from "./FavoriteButton";
-import { ProviderMap } from "./ProviderMap";
+import { ProviderGlobe } from "./ProviderGlobe";
 import { useFavoriteProviders } from "@/hooks/useFavoriteProviders";
 import type { ClientProviderDetail } from "@/lib/provider-types";
 import { getProviderDisplayName } from "@/lib/provider-utils";
@@ -99,7 +99,7 @@ export function ProviderSummary({ provider }: Props) {
           </div>
           {provider.isOnline && (
             <div className="h-full min-h-[240px] w-full flex-shrink-0 lg:min-w-[280px] lg:basis-2/5">
-              <ProviderMap
+              <ProviderGlobe
                 providers={[provider]}
                 initialZoom={5}
                 initialCoordinates={[parseNum(provider.ipLon), parseNum(provider.ipLat)]}

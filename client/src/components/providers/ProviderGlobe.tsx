@@ -1,123 +1,189 @@
-import { useEffect, useRef, useCallback } from "react";
-import createGlobe from "cobe";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import Globe from "react-globe.gl";
+import { useLocation } from "wouter";
+import { providerUrls } from "@/lib/provider-urls";
 import type { ClientProviderList } from "@/lib/provider-types";
-import { cn } from "@/lib/utils";
+import { getProviderDisplayName } from "@/lib/provider-utils";
 
-interface ProviderGlobeProps {
+const EARTH_IMG = "//unpkg.com/three-globe@2.31.1/example/img/earth-night.jpg";
+const ATMOSPHERE_COLOR = "#00ffff";
+
+type Props = {
   providers: ClientProviderList[];
-  className?: string;
+  initialZoom?: number;
+  initialCoordinates?: [number, number];
+};
+
+interface PointData {
+  lat: number;
+  lng: number;
+  name: string;
+  owner: string;
+  deviceId: string;
+  region: string;
+  countryCode: string;
+  isOnline: boolean;
 }
 
-export function ProviderGlobe({ providers, className }: ProviderGlobeProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pointerInteracting = useRef<number | null>(null);
-  const pointerInteractionMovement = useRef(0);
-  const phiRef = useRef(0);
-  const widthRef = useRef(0);
+interface RingData {
+  lat: number;
+  lng: number;
+}
 
-  const onlineCount = providers.filter((p) => p.isOnline).length;
+export function ProviderGlobe({
+  providers,
+  initialZoom = 1,
+  initialCoordinates,
+}: Props) {
+  const globeRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({ w: 600, h: 500 });
+  const [hovered, setHovered] = useState<PointData | null>(null);
+  const [mouse, setMouse] = useState({ x: 0, y: 0 });
+  const [, setLocation] = useLocation();
 
-  // Build marker list from provider lat/lon
-  const markers = providers
-    .filter((p) => p.ipLat && p.ipLon)
-    .map((p) => ({
-      location: [parseFloat(p.ipLat), parseFloat(p.ipLon)] as [number, number],
-      size: p.isOnline ? 0.07 : 0.03,
-    }));
+  // Convert providers to globe point data
+  const pointsData = useMemo<PointData[]>(() => {
+    return (providers || [])
+      .map((p) => ({
+        lat: parseFloat(String(p.ipLat)),
+        lng: parseFloat(String(p.ipLon)),
+        name: getProviderDisplayName(p.name, p.owner),
+        owner: p.owner,
+        deviceId: p.deviceId ?? p.owner,
+        region: p.ipRegion || "",
+        countryCode: p.ipCountryCode || "",
+        isOnline: !!p.isOnline,
+      }))
+      .filter((p) => !isNaN(p.lat) && !isNaN(p.lng));
+  }, [providers]);
 
-  const onResize = useCallback(() => {
-    if (canvasRef.current) {
-      widthRef.current = canvasRef.current.offsetWidth;
+  // Rings for active providers — pulsing glow rings
+  const ringsData = useMemo<RingData[]>(() => {
+    return pointsData.filter((p) => p.isOnline).map((p) => ({ lat: p.lat, lng: p.lng }));
+  }, [pointsData]);
+
+  // Responsive sizing
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      if (width > 0 && height > 0) setDims({ w: width, h: height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Initial camera + globe material
+  useEffect(() => {
+    const globe = globeRef.current;
+    if (!globe) return;
+    const altitude = initialCoordinates ? Math.max(0.4, 3 - initialZoom * 0.5) : 2.2;
+    const lat = initialCoordinates ? initialCoordinates[1] : 20;
+    const lng = initialCoordinates ? initialCoordinates[0] : 0;
+    setTimeout(() => {
+      globe.pointOfView({ lat, lng, altitude }, 0);
+      // Dim the globe slightly so provider lights pop
+      const globeMat = globe.globeMaterial();
+      if (globeMat) {
+        globeMat.bumpScale = 10;
+        globeMat.emissive = { r: 0.02, g: 0.02, b: 0.05 };
+        globeMat.emissiveIntensity = 0.4;
+      }
+    }, 100);
+  }, [initialCoordinates, initialZoom]);
+
+  // Mouse tracking for tooltip
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setMouse({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     }
   }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  const handlePointHover = useCallback((point: object | null) => {
+    setHovered(point as PointData | null);
+  }, []);
 
-    window.addEventListener("resize", onResize);
-    onResize();
+  const handlePointClick = useCallback(
+    (point: object) => {
+      const p = point as PointData;
+      setLocation(providerUrls.detail(p.deviceId));
+    },
+    [setLocation]
+  );
 
-    const globe = createGlobe(canvas, {
-      devicePixelRatio: 2,
-      width: widthRef.current * 2,
-      height: widthRef.current * 2,
-      phi: 0,
-      theta: 0.25,
-      dark: 1,
-      diffuse: 1.2,
-      mapSamples: 16000,
-      mapBrightness: 6,
-      baseColor: [0.15, 0.15, 0.2],
-      markerColor: [0.4, 0.7, 1],
-      glowColor: [0.08, 0.12, 0.25],
-      markers,
-      onRender: (state) => {
-        // Auto-rotate unless user is dragging
-        if (!pointerInteracting.current) {
-          phiRef.current += 0.003;
-        }
-        state.phi = phiRef.current + pointerInteractionMovement.current;
-        state.width = widthRef.current * 2;
-        state.height = widthRef.current * 2;
-      },
-    });
-
-    // Fade in the canvas
-    setTimeout(() => {
-      if (canvas) canvas.style.opacity = "1";
-    }, 0);
-
-    return () => {
-      globe.destroy();
-      window.removeEventListener("resize", onResize);
-    };
-  }, [markers.length]); // re-init when provider count changes
+  const isDetailView = !!initialCoordinates;
 
   return (
-    <div className={cn("relative flex items-center justify-center", className)}>
-      <canvas
-        ref={canvasRef}
-        className="w-full max-w-[350px] aspect-square transition-opacity duration-1000 opacity-0"
-        style={{ contain: "layout paint size" }}
-        onPointerDown={(e) => {
-          pointerInteracting.current =
-            e.clientX - pointerInteractionMovement.current;
-          (e.target as HTMLCanvasElement).style.cursor = "grabbing";
-        }}
-        onPointerUp={(e) => {
-          pointerInteracting.current = null;
-          (e.target as HTMLCanvasElement).style.cursor = "grab";
-        }}
-        onPointerOut={(e) => {
-          pointerInteracting.current = null;
-          (e.target as HTMLCanvasElement).style.cursor = "grab";
-        }}
-        onMouseMove={(e) => {
-          if (pointerInteracting.current !== null) {
-            const delta = e.clientX - pointerInteracting.current;
-            pointerInteractionMovement.current = delta / 200;
-          }
-        }}
-        onTouchMove={(e) => {
-          if (pointerInteracting.current !== null && e.touches[0]) {
-            const delta = e.touches[0].clientX - pointerInteracting.current;
-            pointerInteractionMovement.current = delta / 100;
-          }
-        }}
+    <div
+      ref={containerRef}
+      className="relative h-full w-full min-h-[480px]"
+      onMouseMove={handleMouseMove}
+    >
+      <Globe
+        ref={globeRef}
+        width={dims.w}
+        height={dims.h}
+        globeImageUrl={EARTH_IMG}
+        backgroundColor="rgba(0,0,0,0)"
+        atmosphereColor={ATMOSPHERE_COLOR}
+        atmosphereAltitude={0.18}
+        showAtmosphere={true}
+        animateIn={true}
+        // === Provider dots — larger, glowing ===
+        pointsData={pointsData}
+        pointLat="lat"
+        pointLng="lng"
+        pointColor={(d: any) => (d.isOnline ? "#22c55e" : "#ef4444")}
+        pointAltitude={0.02}
+        pointRadius={0.7}
+        pointResolution={8}
+        pointLabel=""
+        onPointHover={handlePointHover}
+        onPointClick={handlePointClick}
+        enablePointerInteraction={true}
+        // === Pulsing rings on active nodes ===
+        ringsData={ringsData}
+        ringLat="lat"
+        ringLng="lng"
+        ringColor={() => "#00ffcc"}
+        ringMaxRadius={3}
+        ringPropagationSpeed={2}
+        ringRepeatPeriod={1400}
+        ringAltitude={0.015}
+        // === Rotation ===
+        autoRotate={!isDetailView}
+        autoRotateSpeed={0.3}
       />
 
-      {/* Provider count overlay */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-card/80 backdrop-blur-md border border-white/10 px-4 py-1.5 text-sm">
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-        </span>
-        <span className="text-muted-foreground">
-          <strong className="text-foreground">{onlineCount}</strong>{" "}
-          provider{onlineCount !== 1 ? "s" : ""} online
-        </span>
-      </div>
+      {/* Tooltip overlay */}
+      {hovered && (
+        <div
+          className="pointer-events-none absolute z-20 rounded-lg border border-cyan-500/20 bg-card/90 px-3 py-2.5 shadow-2xl backdrop-blur-md"
+          style={{
+            left: Math.min(mouse.x + 14, dims.w - 200),
+            top: Math.max(mouse.y - 70, 8),
+          }}
+        >
+          <div className="space-y-1">
+            <div className="font-semibold text-sm">{hovered.name}</div>
+            {(hovered.region || hovered.countryCode) && (
+              <div className="text-muted-foreground text-xs">
+                {[hovered.region, hovered.countryCode].filter(Boolean).join(", ")}
+              </div>
+            )}
+            <div
+              className={`text-xs font-semibold mt-1 ${
+                hovered.isOnline ? "text-green-400" : "text-red-400"
+              }`}
+            >
+              {hovered.isOnline ? "● Active" : "● Inactive"}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
