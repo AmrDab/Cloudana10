@@ -45,4 +45,5 @@ export const log = {
   blockchain: createLogger("[Blockchain]", { infoColor: c.blue }),
   ipfs: createLogger("[IPFS]", { infoColor: c.green }),
   config: createLogger("[Config]", { infoColor: c.yellow }),
+  pouw: createLogger("[POUW]"),
 };

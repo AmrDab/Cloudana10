@@ -103,7 +103,7 @@ const whyChooseCards = [
 
 const readyToDeployStats = [
   { title: "POUW", description: "Verified Compute" },
-  { title: "80/15/5", description: "Provider / Burn / Treasury" },
+  { title: "75/20/5", description: "Provider / Burn / Treasury" },
   { title: "<2min", description: "Deployment Speed" },
   { title: "Base L2", description: "Settlement Layer" },
 ];

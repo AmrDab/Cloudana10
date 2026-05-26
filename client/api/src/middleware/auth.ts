@@ -6,7 +6,11 @@ import type { Context, Next } from "hono";
 import { createMiddleware } from "hono/factory";
 import { sign, verify } from "hono/jwt";
 
-const JWT_SECRET = process.env.JWT_SECRET || "cloudana-dev-secret-change-in-production";
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("JWT_SECRET environment variable is required");
+  return secret;
+}
 
 export interface JWTPayload {
   sub: string;         // wallet address
@@ -27,7 +31,7 @@ export const requireAuth = createMiddleware(async (c: Context, next: Next) => {
 
   const token = authHeader.slice(7);
   try {
-    const payload = await verify(token, JWT_SECRET) as JWTPayload;
+    const payload = await verify(token, getJwtSecret(), "HS256") as unknown as JWTPayload;
     c.set("jwtPayload", payload);
     return next();
   } catch {
@@ -61,5 +65,5 @@ export async function generateToken(walletAddress: string, role: JWTPayload["rol
     iat: now,
     exp: now + 24 * 60 * 60, // 24 hours
   };
-  return sign(payload, JWT_SECRET);
+  return sign(payload as unknown as Record<string, unknown>, getJwtSecret());
 }

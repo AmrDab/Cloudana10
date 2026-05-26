@@ -241,8 +241,6 @@ paymentsRouter.post("/payments/deposit-crypto", async (c) => {
   }
 
   try {
-    // TODO: implement on-chain verification using viem
-    // Example check: verify txHash on chainId and confirm transfer to Cloudana treasury
     const isVerified = await verifyCryptoDeposit(txHash, resolvedAddress, cldAmount, chainId);
 
     if (!isVerified) {
@@ -329,23 +327,18 @@ paymentsRouter.get("/payments/convert", (c) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// On-chain verification — verify crypto deposits using viem
+// On-chain verification — verify crypto deposits using viem + D1 replay guard
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createPublicClient, http, parseAbiItem, formatUnits, type Hash } from "viem";
 import { baseSepolia, base } from "viem/chains";
+import { getD1 } from "../../lib/storage.js";
 
 // Treasury address where CLD deposits go (set in env or use RewardContract)
 const TREASURY_ADDRESS = (process.env.CLD_TREASURY_ADDRESS || "0x427830A20C4752eb30C47e0d2572A457ebF4A8AD").toLowerCase();
 
 // CLD token address on Base Sepolia
 const CLD_TOKEN_ADDRESS = (process.env.CLD_TOKEN_ADDRESS || "0xcfd19DF5a3f963Dabf52aC7B46d4780Cc0E599e2").toLowerCase();
-
-// Track processed transactions to prevent replay
-const processedTxHashes = new Set<string>();
-
-// ERC20 Transfer event signature
-const TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
 async function verifyCryptoDeposit(
   txHash: string,
@@ -358,18 +351,23 @@ async function verifyCryptoDeposit(
   const senderNorm = senderAddress.toLowerCase();
   const resolvedChainId = Number(chainId) || 84532; // Default to Base Sepolia
 
-  // 1. Check for replay attack
-  if (processedTxHashes.has(txHashNorm)) {
+  // 1. Check for replay attack (D1-backed)
+  const db = getD1();
+  const existing = await db
+    .prepare("SELECT tx_hash FROM processed_tx WHERE tx_hash = ?")
+    .bind(txHashNorm)
+    .first();
+  if (existing) {
     L.warn(`[Payments] Replay attempt: txHash ${txHashNorm} already processed`);
     return false;
   }
 
   // 2. Create viem client for the correct chain
   const chain = resolvedChainId === 8453 ? base : baseSepolia;
-  const rpcUrl = resolvedChainId === 8453 
-    ? "https://mainnet.base.org" 
+  const rpcUrl = resolvedChainId === 8453
+    ? "https://mainnet.base.org"
     : "https://sepolia.base.org";
-  
+
   const client = createPublicClient({
     chain,
     transport: http(rpcUrl),
@@ -428,10 +426,13 @@ async function verifyCryptoDeposit(
       return false;
     }
 
-    // 7. Mark as processed (prevent replay)
-    processedTxHashes.add(txHashNorm);
+    // 7. Mark as processed (prevent replay) — D1
+    await db
+      .prepare("INSERT INTO processed_tx (tx_hash, sender, amount, processed_at) VALUES (?, ?, ?, ?)")
+      .bind(txHashNorm, senderNorm, cldAmount, new Date().toISOString())
+      .run();
 
-    L.info(`[Payments] ✓ Verified crypto deposit: ${formatUnits(transferredAmount, 18)} CLD from ${senderNorm} (tx: ${txHashNorm})`);
+    L.info(`[Payments] Verified crypto deposit: ${formatUnits(transferredAmount, 18)} CLD from ${senderNorm} (tx: ${txHashNorm})`);
     return true;
 
   } catch (err) {

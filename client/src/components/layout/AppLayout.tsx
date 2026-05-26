@@ -314,11 +314,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         style={{ width: SIDEBAR_WIDTH }}
       >
         <div className="flex h-16 items-center gap-2 border-b border-white/5 px-4">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="h-8 w-8 rounded bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.3)] group-hover:shadow-[0_0_25px_rgba(6,182,212,0.5)] transition-all duration-300">
-              <span className="font-bold text-black text-lg">C</span>
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="h-8 w-8 rounded-lg bg-cyan-600 flex items-center justify-center">
+              <span className="font-bold text-white text-sm">C</span>
             </div>
-            <span className="font-bold text-lg tracking-tight">Cloudana</span>
+            <span className="text-[1.35rem] font-semibold tracking-[-0.04em]">cloudana</span>
           </Link>
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
@@ -378,11 +378,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 w-full border-b border-white/5 bg-background/80 backdrop-blur-xl">
           <div className="container mx-auto px-4 h-16 flex items-center justify-between">
             <div className="md:hidden flex items-center gap-2">
-              <Link href="/" className="flex items-center gap-2 group">
-                <div className="h-8 w-8 rounded bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center">
-                  <span className="font-bold text-black text-lg">C</span>
+              <Link href="/" className="flex items-center gap-2.5">
+                <div className="h-8 w-8 rounded-lg bg-cyan-600 flex items-center justify-center">
+                  <span className="font-bold text-white text-sm">C</span>
                 </div>
-                <span className="font-bold text-xl tracking-tight">Cloudana</span>
+                <span className="text-xl font-semibold tracking-[-0.04em]">cloudana</span>
               </Link>
             </div>
             <div className="flex-1" />

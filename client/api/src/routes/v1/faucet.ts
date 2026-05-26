@@ -1,61 +1,32 @@
 /**
  * Testnet CLD Faucet — mints 100 CLD to any wallet, 24h cooldown.
  * Uses the orchestrator wallet (which must have MINTER_ROLE on CLDToken).
+ *
+ * Workers-compatible: uses KV for cooldown persistence, inline ABIs.
  */
 import { Hono } from "hono";
 import { parseEther, type Address } from "viem";
 import { publicClient, walletClient } from "../../services/chain-client.js";
 import { contractAddresses } from "../../config/contracts.js";
+import { CLDTokenABI } from "../../lib/abi-data.js";
+import { getKV } from "../../lib/storage.js";
 import { log } from "../../lib/logger.js";
-import * as fs from "fs";
-import * as path from "path";
 
 const L = log.api;
 const DRIP_AMOUNT = parseEther("100"); // 100 CLD per claim
 const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// --- Persistent cooldown store ---
-const DATA_DIR = path.resolve(process.cwd(), "data");
-const FAUCET_FILE = path.resolve(DATA_DIR, "faucet-claims.json");
-
-let claims: Record<string, number> = {}; // address → last claim timestamp
-
-function loadClaims() {
-  try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    if (fs.existsSync(FAUCET_FILE)) {
-      claims = JSON.parse(fs.readFileSync(FAUCET_FILE, "utf-8"));
-    }
-  } catch {
-    claims = {};
-  }
-}
-
-function saveClaims() {
-  try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(FAUCET_FILE, JSON.stringify(claims, null, 2));
-  } catch (err) {
-    L.error("Failed to save faucet claims", err);
-  }
-}
-
-loadClaims();
-
-// --- Load CLDToken ABI ---
-function loadAbi(name: string): unknown[] {
-  const sharedAbiPath = process.env.SHARED_PATH
-    ? path.join(process.env.SHARED_PATH, "abi")
-    : path.join(process.cwd(), "..", "..", "shared", "abi");
-  const file = path.join(sharedAbiPath, `${name}.json`);
-  if (!fs.existsSync(file)) return [];
-  return JSON.parse(fs.readFileSync(file, "utf8"));
-}
-
-const CLDTokenAbi = loadAbi("CLDToken");
 const CLD_TOKEN_ADDRESS = contractAddresses.CLDToken as Address;
 
 export const faucetRouter = new Hono();
+
+interface FaucetClaim {
+  claimedAt: number;
+  txHash: string;
+}
+
+function kvKey(address: string): string {
+  return `faucet:${address}`;
+}
 
 /**
  * POST /faucet/claim
@@ -75,8 +46,10 @@ faucetRouter.post("/faucet/claim", async (c) => {
       return c.json({ success: false, error: "Faucet not configured (no orchestrator key)" }, 503);
     }
 
-    // Check cooldown
-    const lastClaim = claims[address] || 0;
+    // Check cooldown from KV
+    const kv = getKV();
+    const raw = await kv.get(kvKey(address));
+    const lastClaim = raw ? (JSON.parse(raw) as FaucetClaim).claimedAt : 0;
     const now = Date.now();
     const remaining = COOLDOWN_MS - (now - lastClaim);
 
@@ -90,24 +63,26 @@ faucetRouter.post("/faucet/claim", async (c) => {
       }, 429);
     }
 
-    L.info(`🚰 Faucet: Minting 100 CLD to ${address}`);
+    L.info(`Faucet: Minting 100 CLD to ${address}`);
 
     const hash = await walletClient.writeContract({
       address: CLD_TOKEN_ADDRESS,
-      abi: CLDTokenAbi as any,
+      abi: CLDTokenABI as any,
       functionName: "mint",
       args: [address as Address, DRIP_AMOUNT],
       account: walletClient.account!,
     });
 
-    L.info(`🚰 Faucet: TX sent ${hash}, waiting for confirmation...`);
+    L.info(`Faucet: TX sent ${hash}, waiting for confirmation...`);
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
     if (receipt.status === "success") {
-      claims[address] = now;
-      saveClaims();
-      L.success(`🚰 Faucet: Minted 100 CLD to ${address} ✅ (tx: ${hash})`);
+      // Record claim in KV
+      const claim: FaucetClaim = { claimedAt: now, txHash: hash };
+      await kv.put(kvKey(address), JSON.stringify(claim));
+
+      L.info(`Faucet: Minted 100 CLD to ${address} (tx: ${hash})`);
       return c.json({
         success: true,
         txHash: hash,
@@ -115,11 +90,11 @@ faucetRouter.post("/faucet/claim", async (c) => {
         nextClaimAt: new Date(now + COOLDOWN_MS).toISOString(),
       });
     } else {
-      L.error(`🚰 Faucet: TX reverted for ${address}`);
+      L.error(`Faucet: TX reverted for ${address}`);
       return c.json({ success: false, error: "Transaction reverted. The orchestrator wallet may not have MINTER_ROLE." }, 500);
     }
   } catch (err: any) {
-    L.error("🚰 Faucet error:", err);
+    L.error("Faucet error:", err);
     return c.json({ success: false, error: err.message || "Faucet error" }, 500);
   }
 });
@@ -132,7 +107,9 @@ faucetRouter.get("/faucet/status", async (c) => {
   const address = (c.req.query("address") || "").trim().toLowerCase();
   if (!address) return c.json({ canClaim: false, error: "Missing address" }, 400);
 
-  const lastClaim = claims[address] || 0;
+  const kv = getKV();
+  const raw = await kv.get(kvKey(address));
+  const lastClaim = raw ? (JSON.parse(raw) as FaucetClaim).claimedAt : 0;
   const now = Date.now();
   const remaining = COOLDOWN_MS - (now - lastClaim);
 

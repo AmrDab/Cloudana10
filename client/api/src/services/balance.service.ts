@@ -1,12 +1,11 @@
 /**
  * Balance Service — CLD credit balance tracking for Cloudana users.
  *
- * Storage: file-based JSON persistence (survives restarts).
- * Each balance entry maps a wallet address → { balance, transactions[] }.
+ * Storage: Cloudflare D1 (SQLite at the edge).
+ * Tables: balances (address → balance), transactions (credit/debit log).
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { dirname, resolve } from "path";
+import { getD1 } from "../lib/storage.js";
 import { log } from "../lib/logger.js";
 
 const L = log.api;
@@ -36,59 +35,8 @@ export interface UserBalance {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// File-backed persistent store
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-const DATA_DIR = resolve(process.cwd(), "data");
-const BALANCES_FILE = resolve(DATA_DIR, "balances.json");
-const TRANSACTIONS_FILE = resolve(DATA_DIR, "transactions.json");
-
-const balanceStore = new Map<string, UserBalance>();
-const txStore = new Map<string, Transaction[]>();
-
-/** Load persisted data from disk on startup. */
-function loadFromDisk(): void {
-  try {
-    if (existsSync(BALANCES_FILE)) {
-      const raw = JSON.parse(readFileSync(BALANCES_FILE, "utf-8")) as Record<string, UserBalance>;
-      for (const [key, val] of Object.entries(raw)) {
-        balanceStore.set(key, { ...val, updatedAt: new Date(val.updatedAt) });
-      }
-      L.info(`[Balance] Loaded ${balanceStore.size} balances from disk`);
-    }
-    if (existsSync(TRANSACTIONS_FILE)) {
-      const raw = JSON.parse(readFileSync(TRANSACTIONS_FILE, "utf-8")) as Record<string, Transaction[]>;
-      for (const [key, txs] of Object.entries(raw)) {
-        txStore.set(key, txs.map((tx) => ({ ...tx, timestamp: new Date(tx.timestamp) })));
-      }
-      L.info(`[Balance] Loaded transactions for ${txStore.size} users from disk`);
-    }
-  } catch (err) {
-    L.error("[Balance] Failed to load persisted data, starting fresh:", err);
-  }
-}
-
-/** Persist current state to disk. */
-function saveToDisk(): void {
-  try {
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true });
-    }
-    writeFileSync(
-      BALANCES_FILE,
-      JSON.stringify(Object.fromEntries(balanceStore), null, 2),
-    );
-    writeFileSync(
-      TRANSACTIONS_FILE,
-      JSON.stringify(Object.fromEntries(txStore), null, 2),
-    );
-  } catch (err) {
-    L.error("[Balance] Failed to persist data to disk:", err);
-  }
-}
-
-// Load on module init
-loadFromDisk();
 
 function normalizeAddress(address: string): string {
   return address.toLowerCase().trim();
@@ -96,15 +44,6 @@ function normalizeAddress(address: string): string {
 
 function generateTxId(): string {
   return `tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function getOrCreateBalance(address: string): UserBalance {
-  const key = normalizeAddress(address);
-  if (!balanceStore.has(key)) {
-    const entry: UserBalance = { address: key, balance: 0, updatedAt: new Date() };
-    balanceStore.set(key, entry);
-  }
-  return balanceStore.get(key)!;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +54,17 @@ function getOrCreateBalance(address: string): UserBalance {
  * Get the current CLD credit balance for a user.
  */
 export async function getUserBalance(address: string): Promise<UserBalance> {
-  return getOrCreateBalance(address);
+  const key = normalizeAddress(address);
+  const db = getD1();
+  const row = await db
+    .prepare("SELECT address, balance, updated_at FROM balances WHERE address = ?")
+    .bind(key)
+    .first<{ address: string; balance: number; updated_at: string }>();
+
+  if (row) {
+    return { address: row.address, balance: row.balance, updatedAt: new Date(row.updated_at) };
+  }
+  return { address: key, balance: 0, updatedAt: new Date() };
 }
 
 /**
@@ -130,31 +79,47 @@ export async function creditBalance(
   if (amount <= 0) throw new Error("Credit amount must be positive");
 
   const key = normalizeAddress(address);
-  const entry = getOrCreateBalance(key);
-  entry.balance += amount;
-  entry.updatedAt = new Date();
-  balanceStore.set(key, entry);
+  const db = getD1();
+  const now = new Date();
+  const nowIso = now.toISOString();
 
+  // Upsert balance (SQLite INSERT ... ON CONFLICT)
+  await db
+    .prepare(
+      "INSERT INTO balances (address, balance, updated_at) VALUES (?, ?, ?) ON CONFLICT(address) DO UPDATE SET balance = balance + excluded.balance, updated_at = excluded.updated_at"
+    )
+    .bind(key, amount, nowIso)
+    .run();
+
+  // Read back new balance
+  const row = await db
+    .prepare("SELECT balance FROM balances WHERE address = ?")
+    .bind(key)
+    .first<{ balance: number }>();
+  const newBalance = row?.balance ?? amount;
+
+  // Record transaction
   const tx: Transaction = {
     id: generateTxId(),
     address: key,
     type: "credit",
     amount,
     source,
-    timestamp: new Date(),
+    timestamp: now,
     description: `${source} deposit: +${amount} CLD`,
     metadata,
   };
 
-  const userTxs = txStore.get(key) ?? [];
-  userTxs.push(tx);
-  txStore.set(key, userTxs);
+  await db
+    .prepare(
+      "INSERT INTO transactions (id, address, type, amount, source, description, timestamp, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(tx.id, key, "credit", amount, source, tx.description!, nowIso, metadata ? JSON.stringify(metadata) : null)
+    .run();
 
-  saveToDisk();
+  L.info(`[Balance] Credited ${amount} CLD to ${key} via ${source} (new balance: ${newBalance})`);
 
-  L.info(`[Balance] Credited ${amount} CLD to ${key} via ${source} (new balance: ${entry.balance})`);
-
-  return { balance: entry, transaction: tx };
+  return { balance: { address: key, balance: newBalance, updatedAt: now }, transaction: tx };
 }
 
 /**
@@ -169,17 +134,34 @@ export async function debitBalance(
   if (amount <= 0) throw new Error("Debit amount must be positive");
 
   const key = normalizeAddress(address);
-  const entry = getOrCreateBalance(key);
+  const db = getD1();
+  const now = new Date();
+  const nowIso = now.toISOString();
 
-  if (entry.balance < amount) {
+  // Check current balance
+  const current = await db
+    .prepare("SELECT balance FROM balances WHERE address = ?")
+    .bind(key)
+    .first<{ balance: number }>();
+  const currentBalance = current?.balance ?? 0;
+
+  if (currentBalance < amount) {
     throw new Error(
-      `Insufficient CLD balance. Required: ${amount}, Available: ${entry.balance}`
+      `Insufficient CLD balance. Required: ${amount}, Available: ${currentBalance}`
     );
   }
 
-  entry.balance -= amount;
-  entry.updatedAt = new Date();
-  balanceStore.set(key, entry);
+  // Debit (only if balance is still sufficient — guards against race)
+  const result = await db
+    .prepare(
+      "UPDATE balances SET balance = balance - ?, updated_at = ? WHERE address = ? AND balance >= ? RETURNING balance"
+    )
+    .bind(amount, nowIso, key, amount)
+    .first<{ balance: number }>();
+
+  if (!result) {
+    throw new Error(`Insufficient CLD balance (race condition). Required: ${amount}`);
+  }
 
   const tx: Transaction = {
     id: generateTxId(),
@@ -187,19 +169,20 @@ export async function debitBalance(
     type: "debit",
     amount,
     workloadId,
-    timestamp: new Date(),
+    timestamp: now,
     description: `Workload deployment: -${amount} CLD (workload: ${workloadId})`,
   };
 
-  const userTxs = txStore.get(key) ?? [];
-  userTxs.push(tx);
-  txStore.set(key, userTxs);
+  await db
+    .prepare(
+      "INSERT INTO transactions (id, address, type, amount, source, workload_id, description, timestamp, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(tx.id, key, "debit", amount, null, workloadId, tx.description!, nowIso, null)
+    .run();
 
-  saveToDisk();
+  L.info(`[Balance] Debited ${amount} CLD from ${key} for workload ${workloadId} (new balance: ${result.balance})`);
 
-  L.info(`[Balance] Debited ${amount} CLD from ${key} for workload ${workloadId} (new balance: ${entry.balance})`);
-
-  return { balance: entry, transaction: tx };
+  return { balance: { address: key, balance: result.balance, updatedAt: now }, transaction: tx };
 }
 
 /**
@@ -210,8 +193,43 @@ export async function getTransactionHistory(
   options: { limit?: number; offset?: number } = {}
 ): Promise<{ transactions: Transaction[]; total: number }> {
   const key = normalizeAddress(address);
-  const all = (txStore.get(key) ?? []).slice().reverse(); // newest first
+  const db = getD1();
   const { limit = 50, offset = 0 } = options;
-  const transactions = all.slice(offset, offset + limit);
-  return { transactions, total: all.length };
+
+  const countRow = await db
+    .prepare("SELECT COUNT(*) as total FROM transactions WHERE address = ?")
+    .bind(key)
+    .first<{ total: number }>();
+  const total = countRow?.total ?? 0;
+
+  const rows = await db
+    .prepare(
+      "SELECT id, address, type, amount, source, workload_id, description, timestamp, metadata FROM transactions WHERE address = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+    )
+    .bind(key, limit, offset)
+    .all<{
+      id: string;
+      address: string;
+      type: string;
+      amount: number;
+      source: string | null;
+      workload_id: string | null;
+      description: string | null;
+      timestamp: string;
+      metadata: string | null;
+    }>();
+
+  const transactions: Transaction[] = (rows.results ?? []).map((r) => ({
+    id: r.id,
+    address: r.address,
+    type: r.type as "credit" | "debit",
+    amount: r.amount,
+    source: (r.source as TransactionSource) ?? undefined,
+    workloadId: r.workload_id ?? undefined,
+    description: r.description ?? undefined,
+    timestamp: new Date(r.timestamp),
+    metadata: r.metadata ? JSON.parse(r.metadata) : undefined,
+  }));
+
+  return { transactions, total };
 }

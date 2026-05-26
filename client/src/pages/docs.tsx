@@ -273,7 +273,7 @@ function SectionArchitecture() {
             { step: "2", label: "Provider picks up job", desc: "Provider node polls orchestrator API, receives a job assignment. Executes the workload (e.g. ML inference, batch compute)." },
             { step: "3", label: "POUW mining (parallel)", desc: "While idle or between jobs, the provider runs cuPOW -- matrix multiply with transcript hashing. Valid certificates are submitted to orchestrator." },
             { step: "4", label: "Orchestrator verifies", desc: "Orchestrator re-executes the computation to validate the certificate. On success, triggers on-chain RewardContract.rewardProvider()." },
-            { step: "5", label: "CLD distributed", desc: "Provider receives CLD from: job execution fees (80% of user payment) and POUW mining rewards (minted on mainnet, pool on testnet). 15% of fees are burned; 5% go to the treasury." },
+            { step: "5", label: "CLD distributed", desc: "Provider receives CLD from: job execution fees (75% of user payment) and POUW mining rewards (minted on mainnet, pool on testnet). 20% of fees are burned; 5% go to the treasury." },
           ].map(({ step, label, desc }) => (
             <div key={step} className="flex gap-4">
               <div className="shrink-0 w-7 h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-xs font-bold text-primary">

@@ -226,7 +226,7 @@ export default function ProviderCalculatorPage() {
                   <p className="text-xl font-bold font-mono mt-1">
                     {fmt(projection.netMonthly)}
                   </p>
-                  <p className="text-xs text-muted-foreground">CLD (80% share)</p>
+                  <p className="text-xs text-muted-foreground">CLD (75% share)</p>
                 </div>
                 <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
@@ -260,14 +260,14 @@ export default function ProviderCalculatorPage() {
                 />
                 <Row
                   label="Fee Split"
-                  value="80 / 15 / 5"
+                  value="75 / 20 / 5"
                   sub="Provider / Burned / Treasury"
                 />
                 <Separator className="bg-white/10" />
                 <Row
                   label="Net Monthly"
                   value={`${fmt(projection.netMonthly)} CLD`}
-                  sub="After 80% provider share"
+                  sub="After 75% provider share"
                   bold
                 />
                 <Row

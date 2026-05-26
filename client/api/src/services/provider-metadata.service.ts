@@ -133,7 +133,7 @@ export async function fetchProviderCapacityAndEndpointFromIpfsUrl(
       const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       const startTime = Date.now();
 
-      const res = await fetch(url, { signal: controller.signal, mode: "cors", headers: { Accept: "application/json" } });
+      const res = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
       clearTimeout(timeout);
       const fetchDuration = Date.now() - startTime;
 

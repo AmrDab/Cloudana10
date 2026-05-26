@@ -1,31 +1,9 @@
 /**
- * Deployment templates persistence using MongoDB (shared connection via lib/mongo).
- * Optimized for read speed: normalized schema with two collections and indexes.
- * - template_categories: lightweight docs (title, description, order) for ordered gallery
- * - templates: one doc per template, indexed by _id and categoryId for fast by-id and $lookup
+ * Deployment templates persistence using Cloudflare D1 (SQLite at the edge).
+ * Two tables: template_categories (ordered gallery) + templates (one row per template).
  */
-import type { Collection, Document } from "mongodb";
-import { getDb } from "../lib/mongo.js";
+import { getD1 } from "../lib/storage.js";
 import type { Template, TemplateCategory } from "../types/template.js";
-
-const TEMPLATE_CATEGORIES_COLLECTION = "template_categories";
-const TEMPLATES_COLLECTION = "templates";
-
-/** Category document: MongoDB-style, used for $lookup and ordered gallery. */
-export interface CategoryDoc {
-  _id: string;
-  title: string;
-  description?: string;
-  order: number;
-  updatedAt: string;
-}
-
-/** Template document: MongoDB-style, one doc per template; categoryId for $lookup. */
-export interface TemplateDoc extends Omit<Template, "id"> {
-  _id: string;
-  categoryId: string;
-  updatedAt: string;
-}
 
 function slugFromTitle(title: string): string {
   return title
@@ -36,117 +14,63 @@ function slugFromTitle(title: string): string {
     .replace(/^-|-$/g, "") || "category";
 }
 
-async function categoriesCollection(): Promise<Collection<CategoryDoc>> {
-  const d = await getDb();
-  return d.collection(TEMPLATE_CATEGORIES_COLLECTION);
-}
-
-async function templatesCollection(): Promise<Collection<TemplateDoc>> {
-  const d = await getDb();
-  return d.collection(TEMPLATES_COLLECTION);
-}
-
-/** Ensure indexes for fast reads: template by id, templates by categoryId, categories by order. */
-async function ensureIndexes(): Promise<void> {
-  const db = await getDb();
-  const cats = db.collection(TEMPLATE_CATEGORIES_COLLECTION);
-  const tmpl = db.collection(TEMPLATES_COLLECTION);
-  await Promise.all([
-    cats.createIndex({ order: 1 }),
-    tmpl.createIndex({ categoryId: 1 }),
-    // _id is already unique index by default
-  ]);
-}
-
-/** Map MongoDB template document to domain Template (strip _id, categoryId, updatedAt). */
-function mapTemplateDocToTemplate(doc: TemplateDoc): Template {
-  const { _id, categoryId, updatedAt, ...rest } = doc;
-  return { id: _id, ...rest };
-}
-
-/** Raw aggregation row: category + embedded templates from $lookup (MongoDB shape). */
-interface GalleryAggregationRow {
-  _id: string;
-  title: string;
-  description?: string;
-  order: number;
-  updatedAt: string;
-  templates: TemplateDoc[];
-}
-
-/** Map one aggregation row (MongoDB shape) to domain TemplateCategory. */
-function mapGalleryRowToCategory(row: GalleryAggregationRow): TemplateCategory {
-  return {
-    title: row.title,
-    description: row.description,
-    templates: row.templates.map(mapTemplateDocToTemplate),
-  };
-}
-
 /**
- * Migrate Akash/GitHub format to MongoDB-style docs. Write contract: one category doc per slug,
- * one template doc per unique template id (first category wins for categoryId). Read logic expects this.
- */
-export function migrateAkashToMongoFormat(categories: TemplateCategory[]): {
-  categoryDocs: CategoryDoc[];
-  templateDocs: TemplateDoc[];
-} {
-  const now = new Date().toISOString();
-  const categoryDocs: CategoryDoc[] = [];
-  const seenSlug = new Set<string>();
-  for (let i = 0; i < categories.length; i++) {
-    const c = categories[i];
-    const slug = slugFromTitle(c.title);
-    if (seenSlug.has(slug)) continue;
-    seenSlug.add(slug);
-    categoryDocs.push({
-      _id: slug,
-      title: c.title,
-      description: c.description,
-      order: categoryDocs.length,
-      updatedAt: now,
-    });
-  }
-  const templateDocsById = new Map<string, TemplateDoc>();
-  for (const cat of categories) {
-    const categoryId = slugFromTitle(cat.title);
-    for (const t of cat.templates) {
-      const { id, ...rest } = t;
-      if (templateDocsById.has(id)) continue;
-      templateDocsById.set(id, {
-        _id: id,
-        categoryId,
-        ...rest,
-        updatedAt: now,
-      });
-    }
-  }
-  const templateDocs = Array.from(templateDocsById.values());
-  return { categoryDocs, templateDocs };
-}
-
-/**
- * Load full gallery from DB. Matches write shape: one category doc per slug, one template doc per _id
- * with single categoryId; $lookup joins templates into their category, then we map to domain.
+ * Load full gallery from D1. Categories ordered, templates joined by category_id.
  */
 export async function loadTemplateGallery(): Promise<TemplateCategory[] | null> {
   try {
-    const db = await getDb();
-    const pipeline: Document[] = [
-      { $sort: { order: 1 } },
-      {
-        $lookup: {
-          from: TEMPLATES_COLLECTION,
-          localField: "_id",
-          foreignField: "categoryId",
-          as: "templates",
-        },
-      },
-    ];
-    const cursor = db.collection(TEMPLATE_CATEGORIES_COLLECTION).aggregate(pipeline);
-    const rows = (await cursor.toArray()) as GalleryAggregationRow[];
-    if (!rows?.length) return null;
-    return rows.map(mapGalleryRowToCategory);
+    const db = getD1();
+
+    const cats = await db
+      .prepare("SELECT id, title, description FROM template_categories ORDER BY sort_order")
+      .all<{ id: string; title: string; description: string | null }>();
+
+    if (!cats.results?.length) return null;
+
+    const tmpls = await db
+      .prepare(
+        "SELECT id, category_id, name, path, readme, summary, logo_url, deploy, guide, github_url, persistent_storage_enabled, config FROM templates"
+      )
+      .all<{
+        id: string;
+        category_id: string;
+        name: string;
+        path: string;
+        readme: string;
+        summary: string;
+        logo_url: string | null;
+        deploy: string;
+        guide: string | null;
+        github_url: string;
+        persistent_storage_enabled: number;
+        config: string;
+      }>();
+
+    // Group templates by category
+    const byCat = new Map<string, Template[]>();
+    for (const t of tmpls.results ?? []) {
+      const list = byCat.get(t.category_id) ?? [];
+      list.push({
+        id: t.id,
+        name: t.name,
+        path: t.path,
+        readme: t.readme,
+        summary: t.summary,
+        logoUrl: t.logo_url,
+        deploy: t.deploy,
+        guide: t.guide ?? undefined,
+        githubUrl: t.github_url,
+        persistentStorageEnabled: !!t.persistent_storage_enabled,
+        config: JSON.parse(t.config || "{}"),
+      });
+      byCat.set(t.category_id, list);
+    }
+
+    return cats.results.map((cat) => ({
+      title: cat.title,
+      description: cat.description ?? undefined,
+      templates: byCat.get(cat.id) ?? [],
+    }));
   } catch (e) {
     console.warn("[template-store] loadTemplateGallery failed:", e);
     return null;
@@ -154,46 +78,146 @@ export async function loadTemplateGallery(): Promise<TemplateCategory[] | null> 
 }
 
 /**
- * Load one template by id. Matches write shape: one doc per template _id; strip Mongo fields to domain Template.
+ * Load one template by id.
  */
 export async function loadTemplateById(id: string): Promise<Template | null> {
   try {
-    const coll = await templatesCollection();
-    const doc = await coll.findOne({ _id: id });
-    if (!doc) return null;
-    return mapTemplateDocToTemplate(doc);
+    const db = getD1();
+    const row = await db
+      .prepare(
+        "SELECT id, name, path, readme, summary, logo_url, deploy, guide, github_url, persistent_storage_enabled, config FROM templates WHERE id = ?"
+      )
+      .bind(id)
+      .first<{
+        id: string;
+        name: string;
+        path: string;
+        readme: string;
+        summary: string;
+        logo_url: string | null;
+        deploy: string;
+        guide: string | null;
+        github_url: string;
+        persistent_storage_enabled: number;
+        config: string;
+      }>();
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      path: row.path,
+      readme: row.readme,
+      summary: row.summary,
+      logoUrl: row.logo_url,
+      deploy: row.deploy,
+      guide: row.guide ?? undefined,
+      githubUrl: row.github_url,
+      persistentStorageEnabled: !!row.persistent_storage_enabled,
+      config: JSON.parse(row.config || "{}"),
+    };
   } catch (e) {
     console.warn("[template-store] loadTemplateById failed:", e);
     return null;
   }
 }
 
-/** Save MongoDB-style documents (from migration). Use after migrateAkashToMongoFormat. */
-export async function saveMongoTemplateData(
-  categoryDocs: CategoryDoc[],
-  templateDocs: TemplateDoc[],
-): Promise<void> {
-  try {
-    const catColl = await categoriesCollection();
-    const tmplColl = await templatesCollection();
-    await catColl.deleteMany({});
-    await tmplColl.deleteMany({});
-    if (categoryDocs.length > 0) {
-      await catColl.insertMany(categoryDocs);
+/**
+ * Save template gallery to D1. Replaces all existing data.
+ * Used by the template fetch script / admin endpoint.
+ */
+export async function saveTemplateGallery(categories: TemplateCategory[]): Promise<void> {
+  if (!categories?.length) return;
+
+  const db = getD1();
+  const now = new Date().toISOString();
+
+  // Clear existing data
+  await db.batch([
+    db.prepare("DELETE FROM templates"),
+    db.prepare("DELETE FROM template_categories"),
+  ]);
+
+  // Insert categories
+  const seenSlug = new Set<string>();
+  let order = 0;
+  const catStmts: D1PreparedStatement[] = [];
+  const tmplStmts: D1PreparedStatement[] = [];
+  const seenTemplateId = new Set<string>();
+
+  for (const cat of categories) {
+    const slug = slugFromTitle(cat.title);
+    if (seenSlug.has(slug)) continue;
+    seenSlug.add(slug);
+
+    catStmts.push(
+      db
+        .prepare(
+          "INSERT INTO template_categories (id, title, description, sort_order, updated_at) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(slug, cat.title, cat.description ?? null, order++, now)
+    );
+
+    for (const t of cat.templates) {
+      if (seenTemplateId.has(t.id)) continue;
+      seenTemplateId.add(t.id);
+
+      tmplStmts.push(
+        db
+          .prepare(
+            "INSERT INTO templates (id, category_id, name, path, readme, summary, logo_url, deploy, guide, github_url, persistent_storage_enabled, config, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            t.id,
+            slug,
+            t.name,
+            t.path,
+            t.readme,
+            t.summary,
+            t.logoUrl,
+            t.deploy,
+            t.guide ?? null,
+            t.githubUrl,
+            t.persistentStorageEnabled ? 1 : 0,
+            JSON.stringify(t.config),
+            now
+          )
+      );
     }
-    if (templateDocs.length > 0) {
-      await tmplColl.insertMany(templateDocs);
-    }
-    await ensureIndexes();
-  } catch (e) {
-    console.warn("[template-store] saveMongoTemplateData failed:", e);
-    throw e;
+  }
+
+  // Batch insert (D1 batch limit is 100 statements)
+  const allStmts = [...catStmts, ...tmplStmts];
+  for (let i = 0; i < allStmts.length; i += 100) {
+    await db.batch(allStmts.slice(i, i + 100));
   }
 }
 
-/** Save template gallery from Akash format (migrates to MongoDB style internally). */
-export async function saveTemplateGallery(categories: TemplateCategory[]): Promise<void> {
-  if (!categories?.length) return;
-  const { categoryDocs, templateDocs } = migrateAkashToMongoFormat(categories);
-  await saveMongoTemplateData(categoryDocs, templateDocs);
+/**
+ * Migrate Akash/GitHub format to D1-compatible structures.
+ * Kept for compatibility with the fetch-templates script.
+ */
+export function migrateAkashToMongoFormat(categories: TemplateCategory[]) {
+  const now = new Date().toISOString();
+  const categoryDocs: Array<{ _id: string; title: string; description?: string; order: number; updatedAt: string }> = [];
+  const seenSlug = new Set<string>();
+  for (let i = 0; i < categories.length; i++) {
+    const c = categories[i];
+    const slug = slugFromTitle(c.title);
+    if (seenSlug.has(slug)) continue;
+    seenSlug.add(slug);
+    categoryDocs.push({ _id: slug, title: c.title, description: c.description, order: categoryDocs.length, updatedAt: now });
+  }
+  const templateDocs: Array<{ _id: string; categoryId: string } & Omit<Template, "id"> & { updatedAt: string }> = [];
+  const templateDocsById = new Map<string, (typeof templateDocs)[number]>();
+  for (const cat of categories) {
+    const categoryId = slugFromTitle(cat.title);
+    for (const t of cat.templates) {
+      const { id, ...rest } = t;
+      if (templateDocsById.has(id)) continue;
+      const doc = { _id: id, categoryId, ...rest, updatedAt: now };
+      templateDocsById.set(id, doc);
+    }
+  }
+  return { categoryDocs, templateDocs: Array.from(templateDocsById.values()) };
 }

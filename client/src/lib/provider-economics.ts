@@ -1,15 +1,30 @@
 // Cloudana provider economics — POUW-only model.
 // All CLD is generated exclusively through Proof of Useful Work.
-// No registration mint. No staking. No halving.
-// Fee split: 80% provider / 15% burned / 5% treasury.
+// No registration mint. No staking. No halving to zero.
+// Fee split: 75% provider / 20% burned / 5% treasury.
 
 import { NodeTier } from "@/lib/node-tier";
 
 // -- POUW Reward Formula (Whitepaper Section 8) -------------------------------
 // R = Base_Reward x Difficulty_Multiplier x (Matrix_Size / Reference_Size)^alpha
 
-/** CLD minted per valid POUW block */
+/** CLD minted per valid POUW block (initial rate; halves per HALVING_SCHEDULE) */
 export const BASE_BLOCK_REWARD = 100;
+
+/** Block reward schedule: halves every 4 years with permanent floor at 25 */
+export const HALVING_SCHEDULE = [
+  { fromYear: 0, toYear: 4, reward: 100 },
+  { fromYear: 4, toYear: 8, reward: 50 },
+  { fromYear: 8, toYear: Infinity, reward: 25 },
+] as const;
+
+/** Get block reward for a given network year */
+export function blockRewardAtYear(year: number): number {
+  for (const tier of HALVING_SCHEDULE) {
+    if (year >= tier.fromYear && year < tier.toYear) return tier.reward;
+  }
+  return 25; // permanent floor
+}
 
 /** Target: 1 block per 60 seconds */
 export const BLOCK_TIME_SECONDS = 60;
@@ -23,8 +38,8 @@ export const ALPHA = 1.75;
 // -- Fee Split ----------------------------------------------------------------
 
 export const FEE_SPLIT = {
-  provider: 0.80,
-  burn: 0.15,
+  provider: 0.75,
+  burn: 0.20,
   treasury: 0.05,
 } as const;
 
@@ -75,7 +90,7 @@ export function pouwBlockReward(opts: {
 export interface EarningsProjection {
   /** Monthly POUW earnings before fee split */
   grossMonthly: number;
-  /** Monthly earnings after 80% provider share */
+  /** Monthly earnings after 75% provider share */
   netMonthly: number;
   /** Annual projection */
   annualProjection: number;
@@ -129,9 +144,9 @@ export interface SimulationYear {
  * Run a 10-year simulation of CLD supply dynamics.
  *
  * Assumptions:
- * - Block reward: 100 CLD per block, 1 block per 60s
+ * - Block reward: 100 CLD/block Y1-4, 50 Y5-8, 25 Y9+ (permanent floor)
  * - CLD minted only through POUW (real work)
- * - 15% of all fees burned
+ * - 20% of all fees burned
  * - Provider and workload growth follow logistic curves
  */
 export function simulate10Years(opts?: {
@@ -162,9 +177,9 @@ export function simulate10Years(opts?: {
 
     // Mining: blocks per year = 365.25 * 24 * 60 (one block per minute)
     const blocksPerYear = 365.25 * 24 * 60;
-    const annualCldMinted = BASE_BLOCK_REWARD * blocksPerYear;
+    const annualCldMinted = blockRewardAtYear(year) * blocksPerYear;
 
-    // Burn: 15% of all job fee throughput
+    // Burn: 20% of all job fee throughput
     const annualJobFees = workloads * 365.25 * avgJobFeeCld;
     const annualCldBurned = annualJobFees * FEE_SPLIT.burn;
 

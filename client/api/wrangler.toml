@@ -1,0 +1,22 @@
+name = "cloudana-api"
+main = "src/worker.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+routes = [
+  { pattern = "api.cloudana.io", custom_domain = true }
+]
+
+[vars]
+CHAIN_NETWORK = "baseSepolia"
+CLD_USD_RATE = "100"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudana-db"
+database_id = "682f013a-90bb-4065-8787-2501ea3de81d"
+
+[[kv_namespaces]]
+binding = "CLOUDANA_KV"
+id = "9b7d684cf36a4d7680b5c374d1228246"

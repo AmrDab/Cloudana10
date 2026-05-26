@@ -5,13 +5,15 @@
 import { createPublicClient, createWalletClient, http, webSocket, fallback, type Abi, type Address, type Transport } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
-import { 
-  contractAddresses, 
-  chainId, 
-  rpcUrl, 
+import {
+  WorkloadRegistryABI,
+  ProviderRegistryABI,
+  RewardContractABI,
+} from "../lib/abi-data.js";
+import {
+  contractAddresses,
+  chainId,
+  rpcUrl,
   orchestratorPrivateKey,
   rpcTransportMode,
   wssUrl,
@@ -22,16 +24,6 @@ import { log } from "../lib/logger.js";
 
 const L = log.config;
 const BlockchainLog = log.blockchain;
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sharedAbiPath = process.env.SHARED_PATH
-  ? path.join(process.env.SHARED_PATH, "abi")
-  : path.join(__dirname, "..", "..", "..", "..", "shared", "abi");
-
-function loadAbi(name: string): unknown[] {
-  const file = path.join(sharedAbiPath, `${name}.json`);
-  if (!fs.existsSync(file)) return [];
-  return JSON.parse(fs.readFileSync(file, "utf8"));
-}
 
 /**
  * Create RPC transport based on configuration.
@@ -92,9 +84,9 @@ export const walletClient = account
   ? createWalletClient({ account, chain, transport })
   : null;
 
-const WorkloadRegistryAbi = loadAbi("WorkloadRegistry") as Abi;
-const ProviderRegistryAbi = loadAbi("ProviderRegistry") as Abi;
-const RewardContractAbi = loadAbi("RewardContract") as Abi;
+const WorkloadRegistryAbi = WorkloadRegistryABI as unknown as Abi;
+const ProviderRegistryAbi = ProviderRegistryABI as unknown as Abi;
+const RewardContractAbi = RewardContractABI as unknown as Abi;
 
 export function getWorkloadRegistryAddress(): Address {
   const a = contractAddresses.WorkloadRegistry;

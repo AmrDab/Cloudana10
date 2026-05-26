@@ -1,12 +1,11 @@
 /**
  * Hardware scan service: calls GET /hardware-scan on a provider node, validates
- * the response, and persists it to MongoDB. Used for provider capacity verification.
+ * the response, and persists it to KV. Used for provider capacity verification.
  */
-import { getDb } from "../lib/mongo.js";
+import { getKV } from "../lib/storage.js";
 import { log } from "../lib/logger.js";
 
 const L = log.api;
-const COLLECTION = "hardware_scans";
 const SCAN_STALE_MS = 24 * 60 * 60 * 1000; // consider stale after 24 h
 
 export interface GPUScanResult {
@@ -35,9 +34,13 @@ export interface HardwareScanResult {
   endpoint: string;
 }
 
+function kvKey(deviceId: string): string {
+  return `hardware:${deviceId}`;
+}
+
 /**
  * Trigger a hardware scan by calling the provider's /hardware-scan endpoint.
- * Validates the response structure and persists to MongoDB.
+ * Validates the response structure and persists to KV.
  */
 export async function scanProviderHardware(endpoint: string): Promise<HardwareScanResult> {
   const url = `${endpoint.replace(/\/+$/, "")}/hardware-scan`;
@@ -67,12 +70,8 @@ export async function scanProviderHardware(endpoint: string): Promise<HardwareSc
     endpoint,
   };
 
-  const db = await getDb();
-  await db.collection(COLLECTION).updateOne(
-    { deviceId: record.deviceId },
-    { $set: record },
-    { upsert: true }
-  );
+  const kv = getKV();
+  await kv.put(kvKey(record.deviceId), JSON.stringify(record));
 
   L.info(`[HardwareScan] Stored: deviceId=${record.deviceId} tier=${record.tier} CS=${record.computeScore} GPUs=${record.gpus.length}`);
   return record;
@@ -80,11 +79,10 @@ export async function scanProviderHardware(endpoint: string): Promise<HardwareSc
 
 /** Retrieve the latest stored scan for a device. */
 export async function getHardwareScan(deviceId: string): Promise<HardwareScanResult | null> {
-  const db = await getDb();
-  return db.collection<HardwareScanResult>(COLLECTION).findOne(
-    { deviceId },
-    { projection: { _id: 0 } }
-  ) as Promise<HardwareScanResult | null>;
+  const kv = getKV();
+  const raw = await kv.get(kvKey(deviceId));
+  if (!raw) return null;
+  return JSON.parse(raw) as HardwareScanResult;
 }
 
 /** Return true if a fresh scan exists (scanned within the last 24 h). */
