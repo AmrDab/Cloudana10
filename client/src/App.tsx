@@ -25,6 +25,7 @@ import ProviderCalculatorPage from "@/pages/pricing/provider-calculator";
 import WorkloadRegister from "@/pages/workload-register";
 import MiningDashboard from "@/pages/mining-dashboard";
 import DocsPage from "@/pages/docs";
+import FaucetPage from "@/pages/faucet";
 
 function RedirectToProviderRegister() {
   const [, setLocation] = useLocation();
@@ -66,6 +67,7 @@ function AppRouter() {
         <Route path="/pricing/usage" component={UsageCalculatorPage} />
         <Route path="/pricing/provider" component={ProviderCalculatorPage} />
         <Route path="/docs" component={DocsPage} />
+        <Route path="/faucet" component={FaucetPage} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />
       </Switch>
@@ -74,6 +76,21 @@ function AppRouter() {
 }
 
 function App() {
+  // Serve landing page at the actual root path (outside /control base)
+  const rawPath = typeof window !== "undefined" ? window.location.pathname : "/";
+  const isRootLanding = rawPath === "/" || rawPath === "";
+
+  if (isRootLanding) {
+    return (
+      <ErrorBoundary>
+        <WalletProvider>
+          <LandingPage />
+          <Toaster />
+        </WalletProvider>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
