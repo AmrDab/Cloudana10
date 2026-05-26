@@ -1034,7 +1034,7 @@ function SectionContracts() {
     },
     {
       name: "POUWVerifier",
-      addr: "0xc15c61E35D6d73dEf14460a1C7010fd169eD2e7F",
+      addr: "0xE2791574413d2bdE5B84848A99Aeb3B9f4d80682",
       desc: "Immutable on-chain ledger of all accepted mining certificates. Maintains usedZ mapping for replay protection. Emits CertificateRecorded events for full auditability.",
       fns: ["recordCertificate(address provider, bytes32 deviceId, uint32 n, uint8 difficulty, bytes32 transcriptHash, bytes32 z, uint256 timestamp)", "getMinerStats(address) view", "minerCount() view", "isZUsed(bytes32) view"],
     },
@@ -1074,7 +1074,7 @@ function SectionContracts() {
           <div className="flex gap-2"><span className="text-muted-foreground w-36 shrink-0">ProviderRegistry:</span><span>0x1e7b0039bdC27cB6B1e83d96D5Ad839fD15Af94a</span></div>
           <div className="flex gap-2"><span className="text-muted-foreground w-36 shrink-0">WorkloadRegistry:</span><span>0x71a36e548a884019b4A60947551efB8229e2016a</span></div>
           <div className="flex gap-2"><span className="text-muted-foreground w-36 shrink-0">RewardContract:</span><span>0x427830A20C4752eb30C47e0d2572A457ebF4A8AD</span></div>
-          <div className="flex gap-2"><span className="text-muted-foreground w-36 shrink-0">POUWVerifier:</span><span>0xc15c61E35D6d73dEf14460a1C7010fd169eD2e7F</span></div>
+          <div className="flex gap-2"><span className="text-muted-foreground w-36 shrink-0">POUWVerifier:</span><span>0xE2791574413d2bdE5B84848A99Aeb3B9f4d80682</span></div>
         </div>
       </InfoBox>
     </div>
