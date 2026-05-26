@@ -77,7 +77,7 @@ const formSchema = z.object({
 const whyChooseCards = [
   {
     title: "Significant Cost Savings",
-    description: "Reduce your cloud computing costs by up to 80% compared to traditional providers.",
+    description: "Lower compute costs by leveraging a decentralized provider network with competitive bidding.",
   },
   {
     title: "Enhanced Security",
@@ -102,10 +102,10 @@ const whyChooseCards = [
 ];
 
 const readyToDeployStats = [
-  { title: "85%", description: "Average Cost Savings" },
-  { title: "50+", description: "Provider Locations" },
-  { title: "2min", description: "Deployment Speed" },
-  { title: "99%", description: "Customer Satisfaction" },
+  { title: "POUW", description: "Verified Compute" },
+  { title: "80/15/5", description: "Provider / Burn / Treasury" },
+  { title: "<2min", description: "Deployment Speed" },
+  { title: "Base L2", description: "Settlement Layer" },
 ];
 
 export default function GpusOnDemandPage() {
