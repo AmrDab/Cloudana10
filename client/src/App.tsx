@@ -25,6 +25,7 @@ import ProviderCalculatorPage from "@/pages/pricing/provider-calculator";
 import WorkloadRegister from "@/pages/workload-register";
 import MiningDashboard from "@/pages/mining-dashboard";
 import DocsPage from "@/pages/docs";
+import LitepaperPage from "@/pages/litepaper";
 import FaucetPage from "@/pages/faucet";
 
 function RedirectToProviderRegister() {
@@ -67,6 +68,7 @@ function AppRouter() {
         <Route path="/pricing/usage" component={UsageCalculatorPage} />
         <Route path="/pricing/provider" component={ProviderCalculatorPage} />
         <Route path="/docs" component={DocsPage} />
+        <Route path="/litepaper" component={LitepaperPage} />
         <Route path="/faucet" component={FaucetPage} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />

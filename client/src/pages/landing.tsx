@@ -105,6 +105,7 @@ export default function LandingPage() {
             <Link href="/providers" className="hover:text-slate-900 transition-colors">Providers</Link>
             <Link href="/pricing/gpus" className="hover:text-slate-900 transition-colors">Pricing</Link>
             <Link href="/docs" className="hover:text-slate-900 transition-colors">Docs</Link>
+            <Link href="/litepaper" className="hover:text-slate-900 transition-colors">Litepaper</Link>
           </div>
           <button
             onClick={() => open()}
@@ -563,6 +564,7 @@ export default function LandingPage() {
               <h4 className="text-sm font-semibold mb-3 text-slate-900">Resources</h4>
               <ul className="space-y-2 text-sm text-slate-600">
                 <li><Link href="/docs" className="hover:text-slate-900">Documentation</Link></li>
+                <li><Link href="/litepaper" className="hover:text-slate-900">Litepaper</Link></li>
                 <li>
                   <a href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" className="hover:text-slate-900">
                     Block Explorer
