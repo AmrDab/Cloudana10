@@ -981,8 +981,8 @@ function SectionPeerVerification() {
             <p>Verifiers are randomly selected from the cluster pool. Colluding requires controlling a majority of randomly-chosen peers -- economically infeasible at scale.</p>
           </div>
           <div className="space-y-2">
-            <p className="font-medium text-foreground flex items-center gap-2"><Lock className="h-4 w-4 text-orange-400" /> Reputation Staking</p>
-            <p>Verifiers who falsely reject valid proofs lose reputation. Executors who submit fraudulent proofs are slashed. Both sides have skin in the game.</p>
+            <p className="font-medium text-foreground flex items-center gap-2"><Lock className="h-4 w-4 text-orange-400" /> Provider Accountability</p>
+            <p>Verifiers who falsely reject valid proofs lose reputation. Unreliable providers receive escalating penalties — warning, then 3-month suspension, then 1-year suspension.</p>
           </div>
           <div className="space-y-2">
             <p className="font-medium text-foreground flex items-center gap-2"><Activity className="h-4 w-4 text-orange-400" /> Continuous Monitoring</p>
@@ -1307,7 +1307,7 @@ function SectionLitepaper() {
                 <ul className="space-y-1 list-disc list-inside">
                   <li>Users fund compute workloads with CLD</li>
                   <li>Fee burn (15% of all compute fees)</li>
-                  <li>Provider registration stake (planned)</li>
+                  <li>Provider penalties for downtime (planned)</li>
                   <li>Governance voting weight (planned)</li>
                 </ul>
               </div>
