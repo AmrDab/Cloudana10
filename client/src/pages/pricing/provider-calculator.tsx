@@ -12,32 +12,18 @@ import {
   Radio,
   MonitorSmartphone,
   Zap,
-  TrendingDown,
   Coins,
   ArrowRight,
   Layers,
   Clock,
-  Calendar,
-  Sparkles,
+  Users,
 } from "lucide-react";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-} from "recharts";
 import { cn } from "@/lib/utils";
 import { NodeTier, NODE_TIER_LABELS, NODE_TIER_DESCRIPTIONS } from "@/lib/node-tier";
 import {
   calculateProjection,
-  generateDecayCurve,
-  BASE_REGISTRATION_REWARDS,
-  POUW_HOURLY_RATES,
-  STAKING_TIERS,
-  HALVING_INTERVAL,
+  ESTIMATED_HOURLY_RATES,
+  FEE_SPLIT,
   type EarningsProjection,
 } from "@/lib/provider-economics";
 
@@ -80,24 +66,17 @@ function fmt(n: number, decimals = 0): string {
 
 export default function ProviderCalculatorPage() {
   const [selectedTier, setSelectedTier] = useState<NodeTier>(NodeTier.GPU_MID);
-  const [stakingIndex, setStakingIndex] = useState(0);
   const [utilization, setUtilization] = useState(60);
-  const [networkEpoch, setNetworkEpoch] = useState(0);
+  const [activeProviders, setActiveProviders] = useState(100);
 
   const projection = useMemo<EarningsProjection>(
     () =>
       calculateProjection({
         tier: selectedTier,
-        epoch: networkEpoch,
-        stakingTierIndex: stakingIndex,
+        activeProviders,
         utilization: utilization / 100,
       }),
-    [selectedTier, stakingIndex, utilization, networkEpoch]
-  );
-
-  const decayCurve = useMemo(
-    () => generateDecayCurve(selectedTier, 10),
-    [selectedTier]
+    [selectedTier, activeProviders, utilization]
   );
 
   return (
@@ -109,8 +88,9 @@ export default function ProviderCalculatorPage() {
           <h1 className="text-3xl font-bold">Provider Earn Calculator</h1>
         </div>
         <p className="text-muted-foreground max-w-2xl">
-          Estimate your CLD earnings by providing compute to the Cloudana network.
-          Earn a one-time registration mint plus ongoing Proof of Useful Work rewards.
+          Estimate your CLD earnings by providing compute to the Cloudana network. All
+          CLD is generated through Proof of Useful Work — your hardware earns by doing
+          real computation.
         </p>
       </div>
 
@@ -160,7 +140,7 @@ export default function ProviderCalculatorPage() {
                             : "border-white/10 text-muted-foreground"
                         )}
                       >
-                        {fmt(BASE_REGISTRATION_REWARDS[tier])} CLD
+                        {ESTIMATED_HOURLY_RATES[tier]} CLD/hr
                       </Badge>
                     </button>
                   );
@@ -194,50 +174,23 @@ export default function ProviderCalculatorPage() {
 
               <Separator className="bg-white/10" />
 
-              {/* Staking tier */}
-              <div className="space-y-2">
-                <Label className="text-sm text-muted-foreground">Staking Tier</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {STAKING_TIERS.map((st, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setStakingIndex(i)}
-                      className={cn(
-                        "rounded-lg border p-2 text-center transition-all text-sm",
-                        i === stakingIndex
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-white/5 hover:border-white/15 text-muted-foreground"
-                      )}
-                    >
-                      <p className="font-medium">{st.name}</p>
-                      <p className="text-xs mt-0.5">
-                        {st.stakeRequired > 0 ? `${fmt(st.stakeRequired)} CLD` : "No stake"}
-                        {st.multiplier > 1 ? ` (${st.multiplier}x)` : ""}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <Separator className="bg-white/10" />
-
-              {/* Network epoch */}
+              {/* Network Size */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <Label className="text-sm text-muted-foreground">Network Epoch</Label>
-                  <span className="text-sm font-mono font-semibold">
-                    {networkEpoch} ({fmt(networkEpoch * HALVING_INTERVAL)} providers)
-                  </span>
+                  <Label className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Users className="h-3 w-3" /> Active Providers
+                  </Label>
+                  <span className="text-sm font-mono font-semibold">{fmt(activeProviders)}</span>
                 </div>
                 <Slider
-                  min={0}
-                  max={8}
-                  step={1}
-                  value={[networkEpoch]}
-                  onValueChange={(v) => setNetworkEpoch(v[0])}
+                  min={10}
+                  max={10000}
+                  step={10}
+                  value={[activeProviders]}
+                  onValueChange={(v) => setActiveProviders(v[0])}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Registration rewards halve every {fmt(HALVING_INTERVAL)} providers
+                  Block rewards are shared among all providers. More providers = less per provider.
                 </p>
               </div>
             </CardContent>
@@ -249,42 +202,35 @@ export default function ProviderCalculatorPage() {
           {/* Earnings breakdown */}
           <Card className="border-white/5 bg-card/50">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-primary" />
-                  Your Earnings Breakdown
-                </CardTitle>
-                {networkEpoch === 0 && (
-                  <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 text-xs">
-                    Early Adopter Bonus Active
-                  </Badge>
-                )}
-              </div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Coins className="h-4 w-4 text-primary" />
+                Your Earnings Breakdown
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
               {/* Top-line numbers */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-lg border border-white/10 p-3">
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Coins className="h-3 w-3" /> Registration Mint
+                    <Clock className="h-3 w-3" /> Gross Monthly
                   </p>
                   <p className="text-xl font-bold font-mono mt-1">
-                    {fmt(projection.registrationMint)}
+                    {fmt(projection.grossMonthly)}
                   </p>
-                  <p className="text-xs text-muted-foreground">CLD (one-time)</p>
+                  <p className="text-xs text-muted-foreground">CLD (before fees)</p>
                 </div>
                 <div className="rounded-lg border border-white/10 p-3">
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" /> Monthly POUW
+                    <Coins className="h-3 w-3" /> Net Monthly
                   </p>
                   <p className="text-xl font-bold font-mono mt-1">
-                    {fmt(projection.pouwMonthly)}
+                    {fmt(projection.netMonthly)}
                   </p>
-                  <p className="text-xs text-muted-foreground">CLD/month</p>
+                  <p className="text-xs text-muted-foreground">CLD (80% share)</p>
                 </div>
                 <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Calendar className="h-3 w-3" /> Annual Total
+                    <Clock className="h-3 w-3" /> Annual
                   </p>
                   <p className="text-xl font-bold font-mono mt-1 text-primary">
                     {fmt(projection.annualProjection)}
@@ -298,13 +244,8 @@ export default function ProviderCalculatorPage() {
               {/* Detailed breakdown */}
               <div className="space-y-3">
                 <Row
-                  label="Registration Mint (one-time)"
-                  value={`${fmt(projection.registrationMint)} CLD`}
-                  sub={`${NODE_TIER_LABELS[selectedTier]} at epoch ${networkEpoch}`}
-                />
-                <Row
                   label="POUW Hourly Rate"
-                  value={`${POUW_HOURLY_RATES[selectedTier]} CLD/hr`}
+                  value={`${ESTIMATED_HOURLY_RATES[selectedTier]} CLD/hr`}
                   sub={`Base rate for ${NODE_TIER_LABELS[selectedTier]}`}
                 />
                 <Row
@@ -313,153 +254,36 @@ export default function ProviderCalculatorPage() {
                   sub="Percentage of time serving workloads"
                 />
                 <Row
-                  label="Base Monthly POUW"
-                  value={`${fmt(projection.basePouwMonthly)} CLD`}
-                  sub="Hourly rate x 720 hours x utilization"
+                  label="Active Providers"
+                  value={fmt(activeProviders)}
+                  sub="Block rewards shared across all providers"
                 />
-                {projection.stakingMultiplier > 1 && (
-                  <Row
-                    label="Staking Multiplier"
-                    value={`${projection.stakingMultiplier}x`}
-                    sub={`${STAKING_TIERS[stakingIndex].name}: stake ${fmt(STAKING_TIERS[stakingIndex].stakeRequired)} CLD`}
-                    highlight
-                  />
-                )}
+                <Row
+                  label="Fee Split"
+                  value="80 / 15 / 5"
+                  sub="Provider / Burned / Treasury"
+                />
                 <Separator className="bg-white/10" />
                 <Row
-                  label="First Month Total"
-                  value={`${fmt(projection.firstMonthTotal)} CLD`}
-                  sub="Registration mint + first month POUW"
+                  label="Net Monthly"
+                  value={`${fmt(projection.netMonthly)} CLD`}
+                  sub="After 80% provider share"
                   bold
                 />
                 <Row
-                  label="Monthly Recurring"
-                  value={`${fmt(projection.monthlyRecurring)} CLD`}
-                  sub="POUW earnings after registration"
+                  label="Annual Projection"
+                  value={`${fmt(projection.annualProjection)} CLD`}
+                  sub="12 months at current settings"
+                  bold
                 />
               </div>
 
-              <Link href="/providers/register">
+              <Link href="/provider/register">
                 <Button className="w-full gap-2 mt-2" variant="outline">
                   <ArrowRight className="h-4 w-4" />
                   Register a Provider Node
                 </Button>
               </Link>
-            </CardContent>
-          </Card>
-
-          {/* Decay chart */}
-          <Card className="border-white/5 bg-card/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <TrendingDown className="h-4 w-4 text-primary" />
-                Registration Reward Decay
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Rewards halve every {fmt(HALVING_INTERVAL)} provider registrations, similar to Bitcoin mining.
-                Earlier providers earn the most.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={decayCurve}>
-                    <defs>
-                      <linearGradient id="rewardFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 100% / 0.06)" />
-                    <XAxis
-                      dataKey="totalProviders"
-                      tickFormatter={(v: number) => (v >= 1000 ? `${v / 1000}K` : String(v))}
-                      stroke="hsl(0 0% 100% / 0.2)"
-                      fontSize={11}
-                      label={{
-                        value: "Total Providers",
-                        position: "insideBottom",
-                        offset: -4,
-                        style: { fill: "hsl(0 0% 100% / 0.4)", fontSize: 11 },
-                      }}
-                    />
-                    <YAxis
-                      tickFormatter={(v: number) => `${v}`}
-                      stroke="hsl(0 0% 100% / 0.2)"
-                      fontSize={11}
-                      label={{
-                        value: "CLD",
-                        angle: -90,
-                        position: "insideLeft",
-                        offset: 10,
-                        style: { fill: "hsl(0 0% 100% / 0.4)", fontSize: 11 },
-                      }}
-                    />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--card))",
-                        border: "1px solid hsl(0 0% 100% / 0.1)",
-                        borderRadius: "8px",
-                        fontSize: 12,
-                      }}
-                      formatter={(value: number) => [`${fmt(value)} CLD`, "Reward"]}
-                      labelFormatter={(label: number) =>
-                        `After ${label >= 1000 ? `${label / 1000}K` : label} providers`
-                      }
-                    />
-                    <Area
-                      type="stepAfter"
-                      dataKey="reward"
-                      stroke="hsl(var(--primary))"
-                      fill="url(#rewardFill)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Comparison table */}
-              <div className="mt-4 rounded-lg border border-white/5 overflow-hidden">
-                <div className="grid grid-cols-4 text-xs text-muted-foreground font-medium bg-white/[0.02]">
-                  <div className="px-3 py-2">If you join at</div>
-                  <div className="px-3 py-2 text-right">Epoch</div>
-                  <div className="px-3 py-2 text-right">Mint Reward</div>
-                  <div className="px-3 py-2 text-right">vs. Now</div>
-                </div>
-                {[0, 1, 2, 3, 5].map((epoch) => {
-                  const reward = BASE_REGISTRATION_REWARDS[selectedTier] / Math.pow(2, epoch);
-                  const currentReward = BASE_REGISTRATION_REWARDS[selectedTier] / Math.pow(2, networkEpoch);
-                  const diff = reward - currentReward;
-                  return (
-                    <div
-                      key={epoch}
-                      className={cn(
-                        "grid grid-cols-4 text-xs border-t border-white/5",
-                        epoch === networkEpoch && "bg-primary/5"
-                      )}
-                    >
-                      <div className="px-3 py-2 text-muted-foreground">
-                        {epoch === 0 ? "Now (0)" : `${fmt(epoch * HALVING_INTERVAL)} providers`}
-                        {epoch === networkEpoch && (
-                          <span className="ml-1 text-primary">(current)</span>
-                        )}
-                      </div>
-                      <div className="px-3 py-2 text-right font-mono">{epoch}</div>
-                      <div className="px-3 py-2 text-right font-mono font-medium">
-                        {fmt(reward)} CLD
-                      </div>
-                      <div
-                        className={cn(
-                          "px-3 py-2 text-right font-mono",
-                          diff > 0 ? "text-emerald-400" : diff < 0 ? "text-red-400" : "text-muted-foreground"
-                        )}
-                      >
-                        {diff > 0 ? `+${fmt(diff)}` : diff < 0 ? fmt(diff) : "current"}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
             </CardContent>
           </Card>
         </div>
