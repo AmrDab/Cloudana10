@@ -197,7 +197,7 @@ export default function ProviderRegister() {
     const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
     const actionId = params?.get("action_id");
     if (!actionId) return;
-    const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002/v1"}/build-provider-status`;
+    const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002"}/v1/build-provider-status`;
     fetch(`${apiUrl}/${actionId}`)
       .then((r) => r.json())
       .then((data: { device_id?: string; control_node_endpoint?: string }) => {

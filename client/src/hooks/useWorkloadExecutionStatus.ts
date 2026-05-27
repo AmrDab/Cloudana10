@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
+const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
 
 interface WorkloadExecutionStatus {
   workloadId: string;

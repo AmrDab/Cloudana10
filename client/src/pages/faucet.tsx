@@ -8,7 +8,7 @@ import { Droplets, ExternalLink, Loader2, CheckCircle2, Clock, Wallet, AlertTria
 import { useCLDTokenBalance } from "@/lib/contracts";
 import { useToast } from "@/hooks/use-toast";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
+const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
 
 export default function FaucetPage() {
   const { address, isConnected } = useAccount();

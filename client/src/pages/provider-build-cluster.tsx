@@ -179,7 +179,7 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
   const runningLogPreRef = useRef<HTMLPreElement | null>(null);
   const onBuildCompleteFiredRef = useRef(false);
 
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
+  const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
 
   const fetchProviderNodeStatus = async () => {
     if (!actionId) return;

@@ -15,7 +15,7 @@
 
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 import { verify as cupowVerify } from "../../../../pouw/src/cupow.js";
-import { storeCertificate, isCertificateReplayed } from "./certificate-store.service.js";
+import { storeCertificate, isCertificateReplayedAsync } from "./certificate-store.service.js";
 import { log } from "../lib/logger.js";
 
 const L = log.pouw;
@@ -64,7 +64,7 @@ export async function verifyCertificate(cert: POUWCertificate): Promise<VerifyRe
   }
 
   // ── Replay check ─────────────────────────────────────────────────────────
-  if (isCertificateReplayed(cert.z)) {
+  if (await isCertificateReplayedAsync(cert.z)) {
     return { valid: false, reason: "Certificate z already seen (replay attack)" };
   }
 
@@ -87,8 +87,11 @@ export async function verifyCertificate(cert: POUWCertificate): Promise<VerifyRe
   }
 
   // ── Store and return ──────────────────────────────────────────────────────
-  const certificateId = storeCertificate(cert);
-  L.success(`[POUW:verify] ✅ Valid certificate #${certificateId} from ${cert.providerAddress.slice(0, 10)}... (${elapsed}ms)`);
+  const certificateId = await storeCertificate(cert);
+  if (!certificateId) {
+    return { valid: false, reason: "Certificate z already seen (replay attack)" };
+  }
+  L.success(`[POUW:verify] Valid certificate #${certificateId} from ${cert.providerAddress.slice(0, 10)}... (${elapsed}ms)`);
 
   return { valid: true, certificateId };
 }

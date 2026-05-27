@@ -31,7 +31,7 @@ type Props = {
   children?: ReactNode;
 };
 
-const apiBase = () => import.meta.env.VITE_API_URL || "http://localhost:7002/v1";
+const apiBase = () => (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
 
 export function ProviderDetailLayout({ children, page, address, provider, refresh }: Props) {
   const [, setLocation] = useLocation();

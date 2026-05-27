@@ -120,20 +120,20 @@ pouwRouter.post("/pouw/submit", async (c) => {
 });
 
 /** GET /v1/pouw/stats — Network-wide mining stats. */
-pouwRouter.get("/pouw/stats", (c) => {
-  return c.json(getNetworkStats());
+pouwRouter.get("/pouw/stats", async (c) => {
+  return c.json(await getNetworkStats());
 });
 
 /** GET /v1/pouw/leaderboard — Provider mining leaderboard. */
-pouwRouter.get("/pouw/leaderboard", (c) => {
-  const leaderboard = getMiningLeaderboard();
+pouwRouter.get("/pouw/leaderboard", async (c) => {
+  const leaderboard = await getMiningLeaderboard();
   return c.json({ providers: leaderboard });
 });
 
 /** GET /v1/pouw/certificates — Recent verified certificates. */
-pouwRouter.get("/pouw/certificates", (c) => {
+pouwRouter.get("/pouw/certificates", async (c) => {
   const { provider, limit } = c.req.query() as { provider?: string; limit?: string };
-  const certs = getCertificates({
+  const certs = await getCertificates({
     providerAddress: provider,
     limit: limit ? Number(limit) : 50,
   });
