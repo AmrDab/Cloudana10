@@ -87,7 +87,7 @@ function ProviderTypeSelector({ onSelect }: { onSelect: (type: ProviderType) => 
               <li className="flex items-center gap-2"><CheckCircle className="h-4 w-4 text-green-500 shrink-0" /> No static IP required</li>
               <li className="flex items-center gap-2"><CheckCircle className="h-4 w-4 text-green-500 shrink-0" /> No router port forwarding</li>
               <li className="flex items-center gap-2"><CheckCircle className="h-4 w-4 text-green-500 shrink-0" /> Works behind NAT/firewall</li>
-              <li className="flex items-center gap-2"><Wifi className="h-4 w-4 text-yellow-500 shrink-0" /> Uses Cloudflare Tunnel</li>
+              <li className="flex items-center gap-2"><Wifi className="h-4 w-4 text-yellow-500 shrink-0" /> Built-in WireGuard tunnel</li>
             </ul>
 
             <Button variant="outline" className="w-full border-white/10 group-hover:border-white/20" size="sm">
@@ -109,43 +109,8 @@ function HomeProviderSetup({ onBack }: { onBack: () => void }) {
 
   const steps = [
     {
-      title: "Install Cloudflare Tunnel",
-      description: "This creates a secure tunnel from your machine to the internet. No port forwarding or static IP needed.",
-      code: `# Install cloudflared
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
-chmod +x cloudflared
-sudo mv cloudflared /usr/local/bin/
-
-# Log in to Cloudflare (opens browser)
-cloudflared tunnel login`,
-    },
-    {
-      title: "Create your tunnel",
-      description: "Create a named tunnel for your Cloudana provider node.",
-      code: `# Create tunnel (replace 'my-provider' with your name)
-cloudflared tunnel create my-provider
-
-# Note the tunnel ID from the output. You'll need it next`,
-    },
-    {
-      title: "Configure the tunnel",
-      description: "Point the tunnel to your local provider node (runs on port 4040).",
-      code: `# Create config file
-cat > ~/.cloudflared/config.yml << EOF
-tunnel: <YOUR_TUNNEL_ID>
-credentials-file: /root/.cloudflared/<YOUR_TUNNEL_ID>.json
-ingress:
-  - hostname: provider.<YOUR_DOMAIN>
-    service: http://localhost:4040
-  - service: http_status:404
-EOF
-
-# Route DNS (add a CNAME on your domain)
-cloudflared tunnel route dns my-provider provider.<YOUR_DOMAIN>`,
-    },
-    {
-      title: "Install the provider node",
-      description: "Install and start the Cloudana provider node software.",
+      title: "Install the Cloudana provider node",
+      description: "The provider node includes a built-in WireGuard tunnel. No port forwarding, no third-party services, no static IP needed.",
       code: `# Install Docker if not already installed
 curl -fsSL https://get.docker.com | sh
 
@@ -153,12 +118,28 @@ curl -fsSL https://get.docker.com | sh
 docker run -d \\
   --name cloudana-provider \\
   --restart unless-stopped \\
+  --cap-add NET_ADMIN \\
   -p 4040:4040 \\
   -v /var/cloudana:/data \\
-  cloudana/provider-node:latest
+  cloudana/provider-node:latest`,
+    },
+    {
+      title: "Register your node",
+      description: "The node auto-detects your hardware (CPU, GPU, RAM, storage) and generates a device ID. Register it on-chain to start earning.",
+      code: `# Check your node is running
+curl http://localhost:4040/device-info
 
-# Start your tunnel
-cloudflared tunnel run my-provider`,
+# The output shows your device ID and hardware specs.
+# Use these to register on the Cloudana console.`,
+    },
+    {
+      title: "Start mining",
+      description: "Once registered, the node automatically begins POUW mining and accepts workloads from the network.",
+      code: `# Check mining status
+curl http://localhost:4040/mining/stats
+
+# View logs
+docker logs -f cloudana-provider`,
     },
   ];
 

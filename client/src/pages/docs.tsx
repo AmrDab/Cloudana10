@@ -825,7 +825,7 @@ function SectionClusters() {
         <div className="space-y-3">
           {[
             { phase: "Phase 1 (now)", label: "Single-node execution", desc: "Each provider is a 'cluster of 1'. Scheduler interface supports N nodes but starts with 1.", status: "live" },
-            { phase: "Phase 2", label: "Ingress proxy layer", desc: "Stable endpoints via Cloudflare Tunnel or WireGuard mesh. Workloads get persistent URLs.", status: "next" },
+            { phase: "Phase 2", label: "Ingress proxy layer", desc: "Stable endpoints via WireGuard mesh relay. Workloads get persistent URLs without third-party dependencies.", status: "next" },
             { phase: "Phase 3", label: "Multi-node scheduling", desc: "Route workloads to best available node. Basic failover: restart on another node if one dies.", status: "planned" },
             { phase: "Phase 4", label: "Full cluster model", desc: "Storage replication, checkpointing, GPU scheduling, and contributor trust scoring.", status: "planned" },
           ].map(({ phase, label, desc, status }) => (
