@@ -3,7 +3,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 
-const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL ?? "http://localhost:7002";
+const ORCHESTRATOR_URL = import.meta.env.VITE_API_URL ?? "http://localhost:7002";
 
 export interface ProviderMiningStats {
   providerAddress: string;
