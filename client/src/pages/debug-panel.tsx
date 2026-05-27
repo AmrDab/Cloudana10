@@ -3,10 +3,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { AddressDisplay } from "@/components/ui/address-display";
 import { RefreshCw, Database, Globe } from "lucide-react";
 import { useState } from "react";
+import { useBlockNumber } from "wagmi";
 import { CLD_TOKEN_ADDRESS, WORKLOAD_REGISTRY_ADDRESS, PROVIDER_REGISTRY_ADDRESS } from "@/lib/contracts";
 
 export default function DebugPanel() {
   const [lastSync, setLastSync] = useState(new Date().toLocaleTimeString());
+  const { data: blockNumber } = useBlockNumber({ watch: true });
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -33,7 +35,7 @@ export default function DebugPanel() {
             </div>
             <div className="flex justify-between py-2 border-b border-white/5">
               <span className="text-muted-foreground">Block Height</span>
-              <span>12,450,231</span>
+              <span>{blockNumber ? Number(blockNumber).toLocaleString() : "—"}</span>
             </div>
           </CardContent>
         </Card>
@@ -68,10 +70,12 @@ export default function DebugPanel() {
         </CardHeader>
         <CardContent>
            <div className="flex gap-4">
-             <Button variant="outline" onClick={() => setLastSync(new Date().toLocaleTimeString())}>
+             <Button variant="outline" onClick={() => { window.location.reload(); }}>
                <RefreshCw className="mr-2 h-4 w-4" /> Re-sync Events
              </Button>
-             <Button variant="outline">Clear Local Cache</Button>
+             <Button variant="outline" onClick={() => { localStorage.clear(); setLastSync(new Date().toLocaleTimeString()); }}>
+               Clear Local Cache
+             </Button>
            </div>
            <div className="mt-4 text-xs text-muted-foreground">
              Last synced: {lastSync}

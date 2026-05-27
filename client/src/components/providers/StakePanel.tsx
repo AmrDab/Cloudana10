@@ -124,7 +124,7 @@ export function StakePanel({ stakingManagerAddress, providerAddress, className }
         <CardContent className="space-y-4">
           {isDemoMode && (
             <div className="rounded-md bg-yellow-950/40 border border-yellow-800/40 px-3 py-2 text-xs text-yellow-400">
-              StakingManager contract not yet deployed. Deploy contracts to enable staking.
+              Staking is disabled during testnet MVP phase. Providers can register without staking.
             </div>
           )}
 

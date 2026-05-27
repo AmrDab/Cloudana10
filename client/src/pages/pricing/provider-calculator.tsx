@@ -1,57 +1,23 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import {
-  Cpu,
-  HardDrive,
-  Radio,
-  MonitorSmartphone,
-  Zap,
   Coins,
   ArrowRight,
-  Layers,
   Clock,
-  Users,
+  Pickaxe,
+  Briefcase,
+  Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NodeTier, NODE_TIER_LABELS, NODE_TIER_DESCRIPTIONS } from "@/lib/node-tier";
 import {
   calculateProjection,
-  ESTIMATED_HOURLY_RATES,
-  FEE_SPLIT,
   type EarningsProjection,
 } from "@/lib/provider-economics";
-
-// ── Tier icons ───────────────────────────────────────────────────────────────
-
-const TIER_ICONS: Record<NodeTier, typeof Cpu> = {
-  [NodeTier.CPU_ONLY]: Cpu,
-  [NodeTier.EDGE_RELAY]: Radio,
-  [NodeTier.STORAGE]: HardDrive,
-  [NodeTier.GPU_MID]: MonitorSmartphone,
-  [NodeTier.GPU_HIGH]: Zap,
-};
-
-const TIER_COLORS: Record<NodeTier, string> = {
-  [NodeTier.CPU_ONLY]: "border-blue-500/30 bg-blue-500/5",
-  [NodeTier.EDGE_RELAY]: "border-cyan-500/30 bg-cyan-500/5",
-  [NodeTier.STORAGE]: "border-amber-500/30 bg-amber-500/5",
-  [NodeTier.GPU_MID]: "border-violet-500/30 bg-violet-500/5",
-  [NodeTier.GPU_HIGH]: "border-emerald-500/30 bg-emerald-500/5",
-};
-
-const TIER_ICON_COLORS: Record<NodeTier, string> = {
-  [NodeTier.CPU_ONLY]: "text-blue-400",
-  [NodeTier.EDGE_RELAY]: "text-cyan-400",
-  [NodeTier.STORAGE]: "text-amber-400",
-  [NodeTier.GPU_MID]: "text-violet-400",
-  [NodeTier.GPU_HIGH]: "text-emerald-400",
-};
 
 // ── Format helpers ───────────────────────────────────────────────────────────
 
@@ -65,18 +31,18 @@ function fmt(n: number, decimals = 0): string {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function ProviderCalculatorPage() {
-  const [selectedTier, setSelectedTier] = useState<NodeTier>(NodeTier.GPU_MID);
-  const [utilization, setUtilization] = useState(60);
-  const [activeProviders, setActiveProviders] = useState(100);
+  const [certsPerMonth, setCertsPerMonth] = useState(10);
+  const [jobRevenuePerMonth, setJobRevenuePerMonth] = useState(500);
+  const [networkYear, setNetworkYear] = useState(1);
 
   const projection = useMemo<EarningsProjection>(
     () =>
       calculateProjection({
-        tier: selectedTier,
-        activeProviders,
-        utilization: utilization / 100,
+        certsPerMonth,
+        jobRevenuePerMonth,
+        networkYear,
       }),
-    [selectedTier, activeProviders, utilization]
+    [certsPerMonth, jobRevenuePerMonth, networkYear]
   );
 
   return (
@@ -95,111 +61,82 @@ export default function ProviderCalculatorPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
-        {/* ─── Left: Hardware Tier + Controls ────────────────────────── */}
+        {/* ─── Left: Controls ─────────────────────────────────────── */}
         <div className="lg:col-span-5 space-y-6">
-          {/* Tier selector */}
-          <Card className="border-white/5 bg-card/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Layers className="h-4 w-4 text-primary" />
-                Select Your Hardware
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {Object.values(NodeTier)
-                .filter((v): v is NodeTier => typeof v === "number")
-                .map((tier) => {
-                  const Icon = TIER_ICONS[tier];
-                  const isSelected = tier === selectedTier;
-                  return (
-                    <button
-                      key={tier}
-                      onClick={() => setSelectedTier(tier)}
-                      className={cn(
-                        "w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all",
-                        isSelected
-                          ? `${TIER_COLORS[tier]} ring-1 ring-primary/40`
-                          : "border-white/5 hover:border-white/15 hover:bg-white/[0.02]"
-                      )}
-                    >
-                      <Icon className={cn("h-5 w-5 shrink-0", isSelected ? TIER_ICON_COLORS[tier] : "text-muted-foreground")} />
-                      <div className="min-w-0 flex-1">
-                        <p className={cn("text-sm font-medium", isSelected && "text-foreground")}>
-                          {NODE_TIER_LABELS[tier]}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {NODE_TIER_DESCRIPTIONS[tier]}
-                        </p>
-                      </div>
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "shrink-0 text-xs font-mono",
-                          isSelected
-                            ? "border-primary/30 text-primary"
-                            : "border-white/10 text-muted-foreground"
-                        )}
-                      >
-                        {ESTIMATED_HOURLY_RATES[tier]} CLD/hr
-                      </Badge>
-                    </button>
-                  );
-                })}
-            </CardContent>
-          </Card>
-
-          {/* Controls */}
           <Card className="border-white/5 bg-card/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Settings</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Utilization */}
+              {/* Certificates per month */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <Label className="text-sm text-muted-foreground">Utilization</Label>
-                  <span className="text-sm font-mono font-semibold">{utilization}%</span>
+                  <Label className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Pickaxe className="h-3 w-3" /> POUW Certificates / Month
+                  </Label>
+                  <span className="text-sm font-mono font-semibold">{certsPerMonth}</span>
                 </div>
                 <Slider
-                  min={10}
+                  min={0}
                   max={100}
-                  step={5}
-                  value={[utilization]}
-                  onValueChange={(v) => setUtilization(v[0])}
+                  step={1}
+                  value={[certsPerMonth]}
+                  onValueChange={(v) => setCertsPerMonth(v[0])}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Percentage of time your node serves workloads
+                  Expected POUW certificates found per month. Set to 0 for non-GPU providers.
                 </p>
               </div>
 
               <Separator className="bg-white/10" />
 
-              {/* Network Size */}
+              {/* Job revenue per month */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label className="text-sm text-muted-foreground flex items-center gap-1">
-                    <Users className="h-3 w-3" /> Active Providers
+                    <Briefcase className="h-3 w-3" /> Job Revenue / Month (CLD)
                   </Label>
-                  <span className="text-sm font-mono font-semibold">{fmt(activeProviders)}</span>
+                  <span className="text-sm font-mono font-semibold">{fmt(jobRevenuePerMonth)}</span>
                 </div>
                 <Slider
-                  min={10}
-                  max={10000}
-                  step={10}
-                  value={[activeProviders]}
-                  onValueChange={(v) => setActiveProviders(v[0])}
+                  min={0}
+                  max={5000}
+                  step={50}
+                  value={[jobRevenuePerMonth]}
+                  onValueChange={(v) => setJobRevenuePerMonth(v[0])}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Block rewards are shared among all providers. More providers = less per provider.
+                  Expected job fee revenue per month (CLD, before split). All provider types earn here.
+                </p>
+              </div>
+
+              <Separator className="bg-white/10" />
+
+              {/* Network year */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Calendar className="h-3 w-3" /> Network Year
+                  </Label>
+                  <span className="text-sm font-mono font-semibold">Year {networkYear}</span>
+                </div>
+                <Slider
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={[networkYear]}
+                  onValueChange={(v) => setNetworkYear(v[0])}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Block reward halves over time: 100 CLD (Y1-4), 50 CLD (Y5-8), 25 CLD (Y9+).
                 </p>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* ─── Right: Earnings + Decay ───────────────────────────────── */}
+        {/* ─── Right: Earnings Breakdown ──────────────────────────── */}
         <div className="lg:col-span-7 space-y-6">
-          {/* Earnings breakdown */}
           <Card className="border-white/5 bg-card/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
@@ -212,21 +149,21 @@ export default function ProviderCalculatorPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-lg border border-white/10 p-3">
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" /> Gross Monthly
+                    <Pickaxe className="h-3 w-3" /> Mining
                   </p>
                   <p className="text-xl font-bold font-mono mt-1">
-                    {fmt(projection.grossMonthly)}
+                    {fmt(projection.miningIncome)}
                   </p>
-                  <p className="text-xs text-muted-foreground">CLD (before fees)</p>
+                  <p className="text-xs text-muted-foreground">CLD/month</p>
                 </div>
                 <div className="rounded-lg border border-white/10 p-3">
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Coins className="h-3 w-3" /> Net Monthly
+                    <Briefcase className="h-3 w-3" /> Job Fees
                   </p>
                   <p className="text-xl font-bold font-mono mt-1">
-                    {fmt(projection.netMonthly)}
+                    {fmt(projection.jobFeeIncome)}
                   </p>
-                  <p className="text-xs text-muted-foreground">CLD (75% share)</p>
+                  <p className="text-xs text-muted-foreground">CLD/month</p>
                 </div>
                 <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
@@ -244,19 +181,19 @@ export default function ProviderCalculatorPage() {
               {/* Detailed breakdown */}
               <div className="space-y-3">
                 <Row
-                  label="POUW Hourly Rate"
-                  value={`${ESTIMATED_HOURLY_RATES[selectedTier]} CLD/hr`}
-                  sub={`Base rate for ${NODE_TIER_LABELS[selectedTier]}`}
+                  label="POUW Certificates"
+                  value={`${certsPerMonth}/month`}
+                  sub="Each cert earns block reward × 75% provider share"
                 />
                 <Row
-                  label="Utilization"
-                  value={`${utilization}%`}
-                  sub="Percentage of time serving workloads"
+                  label="Block Reward"
+                  value={`${networkYear < 5 ? 100 : networkYear < 9 ? 50 : 25} CLD`}
+                  sub={`Year ${networkYear} reward schedule`}
                 />
                 <Row
-                  label="Active Providers"
-                  value={fmt(activeProviders)}
-                  sub="Block rewards shared across all providers"
+                  label="Job Revenue"
+                  value={`${fmt(jobRevenuePerMonth)} CLD/month`}
+                  sub="Before fee split (all provider types)"
                 />
                 <Row
                   label="Fee Split"
@@ -265,9 +202,9 @@ export default function ProviderCalculatorPage() {
                 />
                 <Separator className="bg-white/10" />
                 <Row
-                  label="Net Monthly"
-                  value={`${fmt(projection.netMonthly)} CLD`}
-                  sub="After 75% provider share"
+                  label="Total Monthly"
+                  value={`${fmt(projection.totalMonthly)} CLD`}
+                  sub="Mining + job fee income after 75% split"
                   bold
                 />
                 <Row

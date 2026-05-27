@@ -47,6 +47,14 @@ export function useNetworkMiningStats() {
     queryFn: () => fetcher<NetworkMiningStats>("/v1/pouw/stats"),
     refetchInterval: 5000,
     staleTime: 3000,
+    placeholderData: {
+      totalCertificates: 0,
+      activeProviders: 0,
+      certsLast1Min: 0,
+      certsLast5Min: 0,
+      networkHashRate: 0,
+      totalDifficultyMined: 0,
+    },
   });
 }
 
@@ -56,6 +64,7 @@ export function useMiningLeaderboard() {
     queryFn: () => fetcher<{ providers: ProviderMiningStats[] }>("/v1/pouw/leaderboard"),
     refetchInterval: 10000,
     staleTime: 5000,
+    placeholderData: { providers: [] },
   });
 }
 
@@ -65,6 +74,7 @@ export function useRecentCertificates(limit = 20) {
     queryFn: () => fetcher<{ certificates: RecentCertificate[] }>(`/v1/pouw/certificates?limit=${limit}`),
     refetchInterval: 4000,
     staleTime: 2000,
+    placeholderData: { certificates: [] },
   });
 }
 
@@ -73,5 +83,6 @@ export function useMiningChainSeed() {
     queryKey: ["pouw-seed"],
     queryFn: () => fetcher("/v1/pouw/seed"),
     refetchInterval: 6000,
+    placeholderData: { seed: "", blockNumber: "0", fetchedAt: 0 },
   });
 }

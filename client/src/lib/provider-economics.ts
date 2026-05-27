@@ -3,8 +3,6 @@
 // No registration mint. No staking. No halving to zero.
 // Fee split: 75% provider / 20% burned / 5% treasury.
 
-import { NodeTier } from "@/lib/node-tier";
-
 // -- POUW Reward Formula (Whitepaper Section 8) -------------------------------
 // R = Base_Reward x Difficulty_Multiplier x (Matrix_Size / Reference_Size)^alpha
 
@@ -57,21 +55,6 @@ export const PENALTY_TIERS: PenaltyTier[] = [
   { offense: 3, action: "1_year_suspension", description: "1-year suspension from network" },
 ];
 
-// -- Estimated Hourly Rates ---------------------------------------------------
-// Derived from block reward formula at reference difficulty.
-// Actual earnings depend on network size and workload demand.
-
-export const ESTIMATED_HOURLY_RATES: Record<NodeTier, number> = {
-  [NodeTier.CPU_ONLY]: 0.5,
-  [NodeTier.EDGE_RELAY]: 0.3,
-  [NodeTier.STORAGE]: 0.8,
-  [NodeTier.GPU_MID]: 2.5,
-  [NodeTier.GPU_HIGH]: 6.0,
-};
-
-export const HOURS_PER_MONTH = 720;
-export const DEFAULT_UTILIZATION = 0.6;
-
 // -- POUW Reward Calculation --------------------------------------------------
 
 /** Calculate raw POUW block reward for a given matrix size and difficulty. */
@@ -83,47 +66,52 @@ export function pouwBlockReward(opts: {
   return BASE_BLOCK_REWARD * difficultyMultiplier * Math.pow(matrixSize / REFERENCE_MATRIX_SIZE, ALPHA);
 }
 
-// -- Pool Model Earnings ------------------------------------------------------
-// Block rewards are shared among all active providers proportional to work.
-// More providers = less per provider (natural equilibrium).
+// -- Provider Earnings Formula ------------------------------------------------
+// Earnings = Mining Income + Job Fee Income
+//
+// Mining Income = certs_found × BlockReward(year) × FEE_SPLIT.provider
+//   Only GPU providers realistically earn here (POUW is matrix multiplication)
+//
+// Job Fee Income = Σ(job_fees) × FEE_SPLIT.provider
+//   All provider types earn here (CPU, storage, GPU, edge)
+//
+// 20% of all job fees burned. 5% to treasury.
 
 export interface EarningsProjection {
-  /** Monthly POUW earnings before fee split */
-  grossMonthly: number;
-  /** Monthly earnings after 75% provider share */
-  netMonthly: number;
-  /** Annual projection */
+  /** Monthly mining income (CLD) */
+  miningIncome: number;
+  /** Monthly job fee income (CLD) */
+  jobFeeIncome: number;
+  /** Total monthly (CLD) */
+  totalMonthly: number;
+  /** Annual projection (CLD) */
   annualProjection: number;
-  /** Utilization rate used */
-  utilization: number;
-  /** Number of active providers in simulation */
-  activeProviders: number;
 }
 
+/**
+ * Project monthly earnings for a provider.
+ *
+ * @param certsPerMonth  - Expected POUW certificates found per month (0 for non-GPU)
+ * @param jobRevenuePerMonth - Expected job fee revenue per month (CLD, before split)
+ * @param networkYear    - Current network year (affects block reward via halving)
+ */
 export function calculateProjection(options: {
-  tier: NodeTier;
-  activeProviders: number;
-  utilization?: number;
+  certsPerMonth: number;
+  jobRevenuePerMonth: number;
+  networkYear?: number;
 }): EarningsProjection {
-  const { tier, activeProviders, utilization = DEFAULT_UTILIZATION } = options;
+  const { certsPerMonth, jobRevenuePerMonth, networkYear = 1 } = options;
 
-  const hourlyRate = ESTIMATED_HOURLY_RATES[tier];
-  // Total network earning potential at this tier's rate
-  const grossMonthlyIfAlone = hourlyRate * HOURS_PER_MONTH * utilization;
-
-  // Pool effect: block rewards are shared, so divide by active providers.
-  // The base rates assume a 100-provider network, so normalize.
-  const poolDivisor = Math.max(1, activeProviders / 100);
-  const grossMonthly = grossMonthlyIfAlone / poolDivisor;
-  const netMonthly = grossMonthly * FEE_SPLIT.provider;
-  const annualProjection = netMonthly * 12;
+  const reward = blockRewardAtYear(networkYear);
+  const miningIncome = certsPerMonth * reward * FEE_SPLIT.provider;
+  const jobFeeIncome = jobRevenuePerMonth * FEE_SPLIT.provider;
+  const totalMonthly = miningIncome + jobFeeIncome;
 
   return {
-    grossMonthly,
-    netMonthly,
-    annualProjection,
-    utilization,
-    activeProviders,
+    miningIncome,
+    jobFeeIncome,
+    totalMonthly,
+    annualProjection: totalMonthly * 12,
   };
 }
 
