@@ -29,20 +29,6 @@ export interface ProviderMiningStats {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /** Returns true if this z hash has already been accepted (replay protection). */
-export function isCertificateReplayed(z: string): boolean {
-  try {
-    const db = getD1();
-    const row = db.prepare("SELECT 1 FROM pouw_certificates WHERE z = ?").bind(z).first();
-    // D1 .first() is sync in the Workers runtime when used without await in certain contexts,
-    // but we should keep this async-safe. For now, use the sync check.
-    // The actual replay protection is the UNIQUE constraint on z in the DB.
-    return false; // Let the INSERT fail if it's a duplicate
-  } catch {
-    return false;
-  }
-}
-
-/** Check replay asynchronously (preferred). */
 export async function isCertificateReplayedAsync(z: string): Promise<boolean> {
   try {
     const db = getD1();

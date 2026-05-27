@@ -40,6 +40,21 @@ CREATE TABLE IF NOT EXISTS template_categories (
 );
 CREATE INDEX IF NOT EXISTS idx_categories_order ON template_categories(sort_order);
 
+-- Verified POUW certificates (mining proofs). UNIQUE(z) enforces replay protection.
+CREATE TABLE IF NOT EXISTS pouw_certificates (
+  id TEXT PRIMARY KEY,
+  provider_address TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  matrix_size INTEGER NOT NULL,
+  difficulty INTEGER NOT NULL,
+  transcript_hash TEXT NOT NULL,
+  z TEXT NOT NULL UNIQUE,
+  timestamp INTEGER NOT NULL,
+  verified_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pouw_certs_provider ON pouw_certificates(provider_address, verified_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pouw_certs_verified ON pouw_certificates(verified_at DESC);
+
 -- Deployment templates
 CREATE TABLE IF NOT EXISTS templates (
   id TEXT PRIMARY KEY,
