@@ -457,7 +457,7 @@ export class TemplateService {
   private cacheTimestamp: number = 0;
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-  /** Returns template gallery from MongoDB only. Populate DB with scripts/fetch-templates-to-db. */
+  /** Returns template gallery from the persisted store (5-min cache). Seed via `npm run templates`. */
   async getTemplateGallery(): Promise<TemplateCategory[]> {
     const now = Date.now();
     if (this.cachedTemplates && (now - this.cacheTimestamp) < this.CACHE_TTL) {

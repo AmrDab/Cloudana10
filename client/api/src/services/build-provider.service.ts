@@ -26,7 +26,7 @@ const controlNodeByActionId: Record<string, Node> = {};
 /** Map device_id → action_id so owner can start/stop by device_id after registration. */
 const deviceIdToActionId: Record<string, string> = {};
 
-/** Load persisted build status and device_id → action_id from MongoDB; call before serving. */
+/** Load persisted build status and device_id → action_id from the SQLite store; call before serving. */
 export async function initBuildProviderStore(): Promise<void> {
   try {
     const stored = await loadBuildStatusStore();

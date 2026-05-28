@@ -1,5 +1,5 @@
 /**
- * Static seed templates — returned as fallback when MongoDB has no templates.
+ * Static seed templates — returned as fallback when the store has no templates.
  * Each template has a minimal Docker compose-style deploy YAML for Cloudana.
  */
 import type { TemplateCategory } from "../types/template.js";

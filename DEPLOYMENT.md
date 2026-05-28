@@ -54,12 +54,20 @@ Secret: `ORCHESTRATOR_PRIVATE_KEY` (has `ORCHESTRATOR_ROLE` — keep it low-valu
 **What you provide:** a funded Akash wallet (Keplr + ~$50 in AKT/USDC) and DNS access
 for `cloudana.io`. **What's automated:** image build, SDL, server.
 
-1. **Build & push the image** (the k8s manifest + SDL reference this tag):
+1. **Build & push the image — automated.** `.github/workflows/build-orchestrator.yml`
+   builds `client/api/Dockerfile` and pushes
+   `ghcr.io/amrdab/cloudana-orchestrator:{latest,<sha>}` to GHCR on every push to
+   `main` (or via manual **Run workflow**). No local Docker required. The SDL
+   references the `:latest` tag, so it always tracks `main`.
+   ```bash
+   # trigger/verify manually:
+   gh workflow run build-orchestrator.yml
+   gh run watch "$(gh run list --workflow=build-orchestrator.yml -L1 --json databaseId -q '.[0].databaseId')"
+   ```
+   Only if you ever need a local build (the Dockerfile copies `client/api`, `shared`, `pouw`):
    ```bash
    docker build -f client/api/Dockerfile -t ghcr.io/amrdab/cloudana-orchestrator:latest .
-   docker push ghcr.io/amrdab/cloudana-orchestrator:latest
    ```
-   (Run from the repo root — the Dockerfile copies `client/api`, `shared`, `pouw`.)
 
 2. **Deploy** with the provided SDL `client/api/deploy.akash.yaml`:
    ```bash
@@ -94,7 +102,8 @@ for f in seed-chunks/chunk-*.sql; do npx wrangler d1 execute cloudana-db --remot
 
 ## Go-live checklist
 
-- [ ] Build & push `cloudana-orchestrator` image
+- [x] Build & push `cloudana-orchestrator` image — **automated via CI**
+      (`.github/workflows/build-orchestrator.yml`; pushes `:latest` from `main`)
 - [ ] Fund Akash wallet; `provider-services` deploy via `deploy.akash.yaml`
 - [ ] Add `node-api.cloudana.io` DNS → lease URI
 - [ ] Set `VITE_NODE_API_URL`; redeploy console

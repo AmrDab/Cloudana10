@@ -305,7 +305,7 @@
   │    ├─ Re-compute transcript hash                         │
   │    ├─ Re-compute z = SHA256(σ ∥ t)                       │
   │    └─ Verify leading zeros ≥ difficulty                  │
-  │ 5. Store certificate in MongoDB                          │
+  │ 5. Store certificate in D1 (pouw_certificates)           │
   └──────────────┬───────────────────────────────────────────┘
                  │
                  ├─────────────────────────────────────────┐
@@ -502,32 +502,29 @@
 │                        PRODUCTION STACK                             │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                │
-│  │  Frontend   │  │ Orchestrator│  │  MongoDB    │                │
-│  │  (Nginx)    │  │  (Node.js)  │  │  (Data)     │                │
-│  │  :7003      │  │  :7002      │  │  :27017     │                │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘                │
-│         │                │                │                        │
-│  ┌──────┴────────────────┴────────────────┴──────┐                │
-│  │              Docker Compose / K8s              │                │
-│  │  ┌─────────────────────────────────────────┐  │                │
-│  │  │ Kubernetes (k8s/)                       │  │                │
-│  │  │ ├─ namespace.yaml                       │  │                │
-│  │  │ ├─ orchestrator.yaml (Deployment)       │  │                │
-│  │  │ ├─ frontend.yaml (2 replicas)           │  │                │
-│  │  │ ├─ mongodb.yaml (StatefulSet + PVC)     │  │                │
-│  │  │ ├─ ingress.yaml (TLS, cloudana.cloud)   │  │                │
-│  │  │ └─ monitoring/                          │  │                │
-│  │  │     ├─ prometheus-config.yaml           │  │                │
-│  │  │     └─ alerts.yml (5 alert rules)       │  │                │
-│  │  └─────────────────────────────────────────┘  │                │
-│  └───────────────────────────────────────────────┘                │
+│  ┌── Cloudflare (edge) ────────┐  ┌── Akash (orchestrator) ────┐  │
+│  │ Pages: console (cloudana.app)│  │ Node 24 orchestrator :7002 │  │
+│  │ Worker: api.cloudana.io      │  │  heavy routes (verify /    │  │
+│  │  (auth, templates, pouw,     │  │  build-provider / deploy / │  │
+│  │   hardware-scan, payments,   │  │  orchestration / *-logs /  │  │
+│  │   faucet)                    │  │  workload-status)          │  │
+│  │ D1 (cloudana-db) + KV        │  │ embedded SQLite (node:      │  │
+│  │  templates, certs, auth      │  │  sqlite) on persistent vol │  │
+│  └──────────────────────────────┘  └────────────────────────────┘  │
+│         │ VITE_API_URL                    ▲ VITE_NODE_API_URL        │
+│         └───────── console ───────────────┘                         │
 │                                                                     │
 │  ┌───────────────────────────────────────────────┐                │
 │  │ CI/CD (.github/workflows/)                     │                │
-│  │ ├─ ci.yml: lint → test → build → docker        │                │
-│  │ └─ deploy.yml: push image → kubectl apply       │                │
+│  │ └─ build-orchestrator.yml: build client/api/   │                │
+│  │     Dockerfile → push ghcr.io/amrdab/          │                │
+│  │     cloudana-orchestrator:{latest,sha}         │                │
+│  │ (Akash SDL: client/api/deploy.akash.yaml)      │                │
 │  └───────────────────────────────────────────────┘                │
+│                                                                     │
+│  Legacy self-host path (present in repo, NOT the live stack):      │
+│  docker-compose.yml + k8s/ (Nginx/Mongo/StatefulSet) — superseded  │
+│  by Cloudflare + Akash above.                                      │
 │                                                                     │
 │  ┌───────────────────────────────────────────────┐                │
 │  │ The Graph Subgraph                             │                │
