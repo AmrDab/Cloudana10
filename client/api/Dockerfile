@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# Node 24: required for the built-in node:sqlite module (orchestrator state store).
+FROM node:24-alpine
 WORKDIR /app
 
 # Install dependencies

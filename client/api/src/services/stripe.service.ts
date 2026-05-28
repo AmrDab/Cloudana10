@@ -32,6 +32,8 @@ function getStripe(): Stripe {
     _stripe = new Stripe(key, {
       apiVersion: "2026-02-25.clover",
       typescript: true,
+      // Fetch-based client works on both Cloudflare Workers and Node (no Node http dep).
+      httpClient: Stripe.createFetchHttpClient(),
     });
   }
   return _stripe;
@@ -206,7 +208,15 @@ export async function handleWebhook(
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+    // Async + SubtleCrypto so signature verification works on Cloudflare Workers
+    // (the sync constructEvent uses Node crypto and throws there). Works on Node too.
+    event = await stripe.webhooks.constructEventAsync(
+      payload,
+      signature,
+      webhookSecret,
+      undefined,
+      Stripe.createSubtleCryptoProvider(),
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     L.error(`[Stripe] Webhook signature verification failed: ${msg}`);
