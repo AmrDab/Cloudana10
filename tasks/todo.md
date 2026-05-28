@@ -29,5 +29,33 @@
 - [ ] Fix Stripe webhook (`constructEventAsync`) in payments router
 - [ ] Clean up broken `fetch-templates-to-db.ts` (Mongo, dead import)
 
+## Progressive Decentralization (direction: no central control plane; plug-and-play, any hardware)
+
+Synthesized from 3 subagents (Opus=architecture, Sonnet=roadmap, Haiku=UX). Key insight:
+decentralization is mostly **flipping 3 `onlyRole(ORCHESTRATOR_ROLE)` contract fns into
+permissionless, condition-gated ones** + inverting placement push→pull + adding libp2p.
+StakingManager + ChallengeManager already provide the fraud-proof trust layer.
+
+### Done this session
+- [x] `DECENTRALIZATION_ROADMAP.md` — public 5-phase roadmap w/ litmus test per phase
+- [x] `client/src/data/decentralization.ts` + `pages/decentralization.tsx` — transparency
+      status page (route `/control/decentralization`, footer link). Type-clean.
+
+### Build backlog (progressive)
+- [ ] **De-Mongo → SQLite** (build-status-store + drop connectMongo) — unblocks Node boot
+- [ ] **Confirm Akash deploy path** (akashjs vs k3s-provider) wired to the frontend deploy button
+- [ ] **Provider agent pull-loop**: watch WorkloadRegistry → self-select (move matchOne into agent)
+      → claim → run (reuse executeWorkload) → POUW proof → claim reward
+- [ ] **Contracts**: add permissionless `claimWorkload` + condition-gated `claimReward`;
+      trustless POUW (Groth16 or optimistic + ChallengeManager)
+- [ ] **libp2p layer**: DHT discovery + relay/DCUtR NAT traversal + gossipsub; ingress mesh
+- [ ] **`/hardware-scan` endpoint** in provider agent (real GPU detection); add arch to reqs
+- [ ] Fix `/v1/gpu-prices` (404 everywhere); Stripe webhook `constructEventAsync`
+- [ ] One-command provider installer (plug-and-play); IPFS/ENS console (Phase 3)
+
+Subagent design docs: `UX_PROPOSAL.md` (root). Architecture notes captured in this file.
+
 ## Review
-(to be filled in)
+- Templates restored (504 live). Schema + D1 migration completed.
+- Decentralization: roadmap + transparency page shipped; build backlog queued above.
+- Pending push: local `main` is many commits ahead of origin/main (unpushed).

@@ -27,6 +27,7 @@ import MiningDashboard from "@/pages/mining-dashboard";
 import DocsPage from "@/pages/docs";
 import LitepaperPage from "@/pages/litepaper";
 import FaucetPage from "@/pages/faucet";
+import DecentralizationPage from "@/pages/decentralization";
 
 function RedirectToProviderRegister() {
   const [, setLocation] = useLocation();
@@ -70,6 +71,7 @@ function AppRouter() {
         <Route path="/docs" component={DocsPage} />
         <Route path="/litepaper" component={LitepaperPage} />
         <Route path="/faucet" component={FaucetPage} />
+        <Route path="/decentralization" component={DecentralizationPage} />
         <Route path="/debug" component={DebugPanel} />
         <Route component={NotFound} />
       </Switch>

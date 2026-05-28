@@ -599,6 +599,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <Link href="/docs" className="hover:text-primary transition-colors">
                   Documentation
                 </Link>
+                <Link href="/decentralization" className="hover:text-primary transition-colors">
+                  Decentralization
+                </Link>
                 <a href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
                   Explorer
                 </a>
