@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { CheckCircle, Circle, Loader2, ArrowRight, ArrowLeft, ChevronDown, ChevronUp, AlertCircle, Play, Square, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { nodeApiBase } from "@/lib/api-base";
 
 type BuildStepStatus = "completed" | "running" | "pending" | "failed";
 
@@ -179,7 +180,7 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
   const runningLogPreRef = useRef<HTMLPreElement | null>(null);
   const onBuildCompleteFiredRef = useRef(false);
 
-  const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
+  const apiUrl = nodeApiBase();
 
   const fetchProviderNodeStatus = async () => {
     if (!actionId) return;

@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { nodeApiBase } from "@/lib/api-base";
 import { TxLink } from "@/components/ui/tx-link";
 import { AddressDisplay } from "@/components/ui/address-display";
 import { Server, Copy, Check, Loader2, Flame, Cpu, HardDrive, Network, MapPin, CheckCircle, ExternalLink } from "lucide-react";
@@ -197,7 +198,7 @@ export default function ProviderRegister() {
     const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
     const actionId = params?.get("action_id");
     if (!actionId) return;
-    const apiUrl = `${import.meta.env.VITE_API_URL || "http://localhost:7002"}/v1/build-provider-status`;
+    const apiUrl = `${nodeApiBase()}/build-provider-status`;
     fetch(`${apiUrl}/${actionId}`)
       .then((r) => r.json())
       .then((data: { device_id?: string; control_node_endpoint?: string }) => {

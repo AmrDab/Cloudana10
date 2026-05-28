@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
+import { nodeApiBase } from "@/lib/api-base";
 
-const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
+const API_BASE = nodeApiBase();
 
 interface ProviderLog {
   timestamp: number;

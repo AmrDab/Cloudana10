@@ -11,6 +11,7 @@ import { providerUrls } from "@/lib/provider-urls";
 import type { ClientProviderDetail } from "@/lib/provider-types";
 import { ProviderSummary } from "./ProviderSummary";
 import { cn } from "@/lib/utils";
+import { nodeApiBase as apiBase } from "@/lib/api-base";
 
 const NO_BUILD_MESSAGE = "No build found for this device. Register from the build flow first.";
 function isNoBuildStatus(status: string, message: string | null): boolean {
@@ -30,8 +31,6 @@ type Props = {
   refresh: () => void;
   children?: ReactNode;
 };
-
-const apiBase = () => (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
 
 export function ProviderDetailLayout({ children, page, address, provider, refresh }: Props) {
   const [, setLocation] = useLocation();

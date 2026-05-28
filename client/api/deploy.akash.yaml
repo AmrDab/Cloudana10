@@ -1,0 +1,65 @@
+# Akash SDL — deploy the Cloudana Node orchestrator on decentralized compute.
+# Bootstrap hosting for the heavy endpoints (verify / build-provider / deploy /
+# orchestration / provider-logs / workload-status) that can't run on Cloudflare Workers.
+#
+# Deploy:
+#   1. Build & push the image (see DEPLOYMENT.md): ghcr.io/amrdab/cloudana-orchestrator:latest
+#   2. provider-services tx deployment create deploy.akash.yaml --from <wallet>
+#   3. Accept a bid, then read the lease URI and point a DNS CNAME at it.
+#
+# ⚠️ SECRETS: an Akash SDL is published on-chain and is PUBLIC. Do NOT put real
+# secrets (ORCHESTRATOR_PRIVATE_KEY, JWT_SECRET, STRIPE_SECRET_KEY) here. For testnet
+# bootstrap use a low-value throwaway orchestrator key. Secrets management is resolved
+# in Phase 2 of the decentralization roadmap (the orchestrator loses its privileged role).
+
+---
+version: "2.0"
+
+services:
+  orchestrator:
+    image: ghcr.io/amrdab/cloudana-orchestrator:latest
+    env:
+      - PORT=7002
+      - CLOUDANA_DB_PATH=/data/cloudana.sqlite
+      - CHAIN_NETWORK=baseSepolia
+      - ORCHESTRATOR_RPC_TRANSPORT=websocket
+      # Non-secret config above. Inject secrets at deploy time via a private image
+      # layer or an env mechanism — NOT in this published SDL.
+    expose:
+      - port: 7002
+        as: 80
+        to:
+          - global: true
+    params:
+      storage:
+        data:
+          mount: /data        # persistent volume for the SQLite store
+          readOnly: false
+
+profiles:
+  compute:
+    orchestrator:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 1Gi
+        storage:
+          - size: 1Gi
+          - name: data
+            size: 2Gi
+            attributes:
+              persistent: true
+              class: beta3
+  placement:
+    akash:
+      pricing:
+        orchestrator:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  orchestrator:
+    akash:
+      profile: orchestrator
+      count: 1

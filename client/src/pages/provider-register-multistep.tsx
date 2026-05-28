@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CheckCircle, Circle, Loader2, AlertCircle, Trash2, Info, Play, Server, Settings, Tag, Wrench } from "lucide-react";
 import ProviderBuildCluster from "@/pages/provider-build-cluster";
 import { Checkbox } from "@/components/ui/checkbox";
+import { NODE_API_URL } from "@/lib/api-base";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
 import { useToast } from "@/hooks/use-toast";
@@ -392,8 +393,8 @@ export default function ProviderRegisterMultistep() {
   // When on step 4 (Provider Install) with action_id, if build is already completed with device_id, go to step 5 with device_id
   useEffect(() => {
     if (currentStep !== "provider-install" || !buildActionId) return;
-    const apiUrl = import.meta.env.VITE_API_URL
-      ? `${import.meta.env.VITE_API_URL}/v1/build-provider-status`
+    const apiUrl = NODE_API_URL
+      ? `${NODE_API_URL}/v1/build-provider-status`
       : "http://localhost:7002/v1/build-provider-status";
     fetch(`${apiUrl}/${buildActionId}`)
       .then((r) => r.json())
@@ -411,8 +412,8 @@ export default function ProviderRegisterMultistep() {
   const loadDeviceIdFromBuild = useCallback(() => {
     if (!buildActionId) return;
     setLoadingDeviceId(true);
-    const apiUrl = import.meta.env.VITE_API_URL
-      ? `${import.meta.env.VITE_API_URL}/v1/build-provider-status`
+    const apiUrl = NODE_API_URL
+      ? `${NODE_API_URL}/v1/build-provider-status`
       : "http://localhost:7002/v1/build-provider-status";
     fetch(`${apiUrl}/${buildActionId}`)
       .then((r) => r.json())
@@ -539,8 +540,8 @@ export default function ProviderRegisterMultistep() {
         },
       };
 
-      const apiUrl = import.meta.env.VITE_API_URL
-        ? `${import.meta.env.VITE_API_URL}/v1/build-provider`
+      const apiUrl = NODE_API_URL
+        ? `${NODE_API_URL}/v1/build-provider`
         : "http://localhost:7002/v1/build-provider";
 
       // Get auth token from environment variable or localStorage
@@ -720,8 +721,8 @@ export default function ProviderRegisterMultistep() {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), VERIFY_REQUEST_TIMEOUT_MS);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL 
-        ? `${import.meta.env.VITE_API_URL}/v1/verify/control-machine`
+      const apiUrl = NODE_API_URL 
+        ? `${NODE_API_URL}/v1/verify/control-machine`
         : "http://localhost:7002/v1/verify/control-machine";
 
       let keyfileData = null;
@@ -785,8 +786,8 @@ export default function ProviderRegisterMultistep() {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), VERIFY_REQUEST_TIMEOUT_MS);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL 
-        ? `${import.meta.env.VITE_API_URL}/v1/verify/open-ports`
+      const apiUrl = NODE_API_URL 
+        ? `${NODE_API_URL}/v1/verify/open-ports`
         : "http://localhost:7002/v1/verify/open-ports";
 
       const response = await fetch(apiUrl, {
@@ -845,8 +846,8 @@ export default function ProviderRegisterMultistep() {
     setDnsVerifyMessage("");
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL
-        ? `${import.meta.env.VITE_API_URL}/v1/verify/dns`
+      const apiUrl = NODE_API_URL
+        ? `${NODE_API_URL}/v1/verify/dns`
         : "http://localhost:7002/v1/verify/dns";
 
       const response = await fetch(apiUrl, {
