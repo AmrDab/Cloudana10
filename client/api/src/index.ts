@@ -22,7 +22,6 @@ import { hardwareScanRouter } from "./routes/v1/hardware-scan.js";
 import { startOrchestratorLoop } from "./services/orchestrator-loop.service.js";
 import { startOrchestratorEventDriven } from "./services/orchestrator-event.service.js";
 import { startWorkloadStatusPolling } from "./services/workload-status-poller.service.js";
-import { connectMongo } from "./lib/mongo.js";
 import { initBuildProviderStore } from "./services/build-provider.service.js";
 import { log } from "./lib/logger.js";
 
@@ -135,12 +134,6 @@ if (!statusPollingDisabled) {
 }
 
 async function main() {
-  try {
-    await connectMongo();
-  } catch (err) {
-    L.error("MongoDB connection failed", err);
-    process.exit(1);
-  }
   await initBuildProviderStore();
   L.success(`Server is running on port ${port}`);
   L.log(`Swagger UI: http://localhost:${port}/v1/swagger`);

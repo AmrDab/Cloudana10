@@ -1,8 +1,10 @@
 /**
- * Build status persistence using MongoDB (shared connection via lib/mongo).
+ * Build status persistence using local SQLite (node:sqlite via lib/sqlite).
+ * Two tables: build_statuses (one row per terminal build) and device_action_mappings
+ * (device_id → action_id). Previously MongoDB; moved to embedded SQLite so the
+ * orchestrator has no external DB dependency and runs anywhere (incl. Akash).
  */
-import type { Collection } from "mongodb";
-import { getDb, closeMongo } from "../lib/mongo.js";
+import { getSqlite, closeSqlite } from "../lib/sqlite.js";
 import type { BuildProviderStatusResponse } from "../schemas/build-provider.schema.js";
 
 export interface BuildStatusStoreData {
@@ -11,47 +13,50 @@ export interface BuildStatusStoreData {
   deviceIdToActionId: Record<string, string>;
 }
 
-const BUILD_STATUSES_COLLECTION = "build_statuses";
-const DEVICE_ACTION_MAPPINGS_COLLECTION = "device_action_mappings";
+let initialized = false;
 
-async function buildStatusesCollection(): Promise<Collection<BuildProviderStatusResponse & { _id: string }>> {
-  const d = await getDb();
-  return d.collection(BUILD_STATUSES_COLLECTION) as Collection<BuildProviderStatusResponse & { _id: string }>;
+function db() {
+  const d = getSqlite();
+  if (!initialized) {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS build_statuses (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_action_mappings (
+        device_id TEXT PRIMARY KEY,
+        action_id TEXT NOT NULL
+      );
+    `);
+    initialized = true;
+  }
+  return d;
 }
 
-async function deviceMappingsCollection(): Promise<Collection<{ _id: string; actionId: string }>> {
-  const d = await getDb();
-  return d.collection(DEVICE_ACTION_MAPPINGS_COLLECTION);
-}
-
-/** Load persisted build status and device_id → action_id mapping from MongoDB. */
+/** Load persisted build status and device_id → action_id mapping. */
 export async function loadBuildStatusStore(): Promise<BuildStatusStoreData> {
   try {
-    const [buildsColl, mappingsColl] = await Promise.all([
-      buildStatusesCollection(),
-      deviceMappingsCollection(),
-    ]);
-    const [buildDocs, mappingDocs] = await Promise.all([
-      buildsColl.find({}).toArray(),
-      mappingsColl.find({}).toArray(),
-    ]);
+    const d = db();
     const builds: Record<string, BuildProviderStatusResponse> = {};
-    for (const doc of buildDocs) {
-      const { _id, ...rest } = doc;
-      if (_id && rest.status) builds[_id] = { ...rest, id: _id } as BuildProviderStatusResponse;
+    for (const row of d.prepare("SELECT id, data FROM build_statuses").all() as { id: string; data: string }[]) {
+      try {
+        builds[row.id] = { ...JSON.parse(row.data), id: row.id } as BuildProviderStatusResponse;
+      } catch {
+        // skip malformed row
+      }
     }
     const deviceIdToActionId: Record<string, string> = {};
-    for (const doc of mappingDocs) {
-      if (doc._id && doc.actionId) deviceIdToActionId[doc._id] = doc.actionId;
+    for (const row of d.prepare("SELECT device_id, action_id FROM device_action_mappings").all() as { device_id: string; action_id: string }[]) {
+      deviceIdToActionId[row.device_id] = row.action_id;
     }
     return { version: 1, builds, deviceIdToActionId };
   } catch (e) {
-    console.warn("[build-status-store] MongoDB load failed, returning empty store:", e);
+    console.warn("[build-status-store] SQLite load failed, returning empty store:", e);
     return { version: 1, builds: {}, deviceIdToActionId: {} };
   }
 }
 
-/** Persist one terminal build (completed/failed) and related device_id mapping to MongoDB. */
+/** Persist one terminal build (completed/failed) and related device_id mapping. */
 export async function saveBuildToStore(
   actionId: string,
   action: BuildProviderStatusResponse,
@@ -59,49 +64,43 @@ export async function saveBuildToStore(
 ): Promise<void> {
   if (action.status !== "completed" && action.status !== "failed") return;
   try {
-    const buildsColl = await buildStatusesCollection();
-    const doc = { _id: actionId, ...action };
-    await buildsColl.replaceOne({ _id: actionId }, doc, { upsert: true });
+    const d = db();
+    d.prepare(
+      `INSERT INTO build_statuses (id, data) VALUES (?, ?)
+       ON CONFLICT(id) DO UPDATE SET data = excluded.data`
+    ).run(actionId, JSON.stringify(action));
+
     if (action.device_id) {
-      const mappingsColl = await deviceMappingsCollection();
-      await mappingsColl.updateOne(
-        { _id: action.device_id },
-        { $set: { actionId } },
-        { upsert: true }
-      );
+      saveDeviceMapping(d, action.device_id, actionId);
     }
-    // Optionally persist any extra mappings from current map (e.g. from same build)
-    const mappingsColl = await deviceMappingsCollection();
-    const toUpsert = Object.entries(currentDeviceIdToActionId).filter(([, aid]) => aid === actionId);
-    if (toUpsert.length > 0) {
-      await Promise.all(
-        toUpsert.map(([deviceId, aid]) =>
-          mappingsColl.updateOne({ _id: deviceId }, { $set: { actionId: aid } }, { upsert: true })
-        )
-      );
+    // Persist any extra mappings that point at this build.
+    for (const [deviceId, aid] of Object.entries(currentDeviceIdToActionId)) {
+      if (aid === actionId) saveDeviceMapping(d, deviceId, aid);
     }
   } catch (e) {
-    console.warn("[build-status-store] MongoDB saveBuildToStore failed:", e);
+    console.warn("[build-status-store] SQLite saveBuildToStore failed:", e);
     throw e;
   }
 }
 
-/** Persist only device_id → action_id mapping to MongoDB. */
+/** Persist only device_id → action_id mapping. */
 export async function saveDeviceMappingToStore(deviceId: string, actionId: string): Promise<void> {
   try {
-    const mappingsColl = await deviceMappingsCollection();
-    await mappingsColl.updateOne(
-      { _id: deviceId },
-      { $set: { actionId } },
-      { upsert: true }
-    );
+    saveDeviceMapping(db(), deviceId, actionId);
   } catch (e) {
-    console.warn("[build-status-store] MongoDB saveDeviceMappingToStore failed:", e);
+    console.warn("[build-status-store] SQLite saveDeviceMappingToStore failed:", e);
     throw e;
   }
 }
 
-/** Close MongoDB connection (e.g. for graceful shutdown). */
+function saveDeviceMapping(d: ReturnType<typeof getSqlite>, deviceId: string, actionId: string): void {
+  d.prepare(
+    `INSERT INTO device_action_mappings (device_id, action_id) VALUES (?, ?)
+     ON CONFLICT(device_id) DO UPDATE SET action_id = excluded.action_id`
+  ).run(deviceId, actionId);
+}
+
+/** Close the SQLite connection (e.g. for graceful shutdown). */
 export async function closeBuildStatusStore(): Promise<void> {
-  await closeMongo();
+  closeSqlite();
 }
