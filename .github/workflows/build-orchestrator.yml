@@ -20,6 +20,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Only ever publish :latest from main — workflow_dispatch can be fired from
+    # any branch, so guard the publishing job to the default branch.
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
