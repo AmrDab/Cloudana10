@@ -48,9 +48,11 @@ StakingManager + ChallengeManager already provide the fraud-proof trust layer.
 - [x] **Frontend routing**: VITE_NODE_API_URL for heavy endpoints (api-base.ts; 6 call sites)
 - [x] `/v1/gpu-prices` was a FALSE alarm (frontend uses Akash external API, not ours)
 
-### Blocked on you (go-live actions — see DEPLOYMENT.md)
-- [ ] Build + push `ghcr.io/amrdab/cloudana-orchestrator` image (no Docker on this machine)
-- [ ] Fund Akash wallet; deploy via deploy.akash.yaml; add DNS; set VITE_NODE_API_URL
+### Go-live actions
+- [x] Build + push `ghcr.io/amrdab/cloudana-orchestrator` image — AUTOMATED via
+      `.github/workflows/build-orchestrator.yml` (CI run 26571586817 green, 52s).
+      Builds+pushes on every push to main; no local Docker needed.
+- [ ] (you) Fund Akash wallet; deploy via deploy.akash.yaml; add DNS; set VITE_NODE_API_URL
 
 ### Build backlog (progressive — Phase 2+)
 - [ ] **Confirm Akash deploy path** (akashjs vs k3s-provider) wired to the frontend deploy button
