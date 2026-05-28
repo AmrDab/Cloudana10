@@ -41,16 +41,23 @@ StakingManager + ChallengeManager already provide the fraud-proof trust layer.
 - [x] `client/src/data/decentralization.ts` + `pages/decentralization.tsx` — transparency
       status page (route `/control/decentralization`, footer link). Type-clean.
 
-### Build backlog (progressive)
-- [ ] **De-Mongo → SQLite** (build-status-store + drop connectMongo) — unblocks Node boot
+### Done (2026-05-28) — backend now boots & is deploy-ready
+- [x] **De-Mongo → SQLite** (node:sqlite; server boots, /health 200 verified)
+- [x] **Stripe Workers fix** (createFetchHttpClient + constructEventAsync)
+- [x] **Deploy-ready**: Dockerfile node:24, deploy.akash.yaml SDL, DEPLOYMENT.md runbook
+- [x] **Frontend routing**: VITE_NODE_API_URL for heavy endpoints (api-base.ts; 6 call sites)
+- [x] `/v1/gpu-prices` was a FALSE alarm (frontend uses Akash external API, not ours)
+
+### Blocked on you (go-live actions — see DEPLOYMENT.md)
+- [ ] Build + push `ghcr.io/amrdab/cloudana-orchestrator` image (no Docker on this machine)
+- [ ] Fund Akash wallet; deploy via deploy.akash.yaml; add DNS; set VITE_NODE_API_URL
+
+### Build backlog (progressive — Phase 2+)
 - [ ] **Confirm Akash deploy path** (akashjs vs k3s-provider) wired to the frontend deploy button
-- [ ] **Provider agent pull-loop**: watch WorkloadRegistry → self-select (move matchOne into agent)
-      → claim → run (reuse executeWorkload) → POUW proof → claim reward
-- [ ] **Contracts**: add permissionless `claimWorkload` + condition-gated `claimReward`;
-      trustless POUW (Groth16 or optimistic + ChallengeManager)
+- [ ] **Provider agent pull-loop**: watch WorkloadRegistry → self-select → claim → run → POUW → reward
+- [ ] **Contracts**: permissionless `claimWorkload` + condition-gated `claimReward`; trustless POUW
 - [ ] **libp2p layer**: DHT discovery + relay/DCUtR NAT traversal + gossipsub; ingress mesh
 - [ ] **`/hardware-scan` endpoint** in provider agent (real GPU detection); add arch to reqs
-- [ ] Fix `/v1/gpu-prices` (404 everywhere); Stripe webhook `constructEventAsync`
 - [ ] One-command provider installer (plug-and-play); IPFS/ENS console (Phase 3)
 
 Subagent design docs: `UX_PROPOSAL.md` (root). Architecture notes captured in this file.
