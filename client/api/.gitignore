@@ -4,6 +4,12 @@ data/
 *.log
 .DS_Store
 
+# Generated D1 template seed artifacts (regenerate via scripts/seed-akash-templates-to-d1.ts)
+akash-templates-seed.sql
+akash-gallery.json
+seed-chunks/
+.wrangler/
+
 # Package manager lock files (keep the one you use)
 # package-lock.json  # Uncomment if using yarn
 # yarn.lock         # Uncomment if using npm

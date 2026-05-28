@@ -10,7 +10,7 @@
     "start": "tsx src/index.ts",
     "build": "tsc",
     "type-check": "tsc --noEmit",
-    "templates": "tsx scripts/fetch-templates-to-db.ts",
+    "templates": "tsx scripts/seed-akash-templates-to-d1.ts",
     "rpc": "tsx scripts/test-rpc-transport.ts",
     "sdl-parse": "tsx scripts/test-sdl-parse.ts",
     "build-manifest": "tsx scripts/build-manifest.ts"
