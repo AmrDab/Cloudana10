@@ -11,7 +11,8 @@ Two backends, one frontend:
 |---|---|---|---|
 | **Edge API** | Cloudflare Worker | `api.cloudana.io` | ✅ Live |
 | **Node orchestrator** | Node 24 + embedded SQLite | (to deploy — Akash) | ⏳ Not yet deployed |
-| **Console** | Cloudflare Pages | `cloudana.app` | ✅ Live |
+| **Console** | Cloudflare Pages (project `cloudana-console`) | `app.cloudana.io` | ✅ Live |
+| **Landing site** | Cloudflare Pages (direct upload, project `cloudana`) | `cloudana.io` | ✅ Live |
 
 The **edge API** (`client/api/src/worker.ts`) serves the light, Workers-safe routes:
 `auth`, `templates`, `pouw`, `hardware-scan`, `payments`, `faucet`. Data in D1 + KV.

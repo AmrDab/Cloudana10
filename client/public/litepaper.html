@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cloudana Litepaper — Useful compute, honestly decentralized</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B0E13; --ink2:#12161F; --ink3:#1A1F2B;
+    --bone:#E9E6DD; --bone-dim:#9AA0AC; --bone-faint:#5C6470;
+    --amber:#E6A23C;
+    --teal:#54D6C4;
+    --grid:#222836;
+    --display:"Space Grotesk",system-ui,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+    --body:"Inter",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ink);color:var(--bone);
+    font-family:var(--body);font-size:17px;line-height:1.7;
+    -webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--teal);color:var(--ink)}
+  .wrap{max-width:760px;margin:0 auto;padding:0 28px}
+  header{position:sticky;top:0;z-index:50;background:rgba(11,14,19,.78);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--grid)}
+  .bar{display:flex;align-items:center;justify-content:space-between;height:66px}
+  .logo{font-family:var(--mono);font-weight:700;letter-spacing:.04em;font-size:16px;
+    display:flex;align-items:center;gap:10px}
+  .logo .dot{width:9px;height:9px;background:var(--teal);
+    box-shadow:0 0 0 4px rgba(84,214,196,.16);border-radius:1px;display:inline-block}
+  .back{font-family:var(--mono);font-size:13px;color:var(--bone-dim)}
+  .back:hover{color:var(--teal)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--amber);display:inline-block;margin-bottom:14px}
+  .eyebrow.v{color:var(--teal)}
+  h1,h2{font-family:var(--display);font-weight:600;line-height:1.1;margin:0 0 14px}
+  h1{font-size:clamp(34px,5vw,52px)}
+  h2{font-size:26px;margin-top:0}
+  .lede{font-size:20px;color:var(--bone-dim);line-height:1.55}
+  .lede strong{color:var(--bone)}
+  article{padding:72px 0 40px}
+  section{border-top:1px solid var(--grid);padding:48px 0}
+  p{margin:0 0 18px}
+  .step{display:flex;gap:18px;margin:0 0 22px}
+  .step .n{font-family:var(--mono);color:var(--amber);font-weight:700;flex-shrink:0;
+    border:1px solid var(--grid);width:34px;height:34px;display:flex;
+    align-items:center;justify-content:center;border-radius:2px}
+  .step p{margin:4px 0 0}
+  .step strong{font-family:var(--display)}
+  ul{margin:0 0 18px;padding-left:22px}
+  li{margin-bottom:12px}
+  li strong{color:var(--bone)}
+  .plain{background:var(--ink2);border:1px solid var(--grid);border-left:3px solid var(--amber);
+    padding:24px 26px;border-radius:2px}
+  .plain p:last-child{margin-bottom:0}
+  .mono{font-family:var(--mono)}
+  .dim{color:var(--bone-dim)}
+  footer{border-top:1px solid var(--grid);padding:34px 0 60px}
+  .disc{font-size:13px;color:var(--bone-faint);max-width:560px}
+  .cta-row{display:flex;gap:14px;flex-wrap:wrap;margin-top:26px}
+  .btn{font-family:var(--mono);font-size:13px;font-weight:500;padding:10px 18px;
+    border:1px solid var(--bone-faint);color:var(--bone);border-radius:2px;
+    transition:.18s;display:inline-block}
+  .btn:hover{border-color:var(--teal);color:var(--teal)}
+  .btn.solid{background:var(--teal);color:var(--ink);border-color:var(--teal);font-weight:700}
+  .btn.solid:hover{background:#6fe7d6;color:var(--ink)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="logo" href="/"><span class="dot"></span>CLOUDANA</a>
+    <a class="back" href="/">&larr; back to cloudana.io</a>
+  </div>
+</header>
+
+<article class="wrap">
+  <span class="eyebrow">Litepaper</span>
+  <h1>Useful compute, honestly decentralized.</h1>
+  <p class="lede"><strong>Cloudana is a decentralized compute network where the work that secures a provider's reward <em>is</em> the user's computation.</strong></p>
+  <p class="dim">Independent providers contribute CPUs, GPUs, and storage. Users run real workloads — AI/ML, scientific computing, web hosting, batch jobs — and pay in CLD through smart contracts on Base. For matrix-heavy workloads, Cloudana's <strong style="color:var(--bone)">Proof of Useful Work</strong> makes the cryptographic proof and the useful result the same operation. No wasted puzzle energy. No "just trust the provider."</p>
+</article>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">How it works</span>
+    <div class="step"><span class="n">1</span><p><strong>Flash and go.</strong> A provider installs once. The node auto-detects its CPU, RAM, disk, and GPU, classifies its tier, and self-registers. No spec forms. No bidding marketplace.</p></div>
+    <div class="step"><span class="n">2</span><p><strong>You pick what to run.</strong> Want to run an AI workload? Select the model and scale you need. We classify it, route it to a node that fits, and handle placement. The heterogeneity is hidden behind one choice.</p></div>
+    <div class="step"><span class="n">3</span><p><strong>Proof = product.</strong> For matrix workloads, the provider proves the work by computing it. The proof's hardness comes from the full transcript of the computation — unfakeable — and the decoded result is the answer you paid for. Verification is mathematical, not re-execution.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow v">The token</span>
+    <h2>Built to last, not to cap out</h2>
+    <p class="dim">Most chains either inflate forever or halt emission entirely. A useful-work network can't halt — the work must keep happening — so CLD has <strong style="color:var(--bone)">no hard cap</strong>. Instead:</p>
+    <ul>
+      <li><strong>Disinflationary emission with a permanent tail.</strong> Starts at 8%/yr, decays 15%/yr, never below 1.5%. Providers are always paid to keep the network alive.</li>
+      <li><strong>2% of every workload payment is burned.</strong> Because users pay real value for real compute, CLD scarcity grows with usage — not speculation.</li>
+      <li><strong>A soft cap set by the market.</strong> When usage is high, burn outpaces emission and supply becomes deflationary. When low, the tail keeps the lights on. The network self-regulates instead of relying on a hardcoded number.</li>
+    </ul>
+    <p>CLD already has value because every workload is someone paying for work.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Where we are — said plainly</span>
+    <div class="plain">
+      <p>Cloudana's testnet is <strong>trust-minimized and orchestrator-coordinated</strong>, not yet "completely decentralized." Verification is re-run by a trusted coordinator today. Full trustlessness arrives when on-chain zkSNARK verification removes the coordinator from the critical path — that's our mainnet milestone, and we'll claim "decentralized verification" when it's true, not before.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow v">Differentiators</span>
+    <ul>
+      <li><strong>Proof of Useful Work</strong> for AI/ML and scientific compute — proof and product coincide.</li>
+      <li><strong>Demand-backed token</strong> — emission tied to real work, scarcity tied to real usage.</li>
+      <li><strong>Plug-and-play onboarding</strong> — hardware detection, not configuration.</li>
+      <li><strong>Multi-tier verification</strong> — PoUW where it fits, challengers where it doesn't.</li>
+    </ul>
+    <div class="cta-row">
+      <a class="btn solid" href="https://app.cloudana.io">Run a provider node</a>
+      <a class="btn" href="https://github.com/AmrDab/Cloudana10/blob/main/docs/Cloudana_Whitepaper_v2.md">Read the full whitepaper</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="logo" style="font-size:14px;margin-bottom:14px"><span class="dot"></span>CLOUDANA</div>
+    <div class="disc">CLD is a utility token for compute coordination. Nothing here is investment advice or a representation about future token value. Testnet is trust-minimized and orchestrator-coordinated.</div>
+  </div>
+</footer>
+
+</body>
+</html>
