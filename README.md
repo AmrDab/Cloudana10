@@ -4,12 +4,11 @@ A decentralized physical infrastructure network (DePIN) for compute resource sha
 
 ## 🎯 Architecture
 
-This is a **true DePIN application** with:
-- ✅ **No backend server** - Direct smart contract interaction
-- ✅ **No database** - All data on-chain or IPFS
-- ✅ **No WebSocket** - Real-time events via blockchain
+This is a **trust-minimized DePIN application**:
+- ✅ **On-chain settlement** - Provider registry, staking, slashing, and CLD rewards live in smart contracts on Base Sepolia
+- ✅ **Orchestrator-coordinated (testnet)** - An open-source orchestrator verifies PoUW certificates and coordinates workloads; mainnet replaces its attestation with zkSNARK verification (see `circuits/`)
 - ✅ **Decentralized storage** - IPFS for metadata
-- ✅ **Trustless** - Users interact directly with contracts
+- ✅ **Honest about the trust model** - see `DECENTRALIZATION_ROADMAP.md` for what is decentralized today vs. planned
 
 ## 🏗️ Tech Stack
 
@@ -167,10 +166,10 @@ similar to Akash's architecture. See [Provider Node README](./provider-node-serv
 4. Register on-chain with pubKeyHash + IPFS CID
 5. Start earning from compute jobs
 
-### Direct Contract Interaction
-- No API calls to backend
+### Contract Interaction
+- Registration, staking, and rewards settle on-chain
 - Real-time blockchain events
-- Trustless verification
+- PoUW certificates verified by the orchestrator on testnet; zkSNARK on-chain verification is the mainnet milestone
 - Transparent on-chain data
 
 ### IPFS Metadata Storage
