@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>404 — proof not found · Cloudana</title>
+<meta name="robots" content="noindex" />
+<meta name="theme-color" content="#0B0E13" />
+<link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
+<link rel="icon" href="/favicon.ico" sizes="32x32" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0B0E13;--ink2:#12161F;--ink3:#1A1F2B;--bone:#E9E6DD;--bone-dim:#9AA0AC;
+    --bone-faint:#5C6470;--amber:#E6A23C;--teal:#54D6C4;--grid:#222836}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ink);color:var(--bone);min-height:100vh;
+    display:flex;align-items:center;justify-content:center;
+    font-family:"Space Grotesk",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.045;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .panel{background:var(--ink2);border:1px solid var(--grid);border-radius:4px;
+    padding:34px 38px;max-width:480px;margin:24px}
+  .head{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;
+    font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--bone-faint);margin-bottom:24px}
+  .led{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--amber);
+    margin-right:7px;animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  h1{font-size:44px;font-weight:600;margin:0 0 6px;letter-spacing:-.02em}
+  h1 b{color:var(--amber);font-weight:600}
+  .z{font-family:"JetBrains Mono",monospace;font-size:12px;word-break:break-all;
+    color:var(--bone-faint);border-top:1px dashed var(--grid);margin-top:22px;padding-top:16px;line-height:1.8}
+  .z .lbl{display:block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px}
+  .z .val{color:var(--amber)}
+  p{color:var(--bone-dim);font-size:15.5px;line-height:1.6;margin:14px 0 26px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .btn{font-family:"JetBrains Mono",monospace;font-size:13px;padding:10px 18px;
+    border:1px solid var(--bone-faint);color:var(--bone);border-radius:2px;text-decoration:none;transition:.18s}
+  .btn:hover{border-color:var(--teal);color:var(--teal)}
+  .btn.solid{background:var(--teal);color:var(--ink);border-color:var(--teal);font-weight:700}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+  <main class="panel">
+    <div class="head"><span><span class="led"></span>verification failed</span><span>HTTP 404</span></div>
+    <h1>Proof <b>not found.</b></h1>
+    <p>This path produced no valid certificate — the page you asked for doesn't exist, or it moved. The rest of the network is operational.</p>
+    <div class="row">
+      <a class="btn solid" href="/">Back to cloudana.io</a>
+      <a class="btn" href="/litepaper">Litepaper</a>
+    </div>
+    <div class="z">
+      <span class="lbl">Transcript</span>
+      <span class="val">GET <span id="path">/…</span> → no block found · difficulty unmet</span>
+    </div>
+  </main>
+  <script>document.getElementById('path').textContent=location.pathname;</script>
+</body>
+</html>

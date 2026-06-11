@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy Policy · Cloudana</title>
+<meta name="description" content="What Cloudana collects, what it doesn't, and where data lives — said plainly." />
+<link rel="canonical" href="https://cloudana.io/privacy" />
+<meta name="theme-color" content="#0B0E13" />
+<link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
+<link rel="icon" href="/favicon.ico" sizes="32x32" />
+<link rel="apple-touch-icon" href="/favicon-180.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0B0E13;--ink2:#12161F;--ink3:#1A1F2B;--bone:#E9E6DD;--bone-dim:#9AA0AC;
+    --bone-faint:#5C6470;--amber:#E6A23C;--teal:#54D6C4;--grid:#222836;
+    --display:"Space Grotesk",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
+    --body:"Inter",system-ui,sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ink);color:var(--bone);font-family:var(--body);
+    font-size:16.5px;line-height:1.7;-webkit-font-smoothing:antialiased}
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.045;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--teal);color:var(--ink)}
+  .wrap{max-width:720px;margin:0 auto;padding:0 28px}
+  header{position:sticky;top:0;z-index:50;background:rgba(11,14,19,.78);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--grid)}
+  .bar{display:flex;align-items:center;justify-content:space-between;height:66px}
+  .logo{font-family:var(--mono);font-weight:700;letter-spacing:.04em;font-size:16px;
+    display:flex;align-items:center;gap:10px}
+  .logo .dot{width:9px;height:9px;background:var(--teal);border-radius:1px;
+    box-shadow:0 0 0 4px rgba(84,214,196,.16);display:inline-block}
+  .back{font-family:var(--mono);font-size:13px;color:var(--bone-dim)}
+  .back:hover{color:var(--teal)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--teal);display:block;margin-bottom:14px}
+  h1{font-family:var(--display);font-weight:600;font-size:clamp(32px,4.5vw,46px);
+    letter-spacing:-.018em;line-height:1.08;margin:0 0 10px}
+  h2{font-family:var(--display);font-weight:600;font-size:21px;margin:44px 0 12px}
+  article{padding:64px 0 80px}
+  .stamp{font-family:var(--mono);font-size:12px;color:var(--bone-faint);margin-bottom:36px}
+  p{color:var(--bone-dim);margin:0 0 16px}
+  p b,li b{color:var(--bone);font-weight:600}
+  ul{color:var(--bone-dim);padding-left:22px;margin:0 0 16px}
+  li{margin-bottom:10px}
+  .note{background:var(--ink2);border:1px solid var(--grid);border-left:3px solid var(--amber);
+    border-radius:3px;padding:18px 22px;font-size:15px;margin:36px 0 0}
+  .note p{margin:0}
+  a.link{color:var(--bone-dim);border-bottom:1px dotted var(--bone-faint)}
+  a.link:hover{color:var(--teal)}
+  footer{border-top:1px solid var(--grid);padding:30px 0 50px;font-family:var(--mono);font-size:12px;color:var(--bone-faint)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="logo" href="/"><span class="dot"></span>CLOUDANA</a>
+    <a class="back" href="/">&larr; cloudana.io</a>
+  </div>
+</header>
+
+<article class="wrap">
+  <span class="eyebrow">Privacy Policy</span>
+  <h1>What we collect, said plainly.</h1>
+  <div class="stamp">Effective 11 June 2026 · applies to cloudana.io, app.cloudana.io and api.cloudana.io</div>
+
+  <h2>This site (cloudana.io)</h2>
+  <p>The landing site is static. It sets <b>no cookies</b>, runs <b>no analytics or tracking scripts</b>, and stores nothing about you. Fonts load from Google Fonts, and the page makes one request to our own API (<span style="font-family:var(--mono);font-size:14px">api.cloudana.io/health</span>) to show live status — neither request includes anything about you beyond what any HTTP request carries.</p>
+
+  <h2>The console and API</h2>
+  <p>If you create an account or register a provider node, we process what the protocol needs to function:</p>
+  <ul>
+    <li><b>Account data</b> — the email or wallet address you sign in with.</li>
+    <li><b>Provider data</b> — hardware specifications (CPU, GPU, RAM, disk) and a device fingerprint, used for tier classification and anti-Sybil protection. Registrations are recorded on the Base blockchain, which is <b>public and permanent</b>.</li>
+    <li><b>Payment data</b> — handled by Stripe; we never see or store card numbers.</li>
+    <li><b>Operational logs</b> — our infrastructure runs on Cloudflare, which processes IP addresses and request metadata to serve and protect the service.</li>
+  </ul>
+
+  <h2>What we don't do</h2>
+  <ul>
+    <li>We don't sell or rent your data. To anyone.</li>
+    <li>We don't run advertising or cross-site tracking.</li>
+    <li>We don't collect more than the protocol needs to work.</li>
+  </ul>
+
+  <h2>The blockchain caveat</h2>
+  <p>Anything written on-chain — wallet addresses, provider registrations, certificate hashes, rewards — is public by design and cannot be deleted by us or anyone. Don't put anything in an on-chain transaction you wouldn't want to be permanent.</p>
+
+  <h2>Your choices &amp; contact</h2>
+  <p>To access or delete the off-chain data tied to your account, or to ask anything about this policy, <a class="link" href="https://github.com/AmrDab/Cloudana10/issues" rel="noopener">open an issue on GitHub</a> — the project is built in the open and that's the fastest route to us.</p>
+
+  <div class="note"><p><b>Honesty note:</b> this is a plain-language policy for a testnet-stage project, written to be true rather than exhaustive. Before mainnet it will be reviewed by counsel and versioned here.</p></div>
+</article>
+
+<footer>
+  <div class="wrap">CLOUDANA · <a class="link" href="/terms">Terms</a> · <a class="link" href="/litepaper">Litepaper</a></div>
+</footer>
+
+</body>
+</html>

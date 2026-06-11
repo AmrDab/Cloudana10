@@ -4,6 +4,23 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Cloudana — Useful compute, honestly decentralized</title>
+<meta name="description" content="Cloudana is a decentralized compute network where the proof that secures a provider's reward is the computation a user paid for. Proof of Useful Work on Base." />
+<link rel="canonical" href="https://cloudana.io/" />
+<meta name="theme-color" content="#0B0E13" />
+<link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
+<link rel="icon" href="/favicon.ico" sizes="32x32" />
+<link rel="apple-touch-icon" href="/favicon-180.png" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://cloudana.io/" />
+<meta property="og:title" content="Cloudana — The proof and the product are the same operation" />
+<meta property="og:description" content="A decentralized compute network where the work that secures a provider's reward is the computation a user paid for. Proof of Useful Work on Base." />
+<meta property="og:image" content="https://cloudana.io/og.png" />
+<meta property="og:image:width" content="2400" />
+<meta property="og:image:height" content="1260" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Cloudana — The proof and the product are the same operation" />
+<meta name="twitter:description" content="Decentralized compute where proof and product coincide. Proof of Useful Work on Base." />
+<meta name="twitter:image" content="https://cloudana.io/og.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -25,6 +42,9 @@
     font-family:var(--body);font-size:16px;line-height:1.6;
     -webkit-font-smoothing:antialiased;overflow-x:hidden;
   }
+  /* film grain — kills the flat look */
+  body::after{content:"";position:fixed;inset:0;z-index:2000;pointer-events:none;opacity:.045;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
   a{color:inherit;text-decoration:none}
   ::selection{background:var(--teal);color:var(--ink)}
 
@@ -57,7 +77,7 @@
 
   /* ---- hero ---- */
   .hero{display:grid;grid-template-columns:1.05fr 1fr;gap:54px;align-items:center;
-    padding:84px 0 96px;border-top:none}
+    padding:84px 0 72px;border-top:none}
   .hero h1{font-size:clamp(38px,5.4vw,68px);letter-spacing:-.02em}
   .hero h1 .em{color:var(--teal)}
   .hero p.lede{font-size:19px;color:var(--bone-dim);max-width:30em;margin:26px 0 34px}
@@ -66,7 +86,7 @@
     margin-top:40px;display:flex;gap:22px;flex-wrap:wrap}
   .specline b{color:var(--amber);font-weight:500}
   .specline b.v{color:var(--teal)}
-  @media(max-width:920px){.hero{grid-template-columns:1fr;gap:36px;padding:54px 0 64px}}
+  @media(max-width:920px){.hero{grid-template-columns:1fr;gap:36px;padding:54px 0 48px}}
 
   /* ---- the instrument (signature element) ---- */
   .instrument{background:var(--ink2);border:1px solid var(--grid);border-radius:4px;
@@ -100,6 +120,23 @@
     transition:width .25s}
   @media(max-width:420px){.cell{width:26px;height:26px}}
 
+  /* ---- network readout strip ---- */
+  .readout{border-top:1px solid var(--grid);border-bottom:1px solid var(--grid);background:var(--ink2)}
+  .readout .row{display:flex;flex-wrap:wrap;font-family:var(--mono);font-size:12px}
+  .readout .cellr{flex:1 1 auto;min-width:180px;padding:16px 22px;border-right:1px solid var(--grid);
+    display:flex;flex-direction:column;gap:5px}
+  .readout .cellr:last-child{border-right:0}
+  .readout .k{color:var(--bone-faint);font-size:10px;letter-spacing:.18em;text-transform:uppercase}
+  .readout .v{color:var(--bone-dim);display:flex;align-items:center}
+  .readout .v.ok{color:var(--teal)}
+  .readout .v.warm{color:var(--amber)}
+  .readout a.v:hover{color:var(--bone)}
+  @media(max-width:680px){.readout .cellr{min-width:50%}}
+
+  /* ---- ascii texture divider ---- */
+  .divider{font-family:var(--mono);font-size:11px;line-height:1;color:var(--grid);
+    white-space:nowrap;overflow:hidden;padding:10px 0;user-select:none;border-top:1px solid var(--grid)}
+
   /* ---- generic content blocks ---- */
   .block{padding:88px 0}
   .block h2{font-size:clamp(26px,3.6vw,42px);letter-spacing:-.015em;max-width:16em}
@@ -117,7 +154,7 @@
   .equation hr{border:0;border-top:1px dashed var(--grid);margin:18px 0}
   @media(max-width:820px){.thesis-grid{grid-template-columns:1fr;gap:28px}}
 
-  /* process — numbered because order genuinely matters here */
+  /* process steps */
   .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--grid);
     border:1px solid var(--grid);border-radius:4px;overflow:hidden;margin-top:48px}
   .step{background:var(--ink2);padding:26px 22px;min-height:200px;position:relative;transition:.2s}
@@ -129,11 +166,33 @@
   @media(max-width:820px){.steps{grid-template-columns:1fr 1fr}}
   @media(max-width:480px){.steps{grid-template-columns:1fr}}
 
+  /* specimen certificate — the artifact of useful work, annotated */
+  .specimen{margin-top:26px;background:var(--ink2);border:1px solid var(--grid);border-radius:4px;overflow:hidden}
+  .specimen .shead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;
+    padding:14px 24px;border-bottom:1px solid var(--grid);
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--bone-faint)}
+  .specimen .shead .vstat{color:var(--teal)}
+  .sgrid{display:grid;grid-template-columns:repeat(4,1fr);font-family:var(--mono);font-size:12.5px}
+  .sfield{padding:16px 24px;border-right:1px solid var(--grid);border-bottom:1px solid var(--grid)}
+  .sfield:nth-child(4n){border-right:0}
+  .sfield .fk{color:var(--bone-faint);font-size:10px;letter-spacing:.16em;text-transform:uppercase;display:block;margin-bottom:5px}
+  .sfield .fv{color:var(--bone-dim);word-break:break-all}
+  .sfield .fv.w{color:var(--amber)}
+  .sfield .fv.v{color:var(--teal)}
+  .sfield.wide{grid-column:span 2}
+  .specimen .sfoot{padding:11px 24px;font-family:var(--mono);font-size:11px;color:var(--bone-faint)}
+  .specimen .sfoot a{color:var(--bone-dim);border-bottom:1px dotted var(--bone-faint)}
+  .specimen .sfoot a:hover{color:var(--teal)}
+  @media(max-width:820px){.sgrid{grid-template-columns:1fr 1fr}.sfield:nth-child(4n){border-right:1px solid var(--grid)}.sfield:nth-child(2n){border-right:0}.sfield.wide{grid-column:span 2}}
+
   /* tokenomics chart */
   .token-grid{display:grid;grid-template-columns:1fr 1.1fr;gap:48px;margin-top:48px;align-items:center}
   .chart{background:var(--ink2);border:1px solid var(--grid);border-radius:4px;padding:24px}
-  .chart .legend{display:flex;gap:20px;font-family:var(--mono);font-size:12px;margin-bottom:8px;color:var(--bone-dim)}
+  .chart .legend{display:flex;gap:20px;font-family:var(--mono);font-size:12px;margin-bottom:8px;color:var(--bone-dim);flex-wrap:wrap}
   .chart .legend i{width:10px;height:10px;display:inline-block;margin-right:6px;border-radius:1px;vertical-align:middle}
+  .chart .stamp{font-family:var(--mono);font-size:10px;color:var(--bone-faint);margin-top:10px;letter-spacing:.06em}
+  .trace{stroke-dasharray:1200;stroke-dashoffset:1200;transition:stroke-dashoffset 2.4s ease .2s}
+  .in .trace{stroke-dashoffset:0}
   .token-points{list-style:none;padding:0;margin:0}
   .token-points li{padding:18px 0;border-bottom:1px solid var(--grid);display:flex;gap:16px}
   .token-points li:last-child{border-bottom:0}
@@ -141,7 +200,7 @@
   .token-points .vt{color:var(--bone-dim);font-size:15px}
   @media(max-width:820px){.token-grid{grid-template-columns:1fr;gap:28px}}
 
-  /* honest status — brand signature: telling the truth */
+  /* honest status + mainnet gates */
   .honest{background:var(--ink2)}
   .honest .frame{border:1px solid var(--grid);border-left:3px solid var(--amber);
     border-radius:3px;padding:30px 32px;margin-top:36px;display:grid;grid-template-columns:auto 1fr;gap:28px;align-items:start}
@@ -150,16 +209,43 @@
   .honest .state .next{color:var(--teal);margin-top:10px}
   .honest .state .bar{width:1px;height:18px;background:var(--grid);margin:6px auto}
   @media(max-width:640px){.honest .frame{grid-template-columns:1fr}}
+  .gates{margin-top:26px;border:1px solid var(--grid);border-radius:3px;overflow:hidden}
+  .gates .ghead{padding:12px 24px;border-bottom:1px solid var(--grid);font-family:var(--mono);
+    font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--bone-faint)}
+  .gate{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--grid);
+    font-family:var(--mono);font-size:13px;color:var(--bone-dim);background:var(--ink)}
+  .gate:last-child{border-bottom:0}
+  .gate .box{width:13px;height:13px;border:1.5px solid var(--amber);border-radius:2px;flex-shrink:0;opacity:.8}
+  .gate .tag{margin-left:auto;font-size:10px;letter-spacing:.14em;color:var(--amber);text-transform:uppercase}
+
+  /* FAQ */
+  .faq{max-width:760px;margin-top:42px}
+  .faq details{border:1px solid var(--grid);border-radius:3px;margin-bottom:10px;background:var(--ink2)}
+  .faq summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:14px;
+    padding:18px 22px;font-family:var(--display);font-weight:500;font-size:16.5px}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary .qn{font-family:var(--mono);font-size:12px;color:var(--amber);flex-shrink:0}
+  .faq details[open] summary .qn{color:var(--teal)}
+  .faq details p{margin:0;padding:0 22px 20px 56px;color:var(--bone-dim);font-size:15px}
+  .faq summary:hover{color:var(--teal)}
 
   /* cta */
   .cta-block{padding:96px 0;text-align:center}
   .cta-block h2{margin:0 auto;font-size:clamp(28px,4vw,48px)}
   .cta-block p{color:var(--bone-dim);margin:18px auto 32px;max-width:32em}
 
-  footer{border-top:1px solid var(--grid);padding:38px 0;font-family:var(--mono);
+  /* footer */
+  footer{border-top:1px solid var(--grid);padding:46px 0 38px;font-family:var(--mono);
     font-size:12px;color:var(--bone-faint)}
-  .foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px}
-  .foot .disc{max-width:34em;line-height:1.7}
+  .fgrid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:34px}
+  .fcol .fh{color:var(--bone-dim);font-size:10px;letter-spacing:.2em;text-transform:uppercase;margin-bottom:14px}
+  .fcol a{display:block;padding:4px 0;color:var(--bone-faint)}
+  .fcol a:hover{color:var(--teal)}
+  .fmeta{margin-top:34px;padding-top:22px;border-top:1px solid var(--grid);
+    display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;line-height:1.7}
+  .fmeta .oss b{color:var(--bone-dim);font-weight:500}
+  .disc{max-width:46em}
+  @media(max-width:820px){.fgrid{grid-template-columns:1fr 1fr}}
 
   /* reveal */
   .reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
@@ -169,8 +255,19 @@
   @media(prefers-reduced-motion:reduce){
     *{animation:none!important;transition:none!important}
     .reveal{opacity:1;transform:none}
+    .trace{stroke-dasharray:none;stroke-dashoffset:0}
   }
 </style>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"What is Proof of Useful Work?","acceptedAnswer":{"@type":"Answer","text":"A consensus mechanism where the computation that proves a provider did work is the same computation a user paid for. Cloudana's cuPOW protocol derives proof hardness from the full transcript of a matrix multiplication, so the proof is only valid if the provider genuinely computed the user's result."}},
+{"@type":"Question","name":"How is the work verified?","acceptedAnswer":{"@type":"Answer","text":"On testnet, an open-source orchestrator re-verifies each certificate. On mainnet, a Groth16 zkSNARK will verify proofs on-chain in O(1), removing the orchestrator from the critical path."}},
+{"@type":"Question","name":"What gives CLD value?","acceptedAnswer":{"@type":"Answer","text":"Every CLD reward is backed by a paid workload — users pay real value for real compute, and 2% of every payment is burned. Emission is tied to work performed, scarcity to usage, not to a liquidity pool or speculation."}},
+{"@type":"Question","name":"Is Cloudana fully decentralized?","acceptedAnswer":{"@type":"Answer","text":"Not yet, and we say so. Testnet is trust-minimized and orchestrator-coordinated. Full decentralization arrives when zkSNARK verification is live on-chain — that is the mainnet milestone, and we won't claim it before it's true."}},
+{"@type":"Question","name":"How do I provide compute?","acceptedAnswer":{"@type":"Answer","text":"Install the node once. It auto-detects your CPU, GPU, RAM and disk, classifies its tier, and self-registers on-chain. No spec forms, no bidding marketplace."}},
+{"@type":"Question","name":"Is there a hard cap on CLD?","acceptedAnswer":{"@type":"Answer","text":"No — by design. A useful-work network must always pay its providers, so emission decays to a permanent 1.5% tail instead of halting. The 2% burn on payments means high usage makes supply deflationary: a soft cap set by the market, not a hardcoded number."}}
+]}
+</script>
 </head>
 <body>
 
@@ -182,8 +279,9 @@
       <a href="#how">How it works</a>
       <a href="#token">Token</a>
       <a href="#status">Status</a>
+      <a href="#faq">FAQ</a>
     </nav>
-    <a class="btn" href="#cta">Run a node</a>
+    <a class="btn" href="https://app.cloudana.io">Launch console</a>
   </div>
 </header>
 
@@ -195,8 +293,8 @@
       <h1>The proof and the product are <span class="em">the same operation.</span></h1>
       <p class="lede">Cloudana is a decentralized compute network where the work that secures a provider's reward <em>is</em> the computation a user paid for. No wasted puzzle. No "just trust the provider." The matrix multiply does both jobs at once.</p>
       <div class="cta-row">
-        <a class="btn solid" href="#cta">Deploy a workload</a>
-        <a class="btn" href="#how">See how it works</a>
+        <a class="btn solid" href="https://app.cloudana.io">Deploy a workload</a>
+        <a class="btn" href="#cta">Provide compute</a>
       </div>
       <div class="specline">
         <span><b>amber</b> = work in progress</span>
@@ -227,6 +325,34 @@
   </div>
 </div>
 
+<!-- NETWORK READOUT — real signals only -->
+<div class="readout" role="status" aria-label="Network readout">
+  <div class="wrap row">
+    <div class="cellr">
+      <span class="k">Edge API · live check</span>
+      <span class="v" id="api-status"><span class="led" id="api-led" style="background:var(--bone-faint);animation:none"></span>checking…</span>
+    </div>
+    <div class="cellr">
+      <span class="k">Settlement chain</span>
+      <span class="v">Base Sepolia · testnet</span>
+    </div>
+    <div class="cellr">
+      <span class="k">Verification model</span>
+      <span class="v warm">orchestrator-attested</span>
+    </div>
+    <div class="cellr">
+      <span class="k">zk verifier</span>
+      <span class="v">Groth16 · in development</span>
+    </div>
+    <div class="cellr">
+      <a class="v" href="https://github.com/AmrDab/Cloudana10" rel="noopener">
+        <span class="k" style="display:block;margin-bottom:5px">Source</span>
+        open source · MIT &nearr;
+      </a>
+    </div>
+  </div>
+</div>
+
 <!-- THESIS -->
 <section id="thesis">
   <div class="wrap block reveal">
@@ -245,7 +371,7 @@
   </div>
 </section>
 
-<!-- HOW IT WORKS — numbered, because this is a real sequence -->
+<!-- HOW IT WORKS -->
 <section id="how">
   <div class="wrap block reveal">
     <span class="eyebrow">The cuPOW protocol</span>
@@ -272,6 +398,25 @@
         <p>Recover C = A·B cheaply. C is returned to the user as the answer. Reward is paid only for work backed by a real workload.</p>
       </div>
     </div>
+
+    <!-- SPECIMEN: the artifact itself, annotated like a calibration certificate -->
+    <div class="specimen reveal" aria-label="Anatomy of a cuPOW certificate">
+      <div class="shead">
+        <span>cuPOW certificate · testnet specimen</span>
+        <span class="vstat"><span class="led v"></span>VERIFIED</span>
+      </div>
+      <div class="sgrid">
+        <div class="sfield"><span class="fk">Matrix n</span><span class="fv">512 × 512</span></div>
+        <div class="sfield"><span class="fk">Block r</span><span class="fv">8 × 8</span></div>
+        <div class="sfield"><span class="fk">Transcript blocks</span><span class="fv w">4,096 hashed</span></div>
+        <div class="sfield"><span class="fk">Wall time</span><span class="fv">1.84 s</span></div>
+        <div class="sfield wide"><span class="fk">Seed σ · latest Base block hash</span><span class="fv w">0x8f3a…c41e · unpredictable, 5-min validity</span></div>
+        <div class="sfield wide"><span class="fk">Proof z · difficulty 16 bits</span><span class="fv v">0000b9f31e4a7d20c685f9e0b3a1d47c28e5f60a</span></div>
+        <div class="sfield wide"><span class="fk">Backed by workload</span><span class="fv v">true — reward gated on a real, paid job</span></div>
+        <div class="sfield wide"><span class="fk">Replay protection</span><span class="fv">z recorded in usedZ — a certificate spends once</span></div>
+      </div>
+      <div class="sfoot">field layout from <a href="https://github.com/AmrDab/Cloudana10/tree/main/pouw" rel="noopener">pouw/src/cupow.ts</a> — values shown are an illustrative specimen, not live network data</div>
+    </div>
   </div>
 </section>
 
@@ -283,23 +428,29 @@
     <div class="token-grid">
       <div class="chart">
         <div class="legend">
-          <span><i style="background:var(--amber)"></i>Emission</span>
-          <span><i style="background:var(--teal)"></i>Burn (2% of payments)</span>
+          <span><i style="background:var(--amber)"></i>Emission (M CLD/yr)</span>
+          <span><i style="background:var(--teal)"></i>Burn · 2% of payments</span>
+          <span><i style="background:var(--bone-faint)"></i>Supply</span>
         </div>
-        <svg viewBox="0 0 420 230" width="100%" role="img" aria-label="Emission decays while usage-driven burn rises and overtakes it around year five, turning supply deflationary.">
-          <line x1="40" y1="10" x2="40" y2="195" stroke="var(--grid)"/>
-          <line x1="40" y1="195" x2="410" y2="195" stroke="var(--grid)"/>
-          <!-- emission curve (decaying) -->
-          <path d="M40,40 C120,55 200,95 300,120 C350,132 380,140 410,146" fill="none" stroke="var(--amber)" stroke-width="2"/>
-          <!-- burn curve (rising) -->
-          <path d="M40,192 C140,188 220,165 300,120 C350,92 385,70 410,58" fill="none" stroke="var(--teal)" stroke-width="2"/>
-          <!-- crossover marker -->
-          <circle cx="300" cy="120" r="4.5" fill="none" stroke="var(--bone)" stroke-width="1.5"/>
-          <text x="300" y="108" fill="var(--bone-dim)" font-family="var(--mono)" font-size="9" text-anchor="middle">deflation</text>
-          <text x="40" y="210" fill="var(--bone-faint)" font-family="var(--mono)" font-size="9">Y1</text>
-          <text x="300" y="210" fill="var(--bone-faint)" font-family="var(--mono)" font-size="9" text-anchor="middle">Y5</text>
-          <text x="406" y="210" fill="var(--bone-faint)" font-family="var(--mono)" font-size="9" text-anchor="end">Y8</text>
+        <svg viewBox="0 0 440 236" width="100%" role="img" aria-label="Emission decays toward a 1.5 percent tail while usage-driven burn rises to meet it; supply flattens at a usage-set soft cap.">
+          <line x1="46" y1="12" x2="46" y2="198" stroke="var(--grid)"/>
+          <line x1="46" y1="198" x2="420" y2="198" stroke="var(--grid)"/>
+          <!-- supply (secondary, dashed bone) — computed from the emission model -->
+          <polyline class="trace" points="46,174.5 69,152.8 92,133.4 115,116.7 138,102.8 161,91.6 184,82.7 207,75.9 230,70.8 253,67.1 276,64.7 299,63.3 322,63 345,63.5 368,64.7 391,66.1 414,67.4" fill="none" stroke="var(--bone-faint)" stroke-width="1.3" stroke-dasharray="3 4"/>
+          <!-- emission curve: 8%/yr decaying 15%/yr to 1.5% tail -->
+          <polyline class="trace" points="46,39.8 69,50 92,60.7 115,71.6 138,82.4 161,93 184,103.2 207,112.9 230,121.8 253,130 276,137.4 299,144.2 322,150.3 345,155.8 368,159.5 391,159.6 414,159.7" fill="none" stroke="var(--amber)" stroke-width="2"/>
+          <!-- burn curve: 2% of workload volume on an adoption S-curve -->
+          <polyline class="trace" points="46,193.5 69,189.9 92,184.3 115,176.9 138,169 161,162.2 184,157.3 207,154.2 230,152.5 253,151.6 276,151.1 299,150.8 322,150.7 345,150.6 368,150.6 391,150.6 414,150.6" fill="none" stroke="var(--teal)" stroke-width="2"/>
+          <!-- crossover: burn overtakes emission -->
+          <circle cx="330" cy="151" r="4.5" fill="none" stroke="var(--bone)" stroke-width="1.5"/>
+          <text x="330" y="139" fill="var(--bone-dim)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">burn &gt; emission</text>
+          <!-- soft cap annotation where supply flattens -->
+          <text x="414" y="54" fill="var(--bone-faint)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="end">soft cap — set by usage</text>
+          <text x="46" y="214" fill="var(--bone-faint)" font-family="JetBrains Mono,monospace" font-size="9">y0</text>
+          <text x="230" y="214" fill="var(--bone-faint)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="middle">y6</text>
+          <text x="414" y="214" fill="var(--bone-faint)" font-family="JetBrains Mono,monospace" font-size="9" text-anchor="end">y12</text>
         </svg>
+        <div class="stamp">traced from the emission model — 8% → 15%/yr decay → 1.5% tail · burn 2% of volume on an illustrative adoption curve · crossover timing depends on real usage</div>
       </div>
       <ul class="token-points">
         <li><span class="k">Emission</span><span class="vt">Starts at 8%/yr, decays 15%/yr, never below a permanent <b style="color:var(--bone)">1.5% tail</b> — so providers are always paid to keep the network alive.</span></li>
@@ -310,8 +461,10 @@
   </div>
 </section>
 
+<div class="divider" aria-hidden="true">░░░░▒▒▒▒▓▓▓▓▒▒▒▒░░░░░░░░▒▒▒▒▓▓▓▓▒▒▒▒░░░░░░░░▒▒▒▒▓▓▓▓▒▒▒▒░░░░░░░░▒▒▒▒▓▓▓▓▒▒▒▒░░░░░░░░▒▒▒▒▓▓▓▓▒▒▒▒░░░░░░░░▒▒▒▒▓▓▓▓▒▒▒▒░░░░░░░░▒▒▒▒▓▓▓▓▒▒▒▒░░░░</div>
+
 <!-- HONEST STATUS -->
-<section id="status" class="honest">
+<section id="status" class="honest" style="border-top:0">
   <div class="wrap block reveal">
     <span class="eyebrow">Where we actually are</span>
     <h2>Trust-minimized today. Trustless when the math is on-chain.</h2>
@@ -322,6 +475,47 @@
         <div class="next"><span class="led v"></span>MAINNET</div>
       </div>
       <p class="sub" style="margin-top:0">Today, a trusted orchestrator verifies each certificate by re-running it — a normal way to launch, but not "completely decentralized," and we won't call it that. Full trustlessness arrives when a zkSNARK verifies proofs on-chain and the orchestrator leaves the critical path. We'll claim decentralized verification when it's true, not before. In crypto, saying exactly where you stand is the rarest feature — so it's ours.</p>
+    </div>
+    <div class="gates reveal" aria-label="Mainnet launch gates">
+      <div class="ghead">Mainnet ships when all four gates clear — not earlier</div>
+      <div class="gate"><span class="box"></span>Third-party audit of the emission &amp; burn contracts<span class="tag">open</span></div>
+      <div class="gate"><span class="box"></span>Legal review of CLD's classification<span class="tag">open</span></div>
+      <div class="gate"><span class="box"></span>zkSNARK transcript verification live on-chain<span class="tag">open</span></div>
+      <div class="gate"><span class="box"></span>End-to-end proof: real workload &rarr; certificate &rarr; mint &rarr; result delivered<span class="tag">open</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq">
+  <div class="wrap block reveal">
+    <span class="eyebrow v">Questions, answered straight</span>
+    <h2>FAQ</h2>
+    <div class="faq">
+      <details>
+        <summary><span class="qn">Q01</span>What is Proof of Useful Work?</summary>
+        <p>A consensus mechanism where the computation that proves a provider did work is the same computation a user paid for. cuPOW derives proof hardness from the full transcript of a matrix multiplication — so the proof is only valid if the provider genuinely computed the user's result.</p>
+      </details>
+      <details>
+        <summary><span class="qn">Q02</span>How is the work verified?</summary>
+        <p>On testnet, an open-source orchestrator re-verifies each certificate. On mainnet, a Groth16 zkSNARK verifies proofs on-chain in O(1), removing the orchestrator from the critical path.</p>
+      </details>
+      <details>
+        <summary><span class="qn">Q03</span>What gives CLD value?</summary>
+        <p>Every CLD reward is backed by a paid workload — users pay real value for real compute, and 2% of every payment is burned. Emission is tied to work performed and scarcity to usage, not to a liquidity pool or speculation.</p>
+      </details>
+      <details>
+        <summary><span class="qn">Q04</span>Is Cloudana fully decentralized?</summary>
+        <p>Not yet, and we say so. Testnet is trust-minimized and orchestrator-coordinated. Full decentralization arrives when zkSNARK verification is live on-chain — that's the mainnet milestone, and we won't claim it before it's true.</p>
+      </details>
+      <details>
+        <summary><span class="qn">Q05</span>How do I provide compute?</summary>
+        <p>Install the node once. It auto-detects your CPU, GPU, RAM and disk, classifies its tier, and self-registers on-chain. No spec forms, no bidding marketplace.</p>
+      </details>
+      <details>
+        <summary><span class="qn">Q06</span>Is there a hard cap on CLD?</summary>
+        <p>No — by design. A useful-work network must always pay its providers, so emission decays to a permanent 1.5% tail instead of halting. The 2% burn on payments means high usage turns supply deflationary: a soft cap set by the market, not a hardcoded number.</p>
+      </details>
     </div>
   </div>
 </section>
@@ -339,9 +533,37 @@
 </section>
 
 <footer>
-  <div class="wrap foot">
-    <div class="logo" style="font-size:14px"><span class="dot"></span>CLOUDANA</div>
-    <div class="disc">CLD is a utility token for compute coordination. Nothing here is investment advice or a representation about future token value. Testnet is trust-minimized and orchestrator-coordinated.</div>
+  <div class="wrap">
+    <div class="fgrid">
+      <div class="fcol">
+        <div class="logo" style="font-size:14px;margin-bottom:14px"><span class="dot"></span>CLOUDANA</div>
+        <div class="disc">Useful compute, honestly decentralized. The proof that secures a provider's reward is the computation a user paid for.</div>
+      </div>
+      <div class="fcol">
+        <div class="fh">Protocol</div>
+        <a href="https://app.cloudana.io">Console</a>
+        <a href="/litepaper">Litepaper</a>
+        <a href="https://github.com/AmrDab/Cloudana10/blob/main/docs/Cloudana_Whitepaper_v2.md" rel="noopener">Whitepaper v2</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <div class="fcol">
+        <div class="fh">Source</div>
+        <a href="https://github.com/AmrDab/Cloudana10" rel="noopener">GitHub</a>
+        <a href="https://github.com/AmrDab/Cloudana10/tree/main/pouw" rel="noopener">PoUW module</a>
+        <a href="https://github.com/AmrDab/Cloudana10/tree/main/contract/contracts" rel="noopener">Contracts</a>
+        <a href="https://github.com/AmrDab/Cloudana10/tree/main/circuits" rel="noopener">zk circuits</a>
+      </div>
+      <div class="fcol">
+        <div class="fh">Site</div>
+        <a href="https://api.cloudana.io/health" rel="noopener">API status</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+      </div>
+    </div>
+    <div class="fmeta">
+      <span class="oss">Open source · <b>MIT License</b> · built in the open</span>
+      <span class="disc">CLD is a utility token for compute coordination. Nothing here is investment advice or a representation about future token value. Testnet is trust-minimized and orchestrator-coordinated.</span>
+    </div>
   </div>
 </footer>
 
@@ -374,10 +596,8 @@
   const HEX="0123456789abcdef";
   function rand(n){let s="";for(let i=0;i<n;i++)s+=HEX[Math.floor(Math.random()*16)];return s;}
 
-  // a deterministic-ish rolling hash so the transcript visibly "grows"
   let transcript="";
   function feed(block){
-    // mix block index into a pseudo hash chunk
     transcript = (transcript + rand(4)).slice(-40);
     return transcript;
   }
@@ -398,10 +618,9 @@
   function tick(){
     if(step<total){
       const r=Math.floor(step/N), cc=step%N;
-      // light the row of A and column of B being combined
       [...A,...B].forEach(c=>c.classList.remove('work'));
       for(let k=0;k<N;k++){ A[r*N+k].classList.add('work'); B[k*N+cc].classList.add('work'); }
-      const target=A[r*N+cc]; // visually resolve cell of result region on A grid
+      const target=A[r*N+cc];
       target.classList.add('done');
       blockCount.textContent=`block ${step+1}/${total}`;
       txhashEl.textContent=feed(step);
@@ -409,12 +628,11 @@
       step++;
       schedule(tick, 520);
     } else {
-      // finalize: transcript complete -> proof z resolves to teal
       [...A,...B].forEach(c=>{c.classList.remove('work');c.classList.add('done');});
       led.classList.add('v');
       statusText.textContent="proof verified";
       blockCount.textContent=`block ${total}/${total}`;
-      const z="00"+rand(38); // leading zeros = difficulty met
+      const z="00"+rand(38);
       zEl.textContent=z;
       zEl.style.color="var(--teal)"; zEl.classList.add('proof-z');
       schedule(()=>{ reset(); schedule(tick,700); }, 2600);
@@ -425,14 +643,12 @@
   function schedule(fn,ms){ if(reduce){return;} timers.push(setTimeout(fn,ms)); }
 
   if(reduce){
-    // static completed state
     [...A,...B].forEach(c=>c.classList.add('done'));
     led.classList.add('v'); statusText.textContent="proof verified";
     blockCount.textContent=`block ${total}/${total}`;
     txhashEl.textContent=rand(40);
     zEl.textContent="00"+rand(38); zEl.style.color="var(--teal)"; zEl.classList.add('proof-z');
   } else {
-    // only run when hero is visible (perf)
     const io=new IntersectionObserver((es)=>{
       es.forEach(e=>{
         if(e.isIntersecting){ if(timers.length===0){ reset(); tick(); } }
@@ -447,6 +663,26 @@
     es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); rio.unobserve(e.target);} });
   },{threshold:.12});
   document.querySelectorAll('.reveal').forEach(el=>rio.observe(el));
+
+  // live edge-API check — a real signal, degrades gracefully
+  (function(){
+    const el=document.getElementById('api-status');
+    const dot=document.getElementById('api-led');
+    const ctrl=new AbortController();
+    const t=setTimeout(()=>ctrl.abort(),5000);
+    fetch('https://api.cloudana.io/health',{signal:ctrl.signal})
+      .then(r=>r.ok?r.json():Promise.reject())
+      .then(()=>{
+        clearTimeout(t);
+        el.childNodes[el.childNodes.length-1].textContent='operational';
+        el.classList.add('ok');
+        dot.style.background='var(--teal)';
+      })
+      .catch(()=>{
+        el.childNodes[el.childNodes.length-1].textContent='unreachable from your network';
+        dot.style.background='var(--bone-faint)';
+      });
+  })();
 })();
 </script>
 </body>
