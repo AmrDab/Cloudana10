@@ -1,0 +1,18 @@
+{
+  "name": "@cloudana/circuits",
+  "version": "0.1.0",
+  "description": "Cloudana PoUW zkSNARK circuits (Groth16) — scaffold",
+  "type": "module",
+  "scripts": {
+    "install:deps": "npm i -D circom2 snarkjs circomlib",
+    "compile": "circom pouw_verification.circom --r1cs --wasm --sym -l node_modules",
+    "ptau:start": "snarkjs powersoftau new bn128 14 pot14_0000.ptau -v",
+    "ptau:contribute": "snarkjs powersoftau contribute pot14_0000.ptau pot14_0001.ptau --name='cloudana-1' -v",
+    "ptau:prep": "snarkjs powersoftau prepare phase2 pot14_0001.ptau pot14_final.ptau -v",
+    "zkey:new": "snarkjs groth16 setup pouw_verification.r1cs pot14_final.ptau pouw_0000.zkey",
+    "zkey:contribute": "snarkjs zkey contribute pouw_0000.zkey pouw_final.zkey --name='cloudana-2' -v",
+    "vkey:export": "snarkjs zkey export verificationkey pouw_final.zkey verification_key.json",
+    "verifier:sol": "snarkjs zkey export solidityverifier pouw_final.zkey ../contract/contracts/Groth16Verifier.sol",
+    "build": "npm run compile && npm run ptau:start && npm run ptau:contribute && npm run ptau:prep && npm run zkey:new && npm run zkey:contribute && npm run vkey:export && npm run verifier:sol"
+  }
+}
