@@ -290,9 +290,38 @@
     padding:26px 18px 14px;overflow-x:auto}
   .pipe svg{display:block;min-width:720px;width:100%}
 
-  /* reveal */
-  .reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
-  .reveal.in{opacity:1;transform:none}
+  /* ---- 3D: panels behave like physical instruments ---- */
+  .hero,.lab-grid{perspective:1100px}
+  .tilt{transform-style:preserve-3d;overflow:visible;will-change:transform;
+    transition:transform .4s ease,box-shadow .4s ease;
+    box-shadow:0 22px 60px rgba(0,0,0,.45),0 2px 8px rgba(0,0,0,.3)}
+  .tilt.tilting{transition:transform .07s linear,box-shadow .3s ease;
+    box-shadow:0 34px 90px rgba(0,0,0,.55),0 4px 14px rgba(0,0,0,.35)}
+  .tilt .head{transform:translateZ(22px)}
+  .tilt .matmul,.tilt .bgrid{transform:translateZ(30px)}
+  .tilt .meter{transform:translateZ(20px)}
+  .tilt .transcript,.tilt .stats{transform:translateZ(14px)}
+  .tilt .ctrl-row{transform:translateZ(26px)}
+  .tilt .tierbadge{transform:translateZ(28px)}
+  .tilt .labnote{transform:translateZ(8px)}
+  /* sheen that follows the tilt */
+  .tilt::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:radial-gradient(420px circle at var(--mx,50%) var(--my,50%),rgba(233,230,221,.05),transparent 65%);
+    opacity:0;transition:opacity .3s}
+  .tilt.tilting::before{opacity:1}
+
+  /* ---- scroll dynamics ---- */
+  #sprog{position:fixed;top:0;left:0;height:2px;width:0;z-index:120;
+    background:linear-gradient(90deg,var(--amber),var(--teal));
+    box-shadow:0 0 8px rgba(84,214,196,.5)}
+  [data-depth]{will-change:transform}
+  .pipe{transform-origin:50% 20%;will-change:transform}
+
+  /* reveal — sections swing up out of the page plane */
+  .reveal{opacity:0;transform:perspective(900px) translateY(36px) rotateX(7deg) scale(.985);
+    transform-origin:50% 0;
+    transition:opacity .7s ease,transform .85s cubic-bezier(.22,.8,.3,1)}
+  .reveal.in{opacity:1;transform:perspective(900px) translateY(0) rotateX(0) scale(1)}
 
   :focus-visible{outline:2px solid var(--teal);outline-offset:3px}
   @media(prefers-reduced-motion:reduce){
@@ -313,6 +342,7 @@
 </script>
 </head>
 <body>
+<div id="sprog" aria-hidden="true"></div>
 
 <header>
   <div class="wrap bar">
@@ -348,7 +378,7 @@
     </div>
 
     <!-- INSTRUMENT (signature) -->
-    <div class="instrument" id="instrument" aria-label="Live proof-of-useful-work computation">
+    <div class="instrument tilt" id="instrument" data-depth="0.05" aria-label="Live proof-of-useful-work computation">
       <div class="head">
         <span><span class="led" id="led"></span><span id="status-text">computing A · B</span></span>
         <span id="block-count">block 0/0</span>
@@ -446,7 +476,7 @@
     </div>
 
     <!-- SPECIMEN: the artifact itself, annotated like a calibration certificate -->
-    <div class="specimen reveal" aria-label="Anatomy of a cuPOW certificate">
+    <div class="specimen reveal" data-depth="0.04" aria-label="Anatomy of a cuPOW certificate">
       <div class="shead">
         <span>cuPOW certificate · testnet specimen</span>
         <span class="vstat"><span class="led v"></span>VERIFIED</span>
@@ -473,7 +503,7 @@
     <h2>Don't take our word for it. Mine a certificate right now.</h2>
     <p class="sub">This page ships the actual cuPOW construction at demo scale. Press run: your browser multiplies two real 64×64 matrices in 8×8 blocks, chains every block through real SHA-256 (WebCrypto), seeds σ from the latest Base Sepolia block, and grinds a nonce until the proof meets the difficulty you chose. Every hash you see is genuine.</p>
     <div class="lab-grid">
-      <div class="instrument">
+      <div class="instrument tilt">
         <div class="head">
           <span><span class="led" id="lab-led" style="background:var(--bone-faint);animation:none"></span><span id="lab-status">idle — choose difficulty and run</span></span>
           <span id="lab-blocks">block 0/64</span>
@@ -497,7 +527,7 @@
         </dl>
         <div class="labnote">demo scale: n=64, r=8 · the protocol binds difficulty to the transcript itself; the lab grinds a nonce over the transcript commitment so you can watch difficulty work · source: <a href="https://github.com/AmrDab/Cloudana10/tree/main/pouw" rel="noopener" style="border-bottom:1px dotted var(--bone-faint)">pouw/src</a></div>
       </div>
-      <div class="instrument hw">
+      <div class="instrument hw tilt">
         <div class="head"><span><span class="led v"></span>what a node sees</span><span>auto-detect</span></div>
         <dl class="stats" style="border-top:0;padding-top:0">
           <dt>GPU</dt><dd id="hw-gpu">detecting…</dd>
@@ -577,7 +607,7 @@
     <span class="eyebrow v">CLD · Tokenomics v2</span>
     <h2>No hard cap. A soft cap set by usage, not decree.</h2>
     <div class="token-grid">
-      <div class="chart">
+      <div class="chart" data-depth="0.045">
         <div class="legend">
           <span><i style="background:var(--amber)"></i>Emission (M CLD/yr)</span>
           <span><i style="background:var(--teal)"></i>Burn · 2% of payments</span>
@@ -1006,6 +1036,68 @@
     const ps = $('pipesvg');
     if (ps && ps.pauseAnimations) ps.pauseAnimations();
   }
+
+  /* ---------- 3D tilt: panels track the pointer like physical instruments ---------- */
+  const finePointer = window.matchMedia('(pointer:fine)').matches;
+  if (finePointer && !reduce){
+    document.querySelectorAll('.tilt').forEach(panel => {
+      let raf = 0;
+      panel.addEventListener('pointermove', e => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          const r = panel.getBoundingClientRect();
+          const px = (e.clientX - r.left) / r.width;
+          const py = (e.clientY - r.top) / r.height;
+          panel.classList.add('tilting');
+          panel.style.setProperty('--mx', (px * 100).toFixed(1) + '%');
+          panel.style.setProperty('--my', (py * 100).toFixed(1) + '%');
+          panel.style.transform =
+            'rotateX(' + ((0.5 - py) * 7).toFixed(2) + 'deg)' +
+            ' rotateY(' + ((px - 0.5) * 9).toFixed(2) + 'deg)' +
+            ' translateZ(6px)';
+        });
+      });
+      panel.addEventListener('pointerleave', () => {
+        if (raf){ cancelAnimationFrame(raf); raf = 0; }
+        panel.classList.remove('tilting');
+        panel.style.transform = '';
+      });
+    });
+  }
+
+  /* ---------- scroll dynamics: progress bar, parallax depth, pipeline tilt ---------- */
+  const sprog = $('sprog');
+  const depthEls = Array.from(document.querySelectorAll('[data-depth]'));
+  const pipeEl = document.querySelector('.pipe');
+  let ticking = false;
+  function onScroll(){
+    if (ticking) return; ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      const doc = document.documentElement;
+      const max = doc.scrollHeight - innerHeight;
+      if (sprog) sprog.style.width = (max > 0 ? (scrollY / max) * 100 : 0) + '%';
+      if (reduce) return;
+      const vc = innerHeight / 2;
+      for (const el of depthEls){
+        const r = el.getBoundingClientRect();
+        if (r.bottom < -80 || r.top > innerHeight + 80) continue;
+        const off = r.top + r.height / 2 - vc;
+        el.style.translate = '0 ' + (off * -parseFloat(el.dataset.depth)).toFixed(1) + 'px';
+      }
+      if (pipeEl){
+        const r = pipeEl.getBoundingClientRect();
+        if (!(r.bottom < 0 || r.top > innerHeight)){
+          const p = Math.max(-1, Math.min(1, (r.top + r.height / 2 - vc) / vc));
+          pipeEl.style.transform = 'perspective(1100px) rotateX(' + (p * 14).toFixed(2) + 'deg)';
+        }
+      }
+    });
+  }
+  addEventListener('scroll', onScroll, {passive: true});
+  addEventListener('resize', onScroll, {passive: true});
+  onScroll();
 
   // scroll reveals
   const rio=new IntersectionObserver((es)=>{
