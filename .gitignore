@@ -7,6 +7,8 @@ vite.config.ts.*
 /contract/node_modules
 /client/api/node_modules
 /provider-node-server/node_modules
+/pouw/node_modules
+/circuits/node_modules
 
 # Environment files (contain secrets)
 .env
