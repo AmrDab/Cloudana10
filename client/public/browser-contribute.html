@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cloudana Browser Verifier — contribute spare compute</title>
+<meta name="description" content="Opt in to contribute spare browser compute as a verifier in the Cloudana challenger network. Testnet, signed consent, no install." />
+<meta name="robots" content="noindex" />
+<meta name="theme-color" content="#0B0E13" />
+<link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
+<link rel="icon" href="/favicon.ico" sizes="32x32" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B0E13; --ink2:#12161F; --ink3:#1A1F2B;
+    --bone:#E9E6DD; --bone-dim:#9AA0AC; --bone-faint:#5C6470;
+    --amber:#E6A23C; --teal:#54D6C4; --grid:#222836; --red:#E06B6B;
+    --display:"Space Grotesk",system-ui,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+    --body:"Inter",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--ink);color:var(--bone);font-family:var(--body);
+    font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  body::after{content:"";position:fixed;inset:0;z-index:2000;pointer-events:none;opacity:.045;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--teal);color:var(--ink)}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 28px}
+  header{position:sticky;top:0;z-index:50;background:rgba(11,14,19,.78);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--grid)}
+  .bar{display:flex;align-items:center;justify-content:space-between;height:66px}
+  .logo{font-family:var(--mono);font-weight:700;letter-spacing:.04em;font-size:16px;
+    display:flex;align-items:center;gap:10px}
+  .logo .dot{width:9px;height:9px;background:var(--teal);border-radius:1px;
+    box-shadow:0 0 0 4px rgba(84,214,196,.16);display:inline-block}
+  .back{font-family:var(--mono);font-size:13px;color:var(--bone-dim)}
+  .back:hover{color:var(--teal)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--amber);display:inline-block;margin-bottom:16px}
+  .eyebrow.v{color:var(--teal)}
+  h1{font-family:var(--display);font-weight:600;font-size:clamp(32px,4.6vw,52px);
+    letter-spacing:-.02em;line-height:1.06;margin:0}
+  h1 .em{color:var(--teal)}
+  .lede{font-size:18px;color:var(--bone-dim);max-width:46em;margin:22px 0 0}
+  .intro{padding:64px 0 40px}
+
+  .deck{display:grid;grid-template-columns:1.35fr 1fr;gap:24px;padding-bottom:40px}
+  @media(max-width:880px){.deck{grid-template-columns:1fr}}
+  .panel{background:var(--ink2);border:1px solid var(--grid);border-radius:5px;padding:24px}
+  .panel .ph{display:flex;justify-content:space-between;align-items:center;
+    font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--bone-faint);margin-bottom:18px}
+  .led{width:8px;height:8px;border-radius:50%;background:var(--bone-faint);display:inline-block;margin-right:8px;vertical-align:middle}
+  .led.on{background:var(--teal);animation:pulse 1.4s ease-in-out infinite}
+  .led.work{background:var(--amber);animation:pulse 1.1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* stepper */
+  .steps{display:flex;flex-direction:column;gap:12px}
+  .step{display:flex;gap:14px;align-items:flex-start;padding:16px;border:1px solid var(--grid);
+    border-radius:4px;background:var(--ink);transition:.2s}
+  .step.active{border-color:rgba(230,162,60,.5);background:rgba(230,162,60,.05)}
+  .step.done{border-color:rgba(84,214,196,.4)}
+  .step .num{font-family:var(--mono);font-size:12px;width:26px;height:26px;flex-shrink:0;border:1px solid var(--grid);
+    border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--bone-faint)}
+  .step.active .num{color:var(--amber);border-color:var(--amber)}
+  .step.done .num{color:var(--teal);border-color:var(--teal)}
+  .step .body{flex:1}
+  .step h3{font-family:var(--display);font-size:16px;margin:0 0 4px}
+  .step p{font-size:13.5px;color:var(--bone-dim);margin:0 0 12px}
+  .step .meta{font-family:var(--mono);font-size:12px;color:var(--teal);word-break:break-all}
+
+  .btn{font-family:var(--mono);font-size:13px;font-weight:500;padding:10px 18px;border:1px solid var(--bone-faint);
+    color:var(--bone);border-radius:2px;background:transparent;cursor:pointer;transition:.18s;display:inline-block}
+  .btn:hover{border-color:var(--teal);color:var(--teal)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.solid{background:var(--teal);color:var(--ink);border-color:var(--teal);font-weight:700}
+  .btn.solid:hover{background:#6fe7d6}
+  .btn.warm{border-color:var(--amber);color:var(--amber)}
+  .btn.warm:hover{background:rgba(230,162,60,.1)}
+  .btn.stop{border-color:var(--red);color:var(--red)}
+
+  .consent-box{font-family:var(--mono);font-size:12px;line-height:1.7;color:var(--bone-dim);
+    background:var(--ink);border:1px dashed var(--grid);border-radius:3px;padding:14px 16px;margin:0 0 12px;white-space:pre-wrap}
+  .consent-box b{color:var(--bone)}
+
+  /* controls */
+  .ctrl{display:flex;flex-direction:column;gap:18px}
+  .ctrl .row{display:flex;align-items:center;justify-content:space-between;gap:14px}
+  .ctrl label{font-family:var(--mono);font-size:12px;color:var(--bone-dim)}
+  .seg{display:flex;border:1px solid var(--grid);border-radius:3px;overflow:hidden}
+  .seg button{font-family:var(--mono);font-size:12px;padding:7px 14px;background:transparent;color:var(--bone-dim);
+    border:0;border-right:1px solid var(--grid);cursor:pointer}
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:rgba(230,162,60,.12);color:var(--amber)}
+  .toggle{font-family:var(--mono);font-size:12px;color:var(--bone-faint)}
+  .toggle b{color:var(--teal)}
+
+  /* meters */
+  .meters{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--grid);border:1px solid var(--grid);
+    border-radius:4px;overflow:hidden;margin-top:4px}
+  .meter{background:var(--ink2);padding:16px 18px}
+  .meter .k{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--bone-faint)}
+  .meter .val{font-family:var(--mono);font-size:24px;margin-top:6px;color:var(--bone)}
+  .meter .val.v{color:var(--teal)}
+  .meter .val.w{color:var(--amber)}
+  .meter .sub{font-family:var(--mono);font-size:11px;color:var(--bone-faint);margin-top:2px}
+
+  /* log */
+  .log{margin-top:24px}
+  .log .ph{display:flex;justify-content:space-between;align-items:center;
+    font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--bone-faint);margin-bottom:10px}
+  .logbox{font-family:var(--mono);font-size:12px;background:var(--ink2);border:1px solid var(--grid);border-radius:4px;
+    height:240px;overflow-y:auto;padding:12px 16px;line-height:1.85}
+  .logbox .ln{display:flex;gap:12px;border-bottom:1px solid rgba(34,40,54,.5);padding:3px 0}
+  .logbox .t{color:var(--bone-faint);flex-shrink:0}
+  .logbox .ok{color:var(--teal)}
+  .logbox .ev{color:var(--bone-dim)}
+  .logbox .cr{color:var(--amber);margin-left:auto;flex-shrink:0}
+
+  .disc{font-family:var(--mono);font-size:11.5px;color:var(--bone-faint);line-height:1.7;
+    border-top:1px solid var(--grid);margin-top:40px;padding:22px 0 60px;max-width:60em}
+  .disc b{color:var(--bone-dim)}
+  .warn{color:var(--amber)}
+  footer{border-top:1px solid var(--grid)}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="logo" href="/"><span class="dot"></span>CLOUDANA</a>
+    <a class="back" href="/">&larr; cloudana.io</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <section class="intro">
+    <span class="eyebrow">Browser Verifier · Lite Node · testnet</span>
+    <h1>Contribute spare compute as a <span class="em">verifier.</span></h1>
+    <p class="lede">No install. Opt in, sign a one-time compute-consent message, and your browser independently re-checks Cloudana certificates — real verification work in the challenger network — while this tab is open. You earn non-transferable testnet credits. Wallet connection is just identity; it never authorizes compute on its own.</p>
+  </section>
+
+  <div class="deck">
+    <!-- LEFT: onboarding + controls -->
+    <div class="panel">
+      <div class="ph"><span><span class="led" id="state-led"></span><span id="state-text">not contributing</span></span><span id="addr-tag">no wallet</span></div>
+
+      <div class="steps">
+        <div class="step active" id="step1">
+          <div class="num">1</div>
+          <div class="body">
+            <h3>Connect wallet — identity only</h3>
+            <p>Establishes your payout address. Does <b>not</b> grant compute permission.</p>
+            <button class="btn" id="connect">Connect wallet</button>
+            <div class="meta" id="addr-meta" hidden></div>
+          </div>
+        </div>
+
+        <div class="step" id="step2">
+          <div class="num">2</div>
+          <div class="body">
+            <h3>Sign compute consent — separate, explicit</h3>
+            <p>This signature is what authorizes your browser to do work. Revocable, capped, tab-scoped.</p>
+            <div class="consent-box" id="consent-preview"></div>
+            <button class="btn warm" id="consent" disabled>Sign compute consent</button>
+            <div class="meta" id="consent-meta" hidden></div>
+          </div>
+        </div>
+
+        <div class="step" id="step3">
+          <div class="num">3</div>
+          <div class="body">
+            <h3>Contribute while the tab is open</h3>
+            <p>Real certificate verification. Stops the instant you close the tab or hit stop.</p>
+            <div class="ctrl">
+              <div class="row">
+                <label>Intensity (CPU cap)</label>
+                <div class="seg" id="intensity">
+                  <button data-lvl="low">Low</button>
+                  <button data-lvl="med" class="on">Med</button>
+                  <button data-lvl="high">High</button>
+                </div>
+              </div>
+              <div class="row">
+                <span class="toggle">scope: <b>only while this tab is open</b> · no background compute</span>
+              </div>
+              <div class="row" id="battery-row" hidden>
+                <span class="toggle warn" id="battery-text"></span>
+              </div>
+              <div class="row" style="gap:12px">
+                <button class="btn solid" id="start" disabled>Start contributing</button>
+                <button class="btn stop" id="stop" disabled>Stop</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: live meters -->
+    <div class="panel">
+      <div class="ph"><span><span class="led" id="work-led"></span>session</span><span id="uptime">00:00</span></div>
+      <div class="meters">
+        <div class="meter"><div class="k">Credits earned</div><div class="val v" id="m-credits">0</div><div class="sub">testnet · non-transferable</div></div>
+        <div class="meter"><div class="k">Certs verified</div><div class="val" id="m-verified">0</div><div class="sub" id="m-pass">100% valid</div></div>
+        <div class="meter"><div class="k">Verify rate</div><div class="val w" id="m-rate">—</div><div class="sub">certs / min</div></div>
+        <div class="meter"><div class="k">Hardware</div><div class="val" id="m-hw" style="font-size:14px;line-height:1.4">detecting…</div><div class="sub" id="m-threads">—</div></div>
+      </div>
+
+      <div class="log">
+        <div class="ph"><span>task log</span><span id="log-count">0 events</span></div>
+        <div class="logbox" id="logbox"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="disc">
+    <b>What this is, plainly.</b> A front-end prototype of Cloudana's Browser Verifier. The verification is real — your browser re-executes each certificate's block-matrix multiplication, rebuilds the transcript hash, recomputes the proof <span style="color:var(--teal)">z</span>, and confirms it meets difficulty (the same redundancy check the testnet orchestrator performs). In this demo the certificates are generated locally; in production they are drawn from the orchestrator's challenger queue.<br><br>
+    <b>Credits are testnet only.</b> They carry no monetary value and are not a token. Nothing here is a promise that they ever convert to one — any future distribution is subject to legal review and is not committed. Connecting a wallet establishes identity; a separate signed message authorizes compute. Work runs only while this tab is open, throttled to your chosen intensity, and stops on demand. <span class="warn">Desktop on power recommended; heavy use on battery drains it.</span>
+  </div>
+</div>
+
+<footer><div class="wrap" style="padding:22px 0;font-family:var(--mono);font-size:12px;color:var(--bone-faint)">CLOUDANA · <a href="/litepaper" style="border-bottom:1px dotted var(--bone-faint)">Litepaper</a> · <a href="/terms" style="border-bottom:1px dotted var(--bone-faint)">Terms</a></div></footer>
+
+<script>
+(function(){
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const enc = new TextEncoder();
+  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
+
+  /* ---------- cuPOW engine (same construction as the Proof Lab) ---------- */
+  async function sha(...parts){
+    const bufs = parts.map(p => typeof p === "string" ? enc.encode(p) : p);
+    let total = 0; for (const b of bufs) total += b.length;
+    const cat = new Uint8Array(total); let o = 0;
+    for (const b of bufs){ cat.set(b, o); o += b.length; }
+    return new Uint8Array(await crypto.subtle.digest("SHA-256", cat));
+  }
+  const hex = u8 => Array.from(u8, b => b.toString(16).padStart(2,"0")).join("");
+  function lzBits(u8){ let n=0; for(const b of u8){ if(b===0){n+=8;continue;} for(let i=7;i>=0;i--){ if((b>>i)&1) return n; n++; } } return n; }
+  function randMat(n){ const m=new Int32Array(n*n), r=new Uint8Array(n*n); crypto.getRandomValues(r); for(let i=0;i<n*n;i++) m[i]=r[i]%10; return m; }
+  function blockMul(A,B,n,r,bi,bj){ const out=new Int32Array(r*r); for(let i=0;i<r;i++){ const row=(bi*r+i)*n; for(let j=0;j<r;j++){ let s=0; const col=bj*r+j; for(let k=0;k<n;k++) s+=A[row+k]*B[k*n+col]; out[i*r+j]=s; } } return out; }
+  const u8of = ta => new Uint8Array(ta.buffer, ta.byteOffset, ta.byteLength);
+
+  // Build a task: a valid certificate to be verified. (Production: comes from the orchestrator.)
+  const N=48, R=8, NB=N/R, D=6;
+  async function makeTask(){
+    const A=randMat(N), B=randMat(N);
+    const hA=await sha(u8of(A)), hB=await sha(u8of(B));
+    let t=new Uint8Array(32);
+    for(let bi=0;bi<NB;bi++) for(let bj=0;bj<NB;bj++){ t=await sha(t, await sha(u8of(blockMul(A,B,N,R,bi,bj)))); }
+    const sigma="0x"+hex((()=>{const r=new Uint8Array(32);crypto.getRandomValues(r);return r;})());
+    let nonce=0,z,bits;
+    for(;;){ z=await sha(sigma+"|"+nonce+"|", t, hA, hB); bits=lzBits(z); if(bits>=D) break; nonce++; }
+    return {A,B,sigma,nonce,transcript:hex(t),hA,hB,z:hex(z),d:D};
+  }
+  // Verify a task by independent re-execution (the challenger's real job).
+  async function verifyTask(task){
+    let t=new Uint8Array(32);
+    for(let bi=0;bi<NB;bi++) for(let bj=0;bj<NB;bj++){ t=await sha(t, await sha(u8of(blockMul(task.A,task.B,N,R,bi,bj)))); }
+    if(hex(t)!==task.transcript) return false;
+    const z=await sha(task.sigma+"|"+task.nonce+"|", t, task.hA, task.hB);
+    return hex(z)===task.z && lzBits(z)>=task.d;
+  }
+
+  /* ---------- state ---------- */
+  const S={ addr:null, consent:null, intensity:"med", running:false, credits:0, verified:0, fails:0,
+            startMs:0, queue:[], stopFlag:false, events:0 };
+  const SLEEP={ low:900, med:280, high:40 };
+  const persisted = Number(localStorage.getItem("cloudana_credits")||"0");
+  S.credits = persisted; $("m-credits").textContent = persisted;
+
+  function short(a){ return a.slice(0,6)+"…"+a.slice(-4); }
+  function consentMessage(addr,nonce){
+    return "Cloudana Compute Consent v1\n"
+      + "I authorize this browser to run verification tasks while this tab is open.\n"
+      + "Caps: CPU intensity ≤ "+S.intensity.toUpperCase()+" · stops when tab closes · no background execution.\n"
+      + "Address: "+addr+"  Nonce: "+nonce+"  Issued: "+new Date().toISOString();
+  }
+  function refreshConsentPreview(){
+    $("consent-preview").textContent = consentMessage(S.addr||"0x… (connect first)", "…");
+  }
+  refreshConsentPreview();
+
+  function log(ev, ok, credit){
+    const box=$("logbox"); const d=document.createElement("div"); d.className="ln";
+    const ts=document.createElement("span"); ts.className="t"; ts.textContent=new Date().toLocaleTimeString();
+    const body=document.createElement("span"); body.className=ok?"ok":"ev"; body.textContent=ev; // textContent — no HTML injection
+    d.appendChild(ts); d.appendChild(body);
+    if(credit){ const c=document.createElement("span"); c.className="cr"; c.textContent="+"+credit+" cr"; d.appendChild(c); }
+    box.prepend(d); S.events++; $("log-count").textContent=S.events+" events";
+    while(box.children.length>60) box.removeChild(box.lastChild);
+  }
+
+  /* ---------- wallet (identity) ---------- */
+  $("connect").addEventListener("click", async ()=>{
+    try{
+      if(window.ethereum && window.ethereum.request){
+        const accts=await window.ethereum.request({method:"eth_requestAccounts"});
+        S.addr=accts[0];
+      } else {
+        // no injected wallet — demo identity, clearly labelled
+        const r=new Uint8Array(20); crypto.getRandomValues(r); S.addr="0x"+hex(r);
+        log("no injected wallet — using demo identity "+short(S.addr), false, 0);
+      }
+      $("addr-meta").hidden=false; $("addr-meta").textContent=S.addr;
+      $("addr-tag").textContent=short(S.addr);
+      $("step1").classList.add("done"); $("step1").classList.remove("active");
+      $("step2").classList.add("active");
+      $("consent").disabled=false;
+      refreshConsentPreview();
+      log("wallet connected (identity only) "+short(S.addr), true, 0);
+    }catch(e){ log("wallet connect rejected", false, 0); }
+  });
+
+  /* ---------- compute consent (separate signature) ---------- */
+  $("consent").addEventListener("click", async ()=>{
+    const nonce=hex((()=>{const r=new Uint8Array(8);crypto.getRandomValues(r);return r;})());
+    const msg=consentMessage(S.addr, nonce);
+    try{
+      let sig;
+      if(window.ethereum && window.ethereum.request){
+        sig=await window.ethereum.request({method:"personal_sign", params:[msg, S.addr]});
+      } else {
+        sig="demo-unsigned"; // no wallet: explicit unsigned consent, labelled
+      }
+      S.consent={msg, sig, nonce, at:Date.now()};
+      $("consent-meta").hidden=false;
+      $("consent-meta").textContent = sig==="demo-unsigned" ? "consent recorded (demo, unsigned)" : "signed · "+sig.slice(0,18)+"…";
+      $("step2").classList.add("done"); $("step2").classList.remove("active");
+      $("step3").classList.add("active");
+      $("start").disabled=false;
+      log(sig==="demo-unsigned"?"compute consent recorded (unsigned demo)":"compute consent signed", true, 0);
+    }catch(e){ log("consent signature rejected", false, 0); }
+  });
+
+  /* ---------- intensity ---------- */
+  document.querySelectorAll("#intensity button").forEach(b=>b.addEventListener("click", ()=>{
+    document.querySelectorAll("#intensity button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); S.intensity=b.dataset.lvl; refreshConsentPreview();
+  }));
+
+  /* ---------- battery guard ---------- */
+  if(navigator.getBattery){ navigator.getBattery().then(bat=>{
+    function upd(){ if(!bat.charging && bat.level<0.35){ $("battery-row").hidden=false;
+      $("battery-text").textContent="⚠ on battery ("+Math.round(bat.level*100)+"%) — contributing will drain it. Plug in or use Low."; }
+      else $("battery-row").hidden=true; }
+    upd(); bat.addEventListener("levelchange",upd); bat.addEventListener("chargingchange",upd);
+  }).catch(()=>{}); }
+
+  /* ---------- hardware ---------- */
+  (function(){ const c=navigator.hardwareConcurrency||0; $("m-threads").textContent=c?c+" threads":"threads n/a";
+    let gpu=""; try{ const gl=document.createElement("canvas").getContext("webgl"); const dbg=gl&&gl.getExtension("WEBGL_debug_renderer_info"); if(dbg) gpu=gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);}catch(e){}
+    $("m-hw").textContent = gpu ? gpu.slice(0,28) : (navigator.platform||"this device"); })();
+
+  /* ---------- contribution loop ---------- */
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  let lastRateAt=0, lastRateCount=0;
+  function tickUptime(){ if(!S.running) return; const s=Math.floor((Date.now()-S.startMs)/1000);
+    $("uptime").textContent=String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+    const now=Date.now(); if(now-lastRateAt>3000){ const dc=S.verified-lastRateCount, dt=(now-lastRateAt)/60000;
+      if(lastRateAt) $("m-rate").textContent=Math.round(dc/dt); lastRateAt=now; lastRateCount=S.verified; }
+    setTimeout(tickUptime,1000); }
+
+  async function loop(){
+    while(S.running && !S.stopFlag){
+      try{
+        if(S.queue.length<2){ S.queue.push(await makeTask()); }   // refill (production: fetch from orchestrator)
+        const task=S.queue.shift();
+        $("work-led").className="led work";
+        const ok=await verifyTask(task);
+        if(ok){ S.verified++; S.credits++; localStorage.setItem("cloudana_credits", String(S.credits));
+          $("m-credits").textContent=S.credits; $("m-verified").textContent=S.verified;
+          log("verified cert z="+task.z.slice(0,10)+"… · "+task.d+" bits ✓", true, 1);
+        } else { S.fails++; log("REJECTED invalid cert z="+task.z.slice(0,10)+"…", false, 0); }
+        const tot=S.verified+S.fails; $("m-pass").textContent=tot?Math.round(S.verified/tot*100)+"% valid":"—";
+      }catch(e){ log("task error: "+e.message, false, 0); }
+      $("work-led").className="led on";
+      await sleep(SLEEP[S.intensity]);
+    }
+    $("work-led").className="led";
+  }
+
+  $("start").addEventListener("click", ()=>{
+    if(!S.consent){ log("sign compute consent first", false, 0); return; }
+    S.running=true; S.stopFlag=false; S.startMs=Date.now(); lastRateAt=0; lastRateCount=0;
+    $("state-led").className="led on"; $("state-text").textContent="contributing";
+    $("start").disabled=true; $("stop").disabled=false;
+    $("step3").classList.add("done");
+    log("contribution started · intensity "+S.intensity.toUpperCase(), true, 0);
+    tickUptime(); loop();
+  });
+  $("stop").addEventListener("click", ()=>{
+    S.running=false; S.stopFlag=true;
+    $("state-led").className="led"; $("state-text").textContent="stopped";
+    $("start").disabled=false; $("stop").disabled=true;
+    log("contribution stopped by user", true, 0);
+  });
+  // closing the tab halts everything — work lives in the page, no background execution.
+  addEventListener("beforeunload", ()=>{ S.running=false; S.stopFlag=true; });
+
+  if(!(window.crypto && crypto.subtle)){ $("state-text").textContent="webcrypto unavailable"; $("connect").disabled=true; }
+})();
+</script>
+</body>
+</html>
