@@ -907,6 +907,8 @@
       es.forEach(e => { heroVisible = e.isIntersecting; if (heroVisible) heroLoop(); });
     }, {threshold: .05, rootMargin: '300px 0px'});
     io.observe($('instrument'));
+    // some embedded webviews report a zero-height viewport and never fire IO — start anyway
+    setTimeout(() => { if (!heroRunning && innerHeight === 0){ heroVisible = true; heroLoop(); } }, 1200);
   }
 
   /* ---------- PLATE II: the replication bench (n=64, r=8) ---------- */
