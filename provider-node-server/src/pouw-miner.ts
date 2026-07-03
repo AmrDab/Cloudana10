@@ -12,8 +12,6 @@
  *   4. Loop, refreshing sigma every SIGMA_REFRESH_MS.
  */
 
-import { createHash } from "node:crypto";
-
 // We import the pouw package inline (same monorepo) using relative path
 // since the workspace link may not be installed on provider nodes yet.
 // TODO: replace with `import { solve, verify } from "@cloudana/pouw"` once installed.
@@ -40,6 +38,19 @@ interface CertificatePayload {
   deviceId: string;
   matrixA: number[];
   matrixB: number[];
+  /** Set when mined ON a real queue job (true PoUW) — unlocks the full reward. */
+  workloadId?: string;
+  /** The decoded useful output C = A·B, delivered with the proof. */
+  result?: number[];
+}
+
+interface ClaimedJob {
+  workloadId: string;
+  n: number;
+  matrixA: number[];
+  matrixB: number[];
+  difficulty: number;
+  expiresAt: number;
 }
 
 interface MinerState {
@@ -54,14 +65,14 @@ interface MinerState {
 
 const state: MinerState = {
   running: false,
-  chainSeed: createHash("sha256").update("genesis-seed").digest("hex"),
+  chainSeed: "", // empty until a REAL chain seed arrives — never a predictable constant
   lastSeedRefresh: 0,
   totalAttempts: 0,
   totalFound: 0,
   startTime: Date.now(),
 };
 
-async function fetchChainSeed(): Promise<string> {
+async function fetchChainSeed(): Promise<string | null> {
   try {
     const res = await fetch(`${ORCHESTRATOR_URL}/v1/pouw/seed`, {
       signal: AbortSignal.timeout(5000),
@@ -70,9 +81,25 @@ async function fetchChainSeed(): Promise<string> {
     const data = await res.json() as { seed: string };
     return data.seed;
   } catch {
-    // Fallback: derive a pseudo-seed from current timestamp block (10s windows)
-    const timeBlock = Math.floor(Date.now() / 10000);
-    return createHash("sha256").update(`fallback-${timeBlock}`).digest("hex");
+    // NO local pseudo-seed fallback: a timestamp-derived seed is predictable and
+    // pre-minable (audit finding #4). When the orchestrator can't give us a real
+    // chain seed, we WAIT — honest idling beats farmable mining.
+    return null;
+  }
+}
+
+/** Try to claim a REAL matrix job from the orchestrator's queue. */
+async function fetchJob(): Promise<ClaimedJob | null> {
+  try {
+    const res = await fetch(
+      `${ORCHESTRATOR_URL}/v1/pouw/job?provider=${encodeURIComponent(POUW_PROVIDER_ADDRESS)}`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as { status: string; job: ClaimedJob | null };
+    return data.status === "claimed" && data.job ? data.job : null;
+  } catch {
+    return null;
   }
 }
 
@@ -96,7 +123,7 @@ async function submitCertificate(cert: CertificatePayload): Promise<void> {
   }
 }
 
-/** Inline minimal cuPOW implementation to avoid needing workspace install on provider nodes. */
+/** Filler mining (no real job available): capped, fractional reward on the orchestrator side. */
 async function runSolveAttempts(
   chainSeed: string,
   n: number,
@@ -113,38 +140,93 @@ async function runSolveAttempts(
   return result.certificate as CertificatePayload;
 }
 
+/** TRUE PoUW: mine ON a claimed queue job and carry the decoded result back. */
+async function runBackedSolve(
+  chainSeed: string,
+  job: ClaimedJob,
+  deviceId: string,
+): Promise<CertificatePayload | null> {
+  const { solveBacked } = await import("../../pouw/src/workload-bridge.js");
+  const backed = solveBacked(
+    chainSeed,
+    {
+      workloadId: job.workloadId,
+      A: { rows: job.n, cols: job.n, data: job.matrixA },
+      B: { rows: job.n, cols: job.n, data: job.matrixB },
+      difficulty: job.difficulty,
+      expiresAt: job.expiresAt,
+    },
+    POUW_PROVIDER_ADDRESS,
+    deviceId,
+    BATCH_SIZE,
+  );
+  if (!backed) return null;
+  return {
+    ...(backed.certificate as CertificatePayload),
+    workloadId: backed.workloadId,
+    result: backed.result.data,
+  };
+}
+
 /** Main mining loop — call startMining() to begin. */
 async function miningLoop(deviceId: string): Promise<void> {
   console.log(`[POUW] Mining started — n=${POUW_MATRIX_SIZE}, difficulty=${POUW_DIFFICULTY} bits`);
   console.log(`[POUW] Submitting to: ${ORCHESTRATOR_URL}/v1/pouw/submit`);
+  console.log(`[POUW] Job-first mining: real workloads earn full rewards; filler is capped.`);
+
+  let activeJob: ClaimedJob | null = null;
 
   while (state.running) {
-    // Refresh chain seed periodically
+    // Refresh chain seed periodically — and WAIT when none is available.
     const now = Date.now();
-    if (now - state.lastSeedRefresh > SIGMA_REFRESH_MS) {
-      state.chainSeed = await fetchChainSeed();
-      state.lastSeedRefresh = now;
+    if (!state.chainSeed || now - state.lastSeedRefresh > SIGMA_REFRESH_MS) {
+      const seed = await fetchChainSeed();
+      if (seed) {
+        state.chainSeed = seed;
+        state.lastSeedRefresh = now;
+      } else if (!state.chainSeed) {
+        console.warn("[POUW] No chain seed available — idling 10s (refusing predictable local seed)");
+        await new Promise((r) => setTimeout(r, 10_000));
+        continue;
+      }
     }
 
-    const cert = await runSolveAttempts(
-      state.chainSeed,
-      POUW_MATRIX_SIZE,
-      POUW_DIFFICULTY,
-      POUW_PROVIDER_ADDRESS,
-      deviceId,
-      BATCH_SIZE,
-    );
+    // Prefer REAL work: claim a job when we don't hold a live one.
+    if (!activeJob || activeJob.expiresAt < Date.now()) {
+      activeJob = await fetchJob();
+      if (activeJob) {
+        console.log(`[POUW] 📦 Claimed real workload ${activeJob.workloadId} (n=${activeJob.n}, d=${activeJob.difficulty})`);
+      }
+    }
+
+    let cert: CertificatePayload | null;
+    if (activeJob) {
+      cert = await runBackedSolve(state.chainSeed, activeJob, deviceId);
+      if (cert) activeJob = null; // job done — claim a fresh one next tick
+    } else {
+      cert = await runSolveAttempts(
+        state.chainSeed,
+        POUW_MATRIX_SIZE,
+        POUW_DIFFICULTY,
+        POUW_PROVIDER_ADDRESS,
+        deviceId,
+        BATCH_SIZE,
+      );
+    }
 
     state.totalAttempts += BATCH_SIZE;
 
     if (cert) {
       state.totalFound++;
       state.lastFound = Date.now();
-      console.log(`[POUW] 🎯 Certificate #${state.totalFound} found! z=${cert.z.slice(0, 16)}...`);
+      console.log(`[POUW] 🎯 Certificate #${state.totalFound} found!${cert.workloadId ? ` (backed by ${cert.workloadId})` : " (filler)"} z=${cert.z.slice(0, 16)}...`);
       await submitCertificate(cert);
       // Refresh seed after finding a certificate to avoid replays
-      state.chainSeed = await fetchChainSeed();
-      state.lastSeedRefresh = Date.now();
+      const fresh = await fetchChainSeed();
+      if (fresh) {
+        state.chainSeed = fresh;
+        state.lastSeedRefresh = Date.now();
+      }
     }
 
     // Yield to event loop between batches

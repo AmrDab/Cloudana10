@@ -32,11 +32,21 @@ export interface POUWCertificate {
    */
   matrixA: number[];
   matrixB: number[];
+  /**
+   * Present when this certificate was mined ON a real user workload (true PoUW).
+   * The orchestrator gates full mining rewards on this being a live, claimed job.
+   */
+  workloadId?: string;
 }
 
 /** Result of a successful solve() call. */
 export interface SolveResult {
   certificate: POUWCertificate;
+  /**
+   * The decoded useful output C = A·B (flat row-major). This is the answer the
+   * user paid for — the whole point of USEFUL work. Always populated by solve().
+   */
+  result: number[];
 }
 
 /** Summary stats returned by the mining loop. */

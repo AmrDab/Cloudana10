@@ -94,11 +94,19 @@ export function matRandom(rows: number, cols: number, rng: () => number): Matrix
   return m;
 }
 
-/** Serialize matrix to a Buffer for hashing (big-endian uint32 per element). */
+/**
+ * Serialize matrix to a Buffer for hashing (big-endian int32 per element).
+ *
+ * SIGNED on purpose: real user workloads (AI/ML weights, scientific data)
+ * contain negative values. The previous uint32 encoding threw ERR_OUT_OF_RANGE
+ * on any negative entry — it only ever worked for random filler matrices.
+ * Testnet has zero certificates on record, so changing the hash encoding here
+ * invalidates nothing.
+ */
 export function matToBytes(m: Matrix): Buffer {
   const buf = Buffer.alloc(m.data.length * 4);
   for (let i = 0; i < m.data.length; i++) {
-    buf.writeUInt32BE(m.data[i], i * 4);
+    buf.writeInt32BE(m.data[i] | 0, i * 4);
   }
   return buf;
 }

@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "tsx src/test.ts"
+    "test": "tsx src/test.ts && tsx src/test-backed.ts"
   },
   "devDependencies": {
     "tsx": "^4.20.5",

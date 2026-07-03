@@ -72,6 +72,22 @@ export async function storeCertificate(cert: POUWCertificate): Promise<string | 
   }
 }
 
+/** Count a provider's certificates verified since `sinceMs` (reward-cap enforcement). */
+export async function countRecentCertificates(providerAddress: string, sinceMs: number): Promise<number> {
+  try {
+    const db = getD1();
+    const row = await db
+      .prepare(`SELECT COUNT(*) as c FROM pouw_certificates WHERE provider_address = ? AND verified_at > ?`)
+      .bind(providerAddress.toLowerCase(), sinceMs)
+      .first();
+    return Number((row as any)?.c ?? 0);
+  } catch {
+    // Fail CLOSED for caps: if we can't count, report a huge number so the
+    // capped (filler) path pays nothing rather than paying unbounded.
+    return Number.MAX_SAFE_INTEGER;
+  }
+}
+
 /** Get certificates (most recent first), optionally filtered by provider. */
 export async function getCertificates(opts?: {
   providerAddress?: string;

@@ -17,9 +17,38 @@
  * and scientific compute, exactly as the multi-tier design intends.
  */
 
-import type { Matrix } from "./matrix.js";
+import { PRIME_N, type Matrix } from "./matrix.js";
 import { solve } from "./cupow.js";
 import type { POUWCertificate } from "./types.js";
+
+/* ── Signed ↔ field conversion ────────────────────────────────────────────────
+ * cuPOW arithmetic runs over F_p (p = 1e9+7). Real workloads use signed integers,
+ * so the bridge (a) maps inputs into canonical field form and (b) lifts outputs
+ * back to signed via the centered lift. Exact integer recovery requires the
+ * products not to wrap: |entries| ≤ B with n·B² < p/2. maxAbsEntry() enforces it.
+ */
+const HALF_P = (PRIME_N - 1) / 2;
+
+/** Largest |entry| for which C = A·B is exactly recoverable at dimension n. */
+export function maxAbsEntry(n: number): number {
+  return Math.floor(Math.sqrt(HALF_P / n));
+}
+
+function toField(m: Matrix, bound: number, label: string): Matrix {
+  const data = new Array(m.data.length);
+  for (let i = 0; i < m.data.length; i++) {
+    const v = m.data[i];
+    if (!Number.isInteger(v)) throw new Error(`${label}[${i}] is not an integer (quantize workload inputs first)`);
+    if (Math.abs(v) > bound) throw new Error(`${label}[${i}]=${v} exceeds exactness bound ±${bound} for n=${m.rows}`);
+    data[i] = ((v % PRIME_N) + PRIME_N) % PRIME_N;
+  }
+  return { rows: m.rows, cols: m.cols, data };
+}
+
+/** Centered lift: field element → signed integer in (-p/2, p/2]. */
+function liftSigned(v: number): number {
+  return v > HALF_P ? v - PRIME_N : v;
+}
 
 /** A real unit of useful work pulled from the workload queue. */
 export interface WorkloadMatrixJob {
@@ -55,8 +84,14 @@ export function solveBacked(
   maxAttempts = 500,
 ): BackedSolveResult | null {
   const n = job.A.rows;
-  // Pass the REAL matrices as externalA/externalB — this is the one-line change
-  // that makes the work useful. solve() already supports it; the miner never used it.
+  const bound = maxAbsEntry(n);
+  // Map the user's signed integers into canonical field form (throws if the
+  // workload exceeds the exact-recovery bound — reject at intake, not mid-mine).
+  const A = toField(job.A, bound, "A");
+  const B = toField(job.B, bound, "B");
+
+  // Pass the REAL matrices as externalA/externalB — the change that makes the
+  // work useful. solve() supports it; the filler path simply never used it.
   const res = solve(
     chainSeed,
     n,
@@ -64,51 +99,31 @@ export function solveBacked(
     providerAddress,
     deviceId,
     maxAttempts,
-    job.A, // externalA  <-- real workload input
-    job.B, // externalB  <-- real workload input
+    A, // externalA  <-- real workload input
+    B, // externalB  <-- real workload input
   );
   if (!res) return null;
 
-  // Recover the useful answer. (In cupow.ts the decode() result is currently
-  // discarded with `const _ =`; expose it instead — see patch note below.)
-  const result = decodeResult(job.A, job.B, res.certificate);
+  // The useful answer decoded inside solve(), lifted back to signed integers.
+  const result: Matrix = {
+    rows: job.A.rows,
+    cols: job.B.cols,
+    data: res.result.map(liftSigned),
+  };
 
   return {
     workloadId: job.workloadId,
-    certificate: { ...res.certificate, /* tag for orchestrator gating */ },
+    certificate: { ...res.certificate, workloadId: job.workloadId },
     result,
     backedByWorkload: true,
   };
 }
 
-/**
- * Decode C = A·B for return to the user. For the testnet we recompute directly
- * (the provider already holds A, B). On mainnet the zkSNARK proves C without
- * revealing A, B and this direct recompute is replaced by the succinct proof.
- */
-function decodeResult(A: Matrix, B: Matrix, _cert: POUWCertificate): Matrix {
-  const out: Matrix = { rows: A.rows, cols: B.cols, data: new Array(A.rows * B.cols).fill(0) };
-  for (let i = 0; i < A.rows; i++) {
-    for (let k = 0; k < A.cols; k++) {
-      const a = A.data[i * A.cols + k];
-      if (a === 0) continue;
-      for (let j = 0; j < B.cols; j++) {
-        out.data[i * B.cols + j] += a * B.data[k * B.cols + j];
-      }
-    }
-  }
-  return out;
-}
-
 /* ───────────────────────────────────────────────────────────────────────────
- * PATCH NOTE for pouw/src/cupow.ts:
- *   Change   `const _ = decode(...)`   to   `const result = decode(...)`
- *   and add  `result: result.data`     to the returned SolveResult, so callers
- *   can retrieve the useful output instead of throwing it away.
- *
- * PATCH NOTE for client/api/src/services/mining-reward.service.ts:
- *   Gate the reward:
- *     if (!cert.backedByWorkload) return null; // filler earns nothing
- *   so only certificates tied to a funded workload mint full CLD. This removes
- *   the incentive to grind random matrices and aligns emission with real demand.
+ * STATUS (2026-07-03): both patch points are APPLIED.
+ *   - cupow.ts solve() now returns `result` (the decoded C = A·B).
+ *   - mining-reward.service.ts gates full rewards on a live, claimed workload;
+ *     filler certificates earn a reduced fraction under a per-provider daily cap.
+ * The bridge itself is consumed by provider-node-server/src/pouw-miner.ts, which
+ * claims jobs from GET /v1/pouw/job and submits result + workloadId together.
  * ─────────────────────────────────────────────────────────────────────────── */

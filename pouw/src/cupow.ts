@@ -191,10 +191,12 @@ export function solve(
     const z = computeZ(sigma, transcriptHash, matrixAHash, matrixBHash);
 
     if (meetsDifficulty(z, difficulty)) {
-      // Decode: recover A·B (the useful result)
-      const _ = decode(A, B, Cprime, EL, ER, FL, FR); // noqa: for testnet we don't need result
+      // Decode: recover C = A·B — the useful result. This is returned to the
+      // caller so it can be delivered to the user who paid for the computation.
+      const C = decode(A, B, Cprime, EL, ER, FL, FR);
 
       return {
+        result: C.data,
         certificate: {
           sigma,
           n,
