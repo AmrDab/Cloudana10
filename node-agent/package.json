@@ -1,0 +1,21 @@
+{
+  "name": "@cloudana/node-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "selftest": "tsx src/selftest.ts && tsx src/sealed.selftest.ts && tsx src/hosting.selftest.ts && tsx src/workstation.selftest.ts"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.1",
+    "@noble/hashes": "^1.8.0",
+    "viem": "^2.23.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "^5.7.3",
+    "@types/node": "^20.19.0"
+  }
+}

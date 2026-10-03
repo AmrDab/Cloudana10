@@ -1,0 +1,88 @@
+# Cloudana node agent on every node of a Kubernetes cluster, joined to one fleet.
+#
+#   1. Create a fleet in the Cloudana app (or POST /v1/fleets) and copy its token — it is shown once.
+#   2. kubectl create namespace cloudana
+#      kubectl -n cloudana create secret generic cloudana-fleet --from-literal=CLOUDANA_FLEET_TOKEN=cft_...
+#   3. kubectl apply -f node-agent/deploy/kubernetes-daemonset.yaml
+#
+# Each pod announces with the token and is bound to the fleet owner's wallet at once;
+# `kubectl -n cloudana logs ds/cloudana-node-agent` shows "Joined fleet <id> — earnings go to <payout>".
+# Revoking the fleet stops new pods from joining (they exit with "Invalid or revoked fleet token").
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cloudana-node-agent
+  namespace: cloudana
+  labels: { app: cloudana-node-agent }
+spec:
+  selector:
+    matchLabels: { app: cloudana-node-agent }
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels: { app: cloudana-node-agent }
+    spec:
+      # Only schedule onto GPU nodes, for example:
+      # nodeSelector:
+      #   nvidia.com/gpu.present: "true"
+      initContainers:
+        # hostPath directories are created root-owned; hand the key directory to the agent's user.
+        # (Not needed with emptyDir — drop this if you switch.)
+        - name: key-dir-owner
+          image: busybox:1.36
+          command: ["sh", "-c", "chown 1000:1000 /data && chmod 700 /data"]
+          securityContext: { runAsUser: 0 }
+          volumeMounts:
+            - name: node-key
+              mountPath: /data
+      containers:
+        - name: agent
+          # Build and push it yourself: docker build -f node-agent/Dockerfile -t <registry>/cloudana-node-agent .
+          image: ghcr.io/amrdab/cloudana-node-agent:latest
+          env:
+            - name: CLOUDANA_API
+              value: https://api.cloudana.io
+            - name: CLOUDANA_FLEET_TOKEN
+              valueFrom:
+                secretKeyRef: { name: cloudana-fleet, key: CLOUDANA_FLEET_TOKEN }
+          resources:
+            requests: { cpu: "1", memory: 512Mi }
+            limits: { memory: 2Gi }
+            # The agent's matmul work is CPU today; request a GPU only if you pin it to GPU nodes:
+            # limits: { nvidia.com/gpu: 1 }
+            #
+            # GPU workstations: the agent starts them through the host Docker daemon (mount
+            # /var/run/docker.sock and ship a docker CLI), and Docker adds --gpus — so the GPUs are
+            # attached to the workstation containers by the host's nvidia-container-toolkit, not to
+            # this pod, and the pod needs no nvidia.com/gpu limit for them (one would just reserve a
+            # GPU from Kubernetes that workstations then share). The pod only runs nvidia-smi to
+            # detect GPUs: set `runtimeClassName: nvidia` on the pod spec (GPU Operator / toolkit
+            # installed) with NVIDIA_VISIBLE_DEVICES=all so nvidia-smi works without reserving GPUs.
+            # Without it the node announces no `gpu` capability.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000   # the image's `node` user
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false   # tsx writes its compile cache to /tmp
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: node-key
+              mountPath: /app/node-agent/.data
+      volumes:
+        # The node key (its identity) lives in this volume.
+        #
+        # hostPath (default here): the key survives pod restarts, upgrades and rescheduling
+        # on the same machine, so each machine stays one Cloudana node with one history.
+        # The private key sits on the host disk — restrict access to /var/lib/cloudana.
+        # The initContainer above makes it writable by the agent (uid 1000).
+        - name: node-key
+          hostPath:
+            path: /var/lib/cloudana/node-agent
+            type: DirectoryOrCreate
+        # emptyDir instead: nothing is written to the host, but every pod restart creates a
+        # new node key, so the machine re-joins the fleet as a new node and the old entry
+        # goes offline (its earnings stay with the fleet owner's wallet either way).
+        # - name: node-key
+        #   emptyDir: {}
