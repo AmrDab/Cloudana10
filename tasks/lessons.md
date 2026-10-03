@@ -70,3 +70,12 @@
 - Vite re-optimizes deps and force-reloads the page on first import of a new library (three, cobe): a blank capture
   right after adding a dependency is a reload, not a bug — wait and re-check before debugging.
 - A hidden browser pane throttles timers: polling loops never finish there. Use the pane only for pages already mounted.
+
+## 2026-10-03 — production surprises the local stack can't show
+- Vite loads `.env.local` in production builds: the prod build would have pointed at 127.0.0.1 with the dev wallet on.
+  Rule: production overrides live in `.env.production.local`, and grep the built bundle for localhost before deploying.
+- Cloudflare Pages ignores SPA fallback when a top-level 404.html exists → every client route 404'd. Rule: SPA builds
+  ship no 404.html; the app renders its own.
+- Production data differs from fixtures (504 legacy templates incl. mining). Rule: smoke-test the preview Worker
+  version (`wrangler versions upload`) against prod data before `versions deploy`.
+- CI installs per package: a dep that resolves only via the repo root (vite for vitest) passes locally and fails in CI.

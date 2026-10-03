@@ -279,3 +279,16 @@ SSH + web access; persistent volumes with keep-days; max hours + extend; capacit
       behind 301s; sitemap has /lab (404 in production until deployed — expected). Remaining noise is legacy-only
       (Akash CORS, ipfs.io, unauthenticated provider-stats) and fonts preconnect hrefs.
 - [x] 375/390: no horizontal overflow; hero, thesis, services bands checked visually; 0 console errors.
+
+## Shipped (2026-10-03)
+- [x] Committed in 10 reviewable commits on site/hightech-homepage; PR https://github.com/AmrDab/Cloudana10/pull/2
+- [x] Production D1 backed up (.backups/, 4.8 MB) before the additive schema migration
+- [x] API Worker: uploaded as preview, smoke-tested, promoted (version c17cc85d); TESTNET_CREDITS on
+- [x] Two sites, one build: cloudana.io (site) and app.cloudana.io (console); console paths on cloudana.io move to app.
+- [x] Live fixes found only in production: legacy 504-template store (mining categories, no curated) → curated-first
+      gallery 0.97 MB; static 404.html blocked SPA routing (/lab, /control/*) → removed; CI lacked vite → declared.
+- [ ] Merge PR #2 once CI is green
+- [ ] Owner: rotate keys from the client/api/.env in public history (86fa598) incl. ORCHESTRATOR_PRIVATE_KEY Worker
+      secret; revoke MINTER/ADMIN from 0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A; VITE_WALLETCONNECT_PROJECT_ID;
+      INTERNAL_API_KEY Worker secret; deploy settlement contract + keeper on Base Sepolia; publish node image;
+      bring one public node online.
