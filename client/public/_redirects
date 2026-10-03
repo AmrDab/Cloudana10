@@ -4,5 +4,5 @@
 /browser-contribute.html /lab     301
 /prototype-verify.html   /lab     301
 /app/*                   /control/run 301
-# SPA fallback (homepage, /lab, /control/*)
-/*  /index.html  200
+# No 404.html in the build: Cloudflare Pages then serves index.html for unknown paths (SPA mode),
+# and the app renders its own 404 page.
