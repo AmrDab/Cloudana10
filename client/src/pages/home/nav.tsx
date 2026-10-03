@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 import { Logo } from "@/components/cld/logo";
 import { btn } from "@/components/cld/cta";
@@ -14,10 +14,30 @@ const LINKS = [
   { label: "Docs", href: "/control/docs" },
 ];
 
+/** True while the page is scrolling down past the nav; false on any scroll up or near the top. */
+function useHideOnScroll() {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    let last = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (Math.abs(y - last) < 6) return;
+      setHidden(y > last && y > 80);
+      last = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  return hidden;
+}
+
 export function SiteNav() {
   const [open, setOpen] = useState(false);
+  const hidden = useHideOnScroll() && !open;
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-[rgba(7,9,13,.72)] backdrop-blur-[14px]">
+    <header
+      className={`sticky top-0 z-40 border-b border-line bg-[rgba(7,9,13,.72)] backdrop-blur-[14px] transition-transform duration-300 ease-out focus-within:translate-y-0 ${hidden ? "-translate-y-full" : "translate-y-0"}`}
+    >
       <nav aria-label="Primary" className={`${wrap} flex h-16 items-center gap-3 md:gap-6`}>
         <div className="flex items-center gap-3">
           <Logo />
