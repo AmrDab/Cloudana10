@@ -30,3 +30,6 @@ shared/addresses.local.json
 # every package dir (node-agent, contract, client/api…)
 **/node_modules/
 .playwright-mcp/
+
+# production build overrides (public values, kept local)
+client/.env.production.local

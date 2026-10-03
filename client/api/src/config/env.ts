@@ -76,6 +76,8 @@ export const envSchema = z.object({
   // ── v1 work pipeline (docs/BUILD_SPEC_V1.md) ────────────────────────────
   /** Enables POST /v1/dev/credits. Never set in production. */
   DEV_MODE: flag(false),
+  /** Public testnet: /v1/dev/credits gives 10 test CLD once per wallet per day. Never on a value-bearing deployment. */
+  TESTNET_CREDITS: flag(false),
   EPOCH_SECONDS: int(120),
   VEST_B_SECONDS: int(120),
   SUBSIDY_RHO: z.coerce.number().min(0).max(1).default(0.25),

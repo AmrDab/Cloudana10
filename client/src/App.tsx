@@ -9,7 +9,28 @@ const ConsoleApp = lazy(() => import("./ConsoleApp"));
 
 const Blank = () => <div className="min-h-dvh bg-bg" />;
 
+/**
+ * Two production sites, one build: the console lives on VITE_CONSOLE_ORIGIN (app.cloudana.io), the site on
+ * cloudana.io. Console paths on the site host go to the console host; the console host's root opens the console.
+ * Unset locally, so dev serves everything from one origin.
+ */
+function hostRedirect(): string | null {
+  const consoleOrigin = import.meta.env.VITE_CONSOLE_ORIGIN as string | undefined;
+  if (!consoleOrigin || typeof window === "undefined") return null;
+  const { origin, pathname, search, hash } = window.location;
+  const onConsoleHost = origin === consoleOrigin;
+  const consolePath = pathname === "/control" || pathname.startsWith("/control/");
+  if (!onConsoleHost && consolePath) return consoleOrigin + pathname + search + hash;
+  if (onConsoleHost && (pathname === "/" || pathname === "")) return "/control" + search + hash;
+  return null;
+}
+
 function App() {
+  const to = hostRedirect();
+  if (to) {
+    window.location.replace(to);
+    return <Blank />;
+  }
   const rawPath = typeof window !== "undefined" ? window.location.pathname : "/";
   const isHome = rawPath === "/" || rawPath === "";
   const isLab = rawPath === "/lab" || rawPath === "/lab/";
