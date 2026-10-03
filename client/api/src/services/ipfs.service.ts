@@ -5,9 +5,12 @@
 import { readWorkload } from "./chain-client.js";
 import { bytesToCidString } from "../lib/cid.js";
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 
 /** Default: Pinata gateway (reliable for pinned content). Override with IPFS_GATEWAY (e.g. https://cloudflare-ipfs.com). */
-const IPFS_GATEWAY = process.env.IPFS_GATEWAY ?? "https://gateway.pinata.cloud";
+function ipfsGateway(): string {
+  return getEnv().IPFS_GATEWAY;
+}
 const L = log.ipfs;
 
 export interface WorkloadManifestFromIPFS {
@@ -30,8 +33,8 @@ function resolveWorkloadMetadataUriToFetchUrl(uri: string | undefined): string |
   if (!uri || typeof uri !== "string") return null;
   const s = uri.trim();
   if (s.startsWith("http://") || s.startsWith("https://")) return s;
-  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(s) || /^[a-z2-7]{59}$/.test(s)) return `${IPFS_GATEWAY}/ipfs/${s}`;
-  return `${IPFS_GATEWAY}/ipfs/${s}`;
+  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(s) || /^[a-z2-7]{59}$/.test(s)) return `${ipfsGateway()}/ipfs/${s}`;
+  return `${ipfsGateway()}/ipfs/${s}`;
 }
 
 /**
@@ -40,7 +43,7 @@ function resolveWorkloadMetadataUriToFetchUrl(uri: string | undefined): string |
  */
 export async function fetchWorkloadManifestFromIPFS(cid: string): Promise<WorkloadManifestFromIPFS | null> {
   try {
-    const url = `${IPFS_GATEWAY}/ipfs/${cid}`;
+    const url = `${ipfsGateway()}/ipfs/${cid}`;
     L.info(`📥 Fetching workload manifest from IPFS...`);
     L.log(`  CID: ${cid}`);
     L.dim(`  URL: ${url}`);

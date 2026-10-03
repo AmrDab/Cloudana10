@@ -6,13 +6,22 @@
  * GET  /v1/payments/balance         — Get user's CLD credit balance
  * POST /v1/payments/deposit-crypto  — Record a verified crypto deposit
  * GET  /v1/payments/history         — Transaction history
+ * GET  /v1/payments/session/:id     — Confirm a hosted-checkout session after redirect
+ *
+ * Every route except the Stripe webhook and the public USD→CLD preview requires a
+ * JWT (see /v1/auth). The caller's wallet is always `jwtPayload.sub` — never a
+ * body field, header value or query param the client could set to someone else's
+ * address.
  */
 
-import { Hono } from "hono";
+import { createRoute } from "@hono/zod-openapi";
 import { log } from "../../lib/logger.js";
+import { ok, fail, errorMessage } from "../../lib/http.js";
+import { requireAuth } from "../../middleware/auth.js";
 import {
   createCheckoutSession,
   createPaymentIntent,
+  getCheckoutSession,
   handleWebhook,
   convertUsdToCld,
 } from "../../services/stripe.service.js";
@@ -21,80 +30,66 @@ import {
   creditBalance,
   getTransactionHistory,
 } from "../../services/balance.service.js";
+import {
+  BalanceResponseSchema,
+  CheckoutRequestSchema,
+  CheckoutResponseSchema,
+  ConvertQuerySchema,
+  ConvertResponseSchema,
+  DepositCryptoRequestSchema,
+  DepositCryptoResponseSchema,
+  HistoryQuerySchema,
+  HistoryResponseSchema,
+  PaymentIntentRequestSchema,
+  PaymentIntentResponseSchema,
+  SessionParamsSchema,
+  SessionResponseSchema,
+  WebhookResponseSchema,
+} from "../../schemas/payments.schema.js";
+import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
 const L = log.api;
+const TAGS = ["Payments"];
 
-export const paymentsRouter = new Hono();
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Extract caller address from Authorization header or query param */
-function resolveUserId(c: { req: { header: (k: string) => string | undefined; query: (k: string) => string | undefined } }): string | null {
-  // Accept: Authorization: Bearer <address>  OR  ?address=<address>
-  const auth = c.req.header("authorization");
-  if (auth?.startsWith("Bearer ")) {
-    const token = auth.slice(7).trim();
-    if (token) return token;
-  }
-  return c.req.query("address") ?? null;
-}
+export const paymentsRouter = createRouter();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /v1/payments/checkout
 // ─────────────────────────────────────────────────────────────────────────────
 
-paymentsRouter.post("/payments/checkout", async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json<Record<string, unknown>>();
-  } catch {
-    return c.json({ status: "error", error: "Invalid JSON body" }, 400);
-  }
+const checkoutRoute = createRoute({
+  method: "post",
+  path: "/payments/checkout",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  middleware: [requireAuth] as const,
+  request: { body: { required: true, content: { "application/json": { schema: CheckoutRequestSchema } } } },
+  responses: responses({ 200: json(CheckoutResponseSchema, "Hosted checkout session created") }, 400, 401, 429, 500),
+});
 
-  const { amountUsd, userId, metadata, successUrl, cancelUrl } = body as {
-    amountUsd?: number;
-    userId?: string;
-    metadata?: Record<string, string>;
-    successUrl?: string;
-    cancelUrl?: string;
-  };
-
-  // Resolve userId: body > auth header
-  const resolvedUserId = userId ?? resolveUserId(c as Parameters<typeof resolveUserId>[0]) ?? null;
-
-  if (!resolvedUserId) {
-    return c.json(
-      { status: "error", error: "userId is required (body field or Authorization: Bearer <address>)" },
-      400
-    );
-  }
-
-  if (typeof amountUsd !== "number" || amountUsd <= 0) {
-    return c.json({ status: "error", error: "amountUsd must be a positive number" }, 400);
-  }
+paymentsRouter.openapi(checkoutRoute, async (c) => {
+  const { amountUsd, metadata, successUrl, cancelUrl } = c.req.valid("json");
+  const resolvedUserId = c.get("jwtPayload").sub;
 
   try {
     const result = await createCheckoutSession({
       amountUsd,
       userId: resolvedUserId,
       metadata,
-      successUrl: typeof successUrl === "string" ? successUrl : undefined,
-      cancelUrl: typeof cancelUrl === "string" ? cancelUrl : undefined,
+      successUrl,
+      cancelUrl,
     });
 
-    return c.json({
-      status: "success",
+    return ok(c, {
       sessionId: result.sessionId,
       url: result.url,
       cldAmount: result.cldAmount,
       amountUsd: result.amountUsd,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     L.error(`[Payments] Checkout error: ${msg}`);
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", msg);
   }
 });
 
@@ -102,28 +97,23 @@ paymentsRouter.post("/payments/checkout", async (c) => {
 // POST /v1/payments/payment-intent  (embedded form)
 // ─────────────────────────────────────────────────────────────────────────────
 
-paymentsRouter.post("/payments/payment-intent", async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json<Record<string, unknown>>();
-  } catch {
-    return c.json({ status: "error", error: "Invalid JSON body" }, 400);
-  }
+const paymentIntentRoute = createRoute({
+  method: "post",
+  path: "/payments/payment-intent",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  middleware: [requireAuth] as const,
+  request: { body: { required: true, content: { "application/json": { schema: PaymentIntentRequestSchema } } } },
+  responses: responses({ 200: json(PaymentIntentResponseSchema, "Payment intent created") }, 400, 401, 429, 500),
+});
 
-  const { amountUsd, userId } = body as { amountUsd?: number; userId?: string };
-  const resolvedUserId = userId ?? resolveUserId(c as Parameters<typeof resolveUserId>[0]);
-
-  if (!resolvedUserId) {
-    return c.json({ status: "error", error: "userId is required" }, 400);
-  }
-  if (typeof amountUsd !== "number" || amountUsd <= 0) {
-    return c.json({ status: "error", error: "amountUsd must be a positive number" }, 400);
-  }
+paymentsRouter.openapi(paymentIntentRoute, async (c) => {
+  const { amountUsd } = c.req.valid("json");
+  const resolvedUserId = c.get("jwtPayload").sub;
 
   try {
     const result = await createPaymentIntent({ amountUsd, userId: resolvedUserId });
-    return c.json({
-      status: "success",
+    return ok(c, {
       clientSecret: result.clientSecret,
       paymentIntentId: result.paymentIntentId,
       cldAmount: result.cldAmount,
@@ -131,21 +121,31 @@ paymentsRouter.post("/payments/payment-intent", async (c) => {
       publishableKey: result.publishableKey,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     L.error(`[Payments] Payment intent error: ${msg}`);
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", msg);
   }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /v1/payments/webhook  (Stripe sends raw body — must NOT parse JSON)
+// No body schema on purpose: a validator would consume the body before the
+// signature check reads the exact raw bytes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-paymentsRouter.post("/payments/webhook", async (c) => {
+const webhookRoute = createRoute({
+  method: "post",
+  path: "/payments/webhook",
+  tags: TAGS,
+  description: "Stripe webhook. Requires the stripe-signature header; the raw body is verified as sent.",
+  responses: responses({ 200: json(WebhookResponseSchema, "Event received") }, 400, 429),
+});
+
+paymentsRouter.openapi(webhookRoute, async (c) => {
   const signature = c.req.header("stripe-signature");
 
   if (!signature) {
-    return c.json({ status: "error", error: "Missing stripe-signature header" }, 400);
+    return fail(c, "bad_request", "Missing stripe-signature header");
   }
 
   // Read raw body as text (Stripe signature verification requires the exact payload bytes)
@@ -153,13 +153,12 @@ paymentsRouter.post("/payments/webhook", async (c) => {
   try {
     rawBody = await c.req.text();
   } catch {
-    return c.json({ status: "error", error: "Failed to read request body" }, 400);
+    return fail(c, "bad_request", "Failed to read request body");
   }
 
   try {
     const result = await handleWebhook(rawBody, signature);
-    return c.json({
-      status: "success",
+    return ok(c, {
       received: true,
       event: result.event,
       handled: result.handled,
@@ -167,10 +166,10 @@ paymentsRouter.post("/payments/webhook", async (c) => {
       ...(result.cldCredited !== undefined && { cldCredited: result.cldCredited }),
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     L.error(`[Payments] Webhook error: ${msg}`);
     // Return 400 so Stripe retries only on genuine signature failures
-    return c.json({ status: "error", error: msg }, 400);
+    return fail(c, "bad_request", msg);
   }
 });
 
@@ -178,23 +177,24 @@ paymentsRouter.post("/payments/webhook", async (c) => {
 // GET /v1/payments/balance
 // ─────────────────────────────────────────────────────────────────────────────
 
-paymentsRouter.get("/payments/balance", async (c) => {
-  const address = resolveUserId(c as Parameters<typeof resolveUserId>[0]);
+const balanceRoute = createRoute({
+  method: "get",
+  path: "/payments/balance",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  middleware: [requireAuth] as const,
+  responses: responses({ 200: json(BalanceResponseSchema, "Caller's CLD credit balance") }, 401, 429, 500),
+});
 
-  if (!address) {
-    return c.json(
-      { status: "error", error: "address is required (Authorization: Bearer <address> or ?address=<address>)" },
-      400
-    );
-  }
+paymentsRouter.openapi(balanceRoute, async (c) => {
+  const address = c.get("jwtPayload").sub;
 
   try {
     const balance = await getUserBalance(address);
     const rate = Number(process.env.CLD_USD_RATE ?? 100);
     const usdEquivalent = balance.balance / rate;
 
-    return c.json({
-      status: "success",
+    return ok(c, {
       address: balance.address,
       balance: balance.balance,
       currency: "CLD",
@@ -202,9 +202,9 @@ paymentsRouter.get("/payments/balance", async (c) => {
       updatedAt: balance.updatedAt,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     L.error(`[Payments] Balance error: ${msg}`);
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", msg);
   }
 });
 
@@ -213,41 +213,34 @@ paymentsRouter.get("/payments/balance", async (c) => {
 // Record a verified crypto deposit (on-chain verification hook)
 // ─────────────────────────────────────────────────────────────────────────────
 
-paymentsRouter.post("/payments/deposit-crypto", async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json<Record<string, unknown>>();
-  } catch {
-    return c.json({ status: "error", error: "Invalid JSON body" }, 400);
-  }
+const depositCryptoRoute = createRoute({
+  method: "post",
+  path: "/payments/deposit-crypto",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  middleware: [requireAuth] as const,
+  request: { body: { required: true, content: { "application/json": { schema: DepositCryptoRequestSchema } } } },
+  responses: responses(
+    { 200: json(DepositCryptoResponseSchema, "Deposit verified on-chain and credited") },
+    400,
+    401,
+    422,
+    429,
+    500,
+  ),
+});
 
-  const { address, txHash, cldAmount, chainId } = body as {
-    address?: string;
-    txHash?: string;
-    cldAmount?: number;
-    chainId?: string | number;
-  };
+paymentsRouter.openapi(depositCryptoRoute, async (c) => {
+  const { txHash, cldAmount, chainId } = c.req.valid("json");
 
-  const resolvedAddress = address ?? resolveUserId(c as Parameters<typeof resolveUserId>[0]);
-
-  if (!resolvedAddress) {
-    return c.json({ status: "error", error: "address is required" }, 400);
-  }
-  if (!txHash || typeof txHash !== "string") {
-    return c.json({ status: "error", error: "txHash is required" }, 400);
-  }
-  if (typeof cldAmount !== "number" || cldAmount <= 0) {
-    return c.json({ status: "error", error: "cldAmount must be a positive number" }, 400);
-  }
+  // The on-chain Transfer must originate from the authenticated wallet.
+  const resolvedAddress = c.get("jwtPayload").sub;
 
   try {
     const isVerified = await verifyCryptoDeposit(txHash, resolvedAddress, cldAmount, chainId);
 
     if (!isVerified) {
-      return c.json(
-        { status: "error", error: "On-chain transaction verification failed" },
-        422
-      );
+      return fail(c, "unprocessable", "On-chain transaction verification failed");
     }
 
     const { balance, transaction } = await creditBalance(resolvedAddress, cldAmount, "crypto", {
@@ -255,8 +248,7 @@ paymentsRouter.post("/payments/deposit-crypto", async (c) => {
       chainId: String(chainId ?? "unknown"),
     });
 
-    return c.json({
-      status: "success",
+    return ok(c, {
       address: resolvedAddress,
       cldCredited: cldAmount,
       txHash,
@@ -264,9 +256,9 @@ paymentsRouter.post("/payments/deposit-crypto", async (c) => {
       newBalance: balance.balance,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     L.error(`[Payments] Crypto deposit error: ${msg}`);
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", msg);
   }
 });
 
@@ -274,33 +266,65 @@ paymentsRouter.post("/payments/deposit-crypto", async (c) => {
 // GET /v1/payments/history
 // ─────────────────────────────────────────────────────────────────────────────
 
-paymentsRouter.get("/payments/history", async (c) => {
-  const address = resolveUserId(c as Parameters<typeof resolveUserId>[0]);
+const historyRoute = createRoute({
+  method: "get",
+  path: "/payments/history",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  middleware: [requireAuth] as const,
+  request: { query: HistoryQuerySchema },
+  responses: responses({ 200: json(HistoryResponseSchema, "Caller's transaction history") }, 401, 429, 500),
+});
 
-  if (!address) {
-    return c.json(
-      { status: "error", error: "address is required (Authorization: Bearer <address> or ?address=<address>)" },
-      400
-    );
-  }
+paymentsRouter.openapi(historyRoute, async (c) => {
+  const address = c.get("jwtPayload").sub;
 
-  const limitRaw = c.req.query("limit");
-  const offsetRaw = c.req.query("offset");
+  const { limit: limitRaw, offset: offsetRaw } = c.req.valid("query");
   const limit = limitRaw ? Math.min(parseInt(limitRaw, 10) || 50, 200) : 50;
   const offset = offsetRaw ? parseInt(offsetRaw, 10) || 0 : 0;
 
   try {
     const { transactions, total } = await getTransactionHistory(address, { limit, offset });
-    return c.json({
-      status: "success",
+    return ok(c, {
       address: address.toLowerCase(),
       transactions,
       pagination: { total, limit, offset, hasMore: offset + limit < total },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     L.error(`[Payments] History error: ${msg}`);
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", msg);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /v1/payments/session/:id  — confirm a hosted-checkout session after redirect
+// ─────────────────────────────────────────────────────────────────────────────
+
+const sessionRoute = createRoute({
+  method: "get",
+  path: "/payments/session/{id}",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  middleware: [requireAuth] as const,
+  request: { params: SessionParamsSchema },
+  responses: responses({ 200: json(SessionResponseSchema, "Checkout session state") }, 400, 401, 404, 429),
+});
+
+paymentsRouter.openapi(sessionRoute, async (c) => {
+  const { id: sessionId } = c.req.valid("param");
+
+  try {
+    const session = await getCheckoutSession(sessionId);
+    // A session belongs to the wallet it was created for; don't leak others'.
+    if (session.userId?.toLowerCase() !== c.get("jwtPayload").sub) {
+      return fail(c, "not_found", "Session not found");
+    }
+    return ok(c, { ...session });
+  } catch (err) {
+    const msg = errorMessage(err);
+    L.error(`[Payments] Session lookup error: ${msg}`);
+    return fail(c, "not_found", "Session not found");
   }
 });
 
@@ -308,21 +332,28 @@ paymentsRouter.get("/payments/history", async (c) => {
 // GET /v1/payments/convert  (utility: USD → CLD preview)
 // ─────────────────────────────────────────────────────────────────────────────
 
-paymentsRouter.get("/payments/convert", (c) => {
-  const usdRaw = c.req.query("usd");
+const convertRoute = createRoute({
+  method: "get",
+  path: "/payments/convert",
+  tags: TAGS,
+  request: { query: ConvertQuerySchema },
+  responses: responses({ 200: json(ConvertResponseSchema, "USD → CLD preview") }, 400, 429, 500),
+});
+
+paymentsRouter.openapi(convertRoute, (c) => {
+  const usdRaw = c.req.valid("query").usd;
   const usd = parseFloat(usdRaw ?? "0");
 
   if (!usdRaw || isNaN(usd) || usd <= 0) {
-    return c.json({ status: "error", error: "usd query param must be a positive number" }, 400);
+    return fail(c, "bad_request", "usd query param must be a positive number");
   }
 
   try {
     const cld = convertUsdToCld(usd);
     const rate = Number(process.env.CLD_USD_RATE ?? 100);
-    return c.json({ status: "success", usd, cld, rate, currency: "CLD" });
+    return ok(c, { usd, cld, rate, currency: "CLD" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", errorMessage(err));
   }
 });
 

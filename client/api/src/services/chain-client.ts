@@ -12,13 +12,13 @@ import {
 } from "../lib/abi-data.js";
 import {
   contractAddresses,
-  chainId,
-  rpcUrl,
-  orchestratorPrivateKey,
-  rpcTransportMode,
-  wssUrl,
-  websocketRetryCount,
-  websocketRetryDelay
+  getChainId,
+  getRpcUrl,
+  getOrchestratorPrivateKey,
+  getRpcTransportMode,
+  getWssUrl,
+  getWebsocketRetryCount,
+  getWebsocketRetryDelay
 } from "../config/contracts.js";
 import { log } from "../lib/logger.js";
 
@@ -30,8 +30,11 @@ const BlockchainLog = log.blockchain;
  * Supports: http, websocket, hybrid (websocket + http fallback)
  */
 function createRpcTransport(): Transport {
+  const rpcTransportMode = getRpcTransportMode();
+  const rpcUrl = getRpcUrl();
+  const wssUrl = getWssUrl();
   L.info(`[RPC Transport] Mode: ${rpcTransportMode}`);
-  
+
   switch (rpcTransportMode) {
     case 'websocket': {
       if (!wssUrl) {
@@ -41,11 +44,11 @@ function createRpcTransport(): Transport {
       L.success(`[RPC Transport] Using WebSocket: ${wssUrl.slice(0, 40)}...`);
       return webSocket(wssUrl, {
         reconnect: true,
-        retryCount: websocketRetryCount,
-        retryDelay: websocketRetryDelay,
+        retryCount: getWebsocketRetryCount(),
+        retryDelay: getWebsocketRetryDelay(),
       });
     }
-    
+
     case 'hybrid': {
       if (!wssUrl) {
         L.warn("[RPC Transport] Hybrid mode selected but ORCHESTRATOR_CHAIN_WSS_URL not set. Using HTTP only.");
@@ -57,13 +60,13 @@ function createRpcTransport(): Transport {
       return fallback([
         webSocket(wssUrl, {
           reconnect: true,
-          retryCount: websocketRetryCount,
-          retryDelay: websocketRetryDelay,
+          retryCount: getWebsocketRetryCount(),
+          retryDelay: getWebsocketRetryDelay(),
         }),
         http(rpcUrl),
       ]);
     }
-    
+
     case 'http':
     default: {
       L.success(`[RPC Transport] Using HTTP: ${rpcUrl.slice(0, 40)}...`);
@@ -72,17 +75,44 @@ function createRpcTransport(): Transport {
   }
 }
 
-const transport = createRpcTransport();
-const chain = chainId === 84532 ? baseSepolia : { id: chainId, name: "unknown", nativeCurrency: { decimals: 18, name: "Ether", symbol: "ETH" }, rpcUrls: { default: { http: [rpcUrl] } } };
+// Clients are created on first use, never at import time: on the Worker the
+// environment is bridged per request, and on Node a misconfiguration should
+// surface from getEnv() at startup rather than from a module side effect.
+function buildChain() {
+  const chainId = getChainId();
+  const rpcUrl = getRpcUrl();
+  return chainId === 84532
+    ? baseSepolia
+    : { id: chainId, name: "unknown", nativeCurrency: { decimals: 18, name: "Ether", symbol: "ETH" }, rpcUrls: { default: { http: [rpcUrl] } } };
+}
 
-export const publicClient = createPublicClient({ chain, transport });
+function makePublicClient() {
+  return createPublicClient({ chain: buildChain(), transport: createRpcTransport() });
+}
+function makeWalletClient(pk: string) {
+  return createWalletClient({
+    account: privateKeyToAccount(("0x" + pk.replace(/^0x/, "")) as `0x${string}`),
+    chain: buildChain(),
+    transport: createRpcTransport(),
+  });
+}
 
-const account = orchestratorPrivateKey
-  ? privateKeyToAccount(("0x" + orchestratorPrivateKey.replace(/^0x/, "")) as `0x${string}`)
-  : null;
-export const walletClient = account
-  ? createWalletClient({ account, chain, transport })
-  : null;
+let _publicClient: ReturnType<typeof makePublicClient> | null = null;
+let _walletClient: ReturnType<typeof makeWalletClient> | null | undefined;
+
+export function getPublicClient() {
+  if (!_publicClient) _publicClient = makePublicClient();
+  return _publicClient;
+}
+
+/** Signing client for the orchestrator wallet, or null when no key is configured. */
+export function getWalletClient() {
+  if (_walletClient === undefined) {
+    const pk = getOrchestratorPrivateKey();
+    _walletClient = pk ? makeWalletClient(pk) : null;
+  }
+  return _walletClient;
+}
 
 const WorkloadRegistryAbi = WorkloadRegistryABI as unknown as Abi;
 const ProviderRegistryAbi = ProviderRegistryABI as unknown as Abi;
@@ -108,7 +138,7 @@ export function getRewardContractAddress(): Address {
 
 // --- Read WorkloadRegistry ---
 export async function readWorkload(workloadId: bigint) {
-  return publicClient.readContract({
+  return getPublicClient().readContract({
     address: getWorkloadRegistryAddress(),
     abi: WorkloadRegistryAbi,
     functionName: "getWorkload",
@@ -142,7 +172,7 @@ export async function getActiveWorkloadIds(): Promise<bigint[]> {
   BlockchainLog.dim(`  Contract: WorkloadRegistry @ ${address}`);
   
   const startTime = Date.now();
-  const list = await publicClient.readContract({
+  const list = await getPublicClient().readContract({
     address,
     abi: WorkloadRegistryAbi,
     functionName: "getActiveWorkloadIds",
@@ -171,7 +201,7 @@ export async function getWorkloadsBatch(workloadIds: bigint[]): Promise<ChainWor
   BlockchainLog.dim(`  Contract: WorkloadRegistry @ ${address}`);
   
   const startTime = Date.now();
-  const batch = await publicClient.readContract({
+  const batch = await getPublicClient().readContract({
     address,
     abi: WorkloadRegistryAbi,
     functionName: "getWorkloadsBatch",
@@ -230,7 +260,7 @@ export async function getActiveProviders(): Promise<DeviceId[]> {
   BlockchainLog.dim(`  Contract: ProviderRegistry @ ${addr}`);
   
   const startTime = Date.now();
-  const list = await publicClient.readContract({
+  const list = await getPublicClient().readContract({
     address: addr,
     abi: ProviderRegistryAbi,
     functionName: "getActiveProviders",
@@ -263,7 +293,7 @@ export type ChainProvider = {
 export async function getProviderByDevice(deviceId: DeviceId): Promise<ChainProvider | null> {
   const addr = getProviderRegistryAddress();
   if (addr === "0x0000000000000000000000000000000000000000") return null;
-  const result = await publicClient.readContract({
+  const result = await getPublicClient().readContract({
     address: addr,
     abi: ProviderRegistryAbi,
     functionName: "getProviderByDevice",
@@ -276,7 +306,7 @@ export async function getProviderByDevice(deviceId: DeviceId): Promise<ChainProv
 export async function getDeviceOwner(deviceId: DeviceId): Promise<Address | null> {
   const addr = getProviderRegistryAddress();
   if (addr === "0x0000000000000000000000000000000000000000") return null;
-  return publicClient.readContract({
+  return getPublicClient().readContract({
     address: addr,
     abi: ProviderRegistryAbi,
     functionName: "getDeviceOwner",
@@ -294,8 +324,9 @@ export async function getProviderByAddress(providerAddress: Address): Promise<Ch
 
 // --- Write (orchestrator) ---
 async function ensureWallet() {
-  if (!walletClient || !account) throw new Error("Orchestrator private key not set (ORCHESTRATOR_PRIVATE_KEY)");
-  return { walletClient, account };
+  const walletClient = getWalletClient();
+  if (!walletClient?.account) throw new Error("Orchestrator private key not set (ORCHESTRATOR_PRIVATE_KEY)");
+  return { walletClient, account: walletClient.account };
 }
 
 export async function recordPlacement(workloadId: bigint, provider: Address, instanceId: bigint) {
@@ -332,7 +363,7 @@ export async function recordPlacement(workloadId: bigint, provider: Address, ins
   BlockchainLog.info(`⏳ Step 3/3: Waiting for block confirmation...`);
   
   const confirmStartTime = Date.now();
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
   const confirmDuration = Date.now() - confirmStartTime;
   const totalDuration = Date.now() - startTime;
   
@@ -367,7 +398,7 @@ export async function rewardProvider(provider: Address, workloadId: bigint, amou
     args: [provider, workloadId, amount],
     account: a,
   });
-  return publicClient.waitForTransactionReceipt({ hash });
+  return getPublicClient().waitForTransactionReceipt({ hash });
 }
 
 // --- Event subscriptions (event-driven orchestrator) ---
@@ -390,7 +421,7 @@ export function watchWorkloadRegistryEvents(
   const address = getWorkloadRegistryAddress();
   type LogArgs = { args?: { workloadId?: bigint } };
 
-  const unsubRegistered = publicClient.watchContractEvent({
+  const unsubRegistered = getPublicClient().watchContractEvent({
     address,
     abi: WorkloadRegistryAbi,
     eventName: "WorkloadRegistered",
@@ -403,7 +434,7 @@ export function watchWorkloadRegistryEvents(
     },
   });
 
-  const unsubDeregistered = publicClient.watchContractEvent({
+  const unsubDeregistered = getPublicClient().watchContractEvent({
     address,
     abi: WorkloadRegistryAbi,
     eventName: "WorkloadDeregistered",
@@ -417,7 +448,7 @@ export function watchWorkloadRegistryEvents(
     },
   });
 
-  const unsubActivated = publicClient.watchContractEvent({
+  const unsubActivated = getPublicClient().watchContractEvent({
     address,
     abi: WorkloadRegistryAbi,
     eventName: "WorkloadActivated",
@@ -430,7 +461,7 @@ export function watchWorkloadRegistryEvents(
     },
   });
 
-  const unsubDeleted = publicClient.watchContractEvent({
+  const unsubDeleted = getPublicClient().watchContractEvent({
     address,
     abi: WorkloadRegistryAbi,
     eventName: "WorkloadDeleted",
@@ -476,7 +507,7 @@ export function watchProviderRegistryEvents(
   
   type ProviderLogArgs = { args?: { deviceId?: DeviceId; owner?: string } };
 
-  const unsubRegistered = publicClient.watchContractEvent({
+  const unsubRegistered = getPublicClient().watchContractEvent({
     address,
     abi: ProviderRegistryAbi,
     eventName: "ProviderRegistered",
@@ -493,7 +524,7 @@ export function watchProviderRegistryEvents(
     },
   });
 
-  const unsubActivated = publicClient.watchContractEvent({
+  const unsubActivated = getPublicClient().watchContractEvent({
     address,
     abi: ProviderRegistryAbi,
     eventName: "ProviderActivated",
@@ -510,7 +541,7 @@ export function watchProviderRegistryEvents(
     },
   });
 
-  const unsubDeregistered = publicClient.watchContractEvent({
+  const unsubDeregistered = getPublicClient().watchContractEvent({
     address,
     abi: ProviderRegistryAbi,
     eventName: "ProviderDeregistered",

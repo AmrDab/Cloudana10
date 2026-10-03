@@ -7,6 +7,7 @@
  */
 import { addresses as inlinedAddresses } from "../lib/addresses-data.js";
 import { log } from "../lib/logger.js";
+import { getEnv } from "./env.js";
 
 const L = log.config;
 
@@ -20,14 +21,38 @@ function loadAddresses(): Record<string, string> {
   return data.contracts as unknown as Record<string, string>;
 }
 
+// Doesn't touch process.env, so this stays eager.
 export const contractAddresses = loadAddresses();
-export const chainId = Number(process.env.CHAIN_ID ?? 84532);
-export const rpcUrl = process.env.ORCHESTRATOR_CHAIN_RPC_URL ?? process.env.RPC_URL ?? "https://sepolia.base.org";
-export const orchestratorPrivateKey = process.env.ORCHESTRATOR_PRIVATE_KEY ?? "";
+
+// Everything below is sourced from getEnv(), which must not run at import
+// time (the Worker bridges env into process.env per request) — so these are
+// functions, not top-level consts, and callers invoke them per use.
+export function getChainId(): number {
+  return getEnv().CHAIN_ID ?? 84532;
+}
+
+export function getRpcUrl(): string {
+  return getEnv().ORCHESTRATOR_CHAIN_RPC_URL ?? getEnv().RPC_URL ?? "https://sepolia.base.org";
+}
+
+export function getOrchestratorPrivateKey(): string {
+  return getEnv().ORCHESTRATOR_PRIVATE_KEY ?? "";
+}
 
 // RPC Transport Configuration
 export type RpcTransportMode = 'http' | 'websocket' | 'hybrid';
-export const rpcTransportMode = (process.env.ORCHESTRATOR_RPC_TRANSPORT ?? 'http') as RpcTransportMode;
-export const wssUrl = process.env.ORCHESTRATOR_CHAIN_WSS_URL ?? "";
-export const websocketRetryCount = Number(process.env.ORCHESTRATOR_WEBSOCKET_RETRY_COUNT ?? 3);
-export const websocketRetryDelay = Number(process.env.ORCHESTRATOR_WEBSOCKET_RETRY_DELAY ?? 3000);
+export function getRpcTransportMode(): RpcTransportMode {
+  return getEnv().ORCHESTRATOR_RPC_TRANSPORT as RpcTransportMode;
+}
+
+export function getWssUrl(): string {
+  return getEnv().ORCHESTRATOR_CHAIN_WSS_URL ?? "";
+}
+
+export function getWebsocketRetryCount(): number {
+  return getEnv().ORCHESTRATOR_WEBSOCKET_RETRY_COUNT;
+}
+
+export function getWebsocketRetryDelay(): number {
+  return getEnv().ORCHESTRATOR_WEBSOCKET_RETRY_DELAY;
+}

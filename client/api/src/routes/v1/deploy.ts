@@ -8,7 +8,7 @@
  *   providerEndpoint = "https://..." → deploy directly to that Cloudana provider node
  */
 
-import { Hono } from "hono";
+import { createRoute } from "@hono/zod-openapi";
 import {
   createAkashDeployment,
   getAkashDeployment,
@@ -17,39 +17,39 @@ import {
   closeAkashDeployment,
 } from "../../services/akash.service.js";
 import { log } from "../../lib/logger.js";
+import { ok, fail, errorMessage } from "../../lib/http.js";
+import {
+  CloseDeploymentResponseSchema,
+  DeploymentIdParamsSchema,
+  DeploymentResponseSchema,
+  DeploymentsResponseSchema,
+  DeployRequestSchema,
+  DeployResponseSchema,
+} from "../../schemas/deploy.schema.js";
+import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
 const L = log.orchestratorEvent;
+const TAGS = ["Deploy"];
 
-export const deployRouter = new Hono();
+export const deployRouter = createRouter();
+
+// requireAuth is applied to /v1/deploy/* in middleware/security.ts; the
+// /v1/deployments routes fall outside that pattern and are documented without security.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /v1/deploy
-// Body:
-//   {
-//     manifest: string | object,   // SDL YAML or JSON workload manifest
-//     provider?: "akash" | string, // "akash" = Akash network, otherwise ignored for routing
-//     providerEndpoint?: string,   // If set, deploy directly to this Cloudana provider URL
-//     name?: string,               // Optional human-readable name
-//   }
 // ─────────────────────────────────────────────────────────────────────────────
-deployRouter.post("/deploy", async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json<Record<string, unknown>>();
-  } catch {
-    return c.json({ status: "error", error: "Invalid JSON body" }, 400);
-  }
+const deployRoute = createRoute({
+  method: "post",
+  path: "/deploy",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { body: { required: true, content: { "application/json": { schema: DeployRequestSchema } } } },
+  responses: responses({ 200: json(DeployResponseSchema, "Deployment started") }, 400, 401, 500, 502, 503),
+});
 
-  const { manifest, provider, providerEndpoint, name } = body as {
-    manifest?: string | Record<string, unknown>;
-    provider?: string;
-    providerEndpoint?: string;
-    name?: string;
-  };
-
-  if (!manifest) {
-    return c.json({ status: "error", error: "'manifest' field is required" }, 400);
-  }
+deployRouter.openapi(deployRoute, async (c) => {
+  const { manifest, provider, providerEndpoint, name } = c.req.valid("json");
 
   // Normalise manifest to SDL string
   const sdl: string =
@@ -79,14 +79,10 @@ deployRouter.post("/deploy", async (c) => {
       const data = (await res.json()) as Record<string, unknown>;
 
       if (!res.ok) {
-        return c.json(
-          { status: "error", error: `Provider returned ${res.status}`, detail: data },
-          502
-        );
+        return fail(c, "upstream_failed", `Provider returned ${res.status}`, data);
       }
 
-      return c.json({
-        status: "success",
+      return ok(c, {
         provider: "cloudana",
         providerEndpoint,
         workloadId,
@@ -94,9 +90,9 @@ deployRouter.post("/deploy", async (c) => {
         result: data,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       L.error(`[Deploy] Cloudana provider error: ${msg}`);
-      return c.json({ status: "error", error: `Provider unreachable: ${msg}` }, 502);
+      return fail(c, "upstream_failed", `Provider unreachable: ${msg}`);
     }
   }
 
@@ -105,19 +101,16 @@ deployRouter.post("/deploy", async (c) => {
     L.info("[Deploy] Routing to Akash network");
 
     if (!process.env.AKASH_MNEMONIC) {
-      return c.json(
-        {
-          status: "error",
-          error: "AKASH_MNEMONIC is not configured. Set it in the orchestrator .env to enable Akash deployments.",
-        },
-        503
+      return fail(
+        c,
+        "not_configured",
+        "AKASH_MNEMONIC is not configured. Set it in the orchestrator .env to enable Akash deployments.",
       );
     }
 
     try {
       const deployment = await createAkashDeployment({ sdl, name });
-      return c.json({
-        status: "success",
+      return ok(c, {
         provider: "akash",
         deploymentId: deployment.id,
         dseq: deployment.dseq,
@@ -126,58 +119,77 @@ deployRouter.post("/deploy", async (c) => {
         message: "Deployment initiated. Poll GET /v1/deployments/:id for status.",
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       L.error(`[Deploy] Akash deployment error: ${msg}`);
-      return c.json({ status: "error", error: msg }, 500);
+      return fail(c, "internal", msg);
     }
   }
 
-  return c.json(
-    { status: "error", error: `Unknown provider '${provider}'. Use 'akash' or supply providerEndpoint.` },
-    400
-  );
+  return fail(c, "bad_request", `Unknown provider '${provider}'. Use 'akash' or supply providerEndpoint.`);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /v1/deployments
 // ─────────────────────────────────────────────────────────────────────────────
-deployRouter.get("/deployments", async (c) => {
+const listDeploymentsRoute = createRoute({
+  method: "get",
+  path: "/deployments",
+  tags: TAGS,
+  responses: responses({ 200: json(DeploymentsResponseSchema, "Known Akash deployments") }, 500),
+});
+
+deployRouter.openapi(listDeploymentsRoute, async (c) => {
   const deployments = listAkashDeployments();
-  return c.json({ status: "success", deployments });
+  return ok(c, { deployments });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /v1/deployments/:id
 // ─────────────────────────────────────────────────────────────────────────────
-deployRouter.get("/deployments/:id", async (c) => {
-  const id = c.req.param("id");
+const getDeploymentRoute = createRoute({
+  method: "get",
+  path: "/deployments/{id}",
+  tags: TAGS,
+  request: { params: DeploymentIdParamsSchema },
+  responses: responses({ 200: json(DeploymentResponseSchema, "Deployment status") }, 404),
+});
+
+deployRouter.openapi(getDeploymentRoute, async (c) => {
+  const { id } = c.req.valid("param");
 
   // Try refreshing from chain for Akash deployments
   let deployment = await refreshAkashDeploymentStatus(id).catch(() => getAkashDeployment(id));
 
   if (!deployment) {
-    return c.json({ status: "error", error: "Deployment not found" }, 404);
+    return fail(c, "not_found", "Deployment not found");
   }
 
-  return c.json({ status: "success", deployment });
+  return ok(c, { deployment });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /v1/deployments/:id  — close / terminate deployment
 // ─────────────────────────────────────────────────────────────────────────────
-deployRouter.delete("/deployments/:id", async (c) => {
-  const id = c.req.param("id");
+const closeDeploymentRoute = createRoute({
+  method: "delete",
+  path: "/deployments/{id}",
+  tags: TAGS,
+  request: { params: DeploymentIdParamsSchema },
+  responses: responses({ 200: json(CloseDeploymentResponseSchema, "Deployment closed") }, 404, 500),
+});
+
+deployRouter.openapi(closeDeploymentRoute, async (c) => {
+  const { id } = c.req.valid("param");
 
   const deployment = getAkashDeployment(id);
   if (!deployment) {
-    return c.json({ status: "error", error: "Deployment not found" }, 404);
+    return fail(c, "not_found", "Deployment not found");
   }
 
   try {
     await closeAkashDeployment(id);
-    return c.json({ status: "success", message: `Deployment ${id} closed` });
+    return ok(c, { message: `Deployment ${id} closed` });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", errorMessage(err));
   }
 });

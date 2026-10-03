@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { successSchema } from "./common.schema.js";
 
 // Control Machine Input Schema
 export const ControlMachineInputSchema = z.object({
@@ -97,23 +98,21 @@ export const SystemInfoSchema = z.object({
 export type SystemInfo = z.infer<typeof SystemInfoSchema>;
 
 // Verify Control Machine Response Schema
-export const VerifyControlMachineResponseSchema = z.object({
-  status: z.string(),
+export const VerifyControlMachineResponseSchema = successSchema({
   system_info: SystemInfoSchema,
 });
 
 export type VerifyControlMachineResponse = z.infer<typeof VerifyControlMachineResponseSchema>;
 
 // Verify Control and Worker Response Schema
-export const VerifyControlAndWorkerResponseSchema = z.object({
-  status: z.string(),
+export const VerifyControlAndWorkerResponseSchema = successSchema({
   system_info: SystemInfoSchema,
 });
 
 export type VerifyControlAndWorkerResponse = z.infer<typeof VerifyControlAndWorkerResponseSchema>;
 
 // Open Ports Response Schema
-export const OpenPortsResponseSchema = z.object({
+export const OpenPortsResponseSchema = successSchema({
   open_ports: z.array(z.number()),
   closed_ports: z.array(z.number()),
 });
@@ -121,7 +120,7 @@ export const OpenPortsResponseSchema = z.object({
 export type OpenPortsResponse = z.infer<typeof OpenPortsResponseSchema>;
 
 // DNS Response Schema (format: [{ domain: ip }])
-export const DNSResponseSchema = z.object({
+export const DNSResponseSchema = successSchema({
   public_ips: z.array(z.record(z.string(), z.string())),
 });
 

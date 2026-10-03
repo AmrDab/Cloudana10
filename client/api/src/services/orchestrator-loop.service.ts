@@ -8,14 +8,14 @@ import { getWorkloadManifestByWorkloadId } from "./ipfs.service.js";
 import { deployToProvider } from "./deploy-to-provider.service.js";
 import { registerWorkloadForPolling } from "./workload-status-poller.service.js";
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 
-const POLL_INTERVAL_MS = Number(process.env.ORCHESTRATOR_POLL_INTERVAL_MS ?? 60_000); // default 1 min
 const L = log.orchestratorLoop;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let cycleId = 0;
 
 export function getOrchestratorPollIntervalMs(): number {
-  return POLL_INTERVAL_MS;
+  return getEnv().ORCHESTRATOR_POLL_INTERVAL_MS;
 }
 
 async function runPlacementCycle(): Promise<void> {
@@ -83,10 +83,11 @@ export function startOrchestratorLoop(): void {
     L.warn("already running, skip start");
     return;
   }
-  L.success(`STARTING poll (interval ${POLL_INTERVAL_MS}ms)`);
+  const pollIntervalMs = getOrchestratorPollIntervalMs();
+  L.success(`STARTING poll (interval ${pollIntervalMs}ms)`);
   void runPlacementCycle();
-  intervalId = setInterval(runPlacementCycle, POLL_INTERVAL_MS);
-  L.log(`first cycle scheduled; next every ${POLL_INTERVAL_MS}ms`);
+  intervalId = setInterval(runPlacementCycle, pollIntervalMs);
+  L.log(`first cycle scheduled; next every ${pollIntervalMs}ms`);
 }
 
 /**

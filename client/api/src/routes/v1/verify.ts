@@ -1,5 +1,6 @@
-import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { createRoute } from "@hono/zod-openapi";
 import { VerifyService } from "../../services/verify.service.js";
+import { ok, fail } from "../../lib/http.js";
 import {
   ControlMachineInputSchema,
   ControlAndWorkerRequestSchema,
@@ -10,69 +11,37 @@ import {
   OpenPortsResponseSchema,
   DNSResponseSchema,
 } from "../../schemas/verify.schema.js";
+import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
 const verifyService = new VerifyService();
 
-export const verifyRouter = new OpenAPIHono();
+export const verifyRouter = createRouter();
 
-// Security: No authentication required for these endpoints (can be added later)
-type SecurityRequirement = Record<string, string[]>;
-const SECURITY_NONE: SecurityRequirement[] = [];
+// requireAuth is applied to /v1/verify/* in middleware/security.ts.
+const TAGS = ["Verify"];
 
 // POST /v1/verify/control-machine
 const verifyControlMachineRoute = createRoute({
   method: "post",
   path: "/verify/control-machine",
-  tags: ["Verify"],
-  security: SECURITY_NONE,
-  request: {
-    body: {
-      content: {
-        "application/json": {
-          schema: ControlMachineInputSchema,
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "Successfully verified control machine SSH connection",
-      content: {
-        "application/json": {
-          schema: VerifyControlMachineResponseSchema,
-        },
-      },
-    },
-    400: {
-      description: "Bad request - invalid input or SSH connection failed",
-    },
-    500: {
-      description: "Internal server error",
-    },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { body: { required: true, content: { "application/json": { schema: ControlMachineInputSchema } } } },
+  responses: responses(
+    { 200: json(VerifyControlMachineResponseSchema, "Successfully verified control machine SSH connection") },
+    400,
+    401,
+  ),
 });
 
 verifyRouter.openapi(verifyControlMachineRoute, async (c) => {
   try {
     const input = c.req.valid("json");
     const result = await verifyService.verifyControlMachine(input);
-    
-    return c.json({
-      status: "success",
-      ...result,
-    }, 200);
+    return ok(c, { ...result });
   } catch (error) {
     console.error("Error verifying control machine:", error);
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to verify control machine",
-          error_code: "VER_001",
-        },
-      },
-      400
-    );
+    return fail(c, "bad_request", error instanceof Error ? error.message : "Failed to verify control machine");
   }
 });
 
@@ -80,33 +49,14 @@ verifyRouter.openapi(verifyControlMachineRoute, async (c) => {
 const verifyControlAndWorkerRoute = createRoute({
   method: "post",
   path: "/verify/control-and-worker",
-  tags: ["Verify"],
-  security: SECURITY_NONE,
-  request: {
-    body: {
-      content: {
-        "application/json": {
-          schema: ControlAndWorkerRequestSchema,
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "Successfully verified control machine and worker node SSH connections",
-      content: {
-        "application/json": {
-          schema: VerifyControlAndWorkerResponseSchema,
-        },
-      },
-    },
-    400: {
-      description: "Bad request - invalid input or SSH connection failed",
-    },
-    500: {
-      description: "Internal server error",
-    },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { body: { required: true, content: { "application/json": { schema: ControlAndWorkerRequestSchema } } } },
+  responses: responses(
+    { 200: json(VerifyControlAndWorkerResponseSchema, "Successfully verified control machine and worker node SSH connections") },
+    400,
+    401,
+  ),
 });
 
 verifyRouter.openapi(verifyControlAndWorkerRoute, async (c) => {
@@ -116,23 +66,10 @@ verifyRouter.openapi(verifyControlAndWorkerRoute, async (c) => {
       data.control_machine,
       data.worker_node
     );
-    
-    return c.json({
-      status: "success",
-      ...result,
-    }, 200);
+    return ok(c, { ...result });
   } catch (error) {
     console.error("Error verifying control and worker:", error);
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to verify control and worker",
-          error_code: "VER_002",
-        },
-      },
-      400
-    );
+    return fail(c, "bad_request", error instanceof Error ? error.message : "Failed to verify control and worker");
   }
 });
 
@@ -140,50 +77,20 @@ verifyRouter.openapi(verifyControlAndWorkerRoute, async (c) => {
 const verifyOpenPortsRoute = createRoute({
   method: "post",
   path: "/verify/open-ports",
-  tags: ["Verify"],
-  security: SECURITY_NONE,
-  request: {
-    body: {
-      content: {
-        "application/json": {
-          schema: OpenPortsRequestSchema,
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "Returns list of open and closed ports",
-      content: {
-        "application/json": {
-          schema: OpenPortsResponseSchema,
-        },
-      },
-    },
-    400: {
-      description: "Bad request - invalid input",
-    },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { body: { required: true, content: { "application/json": { schema: OpenPortsRequestSchema } } } },
+  responses: responses({ 200: json(OpenPortsResponseSchema, "Open and closed ports") }, 400, 401),
 });
 
 verifyRouter.openapi(verifyOpenPortsRoute, async (c) => {
   try {
     const { public_ip, ports } = c.req.valid("json");
     const result = await verifyService.checkPorts(public_ip, ports);
-    
-    return c.json(result, 200);
+    return ok(c, result);
   } catch (error) {
     console.error("Error checking ports:", error);
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to check ports",
-          error_code: "VER_003",
-        },
-      },
-      400
-    );
+    return fail(c, "bad_request", error instanceof Error ? error.message : "Failed to check ports");
   }
 });
 
@@ -191,49 +98,19 @@ verifyRouter.openapi(verifyOpenPortsRoute, async (c) => {
 const verifyDNSRoute = createRoute({
   method: "post",
   path: "/verify/dns",
-  tags: ["Verify"],
-  security: SECURITY_NONE,
-  request: {
-    body: {
-      content: {
-        "application/json": {
-          schema: DNSRequestSchema,
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "Returns resolved IP addresses for domains",
-      content: {
-        "application/json": {
-          schema: DNSResponseSchema,
-        },
-      },
-    },
-    400: {
-      description: "Bad request - invalid input",
-    },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { body: { required: true, content: { "application/json": { schema: DNSRequestSchema } } } },
+  responses: responses({ 200: json(DNSResponseSchema, "Resolved IP addresses for the domains") }, 400, 401),
 });
 
 verifyRouter.openapi(verifyDNSRoute, async (c) => {
   try {
     const { domains } = c.req.valid("json");
     const result = await verifyService.resolveDomains(domains);
-    
-    return c.json(result, 200);
+    return ok(c, result);
   } catch (error) {
     console.error("Error resolving DNS:", error);
-    return c.json(
-      {
-        status: "error",
-        error: {
-          message: error instanceof Error ? error.message : "Failed to resolve DNS",
-          error_code: "VER_004",
-        },
-      },
-      400
-    );
+    return fail(c, "bad_request", error instanceof Error ? error.message : "Failed to resolve DNS");
   }
 });

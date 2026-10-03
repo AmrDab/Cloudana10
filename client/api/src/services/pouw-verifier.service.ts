@@ -17,14 +17,12 @@ import type { POUWCertificate } from "../../../../pouw/src/types.js";
 import { verify as cupowVerify } from "../../../../pouw/src/cupow.js";
 import { storeCertificate, isCertificateReplayedAsync } from "./certificate-store.service.js";
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 
 const L = log.pouw;
 
 /** How long a sigma seed is valid (seconds). Certs older than this are rejected. */
 const CERT_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
-
-/** Minimum difficulty we accept from providers. Adjust for testnet. */
-const MIN_DIFFICULTY = Number(process.env.POUW_MIN_DIFFICULTY ?? "8");
 
 export interface VerifyResult {
   valid: boolean;
@@ -44,6 +42,7 @@ export async function verifyCertificate(cert: POUWCertificate): Promise<VerifyRe
     return { valid: false, reason: "Missing provider address or device ID" };
   }
 
+  const MIN_DIFFICULTY = getEnv().POUW_MIN_DIFFICULTY;
   if (cert.difficulty < MIN_DIFFICULTY) {
     return { valid: false, reason: `Difficulty ${cert.difficulty} below minimum ${MIN_DIFFICULTY}` };
   }

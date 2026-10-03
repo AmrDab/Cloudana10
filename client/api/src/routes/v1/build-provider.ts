@@ -1,92 +1,78 @@
-import { z } from "zod";
-import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { createRoute } from "@hono/zod-openapi";
+import type { Context } from "hono";
 import { BuildProviderService } from "../../services/build-provider.service.js";
+import { ok, fail, type ErrorCode } from "../../lib/http.js";
 import {
+  ActionIdParamsSchema,
+  BuildProviderEnvelopeSchema,
+  BuildProviderLogsEnvelopeSchema,
   BuildProviderRequestSchema,
-  BuildProviderResponseSchema,
+  BuildProviderStatusEnvelopeSchema,
+  DeviceIdParamsSchema,
+  PrepareRegistrationEnvelopeSchema,
+  ProviderNodeServiceEnvelopeSchema,
+  TaskIdParamsSchema,
+  UpdateProviderAttributesEnvelopeSchema,
   UpdateProviderAttributesRequestSchema,
-  UpdateProviderAttributesResponseSchema,
-  BuildProviderStatusResponseSchema,
-  BuildProviderLogsResponseSchema,
 } from "../../schemas/build-provider.schema.js";
 import { ApplicationError } from "../../types/k3s.js";
+import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
 function isApplicationError(e: unknown): e is ApplicationError {
   return e instanceof ApplicationError;
 }
 
-function errorResponse(c: { json: (body: unknown, status: number) => Response }, error: unknown) {
+/** HTTP status carried by an ApplicationError → the matching envelope code. */
+const CODE_FOR_STATUS: Record<number, ErrorCode> = {
+  400: "bad_request",
+  401: "unauthorized",
+  403: "forbidden",
+  404: "not_found",
+  409: "conflict",
+  413: "payload_too_large",
+  422: "unprocessable",
+  429: "rate_limited",
+  502: "upstream_failed",
+  503: "not_configured",
+};
+
+function errorResponse(c: Context, error: unknown) {
   if (isApplicationError(error)) {
-    const status = error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500;
-    return c.json(
-      { status: "error", error: { message: error.payload.message, error_code: error.errorCode } },
-      status
-    );
+    const code = CODE_FOR_STATUS[error.statusCode] ?? "internal";
+    return fail(c, code, error.payload.message, { errorCode: error.errorCode });
   }
   const msg = error instanceof Error ? error.message : "Internal server error";
-  return c.json(
-    { status: "error", error: { message: msg, error_code: "PRV_001" } },
-    500
-  );
+  return fail(c, "internal", msg);
+}
+
+/** Service results carry their own `status`; expose it as `serviceStatus`. */
+function serviceStatus<T extends { status: string }>(result: T) {
+  const { status, ...rest } = result;
+  return { serviceStatus: status, ...rest };
 }
 
 const buildProviderService = new BuildProviderService();
 
-export const buildProviderRouter = new OpenAPIHono();
+export const buildProviderRouter = createRouter();
 
-// Security: Bearer token required (enforced by global middleware in index.ts)
-type SecurityRequirement = Record<string, string[]>;
-const SECURITY_BEARER: SecurityRequirement[] = [{ BearerAuth: [] }];
+// requireAuth is applied to /v1/build-provider/* in middleware/security.ts.
+// /build-provider-status/* and /update-provider-attributes fall outside that
+// pattern and are therefore documented without security.
+const TAGS = ["Build Provider"];
 
 // POST /v1/build-provider
 const buildProviderRoute = createRoute({
   method: "post",
   path: "/build-provider",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    body: {
-      content: {
-        "application/json": {
-          schema: BuildProviderRequestSchema,
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "Provider build process started successfully",
-      content: {
-        "application/json": {
-          schema: BuildProviderResponseSchema,
-        },
-      },
-    },
-    400: {
-      description: "Bad request - invalid input",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            error: z.object({
-              message: z.string(),
-              error_code: z.string(),
-              details: z.array(z.object({
-                field: z.string(),
-                message: z.string(),
-              })).optional(),
-            }),
-          }),
-        },
-      },
-    },
-    401: {
-      description: "Unauthorized - invalid or missing authentication token",
-    },
-    500: {
-      description: "Internal server error",
-    },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { body: { required: true, content: { "application/json": { schema: BuildProviderRequestSchema } } } },
+  responses: responses(
+    { 200: json(BuildProviderEnvelopeSchema, "Provider build process started successfully") },
+    400,
+    401,
+    500,
+  ),
 });
 
 buildProviderRouter.openapi(buildProviderRoute, async (c) => {
@@ -102,7 +88,7 @@ buildProviderRouter.openapi(buildProviderRoute, async (c) => {
 
     console.log("[API] /v1/build-provider backend response:", result);
 
-    return c.json(result, 200);
+    return ok(c, { message: result.message, action_id: result.action_id });
   } catch (error) {
     console.error("[API] Error building provider:", error);
     return errorResponse(c, error);
@@ -113,29 +99,13 @@ buildProviderRouter.openapi(buildProviderRoute, async (c) => {
 const getBuildProviderStatusRoute = createRoute({
   method: "get",
   path: "/build-provider-status/{action_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER, // Can be changed to SECURITY_BEARER if auth is required
-  request: {
-    params: z.object({
-      action_id: z.string().min(1, "Action ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Build provider status retrieved successfully",
-      content: {
-        "application/json": {
-          schema: BuildProviderStatusResponseSchema,
-        },
-      },
-    },
-    404: {
-      description: "Action not found",
-    },
-    500: {
-      description: "Internal server error",
-    },
-  },
+  tags: TAGS,
+  request: { params: ActionIdParamsSchema },
+  responses: responses(
+    { 200: json(BuildProviderStatusEnvelopeSchema, "Build status (build state in buildStatus)") },
+    404,
+    500,
+  ),
 });
 
 buildProviderRouter.openapi(getBuildProviderStatusRoute, async (c) => {
@@ -144,17 +114,11 @@ buildProviderRouter.openapi(getBuildProviderStatusRoute, async (c) => {
     const authHeader = c.req.header("authorization");
     const token = authHeader?.replace("Bearer ", "") || undefined;
 
-    const result = await buildProviderService.getBuildProviderStatus(action_id, token);
+    const { status, ...rest } = await buildProviderService.getBuildProviderStatus(action_id, token);
 
-    return c.json(result, 200);
+    return ok(c, { ...rest, buildStatus: status });
   } catch (error) {
     console.error("Error getting build provider status:", error);
-    if (isApplicationError(error) && error.statusCode === 404) {
-      return c.json(
-        { status: "error", error: { message: error.payload.message, error_code: error.errorCode } },
-        404
-      );
-    }
     return errorResponse(c, error);
   }
 });
@@ -163,51 +127,15 @@ buildProviderRouter.openapi(getBuildProviderStatusRoute, async (c) => {
 const updateProviderAttributesRoute = createRoute({
   method: "post",
   path: "/update-provider-attributes",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
+  tags: TAGS,
   request: {
-    body: {
-      content: {
-        "application/json": {
-          schema: UpdateProviderAttributesRequestSchema,
-        },
-      },
-    },
+    body: { required: true, content: { "application/json": { schema: UpdateProviderAttributesRequestSchema } } },
   },
-  responses: {
-    200: {
-      description: "Provider attributes update process started successfully",
-      content: {
-        "application/json": {
-          schema: UpdateProviderAttributesResponseSchema,
-        },
-      },
-    },
-    400: {
-      description: "Bad request - invalid input",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            error: z.object({
-              message: z.string(),
-              error_code: z.string(),
-              details: z.array(z.object({
-                field: z.string(),
-                message: z.string(),
-              })).optional(),
-            }),
-          }),
-        },
-      },
-    },
-    401: {
-      description: "Unauthorized - invalid or missing authentication token",
-    },
-    500: {
-      description: "Internal server error",
-    },
-  },
+  responses: responses(
+    { 200: json(UpdateProviderAttributesEnvelopeSchema, "Provider attributes update process started successfully") },
+    400,
+    500,
+  ),
 });
 
 buildProviderRouter.openapi(updateProviderAttributesRoute, async (c) => {
@@ -218,7 +146,7 @@ buildProviderRouter.openapi(updateProviderAttributesRoute, async (c) => {
 
     const result = await buildProviderService.updateProviderAttributes(input, token);
 
-    return c.json(result, 200);
+    return ok(c, { message: result.message, action_id: result.action_id });
   } catch (error) {
     console.error("Error updating provider attributes:", error);
     return errorResponse(c, error);
@@ -229,29 +157,10 @@ buildProviderRouter.openapi(updateProviderAttributesRoute, async (c) => {
 const getBuildProviderLogsRoute = createRoute({
   method: "get",
   path: "/build-provider/logs/{task_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER, // Can be changed to SECURITY_BEARER if auth is required
-  request: {
-    params: z.object({
-      task_id: z.string().min(1, "Task ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Task logs retrieved successfully",
-      content: {
-        "application/json": {
-          schema: BuildProviderLogsResponseSchema,
-        },
-      },
-    },
-    404: {
-      description: "Task not found",
-    },
-    500: {
-      description: "Internal server error",
-    },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: TaskIdParamsSchema },
+  responses: responses({ 200: json(BuildProviderLogsEnvelopeSchema, "Task logs") }, 401, 404, 500),
 });
 
 buildProviderRouter.openapi(getBuildProviderLogsRoute, async (c) => {
@@ -262,15 +171,9 @@ buildProviderRouter.openapi(getBuildProviderLogsRoute, async (c) => {
 
     const result = await buildProviderService.getTaskLogs(task_id, token);
 
-    return c.json(result, 200);
+    return ok(c, result);
   } catch (error) {
     console.error("Error getting build provider logs:", error);
-    if (isApplicationError(error) && error.statusCode === 404) {
-      return c.json(
-        { status: "error", error: { message: error.payload.message, error_code: error.errorCode } },
-        404
-      );
-    }
     return errorResponse(c, error);
   }
 });
@@ -279,36 +182,17 @@ buildProviderRouter.openapi(getBuildProviderLogsRoute, async (c) => {
 const getProviderNodeStatusRoute = createRoute({
   method: "get",
   path: "/build-provider/provider-node/status/{action_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    params: z.object({
-      action_id: z.string().min(1, "Action ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Provider Node service status",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            message: z.string().optional(),
-            pid: z.number().optional(),
-            pm2Status: z.string().optional(),
-          }),
-        },
-      },
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: ActionIdParamsSchema },
+  responses: responses({ 200: json(ProviderNodeServiceEnvelopeSchema, "Provider Node service status") }, 401, 500),
 });
 
 buildProviderRouter.openapi(getProviderNodeStatusRoute, async (c) => {
   try {
     const { action_id } = c.req.valid("param");
     const result = await buildProviderService.getProviderNodeServiceStatus(action_id);
-    return c.json(result, 200);
+    return ok(c, serviceStatus(result));
   } catch (error) {
     return errorResponse(c, error);
   }
@@ -318,34 +202,17 @@ buildProviderRouter.openapi(getProviderNodeStatusRoute, async (c) => {
 const startProviderNodeRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/start/{action_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    params: z.object({
-      action_id: z.string().min(1, "Action ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Provider Node service started",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            message: z.string().optional(),
-          }),
-        },
-      },
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: ActionIdParamsSchema },
+  responses: responses({ 200: json(ProviderNodeServiceEnvelopeSchema, "Provider Node start attempted") }, 401, 500),
 });
 
 buildProviderRouter.openapi(startProviderNodeRoute, async (c) => {
   try {
     const { action_id } = c.req.valid("param");
     const result = await buildProviderService.startProviderNodeService(action_id);
-    return c.json(result, 200);
+    return ok(c, serviceStatus(result));
   } catch (error) {
     return errorResponse(c, error);
   }
@@ -355,34 +222,17 @@ buildProviderRouter.openapi(startProviderNodeRoute, async (c) => {
 const stopProviderNodeRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/stop/{action_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    params: z.object({
-      action_id: z.string().min(1, "Action ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Provider Node service stopped",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            message: z.string().optional(),
-          }),
-        },
-      },
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: ActionIdParamsSchema },
+  responses: responses({ 200: json(ProviderNodeServiceEnvelopeSchema, "Provider Node stop attempted") }, 401, 500),
 });
 
 buildProviderRouter.openapi(stopProviderNodeRoute, async (c) => {
   try {
     const { action_id } = c.req.valid("param");
     const result = await buildProviderService.stopProviderNodeService(action_id);
-    return c.json(result, 200);
+    return ok(c, serviceStatus(result));
   } catch (error) {
     return errorResponse(c, error);
   }
@@ -393,36 +243,21 @@ buildProviderRouter.openapi(stopProviderNodeRoute, async (c) => {
 const providerNodeStatusByDeviceRoute = createRoute({
   method: "get",
   path: "/build-provider/provider-node/status-by-device/{device_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    params: z.object({
-      device_id: z.string().min(1, "Device ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Provider Node service status by device ID",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            message: z.string().optional(),
-            pid: z.number().optional(),
-            pm2Status: z.string().optional(),
-          }),
-        },
-      },
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: DeviceIdParamsSchema },
+  responses: responses(
+    { 200: json(ProviderNodeServiceEnvelopeSchema, "Provider Node service status by device ID") },
+    401,
+    500,
+  ),
 });
 
 buildProviderRouter.openapi(providerNodeStatusByDeviceRoute, async (c) => {
   try {
     const { device_id } = c.req.valid("param");
     const result = await buildProviderService.getProviderNodeServiceStatusByDeviceId(decodeURIComponent(device_id));
-    return c.json(result, 200);
+    return ok(c, serviceStatus(result));
   } catch (error) {
     return errorResponse(c, error);
   }
@@ -431,34 +266,17 @@ buildProviderRouter.openapi(providerNodeStatusByDeviceRoute, async (c) => {
 const startProviderNodeByDeviceRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/start-by-device/{device_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    params: z.object({
-      device_id: z.string().min(1, "Device ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Provider Node service started",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            message: z.string().optional(),
-          }),
-        },
-      },
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: DeviceIdParamsSchema },
+  responses: responses({ 200: json(ProviderNodeServiceEnvelopeSchema, "Provider Node start attempted") }, 401, 500),
 });
 
 buildProviderRouter.openapi(startProviderNodeByDeviceRoute, async (c) => {
   try {
     const { device_id } = c.req.valid("param");
     const result = await buildProviderService.startProviderNodeServiceByDeviceId(decodeURIComponent(device_id));
-    return c.json(result, 200);
+    return ok(c, serviceStatus(result));
   } catch (error) {
     return errorResponse(c, error);
   }
@@ -467,34 +285,17 @@ buildProviderRouter.openapi(startProviderNodeByDeviceRoute, async (c) => {
 const stopProviderNodeByDeviceRoute = createRoute({
   method: "post",
   path: "/build-provider/provider-node/stop-by-device/{device_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    params: z.object({
-      device_id: z.string().min(1, "Device ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Provider Node service stopped",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            message: z.string().optional(),
-          }),
-        },
-      },
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: DeviceIdParamsSchema },
+  responses: responses({ 200: json(ProviderNodeServiceEnvelopeSchema, "Provider Node stop attempted") }, 401, 500),
 });
 
 buildProviderRouter.openapi(stopProviderNodeByDeviceRoute, async (c) => {
   try {
     const { device_id } = c.req.valid("param");
     const result = await buildProviderService.stopProviderNodeServiceByDeviceId(decodeURIComponent(device_id));
-    return c.json(result, 200);
+    return ok(c, serviceStatus(result));
   } catch (error) {
     return errorResponse(c, error);
   }
@@ -504,37 +305,15 @@ buildProviderRouter.openapi(stopProviderNodeByDeviceRoute, async (c) => {
 const prepareRegistrationRoute = createRoute({
   method: "get",
   path: "/build-provider/prepare-registration/{device_id}",
-  tags: ["Build Provider"],
-  security: SECURITY_BEARER,
-  request: {
-    params: z.object({
-      device_id: z.string().min(1, "Device ID is required"),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Device ID and real device spec for registration (cap offered spec in UI)",
-      content: {
-        "application/json": {
-          schema: z.object({
-            device_id: z.string(),
-            real_spec: z.object({
-              cpuModel: z.string(),
-              cpuCores: z.number(),
-              memoryTotalBytes: z.number(),
-              memoryFreeBytes: z.number().optional(),
-              diskTotalBytes: z.number().nullable().optional(),
-              diskFreeBytes: z.number().nullable().optional(),
-            }).nullable(),
-          }),
-        },
-      },
-    },
-    404: {
-      description: "No build found for this device ID",
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: DeviceIdParamsSchema },
+  responses: responses(
+    { 200: json(PrepareRegistrationEnvelopeSchema, "Device ID and real device spec for registration") },
+    401,
+    404,
+    500,
+  ),
 });
 
 buildProviderRouter.openapi(prepareRegistrationRoute, async (c) => {
@@ -542,10 +321,8 @@ buildProviderRouter.openapi(prepareRegistrationRoute, async (c) => {
     const { device_id } = c.req.valid("param");
     const decoded = decodeURIComponent(device_id);
     const result = buildProviderService.getPrepareRegistration(decoded);
-    if (!result) {
-      return c.json({ status: "error", error: { message: "No build found for this device ID.", error_code: "PRV_NOT_FOUND" } }, 404);
-    }
-    return c.json(result, 200);
+    if (!result) return fail(c, "not_found", "No build found for this device ID.");
+    return ok(c, result);
   } catch (error) {
     return errorResponse(c, error);
   }

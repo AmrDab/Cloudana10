@@ -3,7 +3,23 @@
  * Two tables: template_categories (ordered gallery) + templates (one row per template).
  */
 import { getD1 } from "../lib/storage.js";
-import type { Template, TemplateCategory } from "../types/template.js";
+import type { Template, TemplateCategory, TemplateRun } from "../types/template.js";
+
+const RUN_KEYS: (keyof TemplateRun)[] = [
+  "kind", "category", "curated", "image", "command", "ports", "cpu", "memMb", "storageMb", "secretEnv", "env", "files",
+  "gpu", "access", "workdir", "sshPort", "tokenEnv", "tokenQuery",
+];
+
+/** The `config` column also carries the V3 run fields (under `run`), so no table change is needed. */
+function packConfig(t: Template): string {
+  const run = Object.fromEntries(RUN_KEYS.filter((k) => t[k] !== undefined).map((k) => [k, t[k]]));
+  return JSON.stringify(Object.keys(run).length ? { ...t.config, run } : t.config);
+}
+
+function unpackConfig(raw: string | null): Pick<Template, "config"> & Partial<TemplateRun> {
+  const { run, ...config } = JSON.parse(raw || "{}") as Template["config"] & { run?: Partial<TemplateRun> };
+  return { config, ...(run ?? {}) };
+}
 
 function slugFromTitle(title: string): string {
   return title
@@ -61,7 +77,7 @@ export async function loadTemplateGallery(): Promise<TemplateCategory[] | null> 
         guide: t.guide ?? undefined,
         githubUrl: t.github_url,
         persistentStorageEnabled: !!t.persistent_storage_enabled,
-        config: JSON.parse(t.config || "{}"),
+        ...unpackConfig(t.config),
       });
       byCat.set(t.category_id, list);
     }
@@ -114,7 +130,7 @@ export async function loadTemplateById(id: string): Promise<Template | null> {
       guide: row.guide ?? undefined,
       githubUrl: row.github_url,
       persistentStorageEnabled: !!row.persistent_storage_enabled,
-      config: JSON.parse(row.config || "{}"),
+      ...unpackConfig(row.config),
     };
   } catch (e) {
     console.warn("[template-store] loadTemplateById failed:", e);
@@ -179,7 +195,7 @@ export async function saveTemplateGallery(categories: TemplateCategory[]): Promi
             t.guide ?? null,
             t.githubUrl,
             t.persistentStorageEnabled ? 1 : 0,
-            JSON.stringify(t.config),
+            packConfig(t),
             now
           )
       );

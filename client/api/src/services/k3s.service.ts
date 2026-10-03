@@ -16,21 +16,35 @@ import type {
   ListNodesResponse,
 } from "../types/k3s.js";
 import { ApplicationError } from "../types/k3s.js";
+import { getEnv } from "../config/env.js";
 
 const HTTP_400 = 400;
 const HTTP_500 = 500;
 /** K3s creates this file on install; use when ~/.kube/config does not exist yet. */
 const K3S_KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml";
 
-/** Env-based defaults for Akash/Provider (mirror provider-console-api Config). */
-const DEFAULT_CHAIN_ID = process.env.CHAIN_ID ?? "akashnet-2";
-const DEFAULT_PROVIDER_SERVICES_VERSION = (process.env.PROVIDER_SERVICES_VERSION ?? "v0.10.1").replace(/^v/, "");
-const DEFAULT_AKASH_VERSION = (process.env.AKASH_VERSION ?? "v1.0.0").replace(/^v/, "");
-const DEFAULT_INGRESS_NGINX_VERSION = process.env.INGRESS_NGINX_VERSION ?? "4.11.3";
-const PROVIDER_PRICE_SCRIPT_URL =
-  process.env.PROVIDER_PRICE_SCRIPT_URL ??
-  "https://raw.githubusercontent.com/akash-network/helm-charts/main/charts/akash-provider/scripts/price_script_generic.sh";
-const AKASH_NODE_STATUS_CHECK = process.env.AKASH_NODE_STATUS_CHECK ?? "";
+/**
+ * Env-based defaults for Akash/Provider (mirror provider-console-api Config).
+ * Read lazily via getEnv() — must not run at import time.
+ */
+function defaultChainId(): string {
+  return getEnv().CHAIN_ID?.toString() ?? "akashnet-2";
+}
+function defaultProviderServicesVersion(): string {
+  return getEnv().PROVIDER_SERVICES_VERSION.replace(/^v/, "");
+}
+function defaultAkashVersion(): string {
+  return getEnv().AKASH_VERSION.replace(/^v/, "");
+}
+function defaultIngressNginxVersion(): string {
+  return getEnv().INGRESS_NGINX_VERSION;
+}
+function providerPriceScriptUrl(): string {
+  return getEnv().PROVIDER_PRICE_SCRIPT_URL;
+}
+function akashNodeStatusCheck(): string {
+  return getEnv().AKASH_NODE_STATUS_CHECK;
+}
 const SCHEDULER_CONFIG = `
 cat > /var/lib/rancher/k3s/server/etc/scheduler-config.yaml << EOF
 apiVersion: kubescheduler.config.k8s.io/v1
@@ -498,7 +512,7 @@ export class K3sService {
     onLog?: (line: string) => void
   ): Promise<void> {
     const opts = () => runOpts(taskId, onLog);
-    const helmVersion = process.env.HELM_VERSION ?? K3sService.DEFAULT_HELM_VERSION;
+    const helmVersion = getEnv().HELM_VERSION ?? K3sService.DEFAULT_HELM_VERSION;
     try {
       log("info", "Installing Helm...");
       const commands = [
@@ -529,7 +543,7 @@ export class K3sService {
     chainId?: string
   ): Promise<void> {
     const opts = () => runOpts(taskId, onLog);
-    const chain = chainId ?? process.env.CHAIN_ID ?? "akashnet-2";
+    const chain = chainId ?? defaultChainId();
     const repoName = chain === "akashnet-2" ? "akash" : "akash-dev";
     const repoUrl =
       repoName === "akash"
@@ -563,11 +577,11 @@ export class K3sService {
     chainId?: string
   ): Promise<void> {
     const opts = () => runOpts(taskId, onLog);
-    const chain = chainId ?? DEFAULT_CHAIN_ID;
+    const chain = chainId ?? defaultChainId();
     const repoPrefix = chain === "akashnet-2" ? "akash" : "akash-dev";
     const develFlag = chain === "akashnet-2" ? "" : " --devel";
     const namespace = "-n akash-services";
-    const versionTag = `--set image.tag=${DEFAULT_PROVIDER_SERVICES_VERSION}`;
+    const versionTag = `--set image.tag=${defaultProviderServicesVersion()}`;
     try {
       log("info", "Installing Akash services...");
       const commands: string[] = [
@@ -575,7 +589,7 @@ export class K3sService {
         `helm install inventory-operator ${repoPrefix}/akash-inventory-operator ${namespace} ${versionTag}${develFlag}`,
       ];
       if (chain === "akashnet-2") {
-        const nodeVersionTag = `--set image.tag=${DEFAULT_AKASH_VERSION}`;
+        const nodeVersionTag = `--set image.tag=${defaultAkashVersion()}`;
         commands.push(`helm install akash-node akash/akash-node ${namespace} ${nodeVersionTag}`);
       }
       for (const cmd of commands) {
@@ -692,7 +706,7 @@ PROVEOF
       await sleep(5000);
       await this.adapter.runCommand(
         sshClient,
-        `kubectl apply -f https://raw.githubusercontent.com/akash-network/provider/v${DEFAULT_PROVIDER_SERVICES_VERSION}/pkg/apis/akash.network/crd.yaml`,
+        `kubectl apply -f https://raw.githubusercontent.com/akash-network/provider/v${defaultProviderServicesVersion()}/pkg/apis/akash.network/crd.yaml`,
         opts()
       );
       log("info", "Akash provider CRDs installed.");
@@ -709,7 +723,7 @@ PROVEOF
     chainId?: string
   ): Promise<void> {
     const opts = () => runOpts(taskId, onLog);
-    const chain = chainId ?? DEFAULT_CHAIN_ID;
+    const chain = chainId ?? defaultChainId();
     const helmRepo = chain === "akashnet-2" ? "akash" : "akash-dev";
     const develFlag = chain === "akashnet-2" ? "" : "--devel";
     try {
@@ -728,11 +742,11 @@ PROVEOF
           opts()
         );
         pricingScriptB64 = Buffer.from(script, "utf8").toString("base64");
-      } else if (PROVIDER_PRICE_SCRIPT_URL) {
-        log("info", `Downloading pricing script from ${PROVIDER_PRICE_SCRIPT_URL}`);
+      } else if (providerPriceScriptUrl()) {
+        log("info", `Downloading pricing script from ${providerPriceScriptUrl()}`);
         await this.adapter.runCommand(
           sshClient,
-          `wget -q "${PROVIDER_PRICE_SCRIPT_URL}" -O ~/provider/price_script_generic.sh`,
+          `wget -q "${providerPriceScriptUrl()}" -O ~/provider/price_script_generic.sh`,
           opts()
         );
         const { stdout: script } = await this.adapter.runCommand(
@@ -742,7 +756,7 @@ PROVEOF
         );
         pricingScriptB64 = Buffer.from(script, "utf8").toString("base64");
       }
-      let installCmd = `helm install akash-provider ${helmRepo}/provider -n akash-services -f ~/provider/provider.yaml --set image.tag=${DEFAULT_PROVIDER_SERVICES_VERSION} ${develFlag}`.trim();
+      let installCmd = `helm install akash-provider ${helmRepo}/provider -n akash-services -f ~/provider/provider.yaml --set image.tag=${defaultProviderServicesVersion()} ${develFlag}`.trim();
       if (pricingScriptB64) {
         installCmd += ` --set bidpricescript='${pricingScriptB64}'`;
       }
@@ -791,7 +805,7 @@ INGEOF
       await this.adapter.runCommand(sshClient, ingressConfig, opts());
       const commands = [
         "helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx",
-        `helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx --version ${DEFAULT_INGRESS_NGINX_VERSION} --namespace ingress-nginx --create-namespace -f ~/ingress-nginx-custom.yaml --set controller.admissionWebhooks.enabled=false`,
+        `helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx --version ${defaultIngressNginxVersion()} --namespace ingress-nginx --create-namespace -f ~/ingress-nginx-custom.yaml --set controller.admissionWebhooks.enabled=false`,
         "kubectl label ns ingress-nginx app.kubernetes.io/name=ingress-nginx app.kubernetes.io/instance=ingress-nginx --overwrite",
         "kubectl label ingressclass akash-ingress-class akash.network=true --overwrite",
       ];
@@ -806,7 +820,7 @@ INGEOF
     }
   }
 
-  /** Wait for akash-node pod Running; if mainnet and AKASH_NODE_STATUS_CHECK set, wait for sync. No-op for sandbox. */
+  /** Wait for akash-node pod Running; if mainnet and akashNodeStatusCheck() set, wait for sync. No-op for sandbox. */
   async checkAkashNodeReadiness(
     sshClient: SSHClient,
     taskId: string,
@@ -814,7 +828,7 @@ INGEOF
     chainId?: string
   ): Promise<void> {
     const opts = () => runOpts(taskId, onLog);
-    const chain = chainId ?? DEFAULT_CHAIN_ID;
+    const chain = chainId ?? defaultChainId();
     if (chain !== "akashnet-2") {
       log("info", "Akash node readiness check skipped (sandbox has no akash-node)");
       return;
@@ -854,7 +868,7 @@ INGEOF
           },
         });
       }
-      if (chain !== "akashnet-2" || !AKASH_NODE_STATUS_CHECK) {
+      if (chain !== "akashnet-2" || !akashNodeStatusCheck()) {
         log("info", "Akash node readiness check complete (sync check skipped)");
         return;
       }
@@ -872,7 +886,7 @@ INGEOF
           await sleep(checkIntervalMs);
           continue;
         }
-        const res = await fetch(`${AKASH_NODE_STATUS_CHECK.replace(/\/$/, "")}/status`, { signal: AbortSignal.timeout(10000) }).catch(
+        const res = await fetch(`${akashNodeStatusCheck().replace(/\/$/, "")}/status`, { signal: AbortSignal.timeout(10000) }).catch(
           () => null
         );
         if (!res?.ok) {

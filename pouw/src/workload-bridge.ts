@@ -18,7 +18,7 @@
  */
 
 import { PRIME_N, type Matrix } from "./matrix.js";
-import { solve } from "./cupow.js";
+import { solve, solveAssigned, matHash } from "./cupow.js";
 import type { POUWCertificate } from "./types.js";
 
 /* ── Signed ↔ field conversion ────────────────────────────────────────────────
@@ -117,6 +117,38 @@ export function solveBacked(
     result,
     backedByWorkload: true,
   };
+}
+
+/** Field-form matrix from a user's signed n×n data (throws past the exactness bound). */
+export function toFieldMatrix(data: number[], n: number, label = "M"): Matrix {
+  return toField({ rows: n, cols: n, data }, maxAbsEntry(n), label);
+}
+
+/** The hash a certificate must carry for this signed input — used to bind a certificate to its job. */
+export function fieldHash(data: number[], n: number): string {
+  return matHash(toFieldMatrix(data, n));
+}
+
+/** Result of an assigned solve: certificate + the useful answer as signed integers. */
+export interface AssignedSolveResult {
+  certificate: POUWCertificate;
+  result: number[];
+}
+
+/**
+ * Solve an orchestrator-assigned job (difficulty 0, σ issued by the orchestrator).
+ * A and B are the user's signed integers; the result is C = A·B, signed.
+ */
+export function solveAssignedJob(
+  sigma: string,
+  A: number[],
+  B: number[],
+  n: number,
+  providerAddress: string,
+  deviceId: string,
+): AssignedSolveResult {
+  const res = solveAssigned(sigma, toFieldMatrix(A, n, "A"), toFieldMatrix(B, n, "B"), providerAddress, deviceId);
+  return { certificate: res.certificate, result: res.result.map(liftSigned) };
 }
 
 /* ───────────────────────────────────────────────────────────────────────────

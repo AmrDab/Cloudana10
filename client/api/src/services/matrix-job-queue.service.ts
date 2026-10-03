@@ -16,6 +16,7 @@
 import { createHash } from "node:crypto";
 import { getD1 } from "../lib/storage.js";
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 
 const L = log.pouw;
 
@@ -32,10 +33,16 @@ export interface MatrixJob {
   createdAt: number;
   resultHash?: string;
   completedAt?: number;
+  /** Wallet that paid for this job. Undefined for internally seeded work. */
+  owner?: string;
+  /** CLD credits debited when the job was enqueued. */
+  priceCld?: number;
 }
 
 /** How long a claim lasts before the job is reassignable. */
-const CLAIM_TTL_MS = Number(process.env.POUW_JOB_CLAIM_TTL_MS ?? 5 * 60 * 1000);
+function claimTtlMs(): number {
+  return getEnv().POUW_JOB_CLAIM_TTL_MS;
+}
 
 // ─── Storage bootstrap (D1 first, loud in-memory fallback) ──────────────────
 
@@ -61,10 +68,20 @@ async function ensureTable(): Promise<boolean> {
            created_at INTEGER NOT NULL,
            result_json TEXT,
            result_hash TEXT,
-           completed_at INTEGER
+           completed_at INTEGER,
+           owner TEXT,
+           price_cld REAL
          )`,
       )
       .run();
+    // Tables created before paid jobs existed lack these two columns.
+    for (const col of ["owner TEXT", "price_cld REAL"]) {
+      try {
+        await db.prepare(`ALTER TABLE pouw_matrix_jobs ADD COLUMN ${col}`).run();
+      } catch (err: any) {
+        if (!/duplicate column/i.test(String(err?.message ?? err))) throw err;
+      }
+    }
     dbReady = true;
   } catch (err) {
     L.warn("[POUW:queue] DB unavailable — using IN-MEMORY job queue (jobs lost on restart):", err);
@@ -87,6 +104,8 @@ function rowToJob(row: any): MatrixJob {
     createdAt: row.created_at,
     resultHash: row.result_hash ?? undefined,
     completedAt: row.completed_at ?? undefined,
+    owner: row.owner ?? undefined,
+    priceCld: row.price_cld ?? undefined,
   };
 }
 
@@ -98,6 +117,8 @@ export async function enqueueJob(input: {
   matrixA: number[];
   matrixB: number[];
   difficulty: number;
+  owner?: string;
+  priceCld?: number;
 }): Promise<MatrixJob> {
   const job: MatrixJob = {
     id: "mj-" + createHash("sha256").update(`${Date.now()}|${Math.random()}`).digest("hex").slice(0, 20),
@@ -107,23 +128,59 @@ export async function enqueueJob(input: {
     difficulty: input.difficulty,
     status: "queued",
     createdAt: Date.now(),
+    owner: input.owner?.toLowerCase(),
+    priceCld: input.priceCld,
   };
 
   if (await ensureTable()) {
     const db = getD1();
     await db
       .prepare(
-        `INSERT INTO pouw_matrix_jobs (id, n, a_json, b_json, difficulty, status, created_at)
-         VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
+        `INSERT INTO pouw_matrix_jobs (id, n, a_json, b_json, difficulty, status, created_at, owner, price_cld)
+         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
       )
-      .bind(job.id, job.n, JSON.stringify(job.matrixA), JSON.stringify(job.matrixB), job.difficulty, job.createdAt)
+      .bind(
+        job.id,
+        job.n,
+        JSON.stringify(job.matrixA),
+        JSON.stringify(job.matrixB),
+        job.difficulty,
+        job.createdAt,
+        job.owner ?? null,
+        job.priceCld ?? null,
+      )
       .run();
   } else {
     memory.set(job.id, job);
   }
 
-  L.info(`[POUW:queue] Enqueued job ${job.id} (n=${job.n}, d=${job.difficulty})`);
+  L.info(`[POUW:queue] Enqueued job ${job.id} (n=${job.n}, d=${job.difficulty}${job.owner ? `, owner=${job.owner.slice(0, 10)}…` : ", internal"})`);
   return job;
+}
+
+/** A wallet's jobs, newest first (status + result hash; results via getJob). */
+export async function listJobsForOwner(owner: string, limit = 50): Promise<MatrixJob[]> {
+  const o = owner.toLowerCase();
+  if (await ensureTable()) {
+    const { results } = await getD1()
+      .prepare(`SELECT * FROM pouw_matrix_jobs WHERE owner = ? ORDER BY created_at DESC LIMIT ?`)
+      .bind(o, limit)
+      .all();
+    return (results ?? []).map(rowToJob);
+  }
+  return [...memory.values()].filter((j) => j.owner === o).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+}
+
+/** How many jobs are waiting for a miner right now. */
+export async function countQueuedJobs(): Promise<number> {
+  if (await ensureTable()) {
+    const row = await getD1()
+      .prepare(`SELECT COUNT(*) AS c FROM pouw_matrix_jobs WHERE status = 'queued' OR (status = 'claimed' AND expires_at < ?)`)
+      .bind(Date.now())
+      .first<{ c: number }>();
+    return Number(row?.c ?? 0);
+  }
+  return [...memory.values()].filter((j) => j.status !== "done").length;
 }
 
 /**
@@ -146,7 +203,7 @@ export async function claimJob(provider: string): Promise<MatrixJob | null> {
       .bind(now)
       .first();
     if (!row) return null;
-    const expiresAt = now + CLAIM_TTL_MS;
+    const expiresAt = now + claimTtlMs();
     await db
       .prepare(`UPDATE pouw_matrix_jobs SET status='claimed', provider=?, claimed_at=?, expires_at=? WHERE id=?`)
       .bind(p, now, expiresAt, (row as any).id)
@@ -165,7 +222,7 @@ export async function claimJob(provider: string): Promise<MatrixJob | null> {
       job.status = "claimed";
       job.provider = p;
       job.claimedAt = now;
-      job.expiresAt = now + CLAIM_TTL_MS;
+      job.expiresAt = now + claimTtlMs();
       return job;
     }
   }
@@ -201,12 +258,13 @@ export async function completeJob(
     return true;
   }
 
-  const job = memory.get(jobId);
+  const job = memory.get(jobId) as (MatrixJob & { result?: number[] }) | undefined;
   if (!job || job.status !== "claimed" || job.provider !== p || (job.expiresAt ?? 0) < now) return false;
   if (result.length !== job.n * job.n) return false;
   job.status = "done";
   job.resultHash = resultHash;
   job.completedAt = now;
+  job.result = result; // same contract as the D1 path: the owner can read C
   return true;
 }
 

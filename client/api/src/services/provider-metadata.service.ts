@@ -3,11 +3,14 @@
  * On-chain we store only metadata URI; full device spec is on IPFS.
  */
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 
 const L = log.ipfs;
 const FETCH_TIMEOUT_MS = 18_000;
 const FETCH_RETRY_ATTEMPTS = 2;
-const IPFS_GATEWAY = process.env.IPFS_GATEWAY ?? "https://gateway.pinata.cloud";
+function ipfsGateway(): string {
+  return getEnv().IPFS_GATEWAY;
+}
 
 export interface ProviderCapacityFromIPFS {
   cpu: bigint;
@@ -55,7 +58,7 @@ export function resolveMetadataUriToFetchUrl(uri: string | undefined): string | 
   if (!uri || typeof uri !== "string") return null;
   const s = uri.trim();
   if (isMetadataUrl(s)) return s;
-  if (isIpfsCid(s)) return `${IPFS_GATEWAY}/ipfs/${s}`;
+  if (isIpfsCid(s)) return `${ipfsGateway()}/ipfs/${s}`;
   return null;
 }
 

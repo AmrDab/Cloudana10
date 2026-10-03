@@ -5,12 +5,10 @@
  * Provider-node-server: GET /workload/:workloadId/:instanceId/status, /logs, /endpoints, /urls.
  */
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 import type { DeviceId } from "./chain-client.js";
 
 const L = log.orchestratorEvent;
-
-const POLL_INTERVAL_MS = Number(process.env.WORKLOAD_STATUS_POLL_INTERVAL_MS ?? 15_000); // 15s
-const CACHE_TTL_MS = Number(process.env.WORKLOAD_STATUS_CACHE_TTL_MS ?? 60_000); // 1 min
 
 interface WorkloadStatusCache {
   workloadId: bigint;
@@ -86,7 +84,7 @@ export function registerWorkloadForPolling(
   L.info(`   Device ID: ${deviceId.slice(0, 16)}...`);
   L.info(`   Owner: ${ownerAddress}`);
   L.info(`   Total active workloads: ${activeWorkloads.size}`);
-  L.info(`   Status will be polled every ${POLL_INTERVAL_MS / 1000}s`);
+  L.info(`   Status will be polled every ${getEnv().WORKLOAD_STATUS_POLL_INTERVAL_MS / 1000}s`);
   L.success(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 }
 
@@ -337,7 +335,7 @@ export function getWorkloadStatus(
   }
 
   // Check if cache is stale
-  if (Date.now() - cached.lastUpdated > CACHE_TTL_MS) {
+  if (Date.now() - cached.lastUpdated > getEnv().WORKLOAD_STATUS_CACHE_TTL_MS) {
     L.info(`      ⚠️ Cache stale for workload ${workloadId}/${instanceId}`);
   }
 
@@ -412,10 +410,12 @@ export function startWorkloadStatusPolling(): void {
     return;
   }
 
+  const pollIntervalMs = getEnv().WORKLOAD_STATUS_POLL_INTERVAL_MS;
+  const cacheTtlMs = getEnv().WORKLOAD_STATUS_CACHE_TTL_MS;
   L.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   L.success(`✅ WORKLOAD STATUS POLLING STARTED`);
-  L.info(`   Poll interval: ${POLL_INTERVAL_MS}ms (${POLL_INTERVAL_MS / 1000}s)`);
-  L.info(`   Cache TTL: ${CACHE_TTL_MS}ms (${CACHE_TTL_MS / 1000}s)`);
+  L.info(`   Poll interval: ${pollIntervalMs}ms (${pollIntervalMs / 1000}s)`);
+  L.info(`   Cache TTL: ${cacheTtlMs}ms (${cacheTtlMs / 1000}s)`);
   L.info(`   This service tracks workload execution status from providers`);
   L.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
@@ -425,7 +425,7 @@ export function startWorkloadStatusPolling(): void {
   // Then poll on interval
   pollingIntervalId = setInterval(() => {
     void pollAllWorkloads();
-  }, POLL_INTERVAL_MS);
+  }, pollIntervalMs);
 }
 
 /**

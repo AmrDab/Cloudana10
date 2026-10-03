@@ -6,9 +6,9 @@
 import { getProviderByAddress } from "./chain-client.js";
 import { fetchProviderCapacityAndEndpointFromIpfsUrl } from "./provider-metadata.service.js";
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 import type { Address } from "viem";
 
-const TERMINATE_TIMEOUT_MS = Number(process.env.ORCHESTRATOR_TERMINATE_TIMEOUT_MS ?? 15_000);
 const L = log.orchestratorEvent;
 
 /**
@@ -45,7 +45,7 @@ export async function terminateWorkloadOnProvider(
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TERMINATE_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), getEnv().ORCHESTRATOR_TERMINATE_TIMEOUT_MS);
     const res = await fetch(url, { method: "DELETE", signal: controller.signal });
     clearTimeout(timeout);
 

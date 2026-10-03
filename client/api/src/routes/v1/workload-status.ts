@@ -2,23 +2,46 @@
  * Workload Status API Routes
  * Provides endpoints for users to query their deployed workload status, logs, and endpoints.
  */
-import { Hono } from "hono";
+import { createRoute } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
+import { ok, fail } from "../../lib/http.js";
 import {
   getWorkloadStatus,
   refreshWorkloadStatus,
   getAllWorkloadStatuses,
 } from "../../services/workload-status-poller.service.js";
+import {
+  AllWorkloadStatusesResponseSchema,
+  RefreshQuerySchema,
+  WorkloadEndpointsResponseSchema,
+  WorkloadInstanceParamsSchema,
+  WorkloadLogsResponseSchema,
+  WorkloadManifestResponseSchema,
+  WorkloadStatusResponseSchema,
+  WorkloadUrlsResponseSchema,
+} from "../../schemas/workload-status.schema.js";
+import { createRouter, json, responses } from "./_openapi.js";
 
-const workloadStatusRouter = new Hono();
+const workloadStatusRouter = createRouter();
 workloadStatusRouter.use("*", cors({ origin: "*" }));
 
+const TAGS = ["Workload Status"];
+
 // GET /v1/workload-status/:workloadId/:instanceId — get cached status for a workload
-workloadStatusRouter.get("/workload-status/:workloadId/:instanceId", async (c) => {
+const statusRoute = createRoute({
+  method: "get",
+  path: "/workload-status/{workloadId}/{instanceId}",
+  tags: TAGS,
+  request: { params: WorkloadInstanceParamsSchema, query: RefreshQuerySchema },
+  responses: responses({ 200: json(WorkloadStatusResponseSchema, "Workload status (always refreshed)") }, 404, 500),
+});
+
+workloadStatusRouter.openapi(statusRoute, async (c) => {
   try {
-    console.log(`❌ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId": ${c.req.param("workloadId")}/${c.req.param("instanceId")}`);
-    const workloadId = BigInt(c.req.param("workloadId"));
-    const instanceId = BigInt(c.req.param("instanceId"));
+    const params = c.req.valid("param");
+    console.log(`❌ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId": ${params.workloadId}/${params.instanceId}`);
+    const workloadId = BigInt(params.workloadId);
+    const instanceId = BigInt(params.instanceId);
     const forceRefresh = c.req.query("refresh") === "true";
 
     // let status = forceRefresh
@@ -27,46 +50,39 @@ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId", async (c) =
 
     let status = await refreshWorkloadStatus(workloadId, instanceId);
     if (!status) {
-      return c.json(
-        {
-          success: false,
-          error: "Workload status not found. It may not be deployed yet or has been terminated.",
-        },
-        404
-      );
+      return fail(c, "not_found", "Workload status not found. It may not be deployed yet or has been terminated.");
     }
 
-    return c.json({
-      success: true,
+    return ok(c, {
       workloadId: status.workloadId.toString(),
       instanceId: status.instanceId.toString(),
       providerAddress: status.providerAddress,
       providerEndpoint: status.providerEndpoint,
-      status: status.status,
+      workloadStatus: status.status,
       logs: status.logs,
       endpoints: status.endpoints,
       urls: status.urls || [], // Public URLs for accessing the workload
       lastUpdated: status.lastUpdated,
-      error: status.error,
+      workloadError: status.error,
     });
   } catch (e) {
     console.error("Error fetching workload status:", e);
-    return c.json(
-      {
-        success: false,
-        error: e instanceof Error ? e.message : "Failed to fetch workload status",
-      },
-      500
-    );
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch workload status");
   }
 });
 
 // GET /v1/workload-status/all — get all cached workload statuses (admin/debug)
-workloadStatusRouter.get("/workload-status/all", (c) => {
+const allRoute = createRoute({
+  method: "get",
+  path: "/workload-status/all",
+  tags: TAGS,
+  responses: responses({ 200: json(AllWorkloadStatusesResponseSchema, "All cached workload statuses") }, 500),
+});
+
+workloadStatusRouter.openapi(allRoute, (c) => {
   try {
     const statuses = getAllWorkloadStatuses();
-    return c.json({
-      success: true,
+    return ok(c, {
       count: statuses.length,
       statuses: statuses.map((s) => ({
         workloadId: s.workloadId.toString(),
@@ -81,39 +97,33 @@ workloadStatusRouter.get("/workload-status/all", (c) => {
     });
   } catch (e) {
     console.error("Error fetching all workload statuses:", e);
-    return c.json(
-      {
-        success: false,
-        error: e instanceof Error ? e.message : "Failed to fetch workload statuses",
-      },
-      500
-    );
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch workload statuses");
   }
 });
 
 // GET /v1/workload-status/:workloadId/:instanceId/logs — get only logs for a workload
-workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/logs", async (c) => {
+const logsRoute = createRoute({
+  method: "get",
+  path: "/workload-status/{workloadId}/{instanceId}/logs",
+  tags: TAGS,
+  request: { params: WorkloadInstanceParamsSchema, query: RefreshQuerySchema },
+  responses: responses({ 200: json(WorkloadLogsResponseSchema, "Workload logs") }, 404, 500),
+});
+
+workloadStatusRouter.openapi(logsRoute, async (c) => {
   try {
-    const workloadId = BigInt(c.req.param("workloadId"));
-    const instanceId = BigInt(c.req.param("instanceId"));
-    const forceRefresh = c.req.query("refresh") === "true";
+    const params = c.req.valid("param");
+    const workloadId = BigInt(params.workloadId);
+    const instanceId = BigInt(params.instanceId);
+    const forceRefresh = c.req.valid("query").refresh === "true";
 
     let status = forceRefresh
       ? await refreshWorkloadStatus(workloadId, instanceId)
       : getWorkloadStatus(workloadId, instanceId);
 
-    if (!status) {
-      return c.json(
-        {
-          success: false,
-          error: "Workload not found",
-        },
-        404
-      );
-    }
+    if (!status) return fail(c, "not_found", "Workload not found");
 
-    return c.json({
-      success: true,
+    return ok(c, {
       workloadId: status.workloadId.toString(),
       instanceId: status.instanceId.toString(),
       namespace: status.status.namespace,
@@ -122,39 +132,33 @@ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/logs", async 
     });
   } catch (e) {
     console.error("Error fetching workload logs:", e);
-    return c.json(
-      {
-        success: false,
-        error: e instanceof Error ? e.message : "Failed to fetch workload logs",
-      },
-      500
-    );
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch workload logs");
   }
 });
 
 // GET /v1/workload-status/:workloadId/:instanceId/endpoints — get only endpoints for a workload
-workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/endpoints", async (c) => {
+const endpointsRoute = createRoute({
+  method: "get",
+  path: "/workload-status/{workloadId}/{instanceId}/endpoints",
+  tags: TAGS,
+  request: { params: WorkloadInstanceParamsSchema, query: RefreshQuerySchema },
+  responses: responses({ 200: json(WorkloadEndpointsResponseSchema, "Workload endpoints") }, 404, 500),
+});
+
+workloadStatusRouter.openapi(endpointsRoute, async (c) => {
   try {
-    const workloadId = BigInt(c.req.param("workloadId"));
-    const instanceId = BigInt(c.req.param("instanceId"));
-    const forceRefresh = c.req.query("refresh") === "true";
+    const params = c.req.valid("param");
+    const workloadId = BigInt(params.workloadId);
+    const instanceId = BigInt(params.instanceId);
+    const forceRefresh = c.req.valid("query").refresh === "true";
 
     let status = forceRefresh
       ? await refreshWorkloadStatus(workloadId, instanceId)
       : getWorkloadStatus(workloadId, instanceId);
 
-    if (!status) {
-      return c.json(
-        {
-          success: false,
-          error: "Workload not found",
-        },
-        404
-      );
-    }
+    if (!status) return fail(c, "not_found", "Workload not found");
 
-    return c.json({
-      success: true,
+    return ok(c, {
       workloadId: status.workloadId.toString(),
       instanceId: status.instanceId.toString(),
       providerEndpoint: status.providerEndpoint,
@@ -164,36 +168,31 @@ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/endpoints", a
     });
   } catch (e) {
     console.error("Error fetching workload endpoints:", e);
-    return c.json(
-      {
-        success: false,
-        error: e instanceof Error ? e.message : "Failed to fetch workload endpoints",
-      },
-      500
-    );
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch workload endpoints");
   }
 });
 
 // GET /v1/workload-status/:workloadId/:instanceId/urls — get only public URLs for a workload (production endpoint)
-workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/urls", async (c) => {
+const urlsRoute = createRoute({
+  method: "get",
+  path: "/workload-status/{workloadId}/{instanceId}/urls",
+  tags: TAGS,
+  request: { params: WorkloadInstanceParamsSchema, query: RefreshQuerySchema },
+  responses: responses({ 200: json(WorkloadUrlsResponseSchema, "Workload public URLs") }, 404, 500),
+});
+
+workloadStatusRouter.openapi(urlsRoute, async (c) => {
   try {
-    const workloadId = BigInt(c.req.param("workloadId"));
-    const instanceId = BigInt(c.req.param("instanceId"));
-    const forceRefresh = c.req.query("refresh") === "true";
+    const params = c.req.valid("param");
+    const workloadId = BigInt(params.workloadId);
+    const instanceId = BigInt(params.instanceId);
+    const forceRefresh = c.req.valid("query").refresh === "true";
 
     let status = forceRefresh
       ? await refreshWorkloadStatus(workloadId, instanceId)
       : getWorkloadStatus(workloadId, instanceId);
 
-    if (!status) {
-      return c.json(
-        {
-          success: false,
-          error: "Workload not found or not deployed yet",
-        },
-        404
-      );
-    }
+    if (!status) return fail(c, "not_found", "Workload not found or not deployed yet");
 
     // Also fetch directly from provider for most up-to-date URLs
     let directUrls: string[] | undefined;
@@ -217,8 +216,7 @@ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/urls", async 
       }
     }
 
-    return c.json({
-      success: true,
+    return ok(c, {
       workloadId: status.workloadId.toString(),
       instanceId: status.instanceId.toString(),
       providerEndpoint: status.providerEndpoint,
@@ -227,33 +225,28 @@ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/urls", async 
     });
   } catch (e) {
     console.error("Error fetching workload URLs:", e);
-    return c.json(
-      {
-        success: false,
-        error: e instanceof Error ? e.message : "Failed to fetch workload URLs",
-      },
-      500
-    );
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch workload URLs");
   }
 });
 
 // GET /v1/workload-status/:workloadId/:instanceId/manifest — get deployment manifest from provider
-workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/manifest", async (c) => {
+const manifestRoute = createRoute({
+  method: "get",
+  path: "/workload-status/{workloadId}/{instanceId}/manifest",
+  tags: TAGS,
+  request: { params: WorkloadInstanceParamsSchema },
+  responses: responses({ 200: json(WorkloadManifestResponseSchema, "Deployment manifest from the provider") }, 404, 500),
+});
+
+workloadStatusRouter.openapi(manifestRoute, async (c) => {
   try {
-    const workloadId = BigInt(c.req.param("workloadId"));
-    const instanceId = BigInt(c.req.param("instanceId"));
+    const params = c.req.valid("param");
+    const workloadId = BigInt(params.workloadId);
+    const instanceId = BigInt(params.instanceId);
 
     const status = getWorkloadStatus(workloadId, instanceId);
 
-    if (!status) {
-      return c.json(
-        {
-          success: false,
-          error: "Workload not found or not deployed yet",
-        },
-        404
-      );
-    }
+    if (!status) return fail(c, "not_found", "Workload not found or not deployed yet");
 
     // Fetch manifest directly from provider
     try {
@@ -276,8 +269,7 @@ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/manifest", as
         deployedAt?: number;
       };
 
-      return c.json({
-        success: true,
+      return ok(c, {
         workloadId: workloadId.toString(),
         instanceId: instanceId.toString(),
         providerEndpoint: status.providerEndpoint,
@@ -287,23 +279,11 @@ workloadStatusRouter.get("/workload-status/:workloadId/:instanceId/manifest", as
       });
     } catch (e) {
       console.error("Failed to fetch manifest from provider:", e);
-      return c.json(
-        {
-          success: false,
-          error: e instanceof Error ? e.message : "Failed to fetch manifest from provider",
-        },
-        500
-      );
+      return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch manifest from provider");
     }
   } catch (e) {
     console.error("Error fetching workload manifest:", e);
-    return c.json(
-      {
-        success: false,
-        error: e instanceof Error ? e.message : "Failed to fetch workload manifest",
-      },
-      500
-    );
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch workload manifest");
   }
 });
 
