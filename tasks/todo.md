@@ -292,3 +292,8 @@ SSH + web access; persistent volumes with keep-days; max hours + extend; capacit
       secret; revoke MINTER/ADMIN from 0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A; VITE_WALLETCONNECT_PROJECT_ID;
       INTERNAL_API_KEY Worker secret; deploy settlement contract + keeper on Base Sepolia; publish node image;
       bring one public node online.
+
+## 2026-10-03 — logo + hide-on-scroll nav
+- [x] New mark (cloud of two interlocking traces + nodes, after the @Cloudana10 avatar) in LogoMark, favicon set, static pages
+- [x] Site nav hides on scroll down, returns on scroll up / focus / open menu
+- [x] Built + deployed to cloudana and cloudana-console Pages; smoke tested live (200s, nav hides, no console errors)
