@@ -273,7 +273,7 @@ function SectionArchitecture() {
             { step: "2", label: "Provider picks up job", desc: "Provider node polls orchestrator API, receives a job assignment. Executes the workload (e.g. ML inference, batch compute)." },
             { step: "3", label: "POUW mining (parallel)", desc: "While idle or between jobs, the provider runs cuPOW -- matrix multiply with transcript hashing. Valid certificates are submitted to orchestrator." },
             { step: "4", label: "Orchestrator verifies", desc: "Orchestrator re-executes the computation to validate the certificate. On success, triggers on-chain RewardContract.rewardProvider()." },
-            { step: "5", label: "CLD distributed", desc: "Provider receives CLD from: job execution fees (75% of user payment) and POUW mining rewards (minted on mainnet, pool on testnet). 20% of fees are burned; 5% go to the treasury." },
+            { step: "5", label: "CLD distributed", desc: "Provider receives CLD from: job execution fees (97.5% of user payment) and POUW mining rewards (minted on mainnet, pool on testnet). 2% of fees are burned; 0.5% goes to the treasury." },
           ].map(({ step, label, desc }) => (
             <div key={step} className="flex gap-4">
               <div className="shrink-0 w-7 h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-xs font-bold text-primary">
@@ -528,7 +528,7 @@ function SectionRewards() {
           </div>
           <div className="p-4 rounded-lg bg-white/3 border border-white/8 space-y-2">
             <p className="font-medium text-foreground">Fee Distribution</p>
-            <p className="text-muted-foreground text-xs">User compute fees split: 80% to provider, 15% burned (deflationary pressure), 5% to protocol treasury (DAO-governed grants and emergency subsidies).</p>
+            <p className="text-muted-foreground text-xs">User compute fees split: 97.5% to provider, 2% burned (deflationary pressure), 0.5% to protocol treasury (DAO-governed grants and emergency subsidies).</p>
           </div>
           <div className="p-4 rounded-lg bg-white/3 border border-white/8 space-y-2">
             <p className="font-medium text-foreground">Net Supply</p>
@@ -546,7 +546,7 @@ function SectionRewards() {
           <span className="text-muted-foreground">Seed Refresh:</span><span>Every 10 seconds (block hash)</span>
           <span className="text-muted-foreground">Cert Freshness:</span><span>5 minute max age</span>
           <span className="text-muted-foreground">Replay Guard:</span><span>In-memory + on-chain z-hash set</span>
-          <span className="text-muted-foreground">Fee Burn:</span><span>15% of all compute fees</span>
+          <span className="text-muted-foreground">Fee Burn:</span><span>2% of all compute fees</span>
         </div>
       </InfoBox>
     </div>
@@ -1293,11 +1293,11 @@ function SectionLitepaper() {
               </div>
               <div className="p-4 rounded-lg bg-green-500/5 border border-green-500/10 space-y-2">
                 <p className="font-semibold text-green-400">User Fees</p>
-                <p className="text-muted-foreground text-xs">80% of compute fees go directly to the provider. The primary long-term revenue source as the network matures. Fee volume growth offsets declining minting rewards.</p>
+                <p className="text-muted-foreground text-xs">97.5% of compute fees go directly to the provider. The primary long-term revenue source as the network matures. Fee volume growth offsets declining minting rewards.</p>
               </div>
               <div className="p-4 rounded-lg bg-red-500/5 border border-red-500/10 space-y-2">
                 <p className="font-semibold text-red-400">Fee Burn</p>
-                <p className="text-muted-foreground text-xs">15% of all compute fees are permanently burned. At high network usage, burn rate exceeds tail emission -- CLD becomes net deflationary as Cloudana succeeds.</p>
+                <p className="text-muted-foreground text-xs">2% of all compute fees are permanently burned. At high network usage, burn rate exceeds tail emission -- CLD becomes net deflationary as Cloudana succeeds.</p>
               </div>
             </div>
 
@@ -1306,7 +1306,7 @@ function SectionLitepaper() {
                 <p className="font-medium text-foreground">CLD sinks (demand)</p>
                 <ul className="space-y-1 list-disc list-inside">
                   <li>Users fund compute workloads with CLD</li>
-                  <li>Fee burn (15% of all compute fees)</li>
+                  <li>Fee burn (2% of all compute fees)</li>
                   <li>Provider penalties for downtime (planned)</li>
                   <li>Governance voting weight (planned)</li>
                 </ul>

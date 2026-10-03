@@ -611,7 +611,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <a href="https://twitter.com/Cloudana10" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
                   Twitter
                 </a>
-                <a href="https://github.com/cloudana-io" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
+                <a href="https://github.com/AmrDab/Cloudana10" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
                   GitHub
                 </a>
                 <a href="https://discord.gg/cloudana" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">

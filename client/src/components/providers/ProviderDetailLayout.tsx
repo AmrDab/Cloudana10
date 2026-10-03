@@ -12,6 +12,13 @@ import type { ClientProviderDetail } from "@/lib/provider-types";
 import { ProviderSummary } from "./ProviderSummary";
 import { cn } from "@/lib/utils";
 import { nodeApiBase as apiBase } from "@/lib/api-base";
+import { ApiError, fetchJson } from "@/lib/api-error";
+import { isOrchestratorUnavailable } from "@/lib/orchestrator-status";
+import { OrchestratorUnavailable } from "@/components/OrchestratorUnavailable";
+
+/** Provider-node service result; state is `serviceStatus` (older servers: `status`). */
+type ProviderNodeBody = { serviceStatus?: string; status?: string; message?: string };
+const serviceStatusOf = (d: ProviderNodeBody) => d.serviceStatus ?? d.status;
 
 const NO_BUILD_MESSAGE = "No build found for this device. Register from the build flow first.";
 function isNoBuildStatus(status: string, message: string | null): boolean {
@@ -40,7 +47,7 @@ export function ProviderDetailLayout({ children, page, address, provider, refres
   const isOwner = isConnected && !!provider?.owner && !!userAddress && provider.owner.toLowerCase() === userAddress.toLowerCase();
   const deviceIdForOwner = isOwner ? (provider?.deviceId ?? address ?? deviceIdList[0]) : null;
 
-  const [nodeStatus, setNodeStatus] = useState<"active" | "inactive" | "unknown" | "loading" | "error">("loading");
+  const [nodeStatus, setNodeStatus] = useState<"active" | "inactive" | "unknown" | "loading" | "error" | "unavailable">("loading");
   const [nodeMessage, setNodeMessage] = useState<string | null>(null);
   const [nodeAction, setNodeAction] = useState<"idle" | "starting" | "stopping">("idle");
 
@@ -53,18 +60,29 @@ export function ProviderDetailLayout({ children, page, address, provider, refres
     setNodeStatus("loading");
     setNodeMessage(null);
     try {
-      const res = await fetch(`${apiBase()}/build-provider/provider-node/status-by-device/${encodeURIComponent(deviceIdForOwner)}`);
-      const data = await res.json();
+      const data = await fetchJson<ProviderNodeBody>(
+        `${apiBase()}/build-provider/provider-node/status-by-device/${encodeURIComponent(deviceIdForOwner)}`,
+        "Failed to fetch",
+      );
+      const svc = serviceStatusOf(data);
       setNodeStatus(
-        data.status === "active" ? "active"
-        : data.status === "inactive" ? "inactive"
-        : data.status === "error" ? "error"
+        svc === "active" ? "active"
+        : svc === "inactive" ? "inactive"
+        : svc === "error" ? "error"
         : "unknown"
       );
       setNodeMessage(data.message ?? null);
-    } catch {
-      setNodeStatus("error");
-      setNodeMessage("Failed to fetch");
+    } catch (e) {
+      if (isOrchestratorUnavailable(e)) {
+        setNodeStatus("unavailable");
+        setNodeMessage(null);
+      } else if (e instanceof ApiError && e.code === "not_found") {
+        setNodeStatus("unknown");
+        setNodeMessage(e.message);
+      } else {
+        setNodeStatus("error");
+        setNodeMessage(e instanceof Error ? e.message : "Failed to fetch");
+      }
     }
   }, [deviceIdForOwner]);
 
@@ -77,9 +95,14 @@ export function ProviderDetailLayout({ children, page, address, provider, refres
     if (!deviceIdForOwner || nodeAction !== "idle") return;
     setNodeAction("starting");
     try {
-      const res = await fetch(`${apiBase()}/build-provider/provider-node/start-by-device/${encodeURIComponent(deviceIdForOwner)}`, { method: "POST" });
-      const data = await res.json();
-      if (data.status === "success") await fetchNodeStatus();
+      const data = await fetchJson<ProviderNodeBody>(
+        `${apiBase()}/build-provider/provider-node/start-by-device/${encodeURIComponent(deviceIdForOwner)}`,
+        "Start failed",
+        { method: "POST" },
+      );
+      if (serviceStatusOf(data) === "success") await fetchNodeStatus();
+    } catch (e) {
+      setNodeMessage(e instanceof Error ? e.message : "Start failed");
     } finally {
       setNodeAction("idle");
     }
@@ -89,9 +112,14 @@ export function ProviderDetailLayout({ children, page, address, provider, refres
     if (!deviceIdForOwner || nodeAction !== "idle") return;
     setNodeAction("stopping");
     try {
-      const res = await fetch(`${apiBase()}/build-provider/provider-node/stop-by-device/${encodeURIComponent(deviceIdForOwner)}`, { method: "POST" });
-      const data = await res.json();
-      if (data.status === "success") await fetchNodeStatus();
+      const data = await fetchJson<ProviderNodeBody>(
+        `${apiBase()}/build-provider/provider-node/stop-by-device/${encodeURIComponent(deviceIdForOwner)}`,
+        "Stop failed",
+        { method: "POST" },
+      );
+      if (serviceStatusOf(data) === "success") await fetchNodeStatus();
+    } catch (e) {
+      setNodeMessage(e instanceof Error ? e.message : "Stop failed");
     } finally {
       setNodeAction("idle");
     }
@@ -158,7 +186,9 @@ export function ProviderDetailLayout({ children, page, address, provider, refres
                 <CardDescription>Work status and control for this device. Start to accept workloads, stop to pause.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                {isNoBuildStatus(nodeStatus, nodeMessage) ? (
+                {nodeStatus === "unavailable" ? (
+                  <OrchestratorUnavailable detail="Node status and start/stop controls need the orchestrator, which isn't reachable right now." />
+                ) : isNoBuildStatus(nodeStatus, nodeMessage) ? (
                   <>
                     <div className="flex items-start gap-3 rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
                       <Info className="h-5 w-5 shrink-0 text-blue-500 mt-0.5" />

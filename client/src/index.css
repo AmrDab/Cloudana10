@@ -44,56 +44,87 @@
   --color-sidebar-border: hsl(var(--sidebar-border));
   --color-sidebar-ring: hsl(var(--sidebar-ring));
 
-  --font-sans: 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-head: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Brand tokens (docs/V2_BRIEF.md §1) — colour always means something:
+     work = computing · ok = verified · chain = settlement · burn = burn/error. */
+  --color-bg: var(--c-bg);
+  --color-bg-2: var(--c-bg-2);
+  --color-panel: var(--c-panel);
+  --color-panel-2: var(--c-panel-2);
+  --color-line: var(--c-line);
+  --color-line-2: var(--c-line-2);
+  --color-text: var(--c-text);
+  --color-faint: var(--c-faint);
+  --color-work: var(--c-work);
+  --color-ok: var(--c-ok);
+  --color-chain: var(--c-chain);
+  --color-burn: var(--c-burn);
+
+  --ease-settle: cubic-bezier(.2, .8, .2, 1);
+  --animate-marquee: marquee var(--duration) infinite linear;
+  --animate-marquee-vertical: marquee-vertical var(--duration) linear infinite;
+  --animate-shine: shine var(--duration) infinite linear;
 }
 
-/* Dark Mode (Default) - Cloudana Theme */
+@keyframes marquee { from { transform: translateX(0) } to { transform: translateX(calc(-100% - var(--gap))) } }
+@keyframes marquee-vertical { from { transform: translateY(0) } to { transform: translateY(calc(-100% - var(--gap))) } }
+@keyframes shine { 0% { background-position: 0% 0% } 50% { background-position: 100% 100% } to { background-position: 0% 0% } }
+
+/* One theme for the site and the console (mirrors the homepage tokens). */
 :root {
-  --background: 224 71% 4%; /* Deep Space Blue */
-  --foreground: 210 40% 98%;
+  --c-bg: #07090D;
+  --c-bg-2: #0C1017;
+  --c-panel: #111722;
+  --c-panel-2: #161D2A;
+  --c-line: rgba(148, 163, 184, .12);
+  --c-line-2: rgba(148, 163, 184, .22);
+  --c-text: #E6EAF0;
+  --c-faint: #7A8699;
+  --c-work: #F2A93B;
+  --c-ok: #3FD6C2;
+  --c-chain: #5B8DEF;
+  --c-burn: #E5484D;
 
-  --card: 224 71% 6%;
-  --card-foreground: 210 40% 98%;
-
-  --popover: 224 71% 6%;
-  --popover-foreground: 210 40% 98%;
-
-  --primary: 180 100% 50%; /* Electric Cyan */
-  --primary-foreground: 224 71% 4%;
-
-  --secondary: 217 33% 12%; /* Dark Slate */
-  --secondary-foreground: 210 40% 98%;
-
-  --muted: 217 33% 12%;
-  --muted-foreground: 215 20% 65%;
-
-  --accent: 180 100% 50%;
-  --accent-foreground: 224 71% 4%;
-
-  --destructive: 0 62% 30%;
-  --destructive-foreground: 210 40% 98%;
-
-  --border: 217 33% 15%;
-  --input: 217 33% 15%;
-  --ring: 180 100% 50%;
+  --background: 220 31% 4%;
+  --foreground: 216 25% 92%;
+  --card: 219 33% 10%;
+  --card-foreground: 216 25% 92%;
+  --popover: 219 31% 13%;
+  --popover-foreground: 216 25% 92%;
+  --primary: 172 65% 54%;
+  --primary-foreground: 172 78% 7%;
+  --secondary: 219 31% 13%;
+  --secondary-foreground: 216 25% 92%;
+  --muted: 219 31% 13%;
+  --muted-foreground: 219 14% 60%;
+  --accent: 36 88% 59%;
+  --accent-foreground: 36 74% 6%;
+  --destructive: 358 75% 59%;
+  --destructive-foreground: 216 25% 92%;
+  --border: 219 14% 17%;
+  --input: 219 14% 17%;
+  --ring: 172 65% 54%;
 
   --radius: 0.5rem;
 
-  --chart-1: 180 100% 50%;
-  --chart-2: 270 50% 40%;
-  --chart-3: 30 80% 55%;
-  --chart-4: 210 40% 98%;
-  --chart-5: 217 33% 17%;
+  --chart-1: 172 65% 54%;
+  --chart-2: 220 82% 65%;
+  --chart-3: 36 88% 59%;
+  --chart-4: 358 75% 59%;
+  --chart-5: 219 14% 60%;
 
-  --sidebar: 224 71% 5%;
-  --sidebar-foreground: 210 40% 98%;
-  --sidebar-primary: 180 100% 50%;
-  --sidebar-primary-foreground: 224 71% 4%;
-  --sidebar-accent: 217 33% 12%;
-  --sidebar-accent-foreground: 210 40% 98%;
-  --sidebar-border: 217 33% 15%;
-  --sidebar-ring: 180 100% 50%;
+  --sidebar: 218 31% 7%;
+  --sidebar-foreground: 216 25% 92%;
+  --sidebar-primary: 172 65% 54%;
+  --sidebar-primary-foreground: 172 78% 7%;
+  --sidebar-accent: 219 31% 13%;
+  --sidebar-accent-foreground: 216 25% 92%;
+  --sidebar-border: 219 14% 17%;
+  --sidebar-ring: 172 65% 54%;
+  color-scheme: dark;
 }
 
 /* Ensure body uses these variables */
@@ -103,6 +134,12 @@
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+  }
+  h1, h2, h3, h4 { font-family: var(--font-head); letter-spacing: -.02em; }
+  :focus-visible { outline: 2px solid var(--c-ok); outline-offset: 3px; }
+  .tnum { font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; }
   }
 }
 
@@ -118,22 +155,22 @@
 
 /* AppKit Button Styling to match platform */
 appkit-button {
-  --wui-color-accent-100: #06b6d4 !important;
+  --wui-color-accent-100: #3FD6C2 !important;
 }
 
 appkit-button::part(button) {
-  background: #06b6d4 !important;
-  box-shadow: 0 0 40px rgba(6, 182, 212, 0.4) !important;
+  background: #3FD6C2 !important;
+  box-shadow: 0 0 40px rgba(63, 214, 194, 0.25) !important;
   transition: all 0.3s ease !important;
   border-radius: 9999px !important;
 }
 
 appkit-button::part(button):hover {
-  box-shadow: 0 0 60px rgba(6, 182, 212, 0.6) !important;
-  background: rgba(6, 182, 212, 0.9) !important;
+  box-shadow: 0 0 60px rgba(63, 214, 194, 0.35) !important;
+  background: rgba(63, 214, 194, 0.9) !important;
 }
 
 appkit-button wui-text {
-  color: #0a0f1a !important;
+  color: #04201C !important;
   font-weight: 600 !important;
 }

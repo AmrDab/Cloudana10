@@ -244,17 +244,17 @@ export default function LitepaperPage() {
             <CardContent>
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
-                  <div className="text-2xl font-bold text-cyan-600">75%</div>
+                  <div className="text-2xl font-bold text-cyan-600">97.5%</div>
                   <div className="text-xs text-slate-500 mt-1">Provider</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-bold text-orange-500">20%</div>
+                  <div className="text-2xl font-bold text-orange-500">2%</div>
                   <div className="text-xs text-slate-500 mt-1 flex items-center justify-center gap-1">
                     <Flame className="w-3 h-3" /> Burned
                   </div>
                 </div>
                 <div>
-                  <div className="text-2xl font-bold text-slate-700">5%</div>
+                  <div className="text-2xl font-bold text-slate-700">0.5%</div>
                   <div className="text-xs text-slate-500 mt-1">Treasury</div>
                 </div>
               </div>
@@ -272,7 +272,7 @@ export default function LitepaperPage() {
               suspension, then 1-year suspension.
             </p>
             <p>
-              <strong>Deflationary by design:</strong> The 20% fee burn permanently removes CLD from
+              <strong>Deflationary by design:</strong> The 2% fee burn permanently removes CLD from
               circulation. As network usage scales, burn rate exceeds the mint rate from block rewards,
               creating deflationary pressure.
             </p>
@@ -324,7 +324,7 @@ export default function LitepaperPage() {
               phase: "Phase 3",
               title: "Mining Integration",
               when: "Q2 2027",
-              items: ["Provider mining client (GPU-optimized matrix multiplication)", "Block reward halving schedule activation", "Fee burn mechanism", "Provider reputation system"],
+              items: ["Provider mining client (GPU-optimized matrix multiplication)", "Emission decay schedule activation", "Fee burn mechanism", "Provider reputation system"],
             },
             {
               phase: "Phase 4",

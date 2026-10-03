@@ -1,6 +1,9 @@
 // IPFS and DePIN utilities for direct contract interaction
 // No backend needed - all data stored on-chain or IPFS
 import { devLoggers } from "@/lib/logger";
+import { authFetch } from "@/lib/auth";
+import { edgeApiBase } from "@/lib/api-base";
+import { ApiError, fetchJson, readJson } from "@/lib/api-error";
 
 import { getPublicClient } from "@wagmi/core";
 import { wagmiConfig } from "@/lib/wagmi-config";
@@ -30,10 +33,13 @@ export interface PrepareRegistrationResponse {
 export async function getPrepareRegistration(deviceId: string): Promise<PrepareRegistrationResponse | null> {
   const base = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/v1` : "http://localhost:7002/v1";
   const url = `${base}/build-provider/prepare-registration/${encodeURIComponent(deviceId)}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = (await res.json()) as PrepareRegistrationResponse;
-  return data;
+  try {
+    return await fetchJson<PrepareRegistrationResponse>(url, "Failed to load device spec");
+  } catch (e) {
+    // A real "no build for this device" answer is not an error; anything else is surfaced.
+    if (e instanceof ApiError && e.code === "not_found") return null;
+    throw e;
+  }
 }
 
 /** True if the string looks like an HTTP(S) URL we can fetch for metadata */
@@ -193,43 +199,32 @@ export interface ProviderMetadata {
   [key: string]: unknown;
 }
 
-// IPFS Configuration
-const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
-const PINATA_GATEWAY = import.meta.env.VITE_PINATA_GATEWAY || 'gateway.pinata.cloud';
-
-// Pinata API endpoints
-const PINATA_API_URL = 'https://api.pinata.cloud';
-const PINATA_UPLOAD_URL = `${PINATA_API_URL}/pinning/pinJSONToIPFS`;
+/**
+ * Pin JSON to IPFS via the edge API (Pinata secret stays server-side).
+ * Requires a signed-in wallet session (authFetch attaches the JWT).
+ */
+export async function pinJsonToIPFS(content: unknown, name?: string): Promise<{ cid: string; url: string }> {
+  const response = await authFetch(`${edgeApiBase()}/ipfs/pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, name }),
+  });
+  try {
+    const result = await readJson<{ cid: string; url: string }>(response, `HTTP ${response.status}`);
+    return { cid: result.cid, url: result.url };
+  } catch (e) {
+    if (e instanceof ApiError) e.message = `IPFS pin failed (${response.status}): ${e.message}`;
+    throw e;
+  }
+}
 
 /**
  * Upload arbitrary JSON as workload manifest to IPFS (Pinata). Use for create/update workload with on-chain manifestCID.
  * @returns IPFS CID
  */
 export async function uploadWorkloadManifestToIPFS(content: unknown): Promise<string> {
-  if (!PINATA_JWT) {
-    throw new Error('VITE_PINATA_JWT is not set. Please configure it in .env.');
-  }
-  const response = await fetch(PINATA_UPLOAD_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${PINATA_JWT}`,
-    },
-    body: JSON.stringify({
-      pinataContent: content,
-      pinataMetadata: {
-        name: `workload-manifest-${Date.now()}`,
-        keyvalues: { type: 'workload-manifest', network: 'cloudana' },
-      },
-      pinataOptions: { cidVersion: 1 },
-    }),
-  });
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Pinata upload failed: ${err}`);
-  }
-  const result = await response.json();
-  return result.IpfsHash;
+  const { cid } = await pinJsonToIPFS(content, `workload-manifest-${Date.now()}`);
+  return cid;
 }
 
 /**
@@ -248,11 +243,6 @@ export async function uploadToIPFS(metadata: ProviderMetadata): Promise<string> 
     devLoggers.ipfs.info('📤 Uploading Provider Metadata to IPFS (Pinata)');
     devLoggers.ipfs.info('═══════════════════════════════════════════════════');
     
-    // Validate JWT token
-    if (!PINATA_JWT) {
-      throw new Error('PINATA_JWT environment variable is not set. Please configure it in .env file.');
-    }
-
     // Add timestamp if not present
     if (!metadata.createdAt) {
       metadata.createdAt = new Date().toISOString();
@@ -276,49 +266,15 @@ export async function uploadToIPFS(metadata: ProviderMetadata): Promise<string> 
     devLoggers.ipfs.log(`  Size: ${metadataSize} bytes`);
     devLoggers.ipfs.debug('Full metadata object:', metadata);
 
-    devLoggers.ipfs.info('\n🚀 Sending to Pinata...');
-    devLoggers.ipfs.debug(`  URL: ${PINATA_UPLOAD_URL}`);
-    
+    devLoggers.ipfs.info('\n🚀 Pinning via API...');
+
     const startTime = Date.now();
-    // Upload to Pinata
-    const response = await fetch(PINATA_UPLOAD_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${PINATA_JWT}`,
-      },
-      body: JSON.stringify({
-        pinataContent: metadata,
-        pinataMetadata: {
-          name: `provider-${metadata.name || 'node'}-${Date.now()}`,
-          keyvalues: {
-            type: 'provider-metadata',
-            network: 'cloudana',
-            timestamp: new Date().toISOString(),
-          }
-        },
-        pinataOptions: {
-          cidVersion: 1,
-        }
-      }),
-    });
+    const { cid, url: gatewayUrl } = await pinJsonToIPFS(metadata, `provider-${metadata.name || 'node'}-${Date.now()}`);
     const uploadDuration = Date.now() - startTime;
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      devLoggers.ipfs.error(`❌ Pinata API error: HTTP ${response.status} (${uploadDuration}ms)`);
-      devLoggers.ipfs.error(`   Response: ${errorData.slice(0, 200)}`);
-      throw new Error(`Pinata API error (${response.status}): ${errorData}`);
-    }
-
-    const result = await response.json();
-    const cid = result.IpfsHash;
-    const gatewayUrl = `https://${PINATA_GATEWAY}/ipfs/${cid}`;
 
     devLoggers.ipfs.success(`\n✅ Successfully uploaded to IPFS! (${uploadDuration}ms)`);
     devLoggers.ipfs.success(`  CID: ${cid}`);
     devLoggers.ipfs.success(`  Gateway URL: ${gatewayUrl}`);
-    devLoggers.ipfs.log(`  Pin size: ${result.PinSize || 'unknown'} bytes`);
     devLoggers.ipfs.log('═══════════════════════════════════════════════════\n');
 
     return cid;
@@ -562,18 +518,20 @@ async function enrichProviderWithIpfsMetadata(p: Record<string, unknown>): Promi
  * Fetch real-time stats from provider nodes via backend API
  */
 export async function getProviderStats(): Promise<Record<string, any>> {
+  const base = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/v1` : "http://localhost:7002/v1";
+  const data = await fetchJson<{ stats?: Record<string, any> }>(
+    `${base}/orchestration/provider-stats`,
+    "Failed to fetch provider stats",
+  );
+  return data.stats || {};
+}
+
+/** Real-time stats are optional enrichment: providers still list from chain + IPFS without them. */
+async function getProviderStatsOrEmpty(): Promise<Record<string, any>> {
   try {
-    const base = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/v1` : "http://localhost:7002/v1";
-    const url = `${base}/orchestration/provider-stats`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      devLoggers.api.warn(`Failed to fetch provider stats: ${res.status}`);
-      return {};
-    }
-    const data = await res.json();
-    return data.stats || {};
+    return await getProviderStats();
   } catch (error) {
-    devLoggers.api.error("Error fetching provider stats:", error);
+    devLoggers.api.warn("Provider real-time stats unavailable; using IPFS metadata:", error);
     return {};
   }
 }
@@ -619,7 +577,7 @@ export async function getAllProviders(): Promise<any[]> {
     const filtered = providers.filter((provider): provider is NonNullable<typeof provider> => provider != null);
 
     // Fetch real-time stats from provider nodes
-    const stats = await getProviderStats();
+    const stats = await getProviderStatsOrEmpty();
 
     // Merge stats with provider data
     filtered.forEach((provider) => {
@@ -672,7 +630,7 @@ export async function getMyProviders(ownerAddress: Address): Promise<any[]> {
     const filtered = providers.filter((provider): provider is NonNullable<typeof provider> => provider != null);
     
     // Fetch real-time stats from provider nodes
-    const stats = await getProviderStats();
+    const stats = await getProviderStatsOrEmpty();
     
     // Merge stats with provider data
     filtered.forEach((provider) => {

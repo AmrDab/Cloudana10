@@ -34,7 +34,7 @@ import {
   REWARD_CONTRACT_ADDRESS,
 } from "@/lib/contracts";
 import { parseEther } from "viem";
-import { getPinataGatewayUrl } from "@/lib/api";
+import { getPinataGatewayUrl, pinJsonToIPFS } from "@/lib/api";
 
 const REGIONS = ["us-east", "us-west", "eu-west", "eu-central", "asia-pacific", "global"] as const;
 const STORAGE_CLASSES = ["ssd", "hdd", "nvme", "ephemeral"] as const;
@@ -98,12 +98,6 @@ export default function WorkloadRegister() {
   const uploadToIPFS = async (): Promise<string> => {
     console.log('[Workload Register] Starting IPFS upload...');
     
-    const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
-    if (!PINATA_JWT) {
-      console.error('[Workload Register] ERROR: PINATA_JWT not set');
-      throw new Error('PINATA_JWT environment variable is not set');
-    }
-    
     if (!manifestContent.trim()) {
       console.error('[Workload Register] ERROR: Manifest content is empty');
       throw new Error('Manifest content is required');
@@ -138,41 +132,11 @@ export default function WorkloadRegister() {
       requirements: workloadMetadata.requirements,
     });
     
-    console.log('[Workload Register] Sending request to Pinata...');
-    const response = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${PINATA_JWT}`,
-      },
-      body: JSON.stringify({
-        pinataContent: workloadMetadata,
-        pinataMetadata: {
-          name: `workload-${formData.name || 'manifest'}-${Date.now()}`,
-          keyvalues: {
-            type: 'workload-manifest',
-            network: 'cloudana',
-            timestamp: new Date().toISOString(),
-          }
-        },
-        pinataOptions: {
-          cidVersion: 1,
-        }
-      }),
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error('[Workload Register] ERROR: Pinata API error');
-      console.error('[Workload Register] Status:', response.status);
-      console.error('[Workload Register] Response:', errorData);
-      throw new Error(`Pinata API error (${response.status}): ${errorData}`);
-    }
-    
-    const result = await response.json();
+    console.log('[Workload Register] Pinning via API...');
+    const { cid } = await pinJsonToIPFS(workloadMetadata, `workload-${formData.name || 'manifest'}-${Date.now()}`);
     console.log('[Workload Register] ✓ IPFS upload successful');
-    console.log('[Workload Register] CID:', result.IpfsHash);
-    return result.IpfsHash;
+    console.log('[Workload Register] CID:', cid);
+    return cid;
   };
   
   // Handle form submission - automatically uploads to IPFS then registers

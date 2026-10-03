@@ -2,6 +2,7 @@
  * React hooks for POUW mining data — connects to orchestrator POUW API.
  */
 import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/api-error";
 
 const ORCHESTRATOR_URL = import.meta.env.VITE_API_URL ?? "http://localhost:7002";
 
@@ -35,10 +36,8 @@ export interface RecentCertificate {
   verifiedAt: number;
 }
 
-async function fetcher<T>(path: string): Promise<T> {
-  const res = await fetch(`${ORCHESTRATOR_URL}${path}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+function fetcher<T>(path: string): Promise<T> {
+  return fetchJson<T>(`${ORCHESTRATOR_URL}${path}`, "POUW request failed");
 }
 
 export function useNetworkMiningStats() {

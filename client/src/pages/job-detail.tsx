@@ -28,6 +28,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { useWorkloadDetails } from "@/hooks/useWorkloadDetails";
 import { useWorkloadManifest } from "@/hooks/useWorkloadManifest";
 import { useWorkloadExecutionStatus, useWorkloadLogs } from "@/hooks/useWorkloadExecutionStatus";
+import { isOrchestratorUnavailable } from "@/lib/orchestrator-status";
+import { OrchestratorUnavailable } from "@/components/OrchestratorUnavailable";
 import { DeploymentSpecs } from "@/components/deployment-specs";
 import { useUpdateWorkload, useDeregisterWorkload, useActivateWorkload, useDeleteWorkload, type ResourceRequirements } from "@/lib/contracts";
 import { useAccount, useBlockNumber } from "wagmi";
@@ -60,7 +62,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
   const { data: workloadDetails, isLoading: detailsLoading, error: detailsError } = useWorkloadDetails(workloadId);
   const { data: manifestFromIPFS, isLoading: manifestLoading } = useWorkloadManifest(workloadId);
   const instanceId = workloadDetails?.placementInstanceId;
-  const { data: executionStatus, isLoading: statusLoading } = useWorkloadExecutionStatus(workloadId, instanceId);
+  const { data: executionStatus, isLoading: statusLoading, error: statusError } = useWorkloadExecutionStatus(workloadId, instanceId);
   const { logs: workloadLogs, isLoading: logsLoading, refresh: refreshLogs } = useWorkloadLogs(workloadId, instanceId);
   const [isEditing, setIsEditing] = useState(false);
   const [editedManifest, setEditedManifest] = useState("");
@@ -575,7 +577,9 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {!executionStatus && !statusLoading && instanceId ? (
+                    {!executionStatus && isOrchestratorUnavailable(statusError) ? (
+                      <OrchestratorUnavailable detail="Live workload status comes from the orchestrator, which isn't reachable right now." />
+                    ) : !executionStatus && !statusLoading && instanceId ? (
                       <Card className="border-amber-500/50 bg-amber-500/5">
                         <CardContent className="pt-6">
                           <div className="flex items-start gap-3">

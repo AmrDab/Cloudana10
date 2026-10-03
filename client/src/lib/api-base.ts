@@ -14,3 +14,7 @@ export const NODE_API_URL: string =
 
 /** Base for Node-only orchestrator endpoints, including the /v1 prefix. */
 export const nodeApiBase = (): string => `${NODE_API_URL}/v1`;
+
+/** Base for edge (Cloudflare Worker) endpoints, including the /v1 prefix. */
+export const edgeApiBase = (): string =>
+  `${import.meta.env.VITE_API_URL || "http://localhost:7002"}/v1`;

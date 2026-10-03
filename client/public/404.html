@@ -5,74 +5,115 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>404 — proof not found · Cloudana</title>
 <meta name="robots" content="noindex" />
-<meta name="theme-color" content="#F6F2E8" />
+<meta name="theme-color" content="#07090D" />
+<meta name="color-scheme" content="dark" />
 <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
 <link rel="icon" href="/favicon.ico" sizes="32x32" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root{--paper:#F6F2E8;--inkp:#211D16;--ink-mid:#575146;--ink-dim:#807867;--rule2:#C9BFA6;
-    --red:#A93226;--ink:#12100C;--ink2:#1B1813;--ink3:#26221A;
-    --bone:#E9E6DD;--bone-dim:#9C958A;--bone-faint:#6A6357;--amber:#E6A23C;--grid:#2E2A21;
-    --serif:"Fraunces",Georgia,serif;--mono:"IBM Plex Mono",ui-monospace,monospace}
+  :root{
+    --bg:#07090D; --bg2:#0C1017; --panel:#111722; --panel2:#161D2A;
+    --line:rgba(148,163,184,.12); --line2:rgba(148,163,184,.22);
+    --text:#E6EAF0; --muted:#8B95A7; --faint:#7A8699;
+    --work:#F2A93B; --ok:#3FD6C2; --chain:#5B8DEF; --burn:#E5484D;
+    --head:"Bricolage Grotesque",system-ui,sans-serif;
+    --body:"Inter",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--inkp);min-height:100vh;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    font-family:var(--serif);-webkit-font-smoothing:antialiased}
-  body::after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.05;mix-blend-mode:multiply;
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E")}
-  .plate{max-width:500px;margin:24px}
-  .frame{background:var(--ink);border:1px solid var(--inkp);border-radius:4px;padding:8px;
-    box-shadow:0 24px 55px rgba(33,29,22,.28)}
-  .panel{background:var(--ink2);border:1px solid var(--grid);border-radius:3px;
-    padding:34px 38px;color:var(--bone)}
-  .head{display:flex;justify-content:space-between;font-family:var(--mono);
-    font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--bone-faint);margin-bottom:24px}
-  .led{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--amber);
-    margin-right:7px;animation:pulse 1.4s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-  h1{font-size:44px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em;font-family:var(--serif)}
-  h1 b{color:var(--amber);font-weight:600;font-style:italic}
-  .z{font-family:var(--mono);font-size:12px;word-break:break-all;
-    color:var(--bone-faint);border-top:1px dashed var(--grid);margin-top:22px;padding-top:16px;line-height:1.8}
-  .z .lbl{display:block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px}
-  .z .val{color:var(--amber)}
-  p{color:var(--bone-dim);font-size:15.5px;line-height:1.6;margin:14px 0 26px;font-family:var(--mono)}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);min-height:100vh;
+    display:flex;flex-direction:column;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:inherit}
+  ::selection{background:var(--ok);color:var(--bg)}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 24px;width:100%}
+  :focus-visible{outline:2px solid var(--ok);outline-offset:3px;border-radius:4px}
+  .gridfloor{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:64px 64px;mask-image:radial-gradient(70% 60% at 50% 45%,#000 20%,transparent 75%);
+    -webkit-mask-image:radial-gradient(70% 60% at 50% 45%,#000 20%,transparent 75%)}
+  main,header{position:relative;z-index:1}
+
+  /* nav */
+  .nav{position:sticky;top:0;z-index:100;background:rgba(7,9,13,.72);
+    backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
+    border-bottom:1px solid var(--line)}
+  .nav .wrap{display:flex;align-items:center;gap:28px;height:62px}
+  .logo{display:flex;align-items:center;gap:10px;font-family:var(--head);font-weight:700;
+    font-size:18px;letter-spacing:.06em;text-decoration:none}
+  .logo svg{flex-shrink:0}
+  .pill{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--work);border:1px solid rgba(242,169,59,.35);border-radius:99px;padding:3px 10px}
+  .nav .btn.sm{margin-left:auto}
+  @media(max-width:480px){.nav .pill{display:none}}
+  .btn{white-space:nowrap;font-family:var(--body);font-weight:600;font-size:14px;padding:11px 18px;border-radius:8px;
+    text-decoration:none;display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+    border:1px solid var(--line2);color:var(--text);background:rgba(255,255,255,.02);transition:.2s}
+  .btn:hover{border-color:var(--muted);background:rgba(255,255,255,.05)}
+  .btn.primary{background:var(--ok);border-color:var(--ok);color:#04201C}
+  .btn.primary:hover{background:#63E3D2;border-color:#63E3D2}
+  .btn.sm{padding:8px 14px;font-size:13px}
+
+  /* instrument */
+  main{flex:1;display:flex;align-items:center;justify-content:center;padding:48px 16px}
+  .box{width:100%;max-width:540px}
+  .instrument{background:linear-gradient(180deg,rgba(22,29,42,.92),rgba(12,16,23,.94));
+    border:1px solid var(--line2);border-radius:14px;padding:26px 26px 22px;position:relative;
+    box-shadow:0 30px 80px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.04)}
+  .instrument::before{content:"";position:absolute;inset:-1px;border-radius:14px;pointer-events:none;padding:1px;
+    background:linear-gradient(140deg,rgba(242,169,59,.45),transparent 35%,transparent 65%,rgba(229,72,77,.45));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+  .head{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:22px}
+  .led{width:7px;height:7px;border-radius:50%;background:var(--work);display:inline-block;
+    margin-right:8px;animation:pulse 1.4s ease-in-out infinite;vertical-align:1px}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  h1{font-family:var(--head);font-weight:600;font-size:clamp(34px,6vw,46px);line-height:1.05;letter-spacing:-.025em;margin:0 0 12px}
+  h1 .g{background:linear-gradient(90deg,var(--work),var(--burn));-webkit-background-clip:text;background-clip:text;color:transparent}
+  p{color:var(--muted);margin:0 0 24px}
   .row{display:flex;gap:12px;flex-wrap:wrap}
-  .btn{font-family:var(--mono);font-size:13px;padding:10px 18px;
-    border:1px solid var(--bone-faint);color:var(--bone);border-radius:2px;text-decoration:none;transition:.18s}
-  .btn:hover{border-color:var(--amber);color:var(--amber)}
-  .btn.solid{background:var(--bone);color:var(--ink);border-color:var(--bone);font-weight:700}
-  .caption{display:flex;gap:14px;align-items:baseline;border-bottom:1px solid var(--rule2);
-    margin-top:14px;padding-bottom:10px}
-  .caption .fig{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--red);flex-shrink:0}
-  .caption .cap{font-size:14.5px;font-style:italic;color:var(--ink-mid)}
-  @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+  .transcript{margin-top:24px;border-top:1px dashed var(--line2);padding-top:14px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.7;word-break:break-all}
+  .transcript .lbl{color:var(--faint);letter-spacing:.1em;text-transform:uppercase;font-size:10px;display:block;margin-bottom:3px}
+  .transcript .val{color:var(--work)}
+  .cap{font-size:13px;color:var(--faint);margin-top:12px}
+  .cap b{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-right:8px}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-  <main class="plate">
-    <div class="frame">
-      <div class="panel">
-        <div class="head"><span><span class="led"></span>verification failed</span><span>HTTP 404</span></div>
-        <h1>Proof <b>not found.</b></h1>
-        <p>This path produced no valid certificate — the page you asked for doesn't exist, or it moved. The rest of the network is operational.</p>
-        <div class="row">
-          <a class="btn solid" href="/">Back to the journal</a>
-          <a class="btn" href="/litepaper">Litepaper</a>
-        </div>
-        <div class="z">
-          <span class="lbl">Transcript</span>
-          <span class="val">GET <span id="path">/…</span> → no block found · difficulty unmet</span>
-        </div>
+<div class="gridfloor" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="logo" href="/" aria-label="Cloudana home">
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="6" fill="none" stroke="#3FD6C2" stroke-width="1.5"/><rect x="6" y="6" width="6" height="6" rx="1.5" fill="#F2A93B"/><rect x="14" y="6" width="6" height="6" rx="1.5" fill="#3FD6C2" opacity=".5"/><rect x="6" y="14" width="6" height="6" rx="1.5" fill="#3FD6C2" opacity=".5"/><rect x="14" y="14" width="6" height="6" rx="1.5" fill="#3FD6C2"/></svg>
+      CLOUDANA
+    </a>
+    <span class="pill">Testnet</span>
+    <a class="btn primary sm" href="https://app.cloudana.io">Open console &rarr;</a>
+  </div>
+</header>
+
+<main>
+  <div class="box">
+    <div class="instrument">
+      <div class="head"><span><span class="led"></span>verification failed</span><span>HTTP 404</span></div>
+      <h1>Proof <span class="g">not found.</span></h1>
+      <p>This path produced no valid certificate — the page you asked for doesn't exist, or it moved. The rest of the network is operational.</p>
+      <div class="row">
+        <a class="btn primary" href="/">Back to cloudana.io</a>
+        <a class="btn" href="/litepaper">Litepaper</a>
+      </div>
+      <div class="transcript">
+        <span class="lbl">Transcript</span>
+        <span class="val">GET <span id="path">/…</span> → no block found · difficulty unmet</span>
       </div>
     </div>
-    <div class="caption">
-      <span class="fig">Plate 404</span>
-      <span class="cap">An instrument reporting an unproductive query. Figure appears only in error.</span>
-    </div>
-  </main>
-  <script>document.getElementById('path').textContent=location.pathname;</script>
+    <div class="cap"><b>Error</b>An instrument reporting an unproductive query.</div>
+  </div>
+</main>
+<script>document.getElementById('path').textContent=location.pathname;</script>
 </body>
 </html>

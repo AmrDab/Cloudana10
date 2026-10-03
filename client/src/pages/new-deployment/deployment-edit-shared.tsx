@@ -8,6 +8,7 @@ import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Info, Trash2, ExternalLink, Plus } from "lucide-react";
+import { devLoggers } from "@/lib/logger";
 
 export type StorageUnit = "Mi" | "Gi" | "Ti";
 
@@ -97,7 +98,7 @@ export const defaultBuilderConfig = {
 export type BuilderConfig = typeof defaultBuilderConfig;
 
 export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<BuilderConfig> {
-  console.log('[Builder Config] Converting parsed SDL to builder config...');
+  devLoggers.deploy.log('[Builder Config] Converting parsed SDL to builder config...');
   
   // Check if services exist
   if (!parsed?.services || typeof parsed.services !== 'object') {
@@ -139,11 +140,11 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
   }
   
   const [serviceName, serviceValue] = serviceEntries[0];
-  console.log('[Builder Config] Processing service:', serviceName);
+  devLoggers.deploy.log('[Builder Config] Processing service:', serviceName);
   const svc = serviceValue as Record<string, unknown>;
   
   const image = (svc?.image as string) || "nginx:latest";
-  console.log('[Builder Config] Image:', image);
+  devLoggers.deploy.log('[Builder Config] Image:', image);
   
   // Handle env variables - awesome-akash uses strings like "KEY=value", not objects
   const envArr = Array.isArray(svc?.env) ? svc.env : [];
@@ -161,7 +162,7 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
     return { key: "", value: "" };
   });
   const commands = Array.isArray(svc?.command) ? (svc.command as string[]) : [];
-  console.log('[Builder Config] Environment variables:', env.length);
+  devLoggers.deploy.log('[Builder Config] Environment variables:', env.length);
   const exposeArr = Array.isArray(svc?.expose)
     ? (svc.expose as { port?: number; as?: number; to?: { global?: boolean; accept?: string }[] }[])
     : [];
@@ -171,7 +172,7 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
     global: e.to?.[0]?.global ?? true,
     accept: e.to?.[0]?.accept,
   }));
-  console.log('[Builder Config] Expose ports:', expose.length);
+  devLoggers.deploy.log('[Builder Config] Expose ports:', expose.length);
 
   // Check for profiles
   if (!parsed?.profiles || typeof parsed.profiles !== 'object') {
@@ -188,7 +189,7 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
   }
   
   const resources = (compute?.resources as Record<string, unknown>) || {};
-  console.log('[Builder Config] Resources:', {
+  devLoggers.deploy.log('[Builder Config] Resources:', {
     hasCpu: !!resources.cpu,
     hasMemory: !!resources.memory,
     hasStorage: !!resources.storage,
@@ -203,7 +204,7 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
   } else {
     cpu = 1;
   }
-  console.log('[Builder Config] CPU units:', cpu);
+  devLoggers.deploy.log('[Builder Config] CPU units:', cpu);
   const gpuRes = resources.gpu as
     | { units?: number; attributes?: { vendor?: Record<string, { model?: string }> } }
     | undefined;
@@ -220,7 +221,7 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
   }
   const memory = parseFloat(String(memSize).replace(/[^0-9.]/g, "") || "1");
   const memoryUnit = (memSize.includes("Gi") ? "Gi" : memSize.includes("Ti") ? "Ti" : "Mi") as StorageUnit;
-  console.log('[Builder Config] Memory:', memory, memoryUnit);
+  devLoggers.deploy.log('[Builder Config] Memory:', memory, memoryUnit);
   
   // Handle storage - can be array or single object
   let storageRaw = resources.storage;
@@ -247,7 +248,7 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
   const epSize = ephemeral?.size ?? "10Gi";
   const ephemeralStorage = parseFloat(String(epSize).replace(/[^0-9.]/g, "") || "10") || 10;
   const ephemeralUnit = (String(epSize).includes("Gi") ? "Gi" : String(epSize).includes("Ti") ? "Ti" : "Mi") as StorageUnit;
-  console.log('[Builder Config] Storage:', ephemeralStorage, ephemeralUnit);
+  devLoggers.deploy.log('[Builder Config] Storage:', ephemeralStorage, ephemeralUnit);
   const persistentStorages: PersistentStorageItem[] = stor
     .filter((s) => s.attributes?.persistent || s.name)
     .map((s, i) => ({
@@ -308,12 +309,12 @@ export function deployToBuilderConfig(parsed: Record<string, unknown>): Partial<
 
 export function extractDeploySummary(config: string): DeploySummary | null {
   try {
-    console.log('[Deploy Summary] Extracting deployment summary...');
+    devLoggers.deploy.log('[Deploy Summary] Extracting deployment summary...');
     const parsed = JSON.parse(config.trim()) as Record<string, unknown>;
-    console.log('[Deploy Summary] Parsed config keys:', Object.keys(parsed));
+    devLoggers.deploy.log('[Deploy Summary] Parsed config keys:', Object.keys(parsed));
     
     const b = deployToBuilderConfig(parsed) as BuilderConfig;
-    console.log('[Deploy Summary] Builder config:', {
+    devLoggers.deploy.log('[Deploy Summary] Builder config:', {
       image: b.image,
       cpu: b.cpu,
       memory: b.memory,
@@ -362,7 +363,7 @@ export function extractDeploySummary(config: string): DeploySummary | null {
       commands: b.commands.length === 0 ? "None" : b.commands.join("; "),
     };
     
-    console.log('[Deploy Summary] ✓ Summary extracted successfully');
+    devLoggers.deploy.log('[Deploy Summary] ✓ Summary extracted successfully');
     return summary;
   } catch (e) {
     console.error('[Deploy Summary] ✗ Failed to extract summary:', e);

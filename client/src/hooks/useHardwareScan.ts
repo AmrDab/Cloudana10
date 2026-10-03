@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ApiError, fetchJson, readJson } from "@/lib/api-error";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:7002";
 
@@ -40,9 +41,8 @@ export function useHardwareScan() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpoint }),
       });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error ?? "Scan failed");
-      setScan(data.scan as HardwareScanResult);
+      const data = await readJson<{ scan: HardwareScanResult }>(res, "Scan failed");
+      setScan(data.scan);
       setState("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -55,12 +55,16 @@ export function useHardwareScan() {
   return { state, scan, error, triggerScan, reset };
 }
 
+/** Stored scan for a device; null when none exists. Other failures throw `ApiError`. */
 export async function fetchStoredScan(deviceId: string): Promise<HardwareScanResult | null> {
   try {
-    const res = await fetch(`${API}/v1/providers/${deviceId}/hardware`);
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
+    const { status: _status, ...scan } = await fetchJson<HardwareScanResult & { status?: string }>(
+      `${API}/v1/providers/${deviceId}/hardware`,
+      "Failed to load hardware scan",
+    );
+    return scan;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
   }
 }

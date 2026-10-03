@@ -343,20 +343,20 @@ export default function DeploymentEdit({ template, onBack, onDeploy, onRegistrat
 
   // Step 1: Validate and open confirm modal (no contract yet)
   const handleCreateDeploy = useCallback(() => {
-    console.log('[Deployment Edit] ═══════════════════════════════════════');
-    console.log('[Deployment Edit] STARTING DEPLOYMENT CREATION');
-    console.log('[Deployment Edit] ═══════════════════════════════════════');
+    devLoggers.deploy.log('[Deployment Edit] ═══════════════════════════════════════');
+    devLoggers.deploy.log('[Deployment Edit] STARTING DEPLOYMENT CREATION');
+    devLoggers.deploy.log('[Deployment Edit] ═══════════════════════════════════════');
     
     const deploy = editableDeployConfig || template.deploy || "";
-    console.log('[Deployment Edit] Deploy config length:', deploy.length);
-    console.log('[Deployment Edit] Deploy config preview:', deploy.slice(0, 200));
+    devLoggers.deploy.log('[Deployment Edit] Deploy config length:', deploy.length);
+    devLoggers.deploy.log('[Deployment Edit] Deploy config preview:', deploy.slice(0, 200));
     
     let parsed: Record<string, unknown>;
     try {
-      console.log('[Deployment Edit] ─── Step 1: Parse YAML/JSON ───');
+      devLoggers.deploy.log('[Deployment Edit] ─── Step 1: Parse YAML/JSON ───');
       parsed = parseDeployToJson(deploy);
-      console.log('[Deployment Edit] ✓ Parsed successfully');
-      console.log('[Deployment Edit] Structure keys:', Object.keys(parsed));
+      devLoggers.deploy.log('[Deployment Edit] ✓ Parsed successfully');
+      devLoggers.deploy.log('[Deployment Edit] Structure keys:', Object.keys(parsed));
       devLoggers.deploy.debug("Deploy configuration info:", parsed);
     } catch (e) {
       console.error('[Deployment Edit] ✗ Parse failed:', e);
@@ -364,25 +364,25 @@ export default function DeploymentEdit({ template, onBack, onDeploy, onRegistrat
       return;
     }
     
-    console.log('[Deployment Edit] ─── Step 2: Validate SDL ───');
+    devLoggers.deploy.log('[Deployment Edit] ─── Step 2: Validate SDL ───');
     if (!validateSDL(parsed)) {
       console.error('[Deployment Edit] ✗ Validation failed');
       setSdlError("Invalid deploy configuration. Check browser console for details.");
       return;
     }
-    console.log('[Deployment Edit] ✓ Validation passed');
+    devLoggers.deploy.log('[Deployment Edit] ✓ Validation passed');
     
     setSdlError(null);
     const deployJson = JSON.stringify(parsed, null, 2);
     
-    console.log('[Deployment Edit] ─── Step 3: Extract Summary ───');
+    devLoggers.deploy.log('[Deployment Edit] ─── Step 3: Extract Summary ───');
     const summary = extractDeploySummary(deployJson);
     if (!summary) {
       console.error('[Deployment Edit] ✗ Failed to extract deployment summary');
       setSdlError("Could not read deployment summary. Check browser console for details. The SDL structure may be missing required fields (image, cpu, memory, etc).");
       return;
     }
-    console.log('[Deployment Edit] ✓ Summary extracted:', summary);
+    devLoggers.deploy.log('[Deployment Edit] ✓ Summary extracted:', summary);
     if (!isConnected || !address) {
       toast({
         title: "Wallet not connected",

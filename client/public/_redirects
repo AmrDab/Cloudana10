@@ -1,1 +1,8 @@
-/* /index.html 200
+# Retired static pages → their successors (301 so old links and search results follow)
+/landing.html            /        301
+/browser-contribute      /lab     301
+/browser-contribute.html /lab     301
+/prototype-verify.html   /lab     301
+/app/*                   /control/run 301
+# SPA fallback (homepage, /lab, /control/*)
+/*  /index.html  200

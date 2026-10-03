@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { devLoggers } from "@/lib/logger";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
@@ -81,7 +82,7 @@ const fetchWithBrowserHeaders = async (url: string): Promise<Gpus> => {
     }
   } catch (error) {
     if (error instanceof TypeError && (error.message.includes('CORS') || error.message.includes('Failed to fetch'))) {
-      console.log('CORS error detected, trying XMLHttpRequest...');
+      devLoggers.api.log('CORS error detected, trying XMLHttpRequest...');
       
       try {
         return await new Promise((resolve, reject) => {
@@ -115,10 +116,10 @@ const fetchWithBrowserHeaders = async (url: string): Promise<Gpus> => {
           xhr.send();
         });
       } catch (xhrError) {
-        console.log('XMLHttpRequest also failed, using CORS proxy...', xhrError);
+        devLoggers.api.log('XMLHttpRequest also failed, using CORS proxy...', xhrError);
       }
     } else {
-      console.log('Direct fetch failed, trying CORS proxy...', error);
+      devLoggers.api.log('Direct fetch failed, trying CORS proxy...', error);
     }
 
     // Final fallback: Use CORS proxy service
@@ -140,13 +141,13 @@ const fetchWithBrowserHeaders = async (url: string): Promise<Gpus> => {
           return response.json();
         }
       } catch (proxyError) {
-        console.log(`Proxy ${proxyUrl} failed:`, proxyError);
+        devLoggers.api.log(`Proxy ${proxyUrl} failed:`, proxyError);
         continue;
       }
     }
 
     // All methods failed - return fallback data
-    console.log('All fetch methods failed, using fallback GPU data');
+    devLoggers.api.log('All fetch methods failed, using fallback GPU data');
     return FALLBACK_GPU_DATA;
   }
 };

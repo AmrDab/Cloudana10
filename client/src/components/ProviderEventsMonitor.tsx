@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { AlertCircle, RefreshCw, Activity, ExternalLink, FileJson } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { getPinataGatewayUrl } from '@/lib/api';
+import { devLoggers } from '@/lib/logger';
 
 /**
  * Real-time Provider Events Monitor Component
@@ -17,7 +18,7 @@ export function ProviderEventsMonitor() {
     loadHistorical: false, // Real-time only by default
     onNewProvider: (provider) => {
       // Show toast notification for new providers
-      console.log('🎉 New provider registered:', provider.region);
+      devLoggers.provider.log('🎉 New provider registered:', provider.region);
       // You can add toast notification here with: toast.success(`New ${provider.region} provider!`)
     }
   });

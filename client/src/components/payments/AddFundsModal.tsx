@@ -42,7 +42,7 @@ export function AddFundsModal({ open, onOpenChange, onSuccess }: AddFundsModalPr
   const [showCheckout, setShowCheckout] = useState(false);
 
   const { addFundsAsync, isPending: isCreatingSession, reset } = useAddFunds();
-  const { rate } = useConversionRate();
+  const { rate, error: rateError } = useConversionRate();
 
   const amountUsd = selectedPreset ?? (parseFloat(customAmount) || 0);
   const cldEquivalent = rate ? amountUsd * rate.usdToCld : amountUsd * 10;
@@ -132,6 +132,12 @@ export function AddFundsModal({ open, onOpenChange, onSuccess }: AddFundsModalPr
               }}
               disabled={isCreatingSession}
             />
+
+            {rateError && (
+              <p className="text-xs text-red-400 text-center break-words">
+                Couldn't load the live conversion rate: {rateError.message}
+              </p>
+            )}
 
             {/* Amount picker (card flow only; crypto uses wallet balance directly) */}
             {method === "card" && (
