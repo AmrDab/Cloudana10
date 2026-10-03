@@ -79,3 +79,7 @@
 - Production data differs from fixtures (504 legacy templates incl. mining). Rule: smoke-test the preview Worker
   version (`wrangler versions upload`) against prod data before `versions deploy`.
 - CI installs per package: a dep that resolves only via the repo root (vite for vitest) passes locally and fails in CI.
+
+## Rebuilt shells must keep every entry point of the old one
+- Pattern: the v2 console layout replaced the legacy AppLayout and silently dropped its `<appkit-button />`; with the test wallet off in production, sign-in had no way to connect a wallet. Also the production build fell back to `demo-project-id`, so the Reown modal 403d.
+- Rule: before replacing a layout/shell, grep the old one for user entry points (connect, sign in, nav, CTAs) and list where each lives in the new one. Test production-only paths with the production flags (`VITE_DEV_BURNER=false`), not the dev burner.

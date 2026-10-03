@@ -297,3 +297,8 @@ SSH + web access; persistent volumes with keep-days; max hours + extend; capacit
 - [x] New mark (cloud of two interlocking traces + nodes, after the @Cloudana10 avatar) in LogoMark, favicon set, static pages
 - [x] Site nav hides on scroll down, returns on scroll up / focus / open menu
 - [x] Built + deployed to cloudana and cloudana-console Pages; smoke tested live (200s, nav hides, no console errors)
+
+## 2026-10-03 — wallet connect restored (regression)
+- [x] Console header + sidebar "Connect wallet" opens the Reown modal (wallets, email, socials), then signs in; every in-page Sign in goes through the same flow
+- [x] Production build uses the real Reown project ID (was demo-project-id → 403s)
+- [x] Verified live on app.cloudana.io: modal lists WalletConnect/Trust/MetaMask/110+, no console errors
