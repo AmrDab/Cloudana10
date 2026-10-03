@@ -6,7 +6,7 @@
 
 export const API_ROOT = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8790").replace(/\/$/, "");
 const API = `${API_ROOT}/v1`;
-const DEV_BURNER = import.meta.env.VITE_DEV_BURNER === "true";
+export const DEV_BURNER = import.meta.env.VITE_DEV_BURNER === "true";
 
 export class ApiError extends Error {
   constructor(public code: string, message: string, public status = 0) {

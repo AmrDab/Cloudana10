@@ -15,7 +15,7 @@ const metadata = {
   icons: ['https://cloudana.app/icon.png']
 };
 
-createAppKit({
+export const appKit = createAppKit({
   adapters: [wagmiAdapter],
   networks,
   metadata,

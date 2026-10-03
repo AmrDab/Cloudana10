@@ -7,6 +7,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Toaster } from "sonner";
+import { useAppKit } from "@reown/appkit/react";
 import { cn } from "@/lib/utils";
 import { cld, signOut } from "@/lib/cld";
 import { useNetwork } from "@/hooks/useNetwork";
@@ -33,6 +34,41 @@ const EXTRA_TITLES: Record<string, string> = { "/litepaper": "Litepaper", "/fauc
 const isActive = (loc: string, href: string) => (href === "/" ? loc === "/" || loc === "" : loc === href || loc.startsWith(href + "/"));
 const titleFor = (loc: string) => NAV.find((n) => isActive(loc, n.href))?.label ?? EXTRA_TITLES[loc] ?? "Not found";
 
+/** Top-bar wallet control (the old console's appkit-button): connect + sign in, or the signed-in address. */
+function WalletButton() {
+  const session = useSession();
+  const { open } = useAppKit();
+  const [busy, setBusy] = useState(false);
+  if (session) {
+    return (
+      <button
+        type="button"
+        className={cn(btn.ghost, btn.sm, "font-mono")}
+        onClick={() => (session.burner ? undefined : void open({ view: "Account" }))}
+        aria-label="Wallet"
+      >
+        <Wallet />
+        {session.address.slice(0, 6)}…{session.address.slice(-4)}
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={cn(btn.primary, btn.sm)}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        await signInWithToast();
+        setBusy(false);
+      }}
+    >
+      <Wallet />
+      {busy ? "Signing in…" : "Connect wallet"}
+    </button>
+  );
+}
+
 function WalletCard() {
   const session = useSession();
   const account = useAccount();
@@ -54,7 +90,7 @@ function WalletCard() {
           }}
         >
           <Wallet />
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Signing in…" : "Connect wallet"}
         </button>
       </div>
     );
@@ -221,6 +257,7 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
                 </button>
               )}
               <ApiDot />
+              <WalletButton />
             </div>
           </header>
           <main id="main" className="mx-auto w-full max-w-[1120px] px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
