@@ -18,3 +18,15 @@ vite.config.ts.*
 
 # Persisted runtime data
 /client/api/data/
+# never commit runtime secrets (client/api/.env was tracked once — key must be rotated)
+client/api/.env
+**/.env
+!**/.env.example
+.dev.vars
+node-agent/.data/
+shared/addresses.local.json
+.dev-run/
+
+# every package dir (node-agent, contract, client/api…)
+**/node_modules/
+.playwright-mcp/
