@@ -497,13 +497,27 @@ export async function refreshTemplates(): Promise<{ categories: number; template
   return { categories: merged.length, templates: ids.size, imported: count(imported), curated: count(SEED_TEMPLATES) };
 }
 
+/** Categories never shown in the gallery. */
+const EXCLUDED_CATEGORY = /mining/i;
+
 export class TemplateService {
-  /** Gallery from the store (5-min cache); the curated seed when the store is empty. */
+  /**
+   * Gallery (5-min cache): Cloudana's curated templates always first, then the stored import, minus categories that
+   * don't belong on the network (crypto mining). READMEs are left out of the list — the console fetches one by id
+   * when a template is opened — so the gallery stays small.
+   */
   async getTemplateGallery(): Promise<TemplateCategory[]> {
     const now = Date.now();
     if (cachedTemplates && now - cacheTimestamp < CACHE_TTL) return cachedTemplates;
-    const fromDb = await loadTemplateGallery();
-    cachedTemplates = fromDb && fromDb.length > 0 ? fromDb : SEED_TEMPLATES;
+    const fromDb = (await loadTemplateGallery()) ?? [];
+    cachedTemplates = mergeTemplateCategories(SEED_TEMPLATES, fromDb)
+      .filter((c) => !EXCLUDED_CATEGORY.test(c.title))
+      .map((c) => {
+        // The store may already hold the curated list (after a refresh): keep the first copy of each id.
+        const seen = new Set<string>();
+        const templates = c.templates.filter((t) => !seen.has(t.id) && seen.add(t.id)).map((t) => ({ ...t, readme: "" }));
+        return { ...c, templates };
+      });
     cacheTimestamp = now;
     return cachedTemplates;
   }

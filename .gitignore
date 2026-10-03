@@ -33,3 +33,5 @@ shared/addresses.local.json
 
 # production build overrides (public values, kept local)
 client/.env.production.local
+
+.backups/
