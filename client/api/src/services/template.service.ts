@@ -1,5 +1,6 @@
 import type { Template, TemplateCategory } from "../types/template.js";
-import { loadTemplateGallery, loadTemplateById } from "./template-store.js";
+import { loadTemplateGallery, loadTemplateById, saveTemplateGallery } from "./template-store.js";
+import { SEED_TEMPLATES, seedTemplateById } from "./template-seed.js";
 
 const REPOSITORIES = {
   "awesome-akash": {
@@ -238,7 +239,7 @@ async function processTemplate(
 }
 
 // Fetch templates from awesome-akash repository
-async function fetchAwesomeAkashTemplates(): Promise<TemplateCategory[]> {
+export async function fetchAwesomeAkashTemplates(): Promise<TemplateCategory[]> {
   const repo = REPOSITORIES["awesome-akash"];
   const readmeContent = await fetchFileContent(repo.owner, repo.repo, repo.branch, "README.md");
   
@@ -452,32 +453,77 @@ export async function fetchTemplatesFromAkash(): Promise<TemplateCategory[]> {
   );
 }
 
-export class TemplateService {
-  private cachedTemplates: TemplateCategory[] | null = null;
-  private cacheTimestamp: number = 0;
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+/** Gallery cache shared by every TemplateService (cleared by refreshTemplates). */
+const CACHE_TTL = 5 * 60 * 1000;
+let cachedTemplates: TemplateCategory[] | null = null;
+let cacheTimestamp = 0;
 
-  /** Returns template gallery from the persisted store (5-min cache). Seed via `npm run templates`. */
+export function invalidateTemplateCache(): void {
+  cachedTemplates = null;
+  cacheTimestamp = 0;
+}
+
+/** Imported (awesome-akash) templates run as containers; the image is the SDL's first `image:`. */
+function annotateImported(categories: TemplateCategory[]): TemplateCategory[] {
+  return categories.map((cat) => ({
+    ...cat,
+    templates: cat.templates.map((t) => ({
+      ...t,
+      kind: "container" as const,
+      category: cat.title,
+      curated: false,
+      image: /^\s*image:\s*["']?([^\s"']+)/m.exec(t.deploy)?.[1] ?? null,
+    })),
+  }));
+}
+
+/**
+ * Fetch awesome-akash, put Cloudana's curated list in front (same-title categories merge,
+ * curated templates first; a duplicate id keeps the curated one), and replace the store.
+ * If the fetch fails the store still gets the curated list.
+ */
+export async function refreshTemplates(): Promise<{ categories: number; templates: number; imported: number; curated: number }> {
+  const imported = annotateImported(
+    await fetchAwesomeAkashTemplates().catch((err) => {
+      console.warn("[templates] awesome-akash fetch failed:", err);
+      return [] as TemplateCategory[];
+    }),
+  );
+  const merged = mergeTemplateCategories(SEED_TEMPLATES, imported);
+  await saveTemplateGallery(merged);
+  invalidateTemplateCache();
+  const count = (cats: TemplateCategory[]) => cats.reduce((n, c) => n + c.templates.length, 0);
+  const ids = new Set(merged.flatMap((c) => c.templates.map((t) => t.id)));
+  return { categories: merged.length, templates: ids.size, imported: count(imported), curated: count(SEED_TEMPLATES) };
+}
+
+/** Categories never shown in the gallery. */
+const EXCLUDED_CATEGORY = /mining/i;
+
+export class TemplateService {
+  /**
+   * Gallery (5-min cache): Cloudana's curated templates always first, then the stored import, minus categories that
+   * don't belong on the network (crypto mining). READMEs are left out of the list — the console fetches one by id
+   * when a template is opened — so the gallery stays small.
+   */
   async getTemplateGallery(): Promise<TemplateCategory[]> {
     const now = Date.now();
-    if (this.cachedTemplates && (now - this.cacheTimestamp) < this.CACHE_TTL) {
-      return this.cachedTemplates;
-    }
-
-    const fromDb = await loadTemplateGallery();
-    if (fromDb && fromDb.length > 0) {
-      this.cachedTemplates = fromDb;
-      this.cacheTimestamp = now;
-      return fromDb;
-    }
-
-    this.cachedTemplates = [];
-    this.cacheTimestamp = now;
-    return [];
+    if (cachedTemplates && now - cacheTimestamp < CACHE_TTL) return cachedTemplates;
+    const fromDb = (await loadTemplateGallery()) ?? [];
+    cachedTemplates = mergeTemplateCategories(SEED_TEMPLATES, fromDb)
+      .filter((c) => !EXCLUDED_CATEGORY.test(c.title))
+      .map((c) => {
+        // The store may already hold the curated list (after a refresh): keep the first copy of each id.
+        const seen = new Set<string>();
+        const templates = c.templates.filter((t) => !seen.has(t.id) && seen.add(t.id)).map((t) => ({ ...t, readme: "" }));
+        return { ...c, templates };
+      });
+    cacheTimestamp = now;
+    return cachedTemplates;
   }
 
-  /** Single indexed read from templates collection. */
+  /** Store first, then the curated seed (so curated ids resolve before any refresh). */
   async getTemplateById(id: string): Promise<Template | null> {
-    return loadTemplateById(id);
+    return (await loadTemplateById(id)) ?? seedTemplateById(id);
   }
 }

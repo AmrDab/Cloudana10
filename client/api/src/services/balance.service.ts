@@ -2,7 +2,12 @@
  * Balance Service — CLD credit balance tracking for Cloudana users.
  *
  * Storage: Cloudflare D1 (SQLite at the edge).
- * Tables: balances (address → balance), transactions (credit/debit log).
+ * Tables: balances (address → balance_ucld / held_ucld), transactions (credit/debit log).
+ *
+ * Money is stored as integer µCLD (1 CLD = 1,000,000 µCLD). The CLD-denominated
+ * functions below (getUserBalance, creditBalance, debitBalance) keep their old
+ * signatures for the payments and legacy PoUW routes and convert at the edge;
+ * new code uses the µCLD helpers (getBalanceUcld, creditUcld, hold, capture, release).
  */
 
 import { getD1 } from "../lib/storage.js";
@@ -46,6 +51,18 @@ function generateTxId(): string {
   return `tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+export const UCLD_PER_CLD = 1_000_000;
+
+/** CLD (possibly fractional) → integer µCLD. */
+export function cldToUcld(cld: number): number {
+  return Math.round(cld * UCLD_PER_CLD);
+}
+
+/** Integer µCLD → CLD number, for API responses that still speak CLD. */
+export function ucldToCld(ucld: number): number {
+  return ucld / UCLD_PER_CLD;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,12 +74,12 @@ export async function getUserBalance(address: string): Promise<UserBalance> {
   const key = normalizeAddress(address);
   const db = getD1();
   const row = await db
-    .prepare("SELECT address, balance, updated_at FROM balances WHERE address = ?")
+    .prepare("SELECT address, balance_ucld, updated_at FROM balances WHERE address = ?")
     .bind(key)
-    .first<{ address: string; balance: number; updated_at: string }>();
+    .first<{ address: string; balance_ucld: number; updated_at: string }>();
 
   if (row) {
-    return { address: row.address, balance: row.balance, updatedAt: new Date(row.updated_at) };
+    return { address: row.address, balance: ucldToCld(row.balance_ucld), updatedAt: new Date(row.updated_at) };
   }
   return { address: key, balance: 0, updatedAt: new Date() };
 }
@@ -83,20 +100,7 @@ export async function creditBalance(
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // Upsert balance (SQLite INSERT ... ON CONFLICT)
-  await db
-    .prepare(
-      "INSERT INTO balances (address, balance, updated_at) VALUES (?, ?, ?) ON CONFLICT(address) DO UPDATE SET balance = balance + excluded.balance, updated_at = excluded.updated_at"
-    )
-    .bind(key, amount, nowIso)
-    .run();
-
-  // Read back new balance
-  const row = await db
-    .prepare("SELECT balance FROM balances WHERE address = ?")
-    .bind(key)
-    .first<{ balance: number }>();
-  const newBalance = row?.balance ?? amount;
+  const newBalance = ucldToCld(await creditUcld(key, cldToUcld(amount)));
 
   // Record transaction
   const tx: Transaction = {
@@ -138,30 +142,26 @@ export async function debitBalance(
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // Check current balance
-  const current = await db
-    .prepare("SELECT balance FROM balances WHERE address = ?")
-    .bind(key)
-    .first<{ balance: number }>();
-  const currentBalance = current?.balance ?? 0;
-
-  if (currentBalance < amount) {
+  const ucld = cldToUcld(amount);
+  const currentBalance = (await getBalanceUcld(key)).balanceUcld;
+  if (currentBalance < ucld) {
     throw new Error(
-      `Insufficient CLD balance. Required: ${amount}, Available: ${currentBalance}`
+      `Insufficient CLD balance. Required: ${amount}, Available: ${ucldToCld(currentBalance)}`
     );
   }
 
   // Debit (only if balance is still sufficient — guards against race)
-  const result = await db
+  const debited = await db
     .prepare(
-      "UPDATE balances SET balance = balance - ?, updated_at = ? WHERE address = ? AND balance >= ? RETURNING balance"
+      "UPDATE balances SET balance_ucld = balance_ucld - ?, updated_at = ? WHERE address = ? AND balance_ucld >= ? RETURNING balance_ucld"
     )
-    .bind(amount, nowIso, key, amount)
-    .first<{ balance: number }>();
+    .bind(ucld, nowIso, key, ucld)
+    .first<{ balance_ucld: number }>();
 
-  if (!result) {
+  if (!debited) {
     throw new Error(`Insufficient CLD balance (race condition). Required: ${amount}`);
   }
+  const result = { balance: ucldToCld(debited.balance_ucld) };
 
   const tx: Transaction = {
     id: generateTxId(),
@@ -183,6 +183,77 @@ export async function debitBalance(
   L.info(`[Balance] Debited ${amount} CLD from ${key} for workload ${workloadId} (new balance: ${result.balance})`);
 
   return { balance: { address: key, balance: result.balance, updatedAt: now }, transaction: tx };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integer µCLD ledger (v1 work pipeline)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BalanceUcld {
+  balanceUcld: number; // spendable
+  heldUcld: number; // reserved for queued/running jobs
+}
+
+function assertUcld(ucld: number): void {
+  if (!Number.isSafeInteger(ucld) || ucld <= 0) throw new Error(`µCLD amount must be a positive integer, got ${ucld}`);
+}
+
+export async function getBalanceUcld(address: string): Promise<BalanceUcld> {
+  const row = await getD1()
+    .prepare("SELECT balance_ucld, held_ucld FROM balances WHERE address = ?")
+    .bind(normalizeAddress(address))
+    .first<{ balance_ucld: number; held_ucld: number }>();
+  return { balanceUcld: row?.balance_ucld ?? 0, heldUcld: row?.held_ucld ?? 0 };
+}
+
+/** Add spendable µCLD. Returns the new spendable balance. */
+export async function creditUcld(address: string, ucld: number): Promise<number> {
+  assertUcld(ucld);
+  const row = await getD1()
+    .prepare(
+      "INSERT INTO balances (address, balance, updated_at, balance_ucld, held_ucld) VALUES (?, 0, ?, ?, 0) " +
+        "ON CONFLICT(address) DO UPDATE SET balance_ucld = balance_ucld + excluded.balance_ucld, updated_at = excluded.updated_at " +
+        "RETURNING balance_ucld"
+    )
+    .bind(normalizeAddress(address), new Date().toISOString(), ucld)
+    .first<{ balance_ucld: number }>();
+  return row?.balance_ucld ?? ucld;
+}
+
+/** Move µCLD from spendable to held. Returns the new balances, or null if funds are insufficient. */
+export async function hold(address: string, ucld: number): Promise<BalanceUcld | null> {
+  assertUcld(ucld);
+  const row = await getD1()
+    .prepare(
+      "UPDATE balances SET balance_ucld = balance_ucld - ?, held_ucld = held_ucld + ?, updated_at = ? " +
+        "WHERE address = ? AND balance_ucld >= ? RETURNING balance_ucld, held_ucld"
+    )
+    .bind(ucld, ucld, new Date().toISOString(), normalizeAddress(address), ucld)
+    .first<{ balance_ucld: number; held_ucld: number }>();
+  return row ? { balanceUcld: row.balance_ucld, heldUcld: row.held_ucld } : null;
+}
+
+/** Spend held µCLD (the fee is burned on-chain at epoch settlement). False if not enough is held. */
+export async function capture(address: string, ucld: number): Promise<boolean> {
+  assertUcld(ucld);
+  const r = await getD1()
+    .prepare("UPDATE balances SET held_ucld = held_ucld - ?, updated_at = ? WHERE address = ? AND held_ucld >= ?")
+    .bind(ucld, new Date().toISOString(), normalizeAddress(address), ucld)
+    .run();
+  return (r.meta?.changes ?? 0) > 0;
+}
+
+/** Return held µCLD to spendable. False if not enough is held. */
+export async function release(address: string, ucld: number): Promise<boolean> {
+  assertUcld(ucld);
+  const r = await getD1()
+    .prepare(
+      "UPDATE balances SET held_ucld = held_ucld - ?, balance_ucld = balance_ucld + ?, updated_at = ? " +
+        "WHERE address = ? AND held_ucld >= ?"
+    )
+    .bind(ucld, ucld, new Date().toISOString(), normalizeAddress(address), ucld)
+    .run();
+  return (r.meta?.changes ?? 0) > 0;
 }
 
 /**

@@ -21,18 +21,29 @@ import { DirectSecp256k1HdWallet, Registry } from "@cosmjs/proto-signing";
 import { SigningStargateClient, GasPrice, defaultRegistryTypes } from "@cosmjs/stargate";
 import yaml from "js-yaml";
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 
 const L = log.orchestratorEvent;
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// ─── Config (read lazily — getEnv() must not run at import time) ───────────
 
-const AKASH_MNEMONIC     = process.env.AKASH_MNEMONIC    ?? "";
-const AKASH_RPC_URL      = process.env.AKASH_RPC_URL     ?? "https://rpc.akashnet.net:443";
-const AKASH_REST_URL     = (process.env.AKASH_REST_URL   ?? "https://api.akashnet.net").replace(/\/$/, "");
-const AKASH_DEPOSIT_UAKT = process.env.AKASH_DEPOSIT_UAKT ?? "500000";
+function akashMnemonic(): string {
+  return getEnv().AKASH_MNEMONIC ?? "";
+}
+function akashRpcUrl(): string {
+  return getEnv().AKASH_RPC_URL;
+}
+function akashRestUrl(): string {
+  return getEnv().AKASH_REST_URL.replace(/\/$/, "");
+}
+function akashDepositUakt(): string {
+  return getEnv().AKASH_DEPOSIT_UAKT;
+}
 
 /** How long to poll for bids (ms) */
-const BID_TIMEOUT_MS     = Number(process.env.AKASH_BID_TIMEOUT_MS ?? 120_000);
+function bidTimeoutMs(): number {
+  return getEnv().AKASH_BID_TIMEOUT_MS;
+}
 const BID_POLL_MS        = 5_000;
 
 /** Akash message type URLs */
@@ -120,8 +131,8 @@ let _address: string | null = null;
 
 async function getWallet(): Promise<{ wallet: DirectSecp256k1HdWallet; address: string }> {
   if (_wallet && _address) return { wallet: _wallet, address: _address };
-  if (!AKASH_MNEMONIC) throw new Error("AKASH_MNEMONIC env var is not set");
-  _wallet = await DirectSecp256k1HdWallet.fromMnemonic(AKASH_MNEMONIC, { prefix: "akash" });
+  if (!akashMnemonic()) throw new Error("AKASH_MNEMONIC env var is not set");
+  _wallet = await DirectSecp256k1HdWallet.fromMnemonic(akashMnemonic(), { prefix: "akash" });
   [{ address: _address }] = await _wallet.getAccounts();
   return { wallet: _wallet, address: _address! };
 }
@@ -129,7 +140,7 @@ async function getWallet(): Promise<{ wallet: DirectSecp256k1HdWallet; address: 
 // ─── REST helpers ─────────────────────────────────────────────────────────────
 
 async function restGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${AKASH_REST_URL}${path}`, { headers: { Accept: "application/json" } });
+  const res = await fetch(`${akashRestUrl()}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Akash REST GET ${path} → HTTP ${res.status}: ${body.slice(0, 200)}`);
@@ -147,7 +158,7 @@ async function getBlockHeight(): Promise<number> {
 }
 
 async function pollBids(owner: string, dseq: string): Promise<any[]> {
-  const deadline = Date.now() + BID_TIMEOUT_MS;
+  const deadline = Date.now() + bidTimeoutMs();
   while (Date.now() < deadline) {
     try {
       const data = await restGet<{ bids?: Array<{ bid?: any }> }>(
@@ -353,7 +364,7 @@ async function _lifecycle(id: string, spec: AkashDeploymentSpec): Promise<void> 
 
   // 2. Build registry + signing client
   const registry = await buildRegistry();
-  const client   = await SigningStargateClient.connectWithSigner(AKASH_RPC_URL, wallet, {
+  const client   = await SigningStargateClient.connectWithSigner(akashRpcUrl(), wallet, {
     registry,
     gasPrice: GasPrice.fromString("0.025uakt"),
   });
@@ -374,7 +385,7 @@ async function _lifecycle(id: string, spec: AkashDeploymentSpec): Promise<void> 
       id: { owner: address, dseq: { low: parseInt(dseq, 10), high: 0, unsigned: true } },
       groups,
       version: sdlVersion(spec.sdl),
-      deposit: { denom: "uakt", amount: AKASH_DEPOSIT_UAKT },
+      deposit: { denom: "uakt", amount: akashDepositUakt() },
       depositor: address,
     },
   };
@@ -503,7 +514,7 @@ export async function closeAkashDeployment(id: string): Promise<void> {
 
   const { wallet, address } = await getWallet();
   const registry = await buildRegistry();
-  const client   = await SigningStargateClient.connectWithSigner(AKASH_RPC_URL, wallet, {
+  const client   = await SigningStargateClient.connectWithSigner(akashRpcUrl(), wallet, {
     registry,
     gasPrice: GasPrice.fromString("0.025uakt"),
   });

@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Cpu, HardDrive, Server } from "lucide-react";
 import { getPrepareRegistration, type RealDeviceSpec, type ProviderMetadata } from "@/lib/api";
+import { isOrchestratorUnavailable } from "@/lib/orchestrator-status";
+import { OrchestratorUnavailable } from "@/components/OrchestratorUnavailable";
 
 function formatBytesToGB(bytes: number): number {
   return Math.round(bytes / (1024 ** 3) * 10) / 10;
@@ -42,6 +44,7 @@ export function ConfirmRegisterModal({
 }: ConfirmRegisterModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [orchestratorDown, setOrchestratorDown] = useState(false);
   const [prep, setPrep] = useState<{ device_id: string; real_spec: RealDeviceSpec | null } | null>(null);
 
   const [name, setName] = useState(defaultName);
@@ -58,6 +61,7 @@ export function ConfirmRegisterModal({
   useEffect(() => {
     if (!open || !deviceId) return;
     setError(null);
+    setOrchestratorDown(false);
     setPrep(null);
     setLoading(true);
     getPrepareRegistration(deviceId)
@@ -74,7 +78,10 @@ export function ConfirmRegisterModal({
           setOfferedStorageGB(0);
         }
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load device spec"))
+      .catch((e) => {
+        setOrchestratorDown(isOrchestratorUnavailable(e));
+        setError(e instanceof Error ? e.message : "Failed to load device spec");
+      })
       .finally(() => setLoading(false));
   }, [open, deviceId]);
 
@@ -162,7 +169,9 @@ export function ConfirmRegisterModal({
           </div>
         )}
 
-        {error && (
+        {error && orchestratorDown && <OrchestratorUnavailable detail="Can't load the device's real spec to cap the offered spec." />}
+
+        {error && !orchestratorDown && (
           <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
             {error}
           </div>

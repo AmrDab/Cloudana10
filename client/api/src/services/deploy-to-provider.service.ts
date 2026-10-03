@@ -9,8 +9,8 @@ import { parseSDLFromMetadata, parseSDL } from "./sdl-parser.service.js";
 import { buildK8sManifest } from "./k8s-builder.service.js";
 import { deployToAkash, isAkashBridgeReady } from "./akash-bridge.service.js";
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 
-const DEPLOY_TIMEOUT_MS = Number(process.env.ORCHESTRATOR_DEPLOY_TIMEOUT_MS ?? 15_000);
 const L = log.orchestratorEvent;
 
 /**
@@ -122,10 +122,11 @@ export async function deployToProvider(decision: PlacementDecision): Promise<boo
     }
   }
 
+  const DEPLOY_TIMEOUT_MS = getEnv().ORCHESTRATOR_DEPLOY_TIMEOUT_MS;
   L.info(`📡 Step 3/5: Sending deployment request to provider...`);
   L.info(`   Timeout: ${DEPLOY_TIMEOUT_MS}ms`);
   L.info(`   Payload size: ${JSON.stringify(body).length} bytes`);
-  
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DEPLOY_TIMEOUT_MS);

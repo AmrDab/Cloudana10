@@ -25,16 +25,23 @@ import type { POUWCertificate, SolveResult } from "./types.js";
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
-/** Deterministic xorshift32 PRNG seeded from a hex string. NOT cryptographically secure. */
+/**
+ * Deterministic PRNG in SHA-256 counter mode over the FULL seed.
+ * (Previously xorshift32 over the first 32 bits of the seed — a 2³² noise space.)
+ * Each block yields eight 32-bit words: word_i of SHA-256(seed ‖ counter).
+ */
 function makePRNG(hexSeed: string): () => number {
-  const bytes = Buffer.from(hexSeed.padEnd(8, "0").slice(0, 8), "hex");
-  let state = bytes.readUInt32BE(0);
-  if (state === 0) state = 0xdeadbeef;
+  let counter = 0;
+  let block: Buffer = Buffer.alloc(0);
+  let offset = 32;
   return () => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return (state >>> 0) / 0x100000000;
+    if (offset >= 32) {
+      block = createHash("sha256").update(hexSeed).update(String(counter++)).digest();
+      offset = 0;
+    }
+    const v = block.readUInt32BE(offset);
+    offset += 4;
+    return v / 0x100000000;
   };
 }
 
@@ -217,6 +224,52 @@ export function solve(
   }
 
   return null;
+}
+
+/**
+ * Solve an ASSIGNED job: one pass, difficulty 0.
+ *
+ * When the orchestrator assigns work, it also issues σ — bound to the job, the
+ * node and a fresh chain seed. There is no lottery: the node multiplies the
+ * job's matrices exactly once, and the certificate proves that computation.
+ * Because the transcript depends on σ, the certificate can't be computed before
+ * assignment and can't be reused under another node's assignment.
+ *
+ * A and B must already be in field form (see workload-bridge).
+ */
+export function solveAssigned(
+  sigma: string,
+  A: Matrix,
+  B: Matrix,
+  providerAddress: string,
+  deviceId: string,
+): SolveResult {
+  const n = A.rows;
+  const r = chooseBlockSize(n);
+  const { Aprime, Bprime, EL, ER, FL, FR } = encode(sigma, A, B, r);
+  const { C: Cprime, transcriptHash } = matMulWithTranscript(Aprime, Bprime, r);
+  const matrixAHash = matHash(A);
+  const matrixBHash = matHash(B);
+  const z = computeZ(sigma, transcriptHash, matrixAHash, matrixBHash);
+  const C = decode(A, B, Cprime, EL, ER, FL, FR);
+  return {
+    result: C.data,
+    certificate: {
+      sigma,
+      n,
+      r,
+      matrixAHash,
+      matrixBHash,
+      transcriptHash,
+      z,
+      difficulty: 0,
+      timestamp: Date.now(),
+      providerAddress,
+      deviceId,
+      matrixA: A.data,
+      matrixB: B.data,
+    },
+  };
 }
 
 /**

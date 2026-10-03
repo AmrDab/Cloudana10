@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Droplets, ExternalLink, Loader2, CheckCircle2, Clock, Wallet, AlertTriangle } from "lucide-react";
 import { useCLDTokenBalance } from "@/lib/contracts";
 import { useToast } from "@/hooks/use-toast";
+import { ApiError, fetchJson } from "@/lib/api-error";
 
 const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:7002") + "/v1";
 
@@ -32,8 +33,10 @@ export default function FaucetPage() {
   const checkStatus = useCallback(async () => {
     if (!address) return;
     try {
-      const res = await fetch(`${API_BASE}/faucet/status?address=${address}`);
-      const data = await res.json();
+      const data = await fetchJson<{ canClaim: boolean; cooldownMs?: number }>(
+        `${API_BASE}/faucet/status?address=${address}`,
+        "Failed to load faucet status",
+      );
       setCanClaim(data.canClaim);
       setCooldownMs(data.cooldownMs || 0);
     } catch {
@@ -80,30 +83,28 @@ export default function FaucetPage() {
     setLastTx(null);
 
     try {
-      const res = await fetch(`${API_BASE}/faucet/claim`, {
+      const data = await fetchJson<{ txHash: string }>(`${API_BASE}/faucet/claim`, "Claim failed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address }),
       });
 
-      const data = await res.json();
-
-      if (data.success) {
-        setLastTx(data.txHash);
-        setCanClaim(false);
-        setCooldownMs(24 * 60 * 60 * 1000);
-        toast({ title: "Tokens claimed!", description: "100 CLD has been sent to your wallet." });
-        // Wait a moment for chain to propagate, then refetch balance
-        setTimeout(() => refetchBalance(), 3000);
-      } else {
-        setError(data.error || "Claim failed");
-        if (data.cooldownMs) {
-          setCooldownMs(data.cooldownMs);
+      setLastTx(data.txHash);
+      setCanClaim(false);
+      setCooldownMs(24 * 60 * 60 * 1000);
+      toast({ title: "Tokens claimed!", description: "100 CLD has been sent to your wallet." });
+      // Wait a moment for chain to propagate, then refetch balance
+      setTimeout(() => refetchBalance(), 3000);
+    } catch (err: any) {
+      setError(err.message || "Network error");
+      if (err instanceof ApiError) {
+        // Cooldown: 429 with details.cooldownMs (legacy top-level cooldownMs is mapped into details too).
+        const cooldown = (err.details as { cooldownMs?: unknown } | undefined)?.cooldownMs;
+        if (typeof cooldown === "number" && cooldown > 0) {
+          setCooldownMs(cooldown);
           setCanClaim(false);
         }
       }
-    } catch (err: any) {
-      setError(err.message || "Network error");
     } finally {
       setClaiming(false);
     }

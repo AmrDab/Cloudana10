@@ -20,9 +20,9 @@ import { deployToProvider } from "./deploy-to-provider.service.js";
 import { registerWorkloadForPolling, getPlacementByWorkloadId, unregisterWorkloadFromPolling } from "./workload-status-poller.service.js";
 import { terminateWorkloadOnProvider } from "./terminate-workload-on-provider.service.js";
 import { log } from "../lib/logger.js";
-import { chainId, rpcUrl, rpcTransportMode, wssUrl } from "../config/contracts.js";
+import { getChainId, getRpcUrl, getRpcTransportMode, getWssUrl } from "../config/contracts.js";
+import { getEnv } from "../config/env.js";
 
-const DEBOUNCE_MS = Number(process.env.ORCHESTRATOR_EVENT_DEBOUNCE_MS ?? 2_000);
 const L = log.orchestratorEvent;
 let unsubscribeWorkload: (() => void) | null = null;
 let unsubscribeProvider: (() => void) | null = null;
@@ -179,15 +179,16 @@ async function runPlacementCycle(): Promise<void> {
 }
 
 function scheduleRun(): void {
+  const debounceMs = getEnv().ORCHESTRATOR_EVENT_DEBOUNCE_MS;
   if (debounceTimer != null) {
     clearTimeout(debounceTimer);
-    L.dim(`debounce timer reset (${DEBOUNCE_MS}ms)`);
+    L.dim(`debounce timer reset (${debounceMs}ms)`);
   }
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     L.log("debounce fired -> running placement cycle");
     void runPlacementCycle();
-  }, DEBOUNCE_MS);
+  }, debounceMs);
 }
 
 /**
@@ -215,10 +216,13 @@ export function startOrchestratorEventDriven(): void {
     providerRegistryAddress = "(not set)";
   }
   
-  L.success(`STARTING event-driven orchestrator (debounce=${DEBOUNCE_MS}ms)`);
+  const rpcTransportMode = getRpcTransportMode();
+  const rpcUrl = getRpcUrl();
+  const wssUrl = getWssUrl();
+  L.success(`STARTING event-driven orchestrator (debounce=${getEnv().ORCHESTRATOR_EVENT_DEBOUNCE_MS}ms)`);
   L.log(`WorkloadRegistry=${workloadRegistryAddress}`);
   L.log(`ProviderRegistry=${providerRegistryAddress}`);
-  L.log(`chainId=${chainId}`);
+  L.log(`chainId=${getChainId()}`);
   L.log(`RPC Transport: ${rpcTransportMode.toUpperCase()}`);
   if (rpcTransportMode === 'http') {
     L.log(`  HTTP: ${rpcUrl?.slice(0, 60)}...`);

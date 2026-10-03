@@ -14,10 +14,12 @@ import {
   RefreshCw,
   ArrowUpRight,
   ArrowDownLeft,
+  KeyRound,
+  Loader2,
 } from "lucide-react";
 import { AddFundsModal } from "./AddFundsModal";
 import { useBalance, useTransactionHistory } from "@/hooks/usePayments";
-import { useAccount } from "wagmi";
+import { useWalletAuth } from "@/hooks/useWalletAuth";
 import type { Transaction } from "@/lib/payments";
 import { cn } from "@/lib/utils";
 
@@ -31,9 +33,15 @@ interface BalanceDisplayProps {
 
 export function BalanceDisplay({ compact = false, className }: BalanceDisplayProps) {
   const [modalOpen, setModalOpen] = useState(false);
-  const { isConnected } = useAccount();
-  const { balance, isLoading, refetch } = useBalance();
-  const { transactions, isLoading: txLoading } = useTransactionHistory(5);
+  const { isConnected, isAuthenticated, isSigningIn, error: signInError, signIn } = useWalletAuth();
+  const { balance, isLoading, error: balanceError, refetch } = useBalance();
+  const { transactions, isLoading: txLoading, error: txError } = useTransactionHistory(5);
+
+  const handleSignIn = () => {
+    signIn().catch(() => {
+      // Error is surfaced via signInError
+    });
+  };
 
   const handleSuccess = () => {
     refetch();
@@ -46,8 +54,28 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
       <>
         <div className={cn("flex items-center gap-2", className)}>
           <span className="text-sm text-muted-foreground">Balance:</span>
-          {isLoading ? (
+          {isConnected && !isAuthenticated ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={handleSignIn}
+              disabled={isSigningIn}
+              title={signInError?.message}
+            >
+              {isSigningIn ? (
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <KeyRound className="h-3 w-3 mr-1" />
+              )}
+              Sign in with wallet
+            </Button>
+          ) : isLoading ? (
             <Skeleton className="h-4 w-20" />
+          ) : balanceError ? (
+            <span className="text-sm text-red-400" title={balanceError.message}>
+              Error
+            </span>
           ) : (
             <span className="font-mono text-sm font-semibold">
               {isConnected ? `${(balance?.cldCredits ?? 0).toFixed(2)} CLD` : "—"}
@@ -58,7 +86,7 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
             size="sm"
             className="h-7 px-2 text-xs"
             onClick={() => setModalOpen(true)}
-            disabled={!isConnected}
+            disabled={!isAuthenticated}
           >
             <Plus className="h-3 w-3 mr-1" />
             Add Funds
@@ -90,7 +118,7 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
               size="icon"
               className="h-7 w-7"
               onClick={() => refetch()}
-              disabled={isLoading}
+              disabled={isLoading || !isAuthenticated}
               title="Refresh balance"
             >
               <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
@@ -101,15 +129,36 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
         <CardContent className="space-y-4">
           {/* Balance figures */}
           <div className="space-y-1">
-            {isLoading ? (
+            {!isConnected ? (
+              <div className="text-muted-foreground text-sm py-2">
+                Connect wallet to view balance
+              </div>
+            ) : !isAuthenticated ? (
+              <div className="space-y-2 py-2">
+                <p className="text-muted-foreground text-sm">
+                  Sign a message with your wallet to view your balance.
+                </p>
+                <Button size="sm" onClick={handleSignIn} disabled={isSigningIn}>
+                  {isSigningIn ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <KeyRound className="mr-2 h-4 w-4" />
+                  )}
+                  Sign in with wallet
+                </Button>
+                {signInError && (
+                  <p className="text-xs text-red-400 break-words">{signInError.message}</p>
+                )}
+              </div>
+            ) : isLoading ? (
               <>
                 <Skeleton className="h-8 w-32" />
                 <Skeleton className="h-4 w-24" />
               </>
-            ) : !isConnected ? (
-              <div className="text-muted-foreground text-sm py-2">
-                Connect wallet to view balance
-              </div>
+            ) : balanceError ? (
+              <p className="text-sm text-red-400 py-2 break-words">
+                Couldn't load balance: {balanceError.message}
+              </p>
             ) : (
               <>
                 <div className="text-3xl font-bold font-mono">
@@ -128,14 +177,14 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
             variant="outline"
             className="w-full border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50"
             onClick={() => setModalOpen(true)}
-            disabled={!isConnected}
+            disabled={!isAuthenticated}
           >
             <Plus className="mr-2 h-4 w-4" />
             Add Funds
           </Button>
 
           {/* Recent transactions */}
-          {isConnected && (
+          {isAuthenticated && (
             <>
               <Separator className="bg-white/10" />
               <div className="space-y-2">
@@ -148,6 +197,10 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
                       <Skeleton key={i} className="h-8 w-full" />
                     ))}
                   </div>
+                ) : txError ? (
+                  <p className="text-xs text-red-400 py-2 break-words">
+                    Couldn't load activity: {txError.message}
+                  </p>
                 ) : transactions.length === 0 ? (
                   <p className="text-xs text-muted-foreground py-2 text-center">
                     No transactions yet
@@ -177,14 +230,14 @@ export function BalanceDisplay({ compact = false, className }: BalanceDisplayPro
 // ── TransactionRow ────────────────────────────────────────────────────────────
 
 function TransactionRow({ tx }: { tx: Transaction }) {
-  const isCredit = tx.type === "card_deposit" || tx.type === "crypto_deposit" || tx.type === "refund";
+  const isCredit = tx.type !== "deployment_charge";
   const sign = isCredit ? "+" : "−";
 
   const label: Record<Transaction["type"], string> = {
     card_deposit: "Card deposit",
     crypto_deposit: "Crypto deposit",
+    promo_credit: "Promo credit",
     deployment_charge: "Deployment",
-    refund: "Refund",
   };
 
   const statusColor: Record<Transaction["status"], string> = {

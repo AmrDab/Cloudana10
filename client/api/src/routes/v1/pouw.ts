@@ -1,27 +1,54 @@
 /**
- * POUW API Routes — Proof of Useful Work endpoints.
+ * PoUW API — Proof of Useful Work.
  *
- * POST /v1/pouw/submit   — Provider submits a POUW certificate for verification + reward.
- * GET  /v1/pouw/seed     — Get current chain seed (sigma) for mining.
- * GET  /v1/pouw/stats    — Network-wide mining stats.
- * GET  /v1/pouw/leaderboard — Provider mining leaderboard.
- * GET  /v1/pouw/certificates — Recent verified certificates.
+ * The loop this router closes:
+ *   a wallet pays CLD credits to queue a matrix job     POST /pouw/job      (JWT)
+ *   a miner claims it                                    GET  /pouw/job?provider=
+ *   the miner submits certificate + result C             POST /pouw/submit
+ *   the API verifies by full re-execution, pays the provider, records on Base,
+ *   and the owner reads C                                GET  /pouw/job/{id} (JWT)
+ *
+ * Every settlement outcome (reward paid / skipped / not configured, chain
+ * recorded / failed) is returned in the response and persisted — nothing is
+ * fire-and-forget.
  */
 
-import { OpenAPIHono } from "@hono/zod-openapi";
-import { z } from "zod";
+import { createRoute } from "@hono/zod-openapi";
+import { createMiddleware } from "hono/factory";
 import { createPublicClient, http } from "viem";
 import { baseSepolia } from "viem/chains";
+import { ok, fail } from "../../lib/http.js";
+import { getEnv } from "../../config/env.js";
+import { getRpcUrl } from "../../config/contracts.js";
+import { log } from "../../lib/logger.js";
+import { optionalCaller, requireAuth, type AuthVariables } from "../../middleware/auth.js";
 import { verifyCertificate } from "../../services/pouw-verifier.service.js";
 import { getCertificates, getMiningLeaderboard, getNetworkStats } from "../../services/certificate-store.service.js";
-import { distributeMiningReward } from "../../services/mining-reward.service.js";
-import { recordOnChain } from "../../services/pouw-chain-recorder.service.js";
-import { claimJob, completeJob, enqueueJob, getJob } from "../../services/matrix-job-queue.service.js";
-import { log } from "../../lib/logger.js";
-import { chainId, rpcUrl } from "../../config/contracts.js";
+import { claimJob, completeJob, countQueuedJobs, enqueueJob, getJob, listJobsForOwner, type MatrixJob } from "../../services/matrix-job-queue.service.js";
+import { jobPriceCld, retryUnrecordedCertificates, settleCertificate } from "../../services/pouw-settlement.service.js";
+import { debitBalance, getUserBalance } from "../../services/balance.service.js";
+import {
+  CertificateRequestSchema,
+  CertificatesQuerySchema,
+  CertificatesResponseSchema,
+  ClaimJobQuerySchema,
+  ClaimJobResponseSchema,
+  EnqueueJobRequestSchema,
+  EnqueueJobResponseSchema,
+  JobIdParamsSchema,
+  JobStatusResponseSchema,
+  JobsListResponseSchema,
+  LeaderboardResponseSchema,
+  NetworkStatsResponseSchema,
+  QueueDepthResponseSchema,
+  SeedResponseSchema,
+  SubmitResponseSchema,
+} from "../../schemas/pouw.schema.js";
+import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
-export const pouwRouter = new OpenAPIHono();
+export const pouwRouter = createRouter();
 const L = log.pouw;
+const TAGS = ["PoUW"];
 
 // ─── Chain seed ──────────────────────────────────────────────────────────────
 // Cache the latest block hash as the mining seed (refreshed every ~5s)
@@ -39,14 +66,14 @@ async function getChainSeed(): Promise<SeedCache> {
   if (seedCache && now - seedCache.fetchedAt < SEED_TTL_MS) return seedCache;
 
   try {
-    const client = createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) });
+    const client = createPublicClient({ chain: baseSepolia, transport: http(getRpcUrl()) });
     const block = await client.getBlock({ blockTag: "latest" });
     if (!block.hash) throw new Error("no block hash");
     seedCache = { seed: block.hash, blockNumber: block.number, fetchedAt: now };
   } catch (err) {
-    // NO predictable fallback (audit finding #4): a timestamp-window seed can be
-    // pre-mined. A stale REAL block hash is safe (still unpredictable when it
-    // was minted); if we have never seen one, the caller gets a 503 and waits.
+    // NO predictable fallback: a timestamp-window seed can be pre-mined. A stale
+    // REAL block hash is safe (still unpredictable when it was minted); if we
+    // have never seen one, the caller gets an error and waits.
     if (seedCache) return seedCache;
     throw new Error(`chain seed unavailable: ${err instanceof Error ? err.message : err}`);
   }
@@ -54,182 +81,247 @@ async function getChainSeed(): Promise<SeedCache> {
   return seedCache;
 }
 
-// ─── Routes ──────────────────────────────────────────────────────────────────
+const seedRoute = createRoute({
+  method: "get",
+  path: "/pouw/seed",
+  tags: TAGS,
+  responses: responses({ 200: json(SeedResponseSchema, "Current mining seed (latest block hash)") }, 502),
+});
 
-/** GET /v1/pouw/seed — Get current mining seed (sigma). */
-pouwRouter.get("/pouw/seed", async (c) => {
+pouwRouter.openapi(seedRoute, async (c) => {
   try {
     const { seed, blockNumber, fetchedAt } = await getChainSeed();
-    return c.json({ seed, blockNumber: blockNumber.toString(), fetchedAt });
+    return ok(c, { seed, blockNumber: blockNumber.toString(), fetchedAt });
   } catch {
-    return c.json({ status: "error", error: "chain seed unavailable — retry shortly" }, 503);
+    return fail(c, "upstream_failed", "chain seed unavailable — retry shortly");
   }
 });
 
-// ─── Matrix job queue (true PoUW work supply) ────────────────────────────────
+// ─── Matrix job queue (the supply of paid, useful work) ──────────────────────
 
-/** GET /v1/pouw/job?provider=0x… — claim the next real matrix job for mining. */
-pouwRouter.get("/pouw/job", async (c) => {
-  const provider = c.req.query("provider") ?? "";
-  if (!/^0x[0-9a-fA-F]{40}$/.test(provider)) {
-    return c.json({ status: "error", error: "provider query param (0x address) required" }, 400);
-  }
+const summarize = (job: MatrixJob) => ({
+  id: job.id,
+  n: job.n,
+  difficulty: job.difficulty,
+  jobStatus: job.status,
+  createdAt: job.createdAt,
+  priceCld: job.priceCld ?? null,
+  resultHash: job.resultHash ?? null,
+  completedAt: job.completedAt ?? null,
+});
+
+const queueRoute = createRoute({
+  method: "get",
+  path: "/pouw/queue",
+  tags: TAGS,
+  responses: responses({ 200: json(QueueDepthResponseSchema, "Queue depth and current job price") }, 500),
+});
+
+pouwRouter.openapi(queueRoute, async (c) => {
+  return ok(c, { queued: await countQueuedJobs(), priceCldAt64: jobPriceCld(64) });
+});
+
+/** GET /v1/pouw/job?provider=0x… — a miner claims the next job. */
+const claimJobRoute = createRoute({
+  method: "get",
+  path: "/pouw/job",
+  tags: TAGS,
+  request: { query: ClaimJobQuerySchema },
+  responses: responses({ 200: json(ClaimJobResponseSchema, "Claimed job, or job: null when the queue is empty") }, 400),
+});
+
+pouwRouter.openapi(claimJobRoute, async (c) => {
+  const { provider } = c.req.valid("query");
   const job = await claimJob(provider);
-  if (!job) return c.json({ status: "empty", job: null });
-  return c.json({
-    status: "claimed",
+  if (!job) return ok(c, { job: null });
+  return ok(c, {
     job: {
       workloadId: job.id,
       n: job.n,
       matrixA: job.matrixA,
       matrixB: job.matrixB,
       difficulty: job.difficulty,
-      expiresAt: job.expiresAt,
+      expiresAt: job.expiresAt ?? 0,
     },
   });
 });
 
-/** GET /v1/pouw/job/:id — job status (+ result once completed). */
-pouwRouter.get("/pouw/job/:id", async (c) => {
-  const job = await getJob(c.req.param("id"));
-  if (!job) return c.json({ status: "error", error: "not found" }, 404);
-  return c.json({
-    id: job.id,
-    n: job.n,
-    difficulty: job.difficulty,
-    status: job.status,
-    resultHash: job.resultHash ?? null,
-    result: job.status === "done" ? job.result ?? null : null,
-    completedAt: job.completedAt ?? null,
+/** Internal seeding (X-Internal-Key) or a paying wallet (JWT). */
+function isInternalCaller(c: { req: { header: (k: string) => string | undefined } }): boolean {
+  const key = getEnv().INTERNAL_API_KEY;
+  return !!key && c.req.header("x-internal-key") === key;
+}
+
+const requireJobAuthority = createMiddleware<{ Variables: AuthVariables }>(async (c, next) => {
+  if (isInternalCaller(c)) return next();
+  return requireAuth(c, next);
+});
+
+/** POST /v1/pouw/job — queue a matrix job. Wallets pay in CLD credits. */
+const enqueueJobRoute = createRoute({
+  method: "post",
+  path: "/pouw/job",
+  tags: TAGS,
+  description:
+    "Queue a real matrix multiplication for the network to compute. A signed-in wallet is charged " +
+    "POUW_JOB_PRICE_CLD × (n/64)^1.5 credits; the X-Internal-Key header seeds work without charge.",
+  security: BEARER_AUTH,
+  middleware: [requireJobAuthority] as const,
+  request: { body: { required: true, content: { "application/json": { schema: EnqueueJobRequestSchema } } } },
+  responses: responses({ 200: json(EnqueueJobResponseSchema, "Job queued") }, 400, 401, 422),
+});
+
+pouwRouter.openapi(enqueueJobRoute, async (c) => {
+  const { n, matrixA, matrixB, difficulty: requested } = c.req.valid("json");
+  if (matrixA.length !== n * n || matrixB.length !== n * n) {
+    return fail(c, "validation_failed", `matrices must be n*n = ${n * n} elements`);
+  }
+  // A certificate below the network minimum is rejected at verification, so a
+  // job asking for less could never be settled as backed. Clamp at intake.
+  const difficulty = Math.max(requested, getEnv().POUW_MIN_DIFFICULTY);
+
+  if (isInternalCaller(c)) {
+    const job = await enqueueJob({ n, matrixA, matrixB, difficulty });
+    return ok(c, { workloadId: job.id, priceCld: 0, balanceCld: null });
+  }
+
+  const owner = c.get("jwtPayload").sub;
+  const price = jobPriceCld(n);
+  const current = await getUserBalance(owner);
+  if (current.balance < price) {
+    return fail(c, "unprocessable", `Insufficient CLD credits: job costs ${price}, balance is ${current.balance}`);
+  }
+
+  const job = await enqueueJob({ n, matrixA, matrixB, difficulty, owner, priceCld: price });
+  const { balance } = await debitBalance(owner, price, job.id);
+  L.info(`[POUW:job] ${owner.slice(0, 10)}… paid ${price} CLD for job ${job.id} (n=${n})`);
+  return ok(c, { workloadId: job.id, priceCld: price, balanceCld: balance.balance });
+});
+
+/** GET /v1/pouw/jobs — the signed-in wallet's jobs. */
+const listJobsRoute = createRoute({
+  method: "get",
+  path: "/pouw/jobs",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  middleware: [requireAuth] as const,
+  responses: responses({ 200: json(JobsListResponseSchema, "Jobs paid for by the caller, newest first") }, 401),
+});
+
+pouwRouter.openapi(listJobsRoute, async (c) => {
+  const jobs = await listJobsForOwner(c.get("jwtPayload").sub);
+  return ok(c, { jobs: jobs.map(summarize) });
+});
+
+/** GET /v1/pouw/job/{id} — status; the result only for the wallet that paid. */
+const jobStatusRoute = createRoute({
+  method: "get",
+  path: "/pouw/job/{id}",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: JobIdParamsSchema },
+  responses: responses({ 200: json(JobStatusResponseSchema, "Job status; result once done, for the owner") }, 404),
+});
+
+pouwRouter.openapi(jobStatusRoute, async (c) => {
+  const job = await getJob(c.req.valid("param").id);
+  if (!job) return fail(c, "not_found", "Job not found");
+  const caller = await optionalCaller(c);
+  const mayReadResult = !job.owner || caller?.sub === job.owner;
+  return ok(c, {
+    ...summarize(job),
+    result: job.status === "done" && mayReadResult ? job.result ?? null : null,
   });
 });
 
-/** POST /v1/pouw/job — enqueue a real matrix job (internal; the workload
- *  pipeline calls this when a Tier-3 job is decomposed). Guarded by
- *  X-Internal-Key so the public cannot feed the reward queue. */
-const EnqueueSchema = z.object({
-  n: z.number().int().min(8).max(1024),
-  matrixA: z.array(z.number().int()).min(64),
-  matrixB: z.array(z.number().int()).min(64),
-  difficulty: z.number().int().min(1).max(64).default(12),
+// ─── Certificates ────────────────────────────────────────────────────────────
+
+/** POST /v1/pouw/submit — a miner submits a certificate (+ result if backed). */
+const submitRoute = createRoute({
+  method: "post",
+  path: "/pouw/submit",
+  tags: TAGS,
+  request: { body: { required: true, content: { "application/json": { schema: CertificateRequestSchema } } } },
+  responses: responses({ 200: json(SubmitResponseSchema, "Certificate verified; settlement outcome included") }, 400, 422, 429),
 });
 
-pouwRouter.post("/pouw/job", async (c) => {
-  const internalKey = process.env.INTERNAL_API_KEY;
-  if (!internalKey) {
-    return c.json({ status: "error", error: "job intake disabled (INTERNAL_API_KEY unset)" }, 503);
-  }
-  if (c.req.header("x-internal-key") !== internalKey) {
-    return c.json({ status: "error", error: "unauthorized" }, 401);
-  }
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ status: "error", error: "Invalid JSON" }, 400);
-  }
-  const parsed = EnqueueSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ status: "error", error: parsed.error.issues[0]?.message ?? "Validation failed" }, 400);
-  }
-  const { n, matrixA, matrixB, difficulty } = parsed.data;
-  if (matrixA.length !== n * n || matrixB.length !== n * n) {
-    return c.json({ status: "error", error: `matrices must be n*n = ${n * n} elements` }, 400);
-  }
-  const job = await enqueueJob({ n, matrixA, matrixB, difficulty });
-  return c.json({ status: "queued", workloadId: job.id });
-});
+pouwRouter.openapi(submitRoute, async (c) => {
+  const { result: usefulResult, ...cert } = c.req.valid("json");
+  L.info(`[POUW:submit] ${cert.providerAddress.slice(0, 10)}… n=${cert.n} d=${cert.difficulty}${cert.workloadId ? ` job=${cert.workloadId}` : " (filler)"}`);
 
-/** POST /v1/pouw/submit — Submit a POUW certificate for verification and reward. */
-const CertificateSchema = z.object({
-  sigma: z.string().min(64).max(66),
-  n: z.number().int().min(8).max(1024),
-  r: z.number().int().min(1),
-  matrixAHash: z.string().length(64),
-  matrixBHash: z.string().length(64),
-  transcriptHash: z.string().length(64),
-  z: z.string().length(64),
-  difficulty: z.number().int().min(1).max(256),
-  timestamp: z.number().int(),
-  providerAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  deviceId: z.string().startsWith("0x"),
-  matrixA: z.array(z.number()).min(64).max(1024 * 1024),
-  matrixB: z.array(z.number()).min(64).max(1024 * 1024),
-  /** Present when the certificate was mined ON a claimed queue job (true PoUW). */
-  workloadId: z.string().max(64).optional(),
-  /** The decoded useful output C = A·B — required alongside workloadId. */
-  result: z.array(z.number()).max(1024 * 1024).optional(),
-});
-
-pouwRouter.post("/pouw/submit", async (c) => {
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ status: "error", error: "Invalid JSON" }, 400);
+  const verdict = await verifyCertificate(cert);
+  if (!verdict.valid || !verdict.certificateId) {
+    L.warn(`[POUW:submit] Rejected: ${verdict.reason}`);
+    return fail(c, "unprocessable", verdict.reason ?? "Certificate rejected");
   }
 
-  const parsed = CertificateSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ status: "error", error: parsed.error.issues[0]?.message ?? "Validation failed" }, 400);
-  }
-
-  const { result: usefulResult, ...cert } = parsed.data;
-  L.info(`[POUW:submit] Received certificate from ${cert.providerAddress.slice(0, 10)}... n=${cert.n} diff=${cert.difficulty}${cert.workloadId ? ` workload=${cert.workloadId}` : " (filler)"}`);
-
-  const result = await verifyCertificate(cert);
-
-  if (!result.valid) {
-    L.warn(`[POUW:submit] Rejected: ${result.reason}`);
-    return c.json({ status: "rejected", reason: result.reason }, 422);
-  }
-
-  // TRUE PoUW gate: "backed" is decided by the QUEUE (server-side), never by
-  // the submitted payload. The job must exist, be claimed by this provider,
-  // be unexpired, and the result must have the right shape.
+  // "Backed" is decided by the queue, server-side — never by the payload. The job
+  // must exist, be claimed by this provider, be unexpired, and C must be n×n.
   let backedByWorkload = false;
   if (cert.workloadId && usefulResult) {
     backedByWorkload = await completeJob(cert.workloadId, cert.providerAddress, usefulResult);
     if (!backedByWorkload) {
-      L.warn(`[POUW:submit] workloadId ${cert.workloadId} did not validate (unclaimed/expired/foreign) — treating as filler`);
+      L.warn(`[POUW:submit] job ${cert.workloadId} did not validate (unclaimed/expired/foreign) — filler`);
     }
   }
 
-  // Record on-chain and distribute reward asynchronously (don't block the response)
-  recordOnChain(cert).catch((err) => L.error("[POUW:submit] Chain recording error:", err));
-  distributeMiningReward(cert, backedByWorkload).catch((err) =>
-    L.error("[POUW:submit] Reward distribution error:", err),
+  const settlement = await settleCertificate(
+    verdict.certificateId,
+    cert,
+    backedByWorkload,
+    backedByWorkload ? (cert.workloadId ?? null) : null,
   );
 
-  return c.json({
-    status: "accepted",
-    certificateId: result.certificateId,
+  // Opportunistic: clear a little of any on-chain backlog on each accepted cert.
+  retryUnrecordedCertificates(2).catch(() => undefined);
+
+  const message = backedByWorkload
+    ? `Verified against a paid job. Reward: ${settlement.reward.status}. On-chain record: ${settlement.chain.status}.`
+    : `Verified as filler (no paid job attached). Reward: ${settlement.reward.status}. On-chain record: ${settlement.chain.status}.`;
+
+  return ok(c, {
+    certificateId: verdict.certificateId,
     backedByWorkload,
-    message: backedByWorkload
-      ? "Certificate verified against a real workload. Full mining reward being processed."
-      : "Certificate verified (filler). Reduced, capped reward being processed.",
+    settlement: {
+      backedByWorkload: settlement.backedByWorkload,
+      workloadId: settlement.workloadId,
+      reward: settlement.reward,
+      chain: { status: settlement.chain.status, tx: settlement.chain.tx, reason: settlement.chain.reason },
+    },
+    message,
   });
 });
 
-/** GET /v1/pouw/stats — Network-wide mining stats. */
-pouwRouter.get("/pouw/stats", async (c) => {
-  return c.json(await getNetworkStats());
+const statsRoute = createRoute({
+  method: "get",
+  path: "/pouw/stats",
+  tags: TAGS,
+  responses: responses({ 200: json(NetworkStatsResponseSchema, "Network-wide mining stats") }, 500),
 });
 
-/** GET /v1/pouw/leaderboard — Provider mining leaderboard. */
-pouwRouter.get("/pouw/leaderboard", async (c) => {
-  const leaderboard = await getMiningLeaderboard();
-  return c.json({ providers: leaderboard });
+pouwRouter.openapi(statsRoute, async (c) => ok(c, await getNetworkStats()));
+
+const leaderboardRoute = createRoute({
+  method: "get",
+  path: "/pouw/leaderboard",
+  tags: TAGS,
+  responses: responses({ 200: json(LeaderboardResponseSchema, "Provider mining leaderboard") }, 500),
 });
 
-/** GET /v1/pouw/certificates — Recent verified certificates. */
-pouwRouter.get("/pouw/certificates", async (c) => {
-  const { provider, limit } = c.req.query() as { provider?: string; limit?: string };
-  const certs = await getCertificates({
-    providerAddress: provider,
-    limit: limit ? Number(limit) : 50,
-  });
-  return c.json({
+pouwRouter.openapi(leaderboardRoute, async (c) => ok(c, { providers: await getMiningLeaderboard() }));
+
+const certificatesRoute = createRoute({
+  method: "get",
+  path: "/pouw/certificates",
+  tags: TAGS,
+  request: { query: CertificatesQuerySchema },
+  responses: responses({ 200: json(CertificatesResponseSchema, "Recent verified certificates") }, 500),
+});
+
+pouwRouter.openapi(certificatesRoute, async (c) => {
+  const { provider, limit } = c.req.valid("query");
+  const certs = await getCertificates({ providerAddress: provider, limit: limit ? Number(limit) : 50 });
+  return ok(c, {
     certificates: certs.map((sc) => ({
       id: sc.id,
       providerAddress: sc.cert.providerAddress,

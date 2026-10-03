@@ -1,23 +1,39 @@
-import { z } from "zod";
-import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { createRoute } from "@hono/zod-openapi";
+import { ok, fail } from "../../lib/http.js";
 import { findPlacements } from "../../services/placement.service.js";
 import { getActiveProviders, getProviderByDevice, recordPlacement } from "../../services/chain-client.js";
 import { getWorkloadManifestByWorkloadId } from "../../services/ipfs.service.js";
 import { deployToProvider } from "../../services/deploy-to-provider.service.js";
 import { registerWorkloadForPolling } from "../../services/workload-status-poller.service.js";
+import {
+  ExecutePlacementResponseSchema,
+  OrchestrationStatusResponseSchema,
+  PlacementResponseSchema,
+  ProviderStatsResponseSchema,
+  ProvidersResponseSchema,
+  WorkloadIdParamsSchema,
+  WorkloadManifestResponseSchema,
+} from "../../schemas/orchestration.schema.js";
+import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
-export const orchestrationRouter = new OpenAPIHono();
+export const orchestrationRouter = createRouter();
 
-// Security: All orchestration routes require Bearer auth (enforced by global middleware in index.ts)
-type SecurityRequirement = Record<string, string[]>;
-const SECURITY_BEARER: SecurityRequirement[] = [{ BearerAuth: [] }];
+// requireAuth is applied to /v1/orchestration/* in middleware/security.ts.
+const TAGS = ["Orchestration"];
 
 // GET /v1/orchestration/placement — list placement decisions + summary (optimized for no_workloads / no_providers / no_capacity)
-orchestrationRouter.get("/orchestration/placement", async (c) => {
+const placementRoute = createRoute({
+  method: "get",
+  path: "/orchestration/placement",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  responses: responses({ 200: json(PlacementResponseSchema, "Placement decisions and summary") }, 401, 500),
+});
+
+orchestrationRouter.openapi(placementRoute, async (c) => {
   try {
     const result = await findPlacements();
-    return c.json({
-      status: "success",
+    return ok(c, {
       placements: result.decisions.map((d) => ({
         workloadId: d.workloadId.toString(),
         provider: d.provider,
@@ -26,22 +42,25 @@ orchestrationRouter.get("/orchestration/placement", async (c) => {
       summary: result.summary,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Placement failed";
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", e instanceof Error ? e.message : "Placement failed");
   }
 });
 
 // GET /v1/orchestration/status — lightweight placement summary (pending count, provider count, reason)
-orchestrationRouter.get("/orchestration/status", async (c) => {
+const statusRoute = createRoute({
+  method: "get",
+  path: "/orchestration/status",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  responses: responses({ 200: json(OrchestrationStatusResponseSchema, "Placement summary") }, 401, 500),
+});
+
+orchestrationRouter.openapi(statusRoute, async (c) => {
   try {
     const result = await findPlacements();
-    return c.json({
-      status: "success",
-      summary: result.summary,
-    });
+    return ok(c, { summary: result.summary });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Status failed";
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", e instanceof Error ? e.message : "Status failed");
   }
 });
 
@@ -50,31 +69,9 @@ orchestrationRouter.get("/orchestration/status", async (c) => {
 const executePlacementRoute = createRoute({
   method: "post",
   path: "/orchestration/placement/execute",
-  tags: ["Orchestration"],
-  security: SECURITY_BEARER,
-  request: {},
-  responses: {
-    200: {
-      description: "Placement cycle executed",
-      content: {
-        "application/json": {
-          schema: z.object({
-            status: z.string(),
-            placed: z.number(),
-            failed: z.number(),
-            transactions: z.array(z.object({
-              workloadId: z.string(),
-              provider: z.string(),
-              instanceId: z.string(),
-              txHash: z.string().optional(),
-              error: z.string().optional(),
-            })),
-          }),
-        },
-      },
-    },
-    500: { description: "Internal server error" },
-  },
+  tags: TAGS,
+  security: BEARER_AUTH,
+  responses: responses({ 200: json(ExecutePlacementResponseSchema, "Placement cycle executed") }, 401, 500),
 });
 
 orchestrationRouter.openapi(executePlacementRoute, async (c) => {
@@ -98,10 +95,10 @@ orchestrationRouter.openapi(executePlacementRoute, async (c) => {
           continue;
         }
         const receipt = await recordPlacement(d.workloadId, d.provider, d.instanceId);
-        
+
         // Register workload for status polling
         registerWorkloadForPolling(d.workloadId, d.instanceId, d.provider, d.endpoint, d.deviceId, d.ownerAddress);
-        
+
         transactions.push({
           workloadId: d.workloadId.toString(),
           provider: d.provider,
@@ -119,37 +116,51 @@ orchestrationRouter.openapi(executePlacementRoute, async (c) => {
         failed += 1;
       }
     }
-    return c.json({
-      status: "success",
+    return ok(c, {
       placed,
       failed,
       transactions,
       summary: result.summary,
-    }, 200);
+    });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Placement execute failed";
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", e instanceof Error ? e.message : "Placement execute failed");
   }
 });
 
 // GET /v1/orchestration/workloads/:workloadId/manifest — fetch workload manifest from IPFS (on-chain metadataUri)
-orchestrationRouter.get("/orchestration/workloads/:workloadId/manifest", async (c) => {
+const manifestRoute = createRoute({
+  method: "get",
+  path: "/orchestration/workloads/{workloadId}/manifest",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: WorkloadIdParamsSchema },
+  responses: responses({ 200: json(WorkloadManifestResponseSchema, "Workload manifest from IPFS") }, 401, 404, 500),
+});
+
+orchestrationRouter.openapi(manifestRoute, async (c) => {
   try {
-    const workloadIdStr = c.req.param("workloadId");
+    const workloadIdStr = c.req.valid("param").workloadId;
     const workloadId = BigInt(workloadIdStr);
     const result = await getWorkloadManifestByWorkloadId(workloadId);
     if (!result) {
-      return c.json({ status: "error", error: "Workload not found or manifest not available" }, 404);
+      return fail(c, "not_found", "Workload not found or manifest not available");
     }
-    return c.json({ status: "success", manifest: result.manifest, cid: result.cid });
+    return ok(c, { manifest: result.manifest, cid: result.cid });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to fetch workload manifest";
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch workload manifest");
   }
 });
 
 // GET /v1/orchestration/providers — list active providers from chain (metadataUri only; full spec on IPFS)
-orchestrationRouter.get("/orchestration/providers", async (c) => {
+const providersRoute = createRoute({
+  method: "get",
+  path: "/orchestration/providers",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  responses: responses({ 200: json(ProvidersResponseSchema, "Active providers from chain") }, 401, 500),
+});
+
+orchestrationRouter.openapi(providersRoute, async (c) => {
   try {
     const list = await getActiveProviders();
     const withUri = await Promise.all(
@@ -160,32 +171,39 @@ orchestrationRouter.get("/orchestration/providers", async (c) => {
         return { address, deviceId, metadataUri };
       })
     );
-    return c.json({ status: "success", providers: withUri });
+    return ok(c, { providers: withUri });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to fetch providers";
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch providers");
   }
 });
 
 // GET /v1/orchestration/provider-stats — fetch real-time stats from provider nodes
-orchestrationRouter.get("/orchestration/provider-stats", async (c) => {
+const providerStatsRoute = createRoute({
+  method: "get",
+  path: "/orchestration/provider-stats",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  responses: responses({ 200: json(ProviderStatsResponseSchema, "Real-time provider stats") }, 401, 500),
+});
+
+orchestrationRouter.openapi(providerStatsRoute, async (c) => {
   try {
     const { fetchMultipleProviderStats } = await import("../../services/provider-stats.service.js");
     const { fetchProviderMetadataFromUrl, isValidIPFSCID } = await import("../../services/ipfs.service.js");
-    
+
     const list = await getActiveProviders();
     const providers = await Promise.all(
       list.map(async (deviceId) => {
         const p = await getProviderByDevice(deviceId);
         const metadataUri = p?.metadataUri ?? "";
-        
+
         // Fetch IPFS metadata to get endpoint and specs
         let endpoint: string | undefined;
         let cpuCores: number | undefined;
         let gpuCount: number | undefined;
-        
+
         if (metadataUri) {
-          const url = isValidIPFSCID(metadataUri) 
+          const url = isValidIPFSCID(metadataUri)
             ? `https://ipfs.io/ipfs/${metadataUri}`
             : metadataUri;
           const metadata = await fetchProviderMetadataFromUrl(url);
@@ -195,7 +213,7 @@ orchestrationRouter.get("/orchestration/provider-stats", async (c) => {
             gpuCount = metadata.gpuCount;
           }
         }
-        
+
         return {
           deviceId: String(deviceId),
           endpoint,
@@ -204,18 +222,17 @@ orchestrationRouter.get("/orchestration/provider-stats", async (c) => {
         };
       })
     );
-    
+
     const statsMap = await fetchMultipleProviderStats(providers);
-    
+
     // Convert Map to object for JSON response
     const statsObj: Record<string, unknown> = {};
     statsMap.forEach((stats, deviceId) => {
       statsObj[deviceId] = stats;
     });
-    
-    return c.json({ status: "success", stats: statsObj });
+
+    return ok(c, { stats: statsObj });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to fetch provider stats";
-    return c.json({ status: "error", error: msg }, 500);
+    return fail(c, "internal", e instanceof Error ? e.message : "Failed to fetch provider stats");
   }
 });

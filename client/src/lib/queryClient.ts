@@ -1,9 +1,17 @@
+import { ApiError, readApiError } from "@/lib/api-error";
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // not JSON
+    }
+    const info = readApiError(body, text);
+    throw new ApiError(res.status, { ...info, message: `${res.status}: ${info.message}` });
   }
 }
 

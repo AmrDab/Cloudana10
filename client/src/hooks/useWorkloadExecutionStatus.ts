@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { nodeApiBase } from "@/lib/api-base";
+import { ApiError, fetchJson } from "@/lib/api-error";
 
 const API_BASE = nodeApiBase();
 
@@ -36,6 +37,23 @@ interface WorkloadExecutionStatus {
   error?: string;
 }
 
+/** Response body: `status`/`error` arrive as `workloadStatus`/`workloadError` (older servers: `status`/`error`). */
+type WorkloadStatusBody = Omit<WorkloadExecutionStatus, "status" | "error"> & {
+  workloadStatus?: WorkloadExecutionStatus["status"];
+  workloadError?: string;
+  status?: WorkloadExecutionStatus["status"] | string;
+  error?: unknown;
+};
+
+function toExecutionStatus(body: WorkloadStatusBody): WorkloadExecutionStatus {
+  const { workloadStatus, workloadError, status, error, ...rest } = body;
+  return {
+    ...rest,
+    status: workloadStatus ?? (status as WorkloadExecutionStatus["status"]),
+    error: workloadError ?? (typeof error === "string" ? error : undefined),
+  };
+}
+
 export function useWorkloadExecutionStatus(workloadId?: bigint, instanceId?: bigint) {
   const [data, setData] = useState<WorkloadExecutionStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -52,26 +70,17 @@ export function useWorkloadExecutionStatus(workloadId?: bigint, instanceId?: big
       
       try {
         console.log(`✅ useWorkloadExecutionStatus: ${API_BASE}/workload-status/${workloadId}/${instanceId}`);
-        const response = await fetch(
-          `${API_BASE}/workload-status/${workloadId}/${instanceId}`
+        const result = await fetchJson<WorkloadStatusBody>(
+          `${API_BASE}/workload-status/${workloadId}/${instanceId}`,
+          "Failed to fetch workload status",
         );
-        
-        if (!response.ok) {
-          if (response.status === 404) {
-            setData(null);
-            return;
-          }
-          throw new Error(`Failed to fetch workload status: ${response.statusText}`);
-        }
-        
-        const result = await response.json();
-        
-        if (result.success) {
-          setData(result);
-        } else {
-          throw new Error(result.error || "Unknown error");
-        }
+        setData(toExecutionStatus(result));
       } catch (e) {
+        // Not deployed yet / terminated: no status, not an error.
+        if (e instanceof ApiError && e.code === "not_found") {
+          setData(null);
+          return;
+        }
         setError(e instanceof Error ? e : new Error(String(e)));
         setData(null);
       } finally {
@@ -105,21 +114,11 @@ export function useWorkloadLogs(workloadId?: bigint, instanceId?: bigint) {
     setError(null);
     
     try {
-      const response = await fetch(
-        `${API_BASE}/workload-status/${workloadId}/${instanceId}/logs?refresh=true`
+      const result = await fetchJson<{ logs: Record<string, string> }>(
+        `${API_BASE}/workload-status/${workloadId}/${instanceId}/logs?refresh=true`,
+        "Failed to fetch logs",
       );
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch logs: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        setLogs(result.logs);
-      } else {
-        throw new Error(result.error || "Unknown error");
-      }
+      setLogs(result.logs);
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
@@ -151,21 +150,11 @@ export function useWorkloadEndpoints(workloadId?: bigint, instanceId?: bigint) {
       setError(null);
       
       try {
-        const response = await fetch(
-          `${API_BASE}/workload-status/${workloadId}/${instanceId}/endpoints`
+        const result = await fetchJson<{ endpoints: WorkloadExecutionStatus["endpoints"] }>(
+          `${API_BASE}/workload-status/${workloadId}/${instanceId}/endpoints`,
+          "Failed to fetch endpoints",
         );
-        
-        if (!response.ok) {
-          throw new Error(`Failed to fetch endpoints: ${response.statusText}`);
-        }
-        
-        const result = await response.json();
-        
-        if (result.success) {
-          setEndpoints(result.endpoints);
-        } else {
-          throw new Error(result.error || "Unknown error");
-        }
+        setEndpoints(result.endpoints);
       } catch (e) {
         setError(e instanceof Error ? e : new Error(String(e)));
       } finally {

@@ -3,6 +3,13 @@ import { useLocation } from "wouter";
 import { CheckCircle, Circle, Loader2, ArrowRight, ArrowLeft, ChevronDown, ChevronUp, AlertCircle, Play, Square, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { nodeApiBase } from "@/lib/api-base";
+import { ApiError, fetchJson } from "@/lib/api-error";
+import { isOrchestratorUnavailable } from "@/lib/orchestrator-status";
+import { OrchestratorUnavailable } from "@/components/OrchestratorUnavailable";
+
+/** Provider-node service result; state is `serviceStatus` (older servers: `status`). */
+type ProviderNodeBody = { serviceStatus?: string; status?: string; message?: string; pid?: number; pm2Status?: string };
+const serviceStatusOf = (d: ProviderNodeBody) => d.serviceStatus ?? d.status;
 
 type BuildStepStatus = "completed" | "running" | "pending" | "failed";
 
@@ -171,6 +178,7 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
   const [stepLogs, setStepLogs] = useState<Record<string, string[]>>({});
   const [isLoadingLogs, setIsLoadingLogs] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const [orchestratorDown, setOrchestratorDown] = useState(false);
   const [providerNodeStatus, setProviderNodeStatus] = useState<"active" | "inactive" | "unknown" | "error" | "loading" | null>(null);
   const [providerNodeMessage, setProviderNodeMessage] = useState<string | null>(null);
   const [providerNodeDetail, setProviderNodeDetail] = useState<string | null>(null);
@@ -187,12 +195,15 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
     setProviderNodeStatus("loading");
     setProviderNodeDetail(null);
     try {
-      const res = await fetch(`${apiUrl}/build-provider/provider-node/status/${actionId}`);
-      const data = await res.json();
+      const data = await fetchJson<ProviderNodeBody>(
+        `${apiUrl}/build-provider/provider-node/status/${actionId}`,
+        "Failed to fetch status",
+      );
+      const svc = serviceStatusOf(data);
       setProviderNodeStatus(
-        data.status === "active" ? "active"
-        : data.status === "inactive" ? "inactive"
-        : data.status === "error" ? "error"
+        svc === "active" ? "active"
+        : svc === "inactive" ? "inactive"
+        : svc === "error" ? "error"
         : "unknown"
       );
       setProviderNodeMessage(data.message ?? null);
@@ -201,9 +212,9 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
       if (data.pid != null) parts.push(`PID ${data.pid}`);
       if (data.pm2Status) parts.push(`PM2: ${data.pm2Status}`);
       setProviderNodeDetail(parts.length ? parts.join(" · ") : null);
-    } catch {
+    } catch (e) {
       setProviderNodeStatus("error");
-      setProviderNodeMessage("Failed to fetch status");
+      setProviderNodeMessage(isOrchestratorUnavailable(e) ? "Orchestrator unavailable" : e instanceof Error ? e.message : "Failed to fetch status");
       setProviderNodeDetail(null);
     }
   };
@@ -212,16 +223,19 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
     if (!actionId || providerNodeAction !== "idle") return;
     setProviderNodeAction("starting");
     try {
-      const res = await fetch(`${apiUrl}/build-provider/provider-node/start/${actionId}`, { method: "POST" });
-      const data = await res.json();
-      if (data.status === "success") await fetchProviderNodeStatus();
+      const data = await fetchJson<ProviderNodeBody>(
+        `${apiUrl}/build-provider/provider-node/start/${actionId}`,
+        "Start failed",
+        { method: "POST" },
+      );
+      if (serviceStatusOf(data) === "success") await fetchProviderNodeStatus();
       else {
         setProviderNodeStatus("error");
         setProviderNodeMessage(data.message ?? "Start failed");
       }
-    } catch {
+    } catch (e) {
       setProviderNodeStatus("error");
-      setProviderNodeMessage("Failed to start");
+      setProviderNodeMessage(isOrchestratorUnavailable(e) ? "Orchestrator unavailable" : e instanceof ApiError ? e.message : "Failed to start");
     } finally {
       setProviderNodeAction("idle");
     }
@@ -231,16 +245,19 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
     if (!actionId || providerNodeAction !== "idle") return;
     setProviderNodeAction("stopping");
     try {
-      const res = await fetch(`${apiUrl}/build-provider/provider-node/stop/${actionId}`, { method: "POST" });
-      const data = await res.json();
-      if (data.status === "success") await fetchProviderNodeStatus();
+      const data = await fetchJson<ProviderNodeBody>(
+        `${apiUrl}/build-provider/provider-node/stop/${actionId}`,
+        "Stop failed",
+        { method: "POST" },
+      );
+      if (serviceStatusOf(data) === "success") await fetchProviderNodeStatus();
       else {
         setProviderNodeStatus("error");
         setProviderNodeMessage(data.message ?? "Stop failed");
       }
-    } catch {
+    } catch (e) {
       setProviderNodeStatus("error");
-      setProviderNodeMessage("Failed to stop");
+      setProviderNodeMessage(isOrchestratorUnavailable(e) ? "Orchestrator unavailable" : e instanceof ApiError ? e.message : "Failed to stop");
     } finally {
       setProviderNodeAction("idle");
     }
@@ -252,21 +269,23 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
     
     try {
       isPollingRef.current = true;
-      const response = await fetch(`${apiUrl}/build-provider-status/${actionId}`);
-      
-      if (!response.ok) {
-        if (response.status === 404) {
+      let data: any;
+      try {
+        data = await fetchJson<any>(`${apiUrl}/build-provider-status/${actionId}`, "Failed to fetch build status");
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "not_found") {
           setError("Build action not found. Please check the action ID.");
           return;
         }
-        throw new Error(`HTTP ${response.status}: Failed to fetch build status`);
+        throw e;
       }
+      // Build state is `buildStatus` (older servers: `status`).
+      const state = data.buildStatus ?? data.status;
+      setOrchestratorDown(false);
 
-      const data = await response.json();
-      
       // Update build-level status and startedAt from backend
-      if (data.status === "completed" || data.status === "failed" || data.status === "running" || data.status === "pending") {
-        setBuildStatus(data.status);
+      if (state === "completed" || state === "failed" || state === "running" || state === "pending") {
+        setBuildStatus(state);
       }
       if (data.start_time && !startedAt) {
         setStartedAt(parseDate(data.start_time));
@@ -307,19 +326,20 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
       setError(null);
 
       // Stop polling if build is completed or failed
-      if (data.status === "completed" || data.status === "failed") {
+      if (state === "completed" || state === "failed") {
         if (pollingIntervalRef.current) {
           clearInterval(pollingIntervalRef.current);
           pollingIntervalRef.current = null;
         }
         isPollingRef.current = false;
-        if (data.status === "completed" && onBuildComplete && !onBuildCompleteFiredRef.current) {
+        if (state === "completed" && onBuildComplete && !onBuildCompleteFiredRef.current) {
           onBuildCompleteFiredRef.current = true;
           onBuildComplete(typeof data.device_id === "string" ? data.device_id : null);
         }
       }
     } catch (err) {
       console.error("Error fetching build status:", err);
+      setOrchestratorDown(isOrchestratorUnavailable(err));
       setError(err instanceof Error ? err.message : "Failed to fetch build status");
     } finally {
       isPollingRef.current = false;
@@ -334,13 +354,7 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
     setIsLoadingLogs((prev) => ({ ...prev, [taskId]: true }));
 
     try {
-      const response = await fetch(`${apiUrl}/build-provider/logs/${taskId}`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: Failed to fetch logs`);
-      }
-
-      const data = await response.json();
+      const data = await fetchJson<{ logs?: string[] }>(`${apiUrl}/build-provider/logs/${taskId}`, "Failed to fetch logs");
       const newLogs: string[] = data.logs || [];
 
       setStepLogs((prev) => {
@@ -468,7 +482,8 @@ export default function ProviderBuildCluster(props: ProviderBuildClusterProps = 
             Started: {formatStartTime(startedAt)}
           </p>
         )}
-        {error && (
+        {error && orchestratorDown && <OrchestratorUnavailable detail="Build progress comes from the orchestrator, which isn't reachable right now." />}
+        {error && !orchestratorDown && (
           <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-3 flex items-start gap-2">
             <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
             <p className="text-sm text-red-400">{error}</p>

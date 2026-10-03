@@ -12,6 +12,7 @@
 import Stripe from "stripe";
 import { log } from "../lib/logger.js";
 import { creditBalance } from "./balance.service.js";
+import { getEnv } from "../config/env.js";
 
 const L = log.api;
 
@@ -23,7 +24,7 @@ let _stripe: Stripe | null = null;
 
 function getStripe(): Stripe {
   if (!_stripe) {
-    const key = process.env.STRIPE_SECRET_KEY;
+    const key = getEnv().STRIPE_SECRET_KEY;
     if (!key) {
       throw new Error(
         "STRIPE_SECRET_KEY is not set. Configure it in .env to enable payments."
@@ -48,7 +49,7 @@ function getStripe(): Stripe {
  * Default: 1 USD = 100 CLD (CLD_USD_RATE=100)
  */
 export function convertUsdToCld(usdAmount: number): number {
-  const rate = Number(process.env.CLD_USD_RATE ?? 100);
+  const rate = getEnv().CLD_USD_RATE;
   if (isNaN(rate) || rate <= 0) throw new Error("Invalid CLD_USD_RATE configuration");
   return Math.floor(usdAmount * rate);
 }
@@ -88,7 +89,7 @@ export async function createCheckoutSession(
   const cldAmount = convertUsdToCld(amountUsd);
   const amountCents = Math.round(amountUsd * 100);
 
-  const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+  const appUrl = getEnv().APP_URL;
 
   const session = await stripe.checkout.sessions.create({
     payment_method_types: ["card"],
@@ -125,6 +126,27 @@ export async function createCheckoutSession(
     url: session.url!,
     cldAmount,
     amountUsd,
+  };
+}
+
+export interface CheckoutSessionStatus {
+  sessionId: string;
+  paymentStatus: Stripe.Checkout.Session.PaymentStatus;
+  cldAmount: number;
+  amountUsd: number;
+  /** Wallet the session was created for (from metadata). */
+  userId: string | null;
+}
+
+/** Look up a hosted-checkout session so the console can confirm a redirect. */
+export async function getCheckoutSession(sessionId: string): Promise<CheckoutSessionStatus> {
+  const session = await getStripe().checkout.sessions.retrieve(sessionId);
+  return {
+    sessionId: session.id,
+    paymentStatus: session.payment_status,
+    cldAmount: Number(session.metadata?.cldAmount ?? 0),
+    amountUsd: Number(session.metadata?.amountUsd ?? 0),
+    userId: session.metadata?.userId ?? session.client_reference_id ?? null,
   };
 }
 
@@ -173,7 +195,7 @@ export async function createPaymentIntent(
 
   L.info(`[Stripe] Created payment intent ${intent.id} for user ${userId} — $${amountUsd} → ${cldAmount} CLD`);
 
-  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY ?? "";
+  const publishableKey = getEnv().STRIPE_PUBLISHABLE_KEY ?? "";
 
   return {
     clientSecret: intent.client_secret!,
@@ -199,7 +221,7 @@ export async function handleWebhook(
   payload: string | Buffer,
   signature: string
 ): Promise<WebhookResult> {
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const webhookSecret = getEnv().STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     throw new Error("STRIPE_WEBHOOK_SECRET is not configured");
   }

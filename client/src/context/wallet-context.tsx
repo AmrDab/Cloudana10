@@ -10,7 +10,7 @@ import { devLoggers } from '@/lib/logger';
 
 const metadata = {
   name: 'Cloudana',
-  description: 'Decentralized Compute Marketplace on Base Sepolia',
+  description: 'Decentralized datacenter on Base Sepolia — the proof is the work',
   url: typeof window !== 'undefined' ? window.location.origin : 'https://cloudana.app',
   icons: ['https://cloudana.app/icon.png']
 };

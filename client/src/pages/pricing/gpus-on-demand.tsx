@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { devLoggers } from "@/lib/logger";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -162,7 +163,7 @@ export default function GpusOnDemandPage() {
       
       // Here you would submit to your backend/API
       // For now, we'll just show success
-      console.log("Form submitted:", values);
+      devLoggers.api.log("Form submitted:", values);
       
       // Simulate API call
       await new Promise((resolve) => setTimeout(resolve, 1000));

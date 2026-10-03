@@ -8,6 +8,8 @@ import { ProviderDetailLayout, ProviderDetailTabs } from "@/components/providers
 import { useProviderDetail } from "@/hooks/useProviders";
 import { useProviderLogs, useProviderDiagnostics, useProviderHealth } from "@/hooks/useProviderLogs";
 import { RefreshCw, Activity, Server, HardDrive, Cpu, AlertCircle } from "lucide-react";
+import { isOrchestratorUnavailable } from "@/lib/orchestrator-status";
+import { OrchestratorUnavailable } from "@/components/OrchestratorUnavailable";
 
 interface ProviderLogsPageProps {
   params?: { owner?: string };
@@ -81,7 +83,8 @@ export default function ProviderLogsPage({ params }: ProviderLogsPageProps) {
             </TabsList>
 
             <TabsContent value="diagnostics" className="space-y-4 mt-4">
-              {diagError && (
+              {diagError && isOrchestratorUnavailable(diagError) && <OrchestratorUnavailable />}
+              {diagError && !isOrchestratorUnavailable(diagError) && (
                 <Card className="border-destructive/50 bg-destructive/5">
                   <CardContent className="pt-6">
                     <p className="text-sm text-destructive">Error: {diagError.message}</p>
@@ -234,7 +237,8 @@ export default function ProviderLogsPage({ params }: ProviderLogsPageProps) {
             </TabsContent>
 
             <TabsContent value="health" className="space-y-4 mt-4">
-              {healthError && (
+              {healthError && isOrchestratorUnavailable(healthError) && <OrchestratorUnavailable />}
+              {healthError && !isOrchestratorUnavailable(healthError) && (
                 <Card className="border-destructive/50 bg-destructive/5">
                   <CardContent className="pt-6">
                     <p className="text-sm text-destructive">Error: {healthError.message}</p>
@@ -273,7 +277,8 @@ export default function ProviderLogsPage({ params }: ProviderLogsPageProps) {
             </TabsContent>
 
             <TabsContent value="logs" className="space-y-4 mt-4">
-              {logsError && (
+              {logsError && isOrchestratorUnavailable(logsError) && <OrchestratorUnavailable />}
+              {logsError && !isOrchestratorUnavailable(logsError) && (
                 <Card className="border-destructive/50 bg-destructive/5">
                   <CardContent className="pt-6">
                     <p className="text-sm text-destructive">Error: {logsError.message}</p>

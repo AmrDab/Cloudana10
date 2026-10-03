@@ -11,6 +11,8 @@ routes = [
 [vars]
 CHAIN_NETWORK = "baseSepolia"
 CLD_USD_RATE = "100"
+# Public testnet: test credits (no value), once per wallet per day. Remove before CLD carries value.
+TESTNET_CREDITS = "true"
 
 [[d1_databases]]
 binding = "DB"

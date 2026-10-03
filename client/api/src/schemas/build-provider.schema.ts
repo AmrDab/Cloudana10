@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { z } from "@hono/zod-openapi";
+import { successSchema } from "./common.schema.js";
 
 // Node Schema
 export const NodeSchema = z.object({
@@ -172,3 +173,49 @@ export const BuildProviderLogsResponseSchema = z.object({
 });
 
 export type BuildProviderLogsResponse = z.infer<typeof BuildProviderLogsResponseSchema>;
+
+// ─── HTTP envelopes (the service-facing types above stay unchanged) ─────────
+// The service results carry their own `status`; on the wire it is renamed so it
+// cannot clash with the envelope's `status: "success"`.
+
+export const BuildProviderEnvelopeSchema = successSchema({
+  message: z.string(),
+  action_id: z.string().uuid(),
+});
+
+export const UpdateProviderAttributesEnvelopeSchema = successSchema({
+  message: z.string(),
+  action_id: z.string().uuid().optional(),
+});
+
+export const BuildProviderStatusEnvelopeSchema = successSchema({
+  ...BuildProviderStatusResponseSchema.omit({ status: true }).shape,
+  buildStatus: BuildProviderStatusResponseSchema.shape.status,
+});
+
+export const BuildProviderLogsEnvelopeSchema = successSchema(BuildProviderLogsResponseSchema.shape);
+
+export const ProviderNodeServiceEnvelopeSchema = successSchema({
+  serviceStatus: z.string().openapi({ description: "active | inactive | unknown | success | error" }),
+  message: z.string().optional(),
+  pid: z.number().optional(),
+  pm2Status: z.string().optional(),
+});
+
+export const PrepareRegistrationEnvelopeSchema = successSchema({
+  device_id: z.string(),
+  real_spec: z
+    .object({
+      cpuModel: z.string(),
+      cpuCores: z.number(),
+      memoryTotalBytes: z.number(),
+      memoryFreeBytes: z.number().optional(),
+      diskTotalBytes: z.number().nullable().optional(),
+      diskFreeBytes: z.number().nullable().optional(),
+    })
+    .nullable(),
+});
+
+export const ActionIdParamsSchema = z.object({ action_id: z.string().min(1, "Action ID is required") });
+export const TaskIdParamsSchema = z.object({ task_id: z.string().min(1, "Task ID is required") });
+export const DeviceIdParamsSchema = z.object({ device_id: z.string().min(1, "Device ID is required") });

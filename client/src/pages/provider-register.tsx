@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { devLoggers } from "@/lib/logger";
 import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -442,7 +443,7 @@ export default function ProviderRegister() {
     const info = bondInfo as { maxBond?: bigint } | undefined;
     if (!info?.maxBond) return;
     const bondAmount = formatEther(info.maxBond);
-    console.log('[ProviderRegister] Calling approve...');
+    devLoggers.contract.log('[ProviderRegister] Calling approve...');
     approve(PROVIDER_REGISTRY_ADDRESS, bondAmount);
   };
   
@@ -482,7 +483,7 @@ export default function ProviderRegister() {
   // Debug logging for loading states
   useEffect(() => {
     if (isApproving || isRegistering) {
-      console.log('[ProviderRegister] Loading states:', { isApproving, isRegistering, approveHash, registerHash });
+      devLoggers.contract.log('[ProviderRegister] Loading states:', { isApproving, isRegistering, approveHash, registerHash });
     }
   }, [isApproving, isRegistering, approveHash, registerHash]);
   

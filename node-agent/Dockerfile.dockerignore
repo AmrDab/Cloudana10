@@ -1,0 +1,9 @@
+# Build context is the repo root; ship only what the agent needs.
+*
+!node-agent/package.json
+!node-agent/package-lock.json
+!node-agent/tsconfig.json
+!node-agent/src
+!pouw/package.json
+!pouw/src
+!shared/sealed.ts

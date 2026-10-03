@@ -9,13 +9,11 @@ import { createWalletClient, http, keccak256, toBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { log } from "../lib/logger.js";
-import { rpcUrl } from "../config/contracts.js";
+import { getRpcUrl } from "../config/contracts.js";
+import { getEnv } from "../config/env.js";
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 
 const L = log.pouw;
-
-const POUW_VERIFIER_ADDRESS = process.env.POUW_VERIFIER_CONTRACT_ADDRESS as `0x${string}` | undefined;
-const ORCHESTRATOR_PK = process.env.ORCHESTRATOR_PRIVATE_KEY as `0x${string}` | undefined;
 
 const POUW_VERIFIER_ABI = [
   {
@@ -41,16 +39,35 @@ function toBytes32(hex: string): `0x${string}` {
   return `0x${clean.padEnd(64, "0").slice(0, 64)}` as `0x${string}`;
 }
 
-/** Record a certificate on-chain. Fails silently for testnet resilience. */
-export async function recordOnChain(cert: POUWCertificate): Promise<void> {
+/** The fields POUWVerifier.recordCertificate needs — a full certificate or a stored row. */
+export type ChainRecordInput = Pick<
+  POUWCertificate,
+  "providerAddress" | "deviceId" | "n" | "difficulty" | "transcriptHash" | "z" | "timestamp"
+>;
+
+export type ChainStatus = "recorded" | "pending" | "failed" | "not_configured";
+
+export interface ChainOutcome {
+  status: ChainStatus;
+  tx: string | null;
+  reason: string | null;
+}
+
+/**
+ * Record a certificate on-chain. Never throws; the outcome is persisted by the
+ * settlement service so failed records can be retried and the provider can see
+ * whether their certificate made it to Base.
+ */
+export async function recordOnChain(cert: ChainRecordInput): Promise<ChainOutcome> {
+  const POUW_VERIFIER_ADDRESS = getEnv().POUW_VERIFIER_CONTRACT_ADDRESS as `0x${string}` | undefined;
+  const ORCHESTRATOR_PK = getEnv().ORCHESTRATOR_PRIVATE_KEY as `0x${string}` | undefined;
   if (!POUW_VERIFIER_ADDRESS || !ORCHESTRATOR_PK) {
-    // On-chain recording is optional for testnet
-    return;
+    return { status: "not_configured", tx: null, reason: "verifier contract or orchestrator signer not provisioned" };
   }
 
   try {
     const account = privateKeyToAccount(ORCHESTRATOR_PK);
-    const client = createWalletClient({ chain: baseSepolia, transport: http(rpcUrl), account });
+    const client = createWalletClient({ chain: baseSepolia, transport: http(getRpcUrl()), account });
 
     const hash = await client.writeContract({
       address: POUW_VERIFIER_ADDRESS,
@@ -68,7 +85,13 @@ export async function recordOnChain(cert: POUWCertificate): Promise<void> {
     });
 
     L.info(`[POUW:chain] Recorded on-chain | tx: ${hash}`);
+    return { status: "recorded", tx: hash, reason: null };
   } catch (err) {
-    L.warn("[POUW:chain] On-chain recording failed (non-critical):", err instanceof Error ? err.message : err);
+    const reason = err instanceof Error ? err.message : String(err);
+    // The contract's usedZ check makes a duplicate record a revert; that means it
+    // is already on-chain from an earlier attempt — treat it as recorded.
+    if (/already recorded|replay/i.test(reason)) return { status: "recorded", tx: null, reason: "already recorded on-chain" };
+    L.warn("[POUW:chain] On-chain recording failed (will retry):", reason);
+    return { status: "failed", tx: null, reason };
   }
 }

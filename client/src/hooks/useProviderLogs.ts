@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { nodeApiBase } from "@/lib/api-base";
+import { fetchJson } from "@/lib/api-error";
 
 const API_BASE = nodeApiBase();
 
@@ -89,23 +90,12 @@ export function useProviderLogs(providerAddress?: `0x${string}`) {
       if (options.level) params.set("level", options.level);
       if (options.category) params.set("category", options.category);
 
-      const response = await fetch(
-        `${API_BASE}/provider-logs/${providerAddress}?${params.toString()}`
+      const result = await fetchJson<{ logs: ProviderLog[]; stats: any }>(
+        `${API_BASE}/provider-logs/${providerAddress}?${params.toString()}`,
+        "Failed to fetch provider logs",
       );
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      if (result.success) {
-        setLogs(result.logs);
-        setStats(result.stats);
-      } else {
-        throw new Error(result.error || "Unknown error");
-      }
+      setLogs(result.logs);
+      setStats(result.stats);
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
@@ -137,22 +127,11 @@ export function useProviderDiagnostics(providerAddress?: `0x${string}`) {
     setError(null);
 
     try {
-      const response = await fetch(
-        `${API_BASE}/provider-diagnostics/${providerAddress}?owner=${address}`
+      const result = await fetchJson<{ diagnostics: ProviderDiagnostics }>(
+        `${API_BASE}/provider-diagnostics/${providerAddress}?owner=${address}`,
+        "Failed to fetch provider diagnostics",
       );
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      if (result.success) {
-        setDiagnostics(result.diagnostics);
-      } else {
-        throw new Error(result.error || "Unknown error");
-      }
+      setDiagnostics(result.diagnostics);
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
@@ -188,22 +167,11 @@ export function useProviderHealth(providerAddress?: `0x${string}`) {
     setError(null);
 
     try {
-      const response = await fetch(
-        `${API_BASE}/provider-health/${providerAddress}?owner=${address}`
+      const result = await fetchJson<{ health: any }>(
+        `${API_BASE}/provider-health/${providerAddress}?owner=${address}`,
+        "Failed to fetch provider health",
       );
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      if (result.success) {
-        setHealth(result.health);
-      } else {
-        throw new Error(result.error || "Unknown error");
-      }
+      setHealth(result.health);
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {

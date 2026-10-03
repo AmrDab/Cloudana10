@@ -8,6 +8,10 @@ import { CheckCircle, Circle, Loader2, AlertCircle, Trash2, Info, Play, Server, 
 import ProviderBuildCluster from "@/pages/provider-build-cluster";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NODE_API_URL } from "@/lib/api-base";
+import { fetchJson, readJson } from "@/lib/api-error";
+import { ORCHESTRATOR_UNAVAILABLE, isOrchestratorUnavailable, useOrchestratorAvailable } from "@/lib/orchestrator-status";
+import { OrchestratorUnavailable } from "@/components/OrchestratorUnavailable";
+import { getAuthHeader } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
 import { useToast } from "@/hooks/use-toast";
@@ -285,6 +289,7 @@ export default function ProviderRegisterMultistep() {
   // Validation state
   const [isChecking, setIsChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const orchestratorAvailable = useOrchestratorAvailable();
   const [privateKeyContent, setPrivateKeyContent] = useState<string>("");
 
   // Provider Information (first step of provider-config)
@@ -396,10 +401,10 @@ export default function ProviderRegisterMultistep() {
     const apiUrl = NODE_API_URL
       ? `${NODE_API_URL}/v1/build-provider-status`
       : "http://localhost:7002/v1/build-provider-status";
-    fetch(`${apiUrl}/${buildActionId}`)
-      .then((r) => r.json())
-      .then((data: { status?: string; device_id?: string }) => {
-        if (data.status === "completed" && data.device_id && typeof data.device_id === "string" && data.device_id.startsWith("0x")) {
+    fetchJson<{ buildStatus?: string; status?: string; device_id?: string }>(`${apiUrl}/${buildActionId}`, "Failed to fetch build status")
+      .then((data) => {
+        // Build state is `buildStatus` (older servers: `status`).
+        if ((data.buildStatus ?? data.status) === "completed" && data.device_id && typeof data.device_id === "string" && data.device_id.startsWith("0x")) {
           setBuildDeviceId(data.device_id);
           setCompletedSteps((prev) => new Set([...prev, "provider-install"]));
           setCurrentStep("register-onchain");
@@ -415,9 +420,8 @@ export default function ProviderRegisterMultistep() {
     const apiUrl = NODE_API_URL
       ? `${NODE_API_URL}/v1/build-provider-status`
       : "http://localhost:7002/v1/build-provider-status";
-    fetch(`${apiUrl}/${buildActionId}`)
-      .then((r) => r.json())
-      .then((data: { device_id?: string }) => {
+    fetchJson<{ device_id?: string }>(`${apiUrl}/${buildActionId}`, "Failed to fetch build status")
+      .then((data) => {
         if (data.device_id && typeof data.device_id === "string" && data.device_id.startsWith("0x")) {
           setBuildDeviceId(data.device_id);
         }
@@ -433,6 +437,11 @@ export default function ProviderRegisterMultistep() {
     const interval = setInterval(loadDeviceIdFromBuild, 5000);
     return () => clearInterval(interval);
   }, [currentStep, buildDeviceId, buildActionId, loadDeviceIdFromBuild]);
+
+  // Server verification (step 1, sub-step 3) and "Start build" (step 3) call the orchestrator.
+  const orchestratorBlocked =
+    orchestratorAvailable === false &&
+    ((currentStep === "server-access" && serverAccessSubStep === 3) || currentStep === "provider-attributes");
 
   const handleNext = async () => {
     // Handle sub-steps for server-access
@@ -544,15 +553,11 @@ export default function ProviderRegisterMultistep() {
         ? `${NODE_API_URL}/v1/build-provider`
         : "http://localhost:7002/v1/build-provider";
 
-      // Get auth token from environment variable or localStorage
-      const authToken = import.meta.env.VITE_AUTH_TOKEN || localStorage.getItem("auth_token");
+      // Wallet-signed JWT (prompts a signature if not already signed in)
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        ...(await getAuthHeader()),
       };
-      
-      if (authToken) {
-        headers["Authorization"] = `Bearer ${authToken}`;
-      }
 
       const response = await fetch(apiUrl, {
         method: "POST",
@@ -560,14 +565,7 @@ export default function ProviderRegisterMultistep() {
         body: JSON.stringify(buildRequest),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({
-          error: { message: "Failed to start build provider" },
-        }));
-        throw new Error(errorData.error?.message || "Failed to start build provider");
-      }
-
-      const data = await response.json();
+      const data = await readJson<{ action_id?: string }>(response, "Failed to start build provider");
       const returnedActionId = data.action_id || actionId;
 
       if (!returnedActionId) {
@@ -744,26 +742,11 @@ export default function ProviderRegisterMultistep() {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.status?.toLowerCase() === "success" || response.status === 200) {
-          return true;
-        } else {
-          throw new Error(data.error?.message || "SSH connection failed");
-        }
-      } else {
-        const error = await response.json().catch(() => ({ 
-          message: "SSH connection failed",
-          error: { message: "Failed to connect via SSH" }
-        }));
-        throw new Error(
-          error.error?.message || 
-          error.message || 
-          "Failed to connect via SSH. Please check your credentials and try again."
-        );
-      }
+      await readJson(response, "Failed to connect via SSH. Please check your credentials and try again.");
+      return true;
     } catch (error: any) {
       clearTimeout(timeoutId);
+      if (isOrchestratorUnavailable(error)) throw new Error(ORCHESTRATOR_UNAVAILABLE);
       if (error?.name === "AbortError") {
         throw new Error(
           "Verification timed out. Check that the server is reachable and the verification API is running."
@@ -800,22 +783,16 @@ export default function ProviderRegisterMultistep() {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      if (response.ok) {
-        const data = await response.json();
-        const portNum = parseInt(port) || 22;
-        const isOpen = data.open_ports?.includes(portNum) || false;
-        if (!isOpen) {
-          throw new Error(`Port ${portNum} is not open or accessible`);
-        }
-        return true;
-      } else {
-        const error = await response.json().catch(() => ({ 
-          message: "Port check failed"
-        }));
-        throw new Error(error.message || "Failed to check port status");
+      const data = await readJson<{ open_ports?: number[] }>(response, "Failed to check port status");
+      const portNum = parseInt(port) || 22;
+      const isOpen = data.open_ports?.includes(portNum) || false;
+      if (!isOpen) {
+        throw new Error(`Port ${portNum} is not open or accessible`);
       }
+      return true;
     } catch (error: any) {
       clearTimeout(timeoutId);
+      if (isOrchestratorUnavailable(error)) throw new Error(ORCHESTRATOR_UNAVAILABLE);
       if (error?.name === "AbortError") {
         throw new Error(
           "Port check timed out. Check that the server is reachable and the verification API is running."
@@ -856,25 +833,21 @@ export default function ProviderRegisterMultistep() {
         body: JSON.stringify({ domains: [domain] }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        const publicIps = data.public_ips ?? [];
-        const entry = Array.isArray(publicIps) ? publicIps.find((r: Record<string, string>) => domain in r) : null;
-        const ip = entry ? (entry as Record<string, string>)[domain] : null;
-        if (ip) {
-          setDnsVerifyStatus("success");
-          setDnsVerifyMessage(`${domain} resolves to ${ip}`);
-        } else {
-          setDnsVerifyStatus("error");
-          setDnsVerifyMessage("No public IP returned for this domain.");
-        }
+      const data = await readJson<{ public_ips?: unknown }>(response, "Failed to verify DNS.");
+      const publicIps = data.public_ips ?? [];
+      const entry = Array.isArray(publicIps) ? publicIps.find((r: Record<string, string>) => domain in r) : null;
+      const ip = entry ? (entry as Record<string, string>)[domain] : null;
+      if (ip) {
+        setDnsVerifyStatus("success");
+        setDnsVerifyMessage(`${domain} resolves to ${ip}`);
       } else {
-        const err = await response.json().catch(() => ({ error: { message: "Failed to verify DNS" } }));
         setDnsVerifyStatus("error");
-        setDnsVerifyMessage(err.error?.message ?? err.message ?? "Failed to verify DNS.");
+        setDnsVerifyMessage("No public IP returned for this domain.");
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Unable to reach the verification server.";
+      const msg = isOrchestratorUnavailable(e)
+        ? ORCHESTRATOR_UNAVAILABLE
+        : e instanceof Error ? e.message : "Unable to reach the verification server.";
       setDnsVerifyStatus("error");
       setDnsVerifyMessage(msg);
     }
@@ -1144,7 +1117,8 @@ export default function ProviderRegisterMultistep() {
                     variant="outline"
                     size="sm"
                     onClick={verifyDnsConfiguration}
-                    disabled={dnsVerifyStatus === "verifying" || !domainName.trim()}
+                    disabled={dnsVerifyStatus === "verifying" || !domainName.trim() || orchestratorAvailable === false}
+                    title={orchestratorAvailable === false ? "Orchestrator unavailable" : undefined}
                     className="shrink-0"
                   >
                     {dnsVerifyStatus === "verifying" ? (
@@ -1435,6 +1409,13 @@ export default function ProviderRegisterMultistep() {
         {renderStepContent()}
       </div>
 
+      {orchestratorBlocked && (
+        <OrchestratorUnavailable
+          className="mb-4"
+          detail="Verifying your server and building the cluster need the Cloudana orchestrator, which isn't reachable right now. Try again later."
+        />
+      )}
+
       {/* Navigation */}
       <div className="flex justify-between">
         {(currentStep === "server-access" && serverAccessSubStep > 1) ||
@@ -1456,7 +1437,8 @@ export default function ProviderRegisterMultistep() {
         ) : (
           <Button
             onClick={handleNext}
-            disabled={!canProceed() || isChecking || isBuilding}
+            disabled={!canProceed() || isChecking || isBuilding || orchestratorBlocked}
+            title={orchestratorBlocked ? "Orchestrator unavailable" : undefined}
             className="bg-primary hover:bg-primary/90 text-white"
           >
             {isChecking ? (

@@ -9,17 +9,30 @@
  * Requires:    AKASH_MNEMONIC, AKASH_RPC_URL
  */
 import { log } from "../lib/logger.js";
+import { getEnv } from "../config/env.js";
 import type { ParsedManifest, ParsedService } from "./sdl-parser.service.js";
 
 const L = log.orchestratorEvent;
 
-// ─── Config ─────────────────────────────────────────────────────────────────
-const AKASH_ENABLED = process.env.AKASH_BRIDGE_ENABLED === "true";
-const AKASH_RPC = process.env.AKASH_RPC_URL ?? "https://rpc.akashnet.net:443";
-const AKASH_LCD = process.env.AKASH_LCD_URL ?? "https://rest.cosmos.directory/akash";
-const AKASH_CHAIN_ID = process.env.AKASH_CHAIN_ID ?? "akashnet-2";
-const AKASH_MNEMONIC = process.env.AKASH_MNEMONIC ?? "";
-const AKASH_GAS_PRICE = process.env.AKASH_GAS_PRICE ?? "0.025uakt";
+// ─── Config (read lazily — getEnv() must not run at import time) ───────────
+function akashEnabled(): boolean {
+  return getEnv().AKASH_BRIDGE_ENABLED;
+}
+function akashRpc(): string {
+  return getEnv().AKASH_RPC_URL;
+}
+function akashLcd(): string {
+  return getEnv().AKASH_LCD_URL;
+}
+function akashChainId(): string {
+  return getEnv().AKASH_CHAIN_ID;
+}
+function akashMnemonic(): string {
+  return getEnv().AKASH_MNEMONIC ?? "";
+}
+function akashGasPrice(): string {
+  return getEnv().AKASH_GAS_PRICE;
+}
 const AKASH_DSEQ_STORE = new Map<string, AkashLease>(); // workloadId → lease info
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -132,11 +145,11 @@ export async function deployToAkash(
   instanceId: string,
   parsed: ParsedManifest,
 ): Promise<AkashDeploymentResult> {
-  if (!AKASH_ENABLED) {
+  if (!akashEnabled()) {
     return { success: false, error: "Akash bridge disabled (set AKASH_BRIDGE_ENABLED=true)" };
   }
 
-  if (!AKASH_MNEMONIC) {
+  if (!akashMnemonic()) {
     return { success: false, error: "AKASH_MNEMONIC not configured" };
   }
 
@@ -235,13 +248,13 @@ async function createAkashDeployment(
   const { DirectSecp256k1HdWallet } = await import("@cosmjs/proto-signing");
   const { SigningStargateClient } = await import("@cosmjs/stargate");
 
-  const wallet = await DirectSecp256k1HdWallet.fromMnemonic(AKASH_MNEMONIC, {
+  const wallet = await DirectSecp256k1HdWallet.fromMnemonic(akashMnemonic(), {
     prefix: "akash",
   });
   const [account] = await wallet.getAccounts();
   const owner = account.address;
 
-  const client = await SigningStargateClient.connectWithSigner(AKASH_RPC, wallet, {
+  const client = await SigningStargateClient.connectWithSigner(akashRpc(), wallet, {
     gasPrice: { amount: "0.025", denom: "uakt" } as any,
   });
 
@@ -336,7 +349,7 @@ async function waitForBids(dseq: string, owner: string): Promise<AkashBid[]> {
 
   while (Date.now() - start < maxWait) {
     try {
-      const url = `${AKASH_LCD}/akash/market/v1beta4/bids/list?filters.owner=${owner}&filters.dseq=${dseq}&filters.state=open`;
+      const url = `${akashLcd()}/akash/market/v1beta4/bids/list?filters.owner=${owner}&filters.dseq=${dseq}&filters.state=open`;
       const res = await fetch(url);
       if (!res.ok) {
         L.warn(`[Akash Bridge] Bid query failed: ${res.status}`);
@@ -374,11 +387,11 @@ async function acceptBid(
   const { DirectSecp256k1HdWallet } = await import("@cosmjs/proto-signing");
   const { SigningStargateClient } = await import("@cosmjs/stargate");
 
-  const wallet = await DirectSecp256k1HdWallet.fromMnemonic(AKASH_MNEMONIC, {
+  const wallet = await DirectSecp256k1HdWallet.fromMnemonic(akashMnemonic(), {
     prefix: "akash",
   });
 
-  const client = await SigningStargateClient.connectWithSigner(AKASH_RPC, wallet);
+  const client = await SigningStargateClient.connectWithSigner(akashRpc(), wallet);
 
   const msg = {
     typeUrl: "/akash.market.v1beta4.MsgCreateLease",
@@ -472,10 +485,10 @@ async function closeAkashDeployment(dseq: string, owner: string): Promise<void> 
     const { DirectSecp256k1HdWallet } = await import("@cosmjs/proto-signing");
     const { SigningStargateClient } = await import("@cosmjs/stargate");
 
-    const wallet = await DirectSecp256k1HdWallet.fromMnemonic(AKASH_MNEMONIC, {
+    const wallet = await DirectSecp256k1HdWallet.fromMnemonic(akashMnemonic(), {
       prefix: "akash",
     });
-    const client = await SigningStargateClient.connectWithSigner(AKASH_RPC, wallet);
+    const client = await SigningStargateClient.connectWithSigner(akashRpc(), wallet);
 
     const msg = {
       typeUrl: "/akash.deployment.v1beta3.MsgCloseDeployment",
@@ -493,7 +506,7 @@ async function closeAkashDeployment(dseq: string, owner: string): Promise<void> 
 
 /** Check if Akash bridge is enabled and configured */
 export function isAkashBridgeReady(): boolean {
-  return AKASH_ENABLED && !!AKASH_MNEMONIC;
+  return akashEnabled() && !!akashMnemonic();
 }
 
 /** Get stored lease info for a workload */
@@ -504,7 +517,7 @@ export function getAkashLease(workloadId: string, instanceId: string): AkashLeas
 /** Query lease status from Akash LCD */
 export async function queryLeaseStatus(lease: AkashLease): Promise<string> {
   try {
-    const url = `${AKASH_LCD}/akash/market/v1beta4/leases/list?filters.dseq=${lease.dseq}&filters.provider=${lease.provider}&filters.state=active`;
+    const url = `${akashLcd()}/akash/market/v1beta4/leases/list?filters.dseq=${lease.dseq}&filters.provider=${lease.provider}&filters.state=active`;
     const res = await fetch(url);
     if (!res.ok) return "unknown";
     const data = (await res.json()) as { leases?: Array<{ lease: { state: string } }> };

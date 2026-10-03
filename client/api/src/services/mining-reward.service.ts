@@ -17,15 +17,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { log } from "../lib/logger.js";
 import { countRecentCertificates } from "./certificate-store.service.js";
+import { getEnv } from "../config/env.js";
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 
 const L = log.pouw;
-
-// ─── Config ──────────────────────────────────────────────────────────────────
-
-const MINING_REWARDS_ENABLED = process.env.MINING_REWARDS_ENABLED !== "false";
-const RPC_URL = process.env.ORCHESTRATOR_CHAIN_RPC_URL ?? "";
-const ORCHESTRATOR_PK = process.env.ORCHESTRATOR_PRIVATE_KEY as `0x${string}` | undefined;
 
 /** Base reward per certificate in CLD wei (18 decimals).
  *  Testnet: 10 CLD per certificate at n=64, difficulty=12. */
@@ -39,11 +34,6 @@ const BASE_REWARD_CLD = parseUnits("10", 18); // 10 CLD
  *     only until FILLER_DAILY_CERT_CAP certificates per provider per day.
  *     Filler keeps the network warm pre-demand without being farmable.
  */
-const FILLER_REWARD_FRACTION = Number(process.env.POUW_FILLER_REWARD_FRACTION ?? "0.1");
-const FILLER_DAILY_CERT_CAP = Number(process.env.POUW_FILLER_DAILY_CERT_CAP ?? "20");
-
-/** Mining pool workload ID — a special workload funded at deployment for mining rewards. */
-const MINING_POOL_WORKLOAD_ID = BigInt(process.env.POUW_MINING_POOL_WORKLOAD_ID ?? "0");
 
 /** Minimal RewardContract ABI for rewardProvider. */
 const REWARD_ABI = [
@@ -88,11 +78,29 @@ let rewardContractAddress: `0x${string}` | null = null;
 
 function getRewardContractAddress(): `0x${string}` {
   if (rewardContractAddress) return rewardContractAddress;
-  const addr = process.env.REWARD_CONTRACT_ADDRESS;
+  const addr = getEnv().REWARD_CONTRACT_ADDRESS;
   if (!addr) throw new Error("REWARD_CONTRACT_ADDRESS not configured");
   rewardContractAddress = addr as `0x${string}`;
   return rewardContractAddress;
 }
+
+export type RewardStatus = "paid" | "skipped" | "failed" | "disabled" | "not_configured";
+
+/** What happened to the reward — always explicit, so callers and providers can see it. */
+export interface RewardOutcome {
+  status: RewardStatus;
+  /** Amount in CLD wei; set when paid (and when skipped for insufficient pool, for context). */
+  wei: string | null;
+  tx: string | null;
+  reason: string | null;
+}
+
+const outcome = (status: RewardStatus, reason: string | null = null, wei: bigint | null = null, tx: string | null = null): RewardOutcome => ({
+  status,
+  wei: wei === null ? null : wei.toString(),
+  tx,
+  reason,
+});
 
 /**
  * Distribute mining reward for a verified certificate.
@@ -100,50 +108,48 @@ function getRewardContractAddress(): `0x${string}` {
  * @param backedByWorkload TRUE only when the orchestrator confirmed this
  *        certificate completed a claimed job from the matrix job queue.
  *        (Trust the queue's server-side check, never the submitted payload.)
- * Returns the reward amount in CLD wei (as string) or null if nothing was paid.
+ * Never throws: every path returns a RewardOutcome the caller can persist and
+ * report. "not_configured" means the operator has not provisioned the signer
+ * or pool yet — a deployment fact the provider deserves to see, not a silent null.
  */
 export async function distributeMiningReward(
   cert: POUWCertificate,
   backedByWorkload: boolean,
-): Promise<string | null> {
-  if (!MINING_REWARDS_ENABLED) return null;
-  if (!ORCHESTRATOR_PK) {
-    L.warn("[POUW:reward] ORCHESTRATOR_PRIVATE_KEY not set — skipping on-chain reward");
-    return null;
-  }
-  if (MINING_POOL_WORKLOAD_ID === 0n) {
-    L.warn("[POUW:reward] POUW_MINING_POOL_WORKLOAD_ID not set — skipping on-chain reward");
-    return null;
-  }
+): Promise<RewardOutcome> {
+  const env = getEnv();
+  if (!env.MINING_REWARDS_ENABLED) return outcome("disabled", "MINING_REWARDS_ENABLED=false");
+  const ORCHESTRATOR_PK = env.ORCHESTRATOR_PRIVATE_KEY as `0x${string}` | undefined;
+  if (!ORCHESTRATOR_PK) return outcome("not_configured", "orchestrator signer not provisioned");
+  const MINING_POOL_WORKLOAD_ID = BigInt(env.POUW_MINING_POOL_WORKLOAD_ID ?? 0);
+  if (MINING_POOL_WORKLOAD_ID === 0n) return outcome("not_configured", "mining pool workload not configured");
 
   let contractAddress: `0x${string}`;
   try {
     contractAddress = getRewardContractAddress();
   } catch (err) {
-    L.warn("[POUW:reward] Cannot get reward contract address:", err);
-    return null;
+    return outcome("not_configured", err instanceof Error ? err.message : String(err));
   }
 
   let rewardAmount = calculateReward(cert);
 
   if (!backedByWorkload) {
+    const FILLER_DAILY_CERT_CAP = env.POUW_FILLER_DAILY_CERT_CAP;
     // Filler path: capped and fractional — grinding random matrices is not a business.
     const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
     const recentCount = await countRecentCertificates(cert.providerAddress, dayAgo);
     if (recentCount > FILLER_DAILY_CERT_CAP) {
-      L.info(`[POUW:reward] Filler cap reached for ${cert.providerAddress.slice(0, 10)}… (${recentCount}/${FILLER_DAILY_CERT_CAP}/day) — no reward`);
-      return null;
+      return outcome("skipped", `filler cap reached (${Math.min(recentCount, FILLER_DAILY_CERT_CAP)}/${FILLER_DAILY_CERT_CAP} per day)`);
     }
-    rewardAmount = (rewardAmount * BigInt(Math.round(FILLER_REWARD_FRACTION * 1000))) / 1000n;
-    if (rewardAmount === 0n) return null;
+    rewardAmount = (rewardAmount * BigInt(Math.round(env.POUW_FILLER_REWARD_FRACTION * 1000))) / 1000n;
+    if (rewardAmount === 0n) return outcome("skipped", "filler reward rounds to zero");
   }
   const account = privateKeyToAccount(ORCHESTRATOR_PK);
 
+  const RPC_URL = env.ORCHESTRATOR_CHAIN_RPC_URL ?? "";
   const publicClient = createPublicClient({ chain: baseSepolia, transport: http(RPC_URL) });
   const walletClient = createWalletClient({ chain: baseSepolia, transport: http(RPC_URL), account });
 
   try {
-    // Check pool has enough balance
     const poolBalance = await publicClient.readContract({
       address: contractAddress,
       abi: REWARD_ABI,
@@ -153,7 +159,7 @@ export async function distributeMiningReward(
 
     if (poolBalance < rewardAmount) {
       L.warn(`[POUW:reward] Mining pool insufficient: ${poolBalance} < ${rewardAmount}`);
-      return null;
+      return outcome("skipped", "mining pool balance insufficient", rewardAmount);
     }
 
     const hash = await walletClient.writeContract({
@@ -164,9 +170,10 @@ export async function distributeMiningReward(
     });
 
     L.success(`[POUW:reward] Rewarded ${cert.providerAddress.slice(0, 10)}... ${rewardAmount} wei CLD | tx: ${hash}`);
-    return rewardAmount.toString();
+    return outcome("paid", null, rewardAmount, hash);
   } catch (err) {
-    L.error("[POUW:reward] On-chain reward failed:", err);
-    return null;
+    const reason = err instanceof Error ? err.message : String(err);
+    L.error("[POUW:reward] On-chain reward failed:", reason);
+    return outcome("failed", reason, rewardAmount);
   }
 }
