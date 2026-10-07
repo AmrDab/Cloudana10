@@ -3,13 +3,13 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 workers_dev = false
 
+# Route: every *.sites.cloudana.io request goes to this Worker once DNS has a *proxied* wildcard record
+#   *.sites  AAAA  100::   (owner step, docs/OWNER_RUNBOOK.md) and the zone has a certificate covering *.sites.
+# Top-level key: it must stay above the [vars] table or TOML reads it as a variable.
+routes = [
+  { pattern = "*.sites.cloudana.io/*", zone_name = "cloudana.io" }
+]
+
 [vars]
 API_URL = "https://api.cloudana.io"
 SITES_DOMAIN = "sites.cloudana.io"
-
-# Route (owner step — see README.md). Uncomment once DNS has a *proxied* wildcard record
-#   *.sites  CNAME/AAAA  (any proxied target, e.g. "100::" AAAA or cloudana.io CNAME)
-# in the cloudana.io zone. Cloudflare then sends every *.sites.cloudana.io request to this Worker.
-# routes = [
-#   { pattern = "*.sites.cloudana.io/*", zone_name = "cloudana.io" }
-# ]
