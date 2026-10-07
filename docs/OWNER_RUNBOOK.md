@@ -20,9 +20,9 @@ These steps are yours, in order. Each one ends with what to tell Claude.
 2. Go to the project folder by pasting this and pressing Enter:
    ```powershell
    cd C:\Users\amr_d\Cloudana10-site
-   git checkout main
    git pull
    ```
+   (This folder follows the latest `main`; `git pull` brings in whatever Claude last shipped.)
 3. Paste this once per PowerShell window. It creates a short command `wr` for Cloudflare's tool, *wrangler*:
    ```powershell
    function wr { node "$env:LOCALAPPDATA\npm-cache\_npx\32026684e21afda6\node_modules\wrangler\bin\wrangler.js" @args }
