@@ -21,7 +21,7 @@ export const appKit = createAppKit({
   metadata,
   projectId,
   features: {
-    analytics: true,
+    analytics: false, // Reown analytics: blocked by ad blockers (console noise) and not needed
     email: true, // Email login
     socials: ['google', 'x', 'discord', 'github', 'apple'], // Social logins
     emailShowWallets: true, // Show wallet options after social login

@@ -1,5 +1,5 @@
-// Routing for "open the waitlist" requests. One behaviour everywhere: if the page has an inline
-// waitlist form (the homepage §8), scroll to it and prefill; otherwise open the WaitlistHost dialog.
+// Routing for "open the waitlist" requests: open the WaitlistHost dialog where one is mounted (every
+// page, homepage included, so a nav click never jumps the page); otherwise scroll to the inline form.
 import type { ServiceId } from "@/lib/services";
 
 export type WaitlistRole = "use" | "provide" | "verify" | "datacenter" | "partner";
@@ -11,8 +11,8 @@ const hosts = new Set<(r: WaitlistRequest) => void>();
 
 export function openWaitlist(opts: { role?: WaitlistRole; interests?: ServiceId[] } = {}): void {
   const r = { ...opts, n: ++seq };
-  if (inline) inline(r);
-  else if (hosts.size) hosts.forEach((h) => h(r));
+  if (hosts.size) hosts.forEach((h) => h(r));
+  else if (inline) inline(r);
   else if (import.meta.env.DEV) console.warn("[waitlist] openWaitlist() called but no <WaitlistHost/> is mounted");
 }
 

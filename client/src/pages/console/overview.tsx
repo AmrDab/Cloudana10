@@ -34,7 +34,7 @@ export default function OverviewPage() {
         <Tile label="CLD minted" value={d?.mintedUcld} unit="cld" loading={loading} icon={Sparkles} tone="chain" caption="Per verified job" />
         <Tile label="CLD burned" value={d?.burnedUcld} unit="cld" loading={loading} icon={Flame} tone="burn" caption="Every fee" />
         <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-4 xl:col-span-1 xl:grid-cols-1">
-          <MiniStat label="Settlement batch · 2-min windows" value={d ? `#${int(d.epoch)}` : null} loading={loading} />
+          <MiniStat label="Settlement epoch · hourly" value={d ? `#${int(d.epoch)}` : null} loading={loading} />
           <MiniStat label="Price" value={d ? `${int(d.priceNcldPerTmac)} nCLD/TMAC` : null} loading={loading} />
         </div>
       </div>

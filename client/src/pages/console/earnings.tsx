@@ -62,7 +62,7 @@ function Earnings({ address }: { address: string }) {
         <Tile label="In settlement" value={inSettlement} unit="cld" loading={loading} tone="chain" caption="Verified, batch not final" />
         <Tile label="Vesting" value={l?.vesting.B} unit="cld" loading={loading} tone="work" caption="Subsidy, before it settles" />
         <Tile label="Settled" value={settled} unit="cld" loading={loading} tone="ok" caption="Final on Base" />
-        <Tile label="Verifier credits" value={l?.credits} loading={loading} caption="Points, not CLD" />
+        <Tile label="Verifier credits" value={l?.credits} loading={loading} caption="Credits, not CLD" />
       </div>
       <p className="mt-3 font-mono text-[12px] text-faint">
         Minted per verified job. Posted to Base in batches; subsidy vests first. The keeper claims for you once a batch is final.

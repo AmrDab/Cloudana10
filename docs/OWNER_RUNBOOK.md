@@ -6,142 +6,251 @@ Claude has already done everything that doesn't need your keys, accounts or sign
 - deployed the new API, both websites and the hosting gateway Worker;
 - published the node-agent image.
 
-These steps are yours, in order. Each one ends with what to tell Claude.
+What's left needs **you**, because it involves your wallets, your accounts or your money. Each step below has four parts:
 
-> **Golden rule:** a *private key* (a long `0x…` secret, 66 characters) is the password to a wallet.
-> Never paste it into chat, a GitHub issue, a screenshot, or any file except the two places this guide names.
-> An *address* (`0x…`, 42 characters) is public and safe to share.
+- **Why:** what the step is for, in plain English.
+- **Do:** exactly what to click or paste.
+- **You should see:** how you know it worked.
+- **If it goes wrong:** the common problems and what to do.
+
+Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10 is when your workstation is ready.
 
 ---
 
-## Before you start: open PowerShell the same way every time
+## Checklist
 
-1. Press the **Windows key**, type `PowerShell`, and open **Windows PowerShell**.
-2. Go to the project folder by pasting this and pressing Enter:
+| ✔ | Step | Time | Needs | Tell Claude |
+|---|---|---|---|---|
+| ☐ | 0. Set up PowerShell | 5 min | — | — |
+| ☐ | 1. Kill the old Alchemy key | 5 min | Alchemy login | "Alchemy done" |
+| ☐ | 2. Two API secrets | 5 min | PowerShell | the `0x…` address from the link |
+| ☐ | 3. MetaMask, 5 accounts, test ETH, Safe | 30 min | Browser | Safe + Poster addresses |
+| ☐ | 4. Deploy the contracts | 10 min | Deployer key | "contracts deployed" |
+| ☐ | 5. Turn on the keeper | 10 min | Poster key | "keeper deployed" |
+| ☐ | 6. Fund the escrow | 10 min | Safe owners 1 + 2 | "escrow funded" |
+| ☐ | 7. Email aliases | 5 min | Microsoft 365 admin | "aliases done" |
+| ☐ | 8. Hosting DNS + certificate (~$10/mo, optional for now) | 10 min | Cloudflare login | "sites done" |
+| ☐ | 9. Make the node image public | 2 min | GitHub login | "image public" |
+| ☐ | 10. Your workstation as node #1 | later | Your router | "workstation ready" |
+
+---
+
+## Words you'll meet
+
+| Word | Meaning |
+|---|---|
+| **Wallet / account** | An identity on the blockchain. It has a public **address** and a secret **private key**. |
+| **Address** | `0x` + 40 characters (42 total). Public, like an IBAN. Safe to share. |
+| **Private key** | `0x` + 64 characters (66 total). Whoever has it controls the wallet. **Never share it.** |
+| **Recovery phrase** | 12 words that regenerate *all* your MetaMask accounts. Write it on paper; never type it anywhere except MetaMask. |
+| **Base Sepolia** | Coinbase's **test** blockchain. Its ETH and CLD have **no real value**, so mistakes cost nothing. |
+| **Test ETH** | Free "gas money" from a faucet, used to pay for test transactions. |
+| **Safe** | A shared wallet that needs 2 of 3 owners to approve anything. It controls Cloudana's treasury and contracts. |
+| **Contract** | A program on the blockchain. You deploy two: the CLD token and the settlement contract. |
+| **Escrow** | CLD parked in the settlement contract so it can burn fees when settling. |
+| **Keeper** | A small robot (Cloudflare Worker) that posts settlement batches every hour, using the Poster wallet. |
+| **Secret (Cloudflare)** | A value stored inside a Cloudflare Worker that nobody can read back, not even you. |
+| **PowerShell** | The Windows command window. You paste commands into it and press Enter. |
+
+> **Golden rule:** a private key (66 characters) never goes into chat, email, screenshots, GitHub, or any file except the two places this guide names (step 4 `.env`, step 5 prompt).
+
+---
+
+## Step 0: Set up PowerShell (do this every time you open a new window)
+
+**Why:** every step runs commands from the Cloudana project folder, using Cloudflare's tool `wrangler`.
+
+**Do:**
+1. Press the **Windows key**, type `powershell`, and click **Windows PowerShell**. A blue or black window opens.
+2. Paste each line below and press **Enter** after each. To paste in PowerShell, right-click or press Ctrl+V.
    ```powershell
    cd C:\Users\amr_d\Cloudana10-site
    git pull
-   ```
-   (This folder follows the latest `main`; `git pull` brings in whatever Claude last shipped.)
-3. Paste this once per PowerShell window. It creates a short command `wr` for Cloudflare's tool, *wrangler*:
-   ```powershell
    function wr { node "$env:LOCALAPPDATA\npm-cache\_npx\32026684e21afda6\node_modules\wrangler\bin\wrangler.js" @args }
+   wr whoami
    ```
-   Test it with `wr whoami`. It should print your email, `amraldabbas19@gmail.com`.
 
-If you close the window, repeat steps 2 and 3 in the new one.
+**You should see:**
+- `git pull` prints `Already up to date.` or a list of updated files.
+- `wr whoami` prints `You are logged in … amraldabbas19@gmail.com` and a table with your account.
+
+**If it goes wrong:**
+- `cd : Cannot find path` → the folder name is mistyped. Copy it exactly.
+- `wr whoami` says *not logged in*: run `wr login`, a browser opens, click **Allow**, then run `wr whoami` again.
+- `wr : The term 'wr' is not recognized` → you opened a new window; paste the `function wr …` line again.
 
 ---
 
-## Step 1: Rotate the leaked Alchemy key (5 min)
-The old `.env` that leaked also contained an Alchemy URL with a key in it.
+## Step 1: Kill the old Alchemy key (5 min)
 
+**Why:** the file that leaked in March also contained an Alchemy link with a key inside. Anyone can use it on your Alchemy quota.
+
+**Do:**
 1. Go to https://dashboard.alchemy.com and sign in.
-2. Open **Apps**, then find the Base Sepolia app (the one whose URL ended up in the repo).
-3. Click it, then **Delete app**. Or, if you still use it, regenerate its **API key** in the app settings.
+2. In the left menu click **Apps**. Look for an app on **Base Sepolia**.
+3. Click it. If you don't use it anymore, click **Delete app** (usually under ⋮ or *Settings*) and confirm.
+4. If you still use it, find **API Key → Regenerate** instead.
+5. Separately, never send anything to the old wallet `0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A`. Its key is public on GitHub.
 
-Also, from now on never use the wallet `0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A`. Its key is public.
+**You should see:** the app is gone from the list, or it shows a new key.
 
-✅ Tell Claude: *"Alchemy done."*
+**If it goes wrong:** there's no Base Sepolia app? Then nothing to do; the link may have pointed to an app you already deleted.
+
+✅ Tell Claude: **"Alchemy done."**
 
 ---
 
-## Step 2: Set the node instruction key and rotate the sign-in secret (5 min)
-In your PowerShell window (folder `Cloudana10-site`, with `wr` defined), paste these lines one at a time:
+## Step 2: Two secrets for the API (5 min)
 
+**Why:**
+- **Instruction key:** a signature key the API uses to sign orders it sends to nodes, so nodes can tell real orders from fake ones. It is *not* a wallet and holds no money.
+- **Sign-in secret:** the old one existed while the leaked file was public, so we replace it. Everyone gets signed out of the console once.
+
+**Do** (in your PowerShell window from step 0; paste one line at a time):
 ```powershell
 cd client\api
 node -e "process.stdout.write('0x'+require('crypto').randomBytes(32).toString('hex'))" | wr secret put INSTRUCTION_SIGNING_KEY
 node -e "process.stdout.write(require('crypto').randomBytes(48).toString('hex'))" | wr secret put JWT_SECRET
 cd ..\..
 ```
-Each line makes a random secret and sends it straight to Cloudflare; you never see it. Each should print `✨ Success!`.
+Each `node -e …` part makes a random value on your computer and hands it straight to Cloudflare. You never see it, so you can't leak it.
 
-The second line signs everyone out of the console once; that's expected.
+Then open https://api.cloudana.io/v1/nodes/instruction-key in your browser.
 
-Now open this in your browser: https://api.cloudana.io/v1/nodes/instruction-key.
-You'll see something like `{"status":"success","address":"0xABC…"}`.
+**You should see:**
+- After each `wr secret put` line: `✨ Success! Uploaded secret …`.
+- In the browser: `{"status":"success","address":"0x…"}`. That address is public.
 
-✅ Tell Claude: *"instruction key address is 0x…"* (it's public). Claude builds it into the node agent.
+**If it goes wrong:**
+- The browser shows `not_configured`: wait 30 seconds and refresh. If it persists, re-run the first `node -e … INSTRUCTION_SIGNING_KEY` line.
+- `Need to pass in a value`: you ran `wr secret put` on its own. Run the whole line, including the `node -e … |` part.
+
+✅ Tell Claude: **"instruction key address is 0x…"** (paste the address from the browser).
 
 ---
 
-## Step 3: Make wallets and a Safe (25 min)
-You need: **3 owner wallets** (for the Safe), **1 deployer** wallet (used once) and **1 poster** wallet (used by the keeper robot).
+## Step 3: MetaMask, five accounts, test ETH and a Safe (30 min)
 
-### 3a. Install MetaMask and add Base Sepolia
-1. Install the **MetaMask** browser extension from https://metamask.io, create a wallet, and **write the recovery phrase on paper**.
-2. Open https://chainlist.org, tick **"Include Testnets"**, search **Base Sepolia** (chain ID 84532) and click **Add to MetaMask**.
+**Why:** Cloudana's treasury and admin rights belong to a **Safe**, a shared wallet needing 2 of 3 approvals, so no single lost or stolen key can drain or hijack it. Two more single-purpose wallets do the deploying and the hourly posting.
 
-### 3b. Create five accounts
-In MetaMask, click the account name at the top, then **+ Add account** (or "Create account"). Make five and rename them so you don't mix them up:
+### 3a. Install MetaMask
+1. In Chrome or Edge, go to **https://metamask.io → Download** and add the extension.
+2. Click **Create a new wallet** and set a password.
+3. MetaMask shows **12 words**. Write them on paper, in order, and store the paper safely. Never type them into a website.
+4. Confirm the words when asked.
 
-| Name | Used for |
-|---|---|
-| Safe Owner 1 | signs Safe transactions |
-| Safe Owner 2 | signs Safe transactions |
-| Safe Owner 3 | backup signer (a hardware wallet is even better) |
-| Deployer | deploys the contracts once, then is never used again |
-| Poster | the keeper uses it to post settlement batches |
+### 3b. Add the Base Sepolia test network
+1. Go to **https://chainlist.org**.
+2. Turn on **Include Testnets** (toggle near the search box).
+3. Search **Base Sepolia** and check the chain ID is **84532**.
+4. Click **Connect Wallet**, approve in MetaMask, then click **Add to MetaMask** and approve.
 
-### 3c. Get free test ETH
-1. Copy the **Deployer** address (click the account name to copy it).
-2. Paste it into a Base Sepolia faucet, for example:
-   - Coinbase: https://portal.cdp.coinbase.com/products/faucet (choose Base Sepolia);
-   - Alchemy: https://www.alchemy.com/faucets/base-sepolia.
-3. Do the same for **Poster** and **Safe Owner 1**. Target: ~0.02 ETH on Deployer, ~0.05 on Poster, a little on Owner 1.
+**You should see:** MetaMask's network selector (top-left) shows **Base Sepolia**. Select it.
 
-Test ETH is free and has no value. Faucets limit how often you can claim, so you may need two faucets.
+### 3c. Create five accounts
+1. In MetaMask, click the account name at the top, then **+ Add account or hardware wallet → Add a new account**.
+2. Do this until you have five accounts.
+3. Rename each one (account menu **⋮ → Account details → ✏️ next to the name**):
 
-### 3d. Create the Safe
-1. Go to https://app.safe.global and click **Connect wallet** (MetaMask, as **Safe Owner 1**).
+| Name | Purpose | Test ETH needed |
+|---|---|---|
+| Safe Owner 1 | approves Safe transactions | ~0.01 |
+| Safe Owner 2 | approves Safe transactions | ~0.005 |
+| Safe Owner 3 | backup approver | 0 |
+| Deployer | deploys the contracts once | ~0.02 |
+| Poster | the keeper's wallet | ~0.05 |
+
+(A hardware wallet such as Ledger as Owner 3 is better, but not needed for testnet.)
+
+### 3d. Get free test ETH
+1. Click an account's name to **copy its address** (`0x…`).
+2. Go to a faucet and paste the address:
+   - **Coinbase:** https://portal.cdp.coinbase.com/products/faucet (sign in with a free Coinbase account, choose **Base Sepolia**, ETH);
+   - **Alchemy:** https://www.alchemy.com/faucets/base-sepolia.
+3. Repeat for **Deployer**, **Poster**, **Safe Owner 1** and **Safe Owner 2**.
+
+**You should see:** a balance like `0.05 SepoliaETH` within a minute (make sure MetaMask is on Base Sepolia).
+
+**If it goes wrong:**
+- "Already claimed today" → use the other faucet, or wait 24 h.
+- Balance still 0 → you're looking at the wrong network; switch to Base Sepolia top-left.
+
+### 3e. Create the Safe
+1. Go to **https://app.safe.global** and click **Connect wallet → MetaMask**, choosing **Safe Owner 1**.
 2. Click **Create account**.
-3. Network: **Base Sepolia**. Name: `Cloudana Testnet`.
-4. Owners: add the addresses of **Safe Owner 1, 2 and 3**. Threshold: **2 out of 3**.
-5. Review, then **Create**, and confirm in MetaMask (it costs a tiny amount of test ETH).
-6. When it's done, copy the **Safe address** (shown top-left, starting with `basesep:0x…`; copy only the `0x…` part).
+3. **Network:** Base Sepolia. **Name:** `Cloudana Testnet`. Click **Next**.
+4. **Signers:** paste the addresses of Safe Owner 1, 2 and 3 (use **+ Add new signer** for more rows).
+5. **Threshold:** `2` out of 3. Click **Next**, review, then **Create account**, and approve in MetaMask.
+6. When it says the account is ready, click the Safe's name top-left to copy its address. It looks like `basesep:0x…`; keep only the part from `0x`.
 
-✅ Tell Claude: *"Safe is 0x… and poster is 0x…"* (both are addresses, both public).
+**You should see:** your Safe dashboard with 0 balance and three signers listed under **Settings**.
+
+✅ Tell Claude: **"Safe is 0x… and Poster is 0x…"** (two addresses, both public).
 
 ---
 
 ## Step 4: Deploy the contracts (10 min)
-1. In MetaMask, select the **Deployer** account, then **⋮ → Account details → Show private key**. Enter your password and copy the key.
-2. In PowerShell (folder `Cloudana10-site`):
+
+**Why:** this puts the new CLD token and the settlement contract on Base Sepolia, controlled by your Safe. It replaces the old contracts whose key leaked.
+
+**Do:**
+1. **Copy the Deployer's private key:** in MetaMask, select **Deployer**, then **⋮ → Account details → Show private key**. Enter your MetaMask password, hold the button, and copy the key (66 characters, starts with `0x`).
+2. **Put it in a private file** (in PowerShell from step 0):
    ```powershell
    cd contract
-   notepad .env
-   ```
-   Notepad asks to create the file; click **Yes**. Type one line, `PRIVATE_KEY=` followed by the key you copied, e.g. `PRIVATE_KEY=0xabc123…`. Save and close Notepad.
-3. Check the file will never be uploaded to GitHub:
-   ```powershell
    git check-ignore .env
    ```
-   It must print `.env`. If it prints nothing, **stop** and tell Claude.
-4. Paste this, replacing the two `0x…` placeholders with your Safe address and Poster address:
+   This must print `.env`, meaning Git will never upload the file. If it prints nothing, **stop** and tell Claude.
    ```powershell
-   $env:TREASURY_SAFE="0xYourSafeAddress"; $env:GUARDIAN_SAFE=$env:TREASURY_SAFE; $env:ADMIN_SAFE=$env:TREASURY_SAFE
+   notepad .env
+   ```
+   Notepad asks *"Do you want to create a new file?"*; click **Yes**. Type `PRIVATE_KEY=`, paste the key right after it with no spaces, then save (Ctrl+S) and close.
+3. **Install the contract tools** (first time only; takes a minute or two):
+   ```powershell
+   npm install
+   ```
+4. **Deploy:** copy this block into Notepad first, replace both `0xYour…` placeholders with your real Safe and Poster addresses, then paste the whole block into PowerShell:
+   ```powershell
+   $env:TREASURY_SAFE="0xYourSafeAddress"
+   $env:GUARDIAN_SAFE=$env:TREASURY_SAFE
+   $env:ADMIN_SAFE=$env:TREASURY_SAFE
    $env:POSTER_ADDRESS="0xYourPosterAddress"
    $env:GENESIS_TIMESTAMP="1791331200"
    npx hardhat run scripts/v2/deploy.ts --network baseSepolia
    ```
-   It prints the new token and settlement addresses and finishes with a line about roles. If it shows a red error, copy the error (never the key) to Claude.
-5. **Remove the key from the file:**
+   (`GENESIS_TIMESTAMP` = 7 Oct 2026, 00:00 UTC: the hour the new API went live, so everything it records can be settled.)
+5. **Remove the key from the file right away:**
    ```powershell
    notepad .env
    ```
-   Delete the whole line, save, and close.
-6. (Optional) It also printed two `npx hardhat verify …` lines. Those publish the source on Basescan and need a free API key from etherscan.io. Skip them if you like; nothing depends on them.
+   Delete everything, save, close. Then `cd ..` to go back to the project folder.
 
-✅ Tell Claude: *"contracts deployed"*. Claude reads the new addresses from `shared/addresses.baseSepolia.json` and wires them into the API and the keeper.
+**You should see:** after about a minute, lines like:
+```
+CLDTokenV2            0x…
+CloudanaSettlementV2  0x…  (genesisEpoch 497592)
+token roles: minter=settlement admin=0x…(your Safe) deployer=none
+wrote shared/addresses.baseSepolia.json …
+```
+followed by two `npx hardhat verify …` lines. You can skip those; they only publish source code on Basescan and need an extra free key from etherscan.io.
+
+**If it goes wrong:**
+- `insufficient funds` → the Deployer needs more test ETH (step 3d).
+- `invalid private key` / `HH8` → the `.env` line is wrong. It must be exactly `PRIVATE_KEY=0x…`, with no quotes or spaces.
+- `TREASURY_SAFE must be set to an address` → you're in a new window or a placeholder is still there; paste the `$env:` lines again with real addresses.
+- `no deployer: set PRIVATE_KEY` → `.env` is empty or saved somewhere else; it must be `contract\.env`.
+- Anything else: copy the red error text (never the key) to Claude.
+
+✅ Tell Claude: **"contracts deployed"**. Claude reads the new addresses from `shared/addresses.baseSepolia.json` and wires them into the API and keeper. Wait for Claude's "ready for step 5".
 
 ---
 
-## Step 5: Turn on the keeper robot (10 min, after Claude says it's wired)
-The keeper and the API share one internal password, so this step sets it on both at once.
+## Step 5: Turn on the keeper (10 min, after Claude says ready)
 
+**Why:** every hour the API totals who earned what. The keeper posts that batch to the settlement contract, then pays everyone. It signs with the Poster wallet, so it needs the Poster's key. It also needs a shared password with the API (the *internal key*), which this step sets on both at the same time.
+
+**Do** (PowerShell from step 0; one line at a time):
 ```powershell
-cd C:\Users\amr_d\Cloudana10-site
 git pull
 $k = node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))"
 cd client\api
@@ -151,97 +260,141 @@ npm install
 $k | wr secret put INTERNAL_API_KEY
 wr secret put POSTER_PRIVATE_KEY
 ```
-The last command asks *"Enter a secret value"*. In MetaMask, copy the **Poster** account's private key (as in step 4.1), paste it at the prompt and press Enter. The paste is hidden; that's normal.
+The last line asks **"Enter a secret value:"**. In MetaMask, select **Poster → ⋮ → Account details → Show private key**, copy it, paste it at the prompt (it stays invisible; that's normal) and press **Enter**.
 
-Then:
+Then deploy the keeper:
 ```powershell
 wr deploy
+cd ..
 ```
-Open the keeper's health page: https://cloudana-keeper.amraldabbas19.workers.dev/health. It should show your settlement address and the poster's ETH balance.
 
-✅ Tell Claude: *"keeper deployed"*.
+**You should see:**
+- `✨ Success! Uploaded secret` three times, and `Deployed cloudana-keeper` with a `schedule: */5 * * * *` line.
+- https://cloudana-keeper.amraldabbas19.workers.dev/health shows `"settlement":"0x…"` (your new contract) and a `posterBalanceEth` above 0.
+
+**If it goes wrong:**
+- `/health` shows an error about the API → the two `INTERNAL_API_KEY` values differ (e.g. you opened a new window between lines, so `$k` was empty). Re-run the whole block from `$k = …` in one window.
+- `posterBalanceEth: "0"` → fund the Poster (step 3d).
+
+✅ Tell Claude: **"keeper deployed"**.
 
 ---
 
-## Step 6: Put CLD into the settlement escrow (10 min)
-The new contract minted 1,000,000 test CLD to your Safe. The settlement needs some of it in escrow before it can settle batches.
+## Step 6: Fund the escrow (10 min)
 
-1. Go to https://app.safe.global, open your **Cloudana Testnet** Safe, and click **Apps → Transaction Builder**.
-2. **First call:**
-   - Address: the **CLD token** address (Claude gives it to you after step 4).
-   - If it asks for an ABI, paste this:
+**Why:** the token contract minted **1,000,000 test CLD** to your Safe. Free test credits in the console are tracked off-chain, so the settlement contract needs real (test) CLD parked in it to burn when it settles fees. Without it the keeper says *"fees exceed free escrow"* and nobody gets paid.
+
+You'll create **two actions in one batch**:
+- `approve` lets the settlement contract take CLD from the Safe;
+- `deposit` moves 10,000 CLD into it.
+
+Claude gives you both addresses (token and settlement) after step 4.
+
+**Do:**
+1. Go to https://app.safe.global, select the **Cloudana Testnet** Safe, and check the balance shows **1,000,000 CLD** (under *Assets*; you may need to enable "show all tokens").
+2. Left menu **Apps** → search **Transaction Builder** → open it.
+3. **First action (approve):**
+   - **Enter Address:** the **CLD token address**.
+   - If a box asks for an **ABI**, paste:
      ```json
      [{"type":"function","name":"approve","stateMutability":"nonpayable","inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[{"type":"bool"}]}]
      ```
-   - Method `approve`, spender = the **settlement** address, amount = `10000000000000000000000` (10,000 CLD, written with 18 zeros of decimals).
+   - **Contract Method:** `approve`.
+   - **spender:** the **settlement address**.
+   - **amount:** `10000000000000000000000` (that's 10,000 followed by 18 zeros, because CLD has 18 decimals).
    - Click **Add transaction**.
-3. **Second call:**
-   - Address: the **settlement** address.
-   - ABI:
+4. **Second action (deposit):**
+   - **Enter Address:** the **settlement address**.
+   - ABI (if asked):
      ```json
      [{"type":"function","name":"deposit","stateMutability":"nonpayable","inputs":[{"name":"amount","type":"uint256"}],"outputs":[]}]
      ```
-   - Method `deposit`, amount = `10000000000000000000000`.
+   - **Method:** `deposit`, **amount:** `10000000000000000000000`.
    - Click **Add transaction**.
-4. Click **Create batch**, then **Send batch**, and sign with Owner 1.
-5. Switch MetaMask to **Safe Owner 2**, open the pending transaction in the Safe app, click **Confirm**, then **Execute**.
+5. Click **Create Batch → Send Batch → Sign** (MetaMask on Safe Owner 1).
+6. In MetaMask switch to **Safe Owner 2**, reload the Safe page, open **Transactions → Queue**, click the batch, then **Confirm**, and finally **Execute**.
 
-✅ Tell Claude: *"escrow funded"*.
+**You should see:** the transaction moves to **History** as *Success*, and the Safe's CLD balance drops to 990,000.
+
+**If it goes wrong:**
+- *"Transaction will fail"* warning → check the amount has exactly 22 digits and the addresses aren't swapped (token first, settlement second).
+- Execute is greyed out → the second owner hasn't confirmed yet.
+
+✅ Tell Claude: **"escrow funded"**. Claude then watches the first hourly batch go through end to end.
 
 ---
 
-## Step 7: Create privacy@ and abuse@ (5 min)
-cloudana.io email runs on **Microsoft 365 (Outlook)**. Claude didn't touch it, because Cloudflare Email Routing would have broken your inbox.
+## Step 7: Email aliases privacy@ and abuse@ (5 min)
 
-1. Go to https://admin.microsoft.com and sign in as the admin.
-2. Open **Users → Active users** and click your own user.
-3. Under **Aliases**, click **Manage username and email**.
-4. Add alias `privacy` with domain `cloudana.io`, and save. Do the same for `abuse`.
+**Why:** the Terms and Privacy pages tell people to write to `privacy@cloudana.io` and `abuse@cloudana.io`. Your cloudana.io email runs on **Microsoft 365**, so add them there as free aliases. (Claude deliberately did not switch on Cloudflare's email feature; it would have broken your inbox.)
 
-Mail to those addresses now lands in your inbox. Test by emailing `abuse@cloudana.io` from your Gmail.
+**Do:**
+1. Go to **https://admin.microsoft.com** and sign in with your Microsoft 365 admin account.
+2. Left menu **Users → Active users**, then click your own name.
+3. On the **Account** tab, find **Aliases → Manage username and email**.
+4. Under **Aliases**, type `privacy`, make sure the domain dropdown says `cloudana.io`, click **Add**, then **Save changes**.
+5. Repeat for `abuse`.
 
-✅ Tell Claude: *"aliases done"*.
+**You should see:** both aliases listed. Within ~15 minutes, an email from your Gmail to `abuse@cloudana.io` arrives in your Outlook inbox.
+
+**If it goes wrong:** no admin rights? Then whoever set up Microsoft 365 for cloudana.io needs to do it.
+
+✅ Tell Claude: **"aliases done"**.
 
 ---
 
 ## Step 8: Hosting addresses `*.sites.cloudana.io` (10 min, ~$10/month; can wait)
-Only needed once someone hosts a site. The gateway Worker is already deployed; it needs a DNS record and a certificate.
 
-1. Go to https://dash.cloudflare.com, then **cloudana.io → DNS → Records → Add record**:
-   - Type **AAAA**, Name `*.sites`, IPv6 address `100::`.
-   - Proxy status **Proxied** (orange cloud).
-   - Click **Save**.
-2. **SSL/TLS → Edge Certificates → Order Advanced Certificate**:
-   - Hostnames: `sites.cloudana.io` and `*.sites.cloudana.io`.
-   - Keep the defaults and order it. It needs the Advanced Certificate Manager add-on (~$10/month).
-   - The certificate usually becomes **Active** within a few minutes to an hour.
+**Why:** when someone hosts a website on Cloudana, it gets an address like `https://<id>.sites.cloudana.io`. The gateway that serves those is already deployed; it needs one DNS record, plus a certificate so browsers show the padlock. The free certificate only covers one level (`*.cloudana.io`), so `*.sites.cloudana.io` needs Cloudflare's paid **Advanced Certificate Manager** (about $10/month). Only needed once the first hosting node is online.
 
-✅ Tell Claude: *"sites DNS and certificate done"*. Claude tests it end to end.
+**Do:**
+1. Go to **https://dash.cloudflare.com**, then click **cloudana.io**.
+2. **DNS → Records → + Add record**:
+   - **Type:** `AAAA`
+   - **Name:** `*.sites`
+   - **IPv6 address:** `100::`
+   - **Proxy status:** orange cloud **ON (Proxied)**
+   - Click **Save**. (`100::` is a placeholder; Cloudflare intercepts every request before it goes anywhere.)
+3. **SSL/TLS → Edge Certificates → Order an advanced certificate** (subscribe to Advanced Certificate Manager if asked):
+   - **Hostnames:** `sites.cloudana.io` and `*.sites.cloudana.io`.
+   - Leave the other defaults and click **Save / Order**.
+4. Wait until the certificate status says **Active** (minutes to an hour).
+
+**You should see:** https://test.sites.cloudana.io shows a small dark *"This site is not here"* page with a valid padlock.
+
+✅ Tell Claude: **"sites done"**. Claude tests a real site end to end.
 
 ---
 
-## Step 9: Make the node image public (2 min, after Claude bakes in the step-2 address)
-1. Go to https://github.com, click your profile picture, then **Your profile → Packages**.
-2. Click **cloudana-node-agent → Package settings** (right side).
-3. At the bottom, under **Danger Zone**, click **Change visibility → Public**, type the name to confirm, and click **I understand**.
+## Step 9: Make the node image public (2 min, after Claude bakes in your step-2 address)
 
-✅ Tell Claude: *"image is public"*.
+**Why:** node operators download the Cloudana node software from GitHub's package registry. New packages start private, so it must be public before anyone, including your workstation, can download it without logging in.
+
+**Do:**
+1. Go to **https://github.com/AmrDab?tab=packages**.
+2. Click **cloudana-node-agent**, then **Package settings** (right side).
+3. Scroll to **Danger Zone → Change visibility**, choose **Public**, type `cloudana-node-agent` to confirm, and click **I understand…**.
+
+**You should see:** the package page shows a **Public** badge.
+
+✅ Tell Claude: **"image public"**.
 
 ---
 
 ## Step 10: Your workstation as node #1 (when it's ready)
-Tell Claude when the workstation is running. You'll get:
 
-1. the one command that installs and starts the agent;
-2. how to forward ports **42000–42100** on your router to the workstation (so hosted sites are reachable);
-3. a link the agent prints. Open it and sign with MetaMask to bind the node to your wallet.
+Tell Claude **"workstation ready"**, with its operating system (Windows/Linux) and whether it has an NVIDIA GPU. You'll get:
+1. one install command (Docker or Node), pre-filled with the right settings;
+2. router instructions to forward ports **42000–42100** to the workstation, so the sites it hosts can be reached;
+3. a link the agent prints. Open it, connect MetaMask (any account; your earnings go there) and sign to bind the node to you.
 
-Home computers run compute jobs and static sites only; containers and GPU rentals stay off until a hardened datacenter node exists.
+Home machines run **compute jobs and static websites only**. Container and GPU rentals stay off until a properly hardened datacenter node exists. That's a security decision, not a bug.
 
 ---
 
-## Before CLD has any real value (not now)
-- A lawyer reviews the token and payment setup.
-- A professional audit of the v2 contracts.
-- Add a guardian signer who isn't you, and a 48-hour delay on admin changes.
-- Re-check the mainnet numbers in `docs/DECISIONS_CONSENSUS.md`.
+## Later: before CLD has any real value
+Not needed for testnet, but don't skip them before mainnet:
+- a lawyer reviews the token and payment setup;
+- a professional audit of the two v2 contracts;
+- a guardian signer who isn't you, and a 48-hour delay on admin changes;
+- re-checking the mainnet numbers in `docs/DECISIONS_CONSENSUS.md`.
