@@ -13,7 +13,11 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["node"]
+    "types": ["node"],
+    // ../shared/sealed.ts has no node_modules above it in CI or the Docker build stage: resolve its
+    // @noble/* imports from the agent's own dependencies (at runtime the image symlinks them).
+    "baseUrl": ".",
+    "paths": { "@noble/*": ["./node_modules/@noble/*"] }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules"]
