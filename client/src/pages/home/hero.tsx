@@ -15,7 +15,7 @@ function Hud() {
       <div className={row}><i className="size-1.5 rounded-full bg-faint" /> Home node</div>
       <div className={row}><i className="h-px w-4 bg-gradient-to-r from-work to-ok" /> Live link</div>
       <div className="mt-1 border-t border-line pt-2 font-mono text-[11px] tabular-nums text-faint">
-        {data ? `${int(data.nodesOnline)} online now` : "—"} · positions illustrative
+        {data && data.nodesOnline > 0 ? `${int(data.nodesOnline)} online now · ` : ""}positions illustrative
       </div>
     </div>
   );
@@ -53,7 +53,7 @@ export function Hero() {
               Open console <ArrowRight className="size-4" aria-hidden />
             </a>
           </div>
-          <p className="mt-4 font-mono text-xs text-faint">Testnet is open. The waitlist is for services not yet live.</p>
+          <p className="mt-4 font-mono text-xs text-faint">Public testnet: the console and verifier are live, first nodes coming online. The waitlist is for services not yet live.</p>
         </div>
 
         <div className="mx-auto mt-10 w-full max-w-[440px] lg:hidden">
