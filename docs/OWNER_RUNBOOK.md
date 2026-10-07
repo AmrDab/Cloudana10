@@ -398,3 +398,22 @@ Not needed for testnet, but don't skip them before mainnet:
 - a professional audit of the two v2 contracts;
 - a guardian signer who isn't you, and a 48-hour delay on admin changes;
 - re-checking the mainnet numbers in `docs/DECISIONS_CONSENSUS.md`.
+
+---
+
+## Anytime: download your waitlist
+
+Sign-ups are stored in Cloudana's own database (Cloudflare D1, the same one the API uses). It's backed up automatically: D1 "Time Travel" can restore any point in the last 30 days (7 on the free Workers plan). You don't need a separate service like Supabase.
+
+To download everyone as a spreadsheet, open PowerShell (step 0) and paste:
+```powershell
+cd client\api
+$rows = wr d1 execute cloudana-db --remote --json --command "SELECT datetime(created_at/1000,'unixepoch') AS joined_utc, email, role, newsletter, ref_code, referred_by, country, company FROM waitlist ORDER BY created_at" 2>$null | ConvertFrom-Json | ForEach-Object { $_.results }
+if ($rows) { $rows | Export-Csv "$HOME\Desktop\cloudana-waitlist.csv" -NoTypeInformation; "Saved $(@($rows).Count) sign-ups to your Desktop" } else { "No sign-ups yet." }
+cd ..\..
+```
+**You should see:** `Saved N sign-ups to your Desktop` and a file `cloudana-waitlist.csv` there (open it with Excel), or `No sign-ups yet.`
+- `newsletter` = 1 means they agreed to emails.
+- `referred_by` is the code of whoever referred them.
+
+Only email people with `newsletter = 1`, and honour unsubscribe requests: the privacy page promises it.
