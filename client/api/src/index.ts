@@ -83,6 +83,19 @@ if (env.WORKLOAD_STATUS_POLLING_ENABLED) {
 async function main() {
   await initBuildProviderStore();
   serve({ fetch: app.fetch, port: env.PORT });
+  // Same jobs as the Worker cron (src/worker.ts scheduled()): duties every minute, price controller
+  // (self-limits to once an hour), Deposited watcher (inactive until SETTLEMENT_ADDRESS is set).
+  const cron = async () => {
+    const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }] = await Promise.all([
+      import("./services/deployment-duties.service.js"),
+      import("./services/pricing.service.js"),
+      import("./services/deposit-watcher.service.js"),
+    ]);
+    for (const [name, run] of [["duties", () => runDutiesCron()], ["price", () => runPriceControllerCron()], ["deposits", () => runDepositWatcherCron()]] as const) {
+      await run().catch((err: unknown) => L.error(`[cron] ${name} failed:`, err));
+    }
+  };
+  setInterval(() => void cron(), 60_000);
   L.success(`Orchestrator listening on :${env.PORT}`);
   L.log(`Swagger UI: http://localhost:${env.PORT}/v1/swagger`);
 }

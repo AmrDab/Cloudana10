@@ -7,7 +7,10 @@
  * idempotent: CREATE … IF NOT EXISTS, and ALTERs that tolerate "duplicate column".
  */
 import { getD1 } from "./storage.js";
+import { getEnv } from "../config/env.js";
 import { log } from "./logger.js";
+import { HOSTING_MIGRATIONS } from "../db/migrations-hosting.js";
+import { NODE_SECURITY_MIGRATIONS } from "../db/migrations-node-security.js";
 
 export const V1_TABLES = [
   `CREATE TABLE IF NOT EXISTS nodes (
@@ -77,6 +80,18 @@ export const V1_TABLES = [
   `CREATE TABLE IF NOT EXISTS deployment_stale_nodes (
     deployment_id TEXT NOT NULL, node TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (deployment_id, node))`,
   `CREATE INDEX IF NOT EXISTS idx_deployment_stale_nodes_node ON deployment_stale_nodes(node)`,
+  // Guards one-off data migrations (key 'epoch_seconds' = the EPOCH_SECONDS reward_entries.epoch was computed with).
+  `CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+  // Price controller state (docs/IMPL_SPEC_2026-10.md): one row, id = 1.
+  `CREATE TABLE IF NOT EXISTS price_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1), price_ncld_per_tmac INTEGER NOT NULL, ema_ncld_per_tmac REAL NOT NULL,
+    stepped_at INTEGER, quote_price INTEGER, quote_expires_at INTEGER)`,
+  // Testnet credit caps (routes/v1/dev.ts): one row per wallet / IP bucket / ASN-day, claimed with an atomic upsert
+  // (KV is eventually consistent, so concurrent claims all passed a check-then-set there).
+  `CREATE TABLE IF NOT EXISTS testnet_claims (key TEXT PRIMARY KEY, at INTEGER NOT NULL, n INTEGER NOT NULL DEFAULT 1)`,
+  // Node request nonces (middleware/node-auth.ts): INSERT … ON CONFLICT DO NOTHING makes the replay check atomic.
+  `CREATE TABLE IF NOT EXISTS node_nonces (key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_node_nonces_expires ON node_nonces(expires_at)`,
 ];
 
 const BALANCE_COLUMNS = [
@@ -97,6 +112,9 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE deployments ADD COLUMN web_token TEXT",
   // 1 = the owner asked to delete the workstation's volume too: the node gets action "purge" until it confirms.
   "ALTER TABLE deployments ADD COLUMN purge_pending INTEGER NOT NULL DEFAULT 0",
+  // Settlement v2: the treasury is posted as an amount, not a leaf; settled_at feeds /network lastSettledEpochAt.
+  "ALTER TABLE epochs ADD COLUMN treasury_ucld INTEGER",
+  "ALTER TABLE epochs ADD COLUMN settled_at INTEGER",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`
@@ -110,7 +128,7 @@ let ready: Promise<void> | null = null;
 async function run(): Promise<void> {
   const db = getD1();
   for (const sql of V1_TABLES) await db.prepare(sql).run();
-  for (const sql of BALANCE_COLUMNS) {
+  for (const sql of [...BALANCE_COLUMNS, ...NODE_SECURITY_MIGRATIONS, ...HOSTING_MIGRATIONS]) {
     try {
       await db.prepare(sql).run();
     } catch (err) {
@@ -118,6 +136,40 @@ async function run(): Promise<void> {
     }
   }
   await db.prepare(MIGRATE_BALANCES).run();
+  await migrateEpochs(db);
+}
+
+/**
+ * reward_entries.epoch is floor(created_at / (EPOCH_SECONDS × 1000)). When EPOCH_SECONDS changes
+ * (120 s → 3600 s on testnet) — or on the first run of a database that predates schema_meta — the
+ * unsettled settlement rows were made under the old split, budget and contract, which the v2
+ * Settlement would reject (treasury < 3%, epochs before genesis): pending A/B/treasury entries and
+ * closed/posted epochs (with their posted entries) are voided as 'clawed'. Verifier points are only
+ * re-bucketed. schema_meta('epoch_seconds') makes this a no-op until the setting changes again.
+ * Exported for its test; ensureSchema() is the caller.
+ */
+export async function migrateEpochs(db = getD1()): Promise<void> {
+  const epochSeconds = String(getEnv().EPOCH_SECONDS);
+  const meta = await db.prepare("SELECT value FROM schema_meta WHERE key = 'epoch_seconds'").first<{ value: string }>();
+  if (meta?.value === epochSeconds) return;
+  const r = await db
+    .prepare("UPDATE reward_entries SET epoch = CAST(created_at / ? AS INTEGER) WHERE status = 'pending' AND lane = 'verify'")
+    .bind(Number(epochSeconds) * 1000)
+    .run();
+  const voided = await db
+    .prepare(
+      "UPDATE reward_entries SET status = 'clawed' WHERE lane IN ('A','B','treasury') AND (status = 'pending' OR " +
+        "(status = 'posted' AND epoch IN (SELECT id FROM epochs WHERE status IN ('closed','posted'))))",
+    )
+    .run();
+  await db.prepare("UPDATE epochs SET status = 'void' WHERE status IN ('closed','posted')").run();
+  await db
+    .prepare("INSERT INTO schema_meta (key, value) VALUES ('epoch_seconds', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .bind(epochSeconds)
+    .run();
+  log.api.warn(
+    `[schema] EPOCH_SECONDS ${meta?.value ?? "unset"} → ${epochSeconds}: re-bucketed ${r.meta?.changes ?? 0} verifier entries, voided ${voided.meta?.changes ?? 0} unsettled settlement entries`,
+  );
 }
 
 /** Create/upgrade the v1 tables once per isolate. Retries on the next call if it failed. */

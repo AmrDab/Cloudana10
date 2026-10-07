@@ -8,7 +8,7 @@ import {
   AlertTriangle, Building2, Check, Container, Cpu, Globe, HardDrive, KeyRound, Link2, Loader2, Server, ShieldCheck, Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, cld, int, short, signWithSessionWallet } from "@/lib/cld";
+import { api, cld, int, short, signWithSessionWallet, throughputEarningsUcld } from "@/lib/cld";
 import { useNetwork } from "@/hooks/useNetwork";
 import { StatusChip } from "@/components/cld/status-chip";
 import { openWaitlist } from "@/components/waitlist";
@@ -245,7 +245,7 @@ function FloorPrice() {
     <Panel className="flex flex-col">
       <PanelHeader title="Floor price" kicker="Your minimum" right={<Pill tone="work">Not enforced yet</Pill>} />
       <div className="flex flex-1 flex-col gap-3 p-5">
-        <label htmlFor="floor" className="font-mono text-[11px] tracking-[.04em] text-faint">µCLD per million multiply-adds</label>
+        <label htmlFor="floor" className="font-mono text-[11px] tracking-[.04em] text-faint">nCLD per tera multiply-adds</label>
         <div className="flex gap-2">
           <input
             id="floor"
@@ -255,7 +255,7 @@ function FloorPrice() {
               setV(e.target.value.replace(/[^0-9]/g, ""));
               setSaved(false);
             }}
-            placeholder={net.data ? String(net.data.priceUcldPerMmac) : "—"}
+            placeholder={net.data ? String(net.data.priceNcldPerTmac) : "—"}
             className="h-10 min-w-0 flex-1 rounded-md border border-line-2 bg-bg-2 px-3 font-mono text-sm tabular-nums text-text placeholder:text-faint"
           />
           <button
@@ -418,8 +418,8 @@ function NodeBones() {
 }
 
 // ── Earnings estimate ──────────────────────────────────────────────────────
-/** Share of each verified job's fee minted to the provider (the rest: 2 % burn, 0.5 % treasury). */
-const PROVIDER_SHARE = 0.975;
+/** Share of each verified job's fee minted to the provider (the rest: 3 % treasury, 2 % net burn). */
+const PROVIDER_SHARE = 0.95;
 
 function EarningsEstimate({ className }: { className?: string }) {
   const net = useNetwork();
@@ -440,9 +440,9 @@ function EarningsEstimate({ className }: { className?: string }) {
     setFrom(measured[0].address);
   }, [measured, from]);
 
-  const price = net.data?.priceUcldPerMmac ?? null;
+  const price = net.data?.priceNcldPerTmac ?? null;
   const hasNode = measured.length > 0;
-  const perDay = price == null || !hasNode ? null : Math.round(price * mmac * 86_400 * (util / 100) * PROVIDER_SHARE);
+  const perDay = price == null || !hasNode ? null : Math.round(throughputEarningsUcld(mmac, price, 86_400) * (util / 100) * PROVIDER_SHARE);
 
   return (
     <Panel className={cn("flex flex-col", className)}>
@@ -509,11 +509,11 @@ function EarningsEstimate({ className }: { className?: string }) {
           <dl className="grid gap-1 font-mono text-[12px]">
             <div className="flex justify-between gap-3">
               <dt className="text-faint">Price</dt>
-              <dd className="tabular-nums text-muted-foreground">{price == null ? "—" : `${int(price)} µCLD/MMAC`}</dd>
+              <dd className="tabular-nums text-muted-foreground">{price == null ? "—" : `${int(price)} nCLD/TMAC`}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-faint">Your share</dt>
-              <dd className="tabular-nums text-muted-foreground">97.5 %</dd>
+              <dd className="tabular-nums text-muted-foreground">95 %</dd>
             </div>
           </dl>
         </div>

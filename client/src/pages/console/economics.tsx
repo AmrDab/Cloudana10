@@ -70,7 +70,7 @@ export default function EconomicsPage() {
       <PageHeader
         kicker="Economics"
         title="Twenty years of the two-lane mint, simulated."
-        lede="Every fee is burned; providers are minted 97.5 % of it, the treasury 0.5 %, and a capped subsidy on top. Pick a scenario to see where supply goes."
+        lede="Every fee is burned; the provider is minted 95 % of it, the treasury 3 %, 2 % is destroyed for good, and a capped, declining subsidy is minted on top. Pick a scenario to see where supply goes."
       />
 
       <div role="note" className="mb-6 rounded-lg border border-work/60 bg-work/[.06] px-4 py-3 text-sm text-text">
@@ -121,7 +121,7 @@ export default function EconomicsPage() {
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="Supply, year 20" value={data[last].supplyM} caption={`M CLD · genesis ${p.genesisSupplyM}M`} tone="ok" />
         <Tile label="Net change, year 20" value={data[last].netInflationPct} caption="% of supply that year" tone={data[last].netInflationPct < 0 ? "burn" : "ok"} />
-        <Tile label="Treasury, year 20" value={data[last].treasuryM} caption="M CLD from the 0.5 % stream" tone="chain" />
+        <Tile label="Treasury, year 20" value={data[last].treasuryM} caption={`M CLD from the ${p.treasury * 100} % stream`} tone="chain" />
         <Tile label="Subsidy share, year 5" value={data[4].subsidySharePct} caption="% of CLD minted that year" tone="work" />
       </div>
 
@@ -181,14 +181,14 @@ export default function EconomicsPage() {
       <Panel className="mt-6">
         <PanelHeader kicker="Assumptions" title="What the simulation takes as given" />
         <ul className="grid gap-x-8 gap-y-2 px-5 py-4 text-sm text-muted-foreground md:grid-cols-2">
-          <Assumption k="Fee split">burn 100 % of F · mint {p.laneA * 100} % provider + {p.treasury * 100} % treasury</Assumption>
-          <Assumption k="Subsidy">min(ρ·F, epoch budget), ρ = {p.rho}; cluster test: largest wallet ≤ {p.clusterSCap * 100} %</Assumption>
+          <Assumption k="Fee split">burn 100 % of F · mint {p.laneA * 100} % provider + {p.treasury * 100} % treasury (rounded up per job) · {Math.round(p.netBurn * 100)} % destroyed</Assumption>
+          <Assumption k="Subsidy">min(ρ·F, epoch budget), ρ = {p.rho}; per-operator gate: an operator above {p.clusterSCap * 100} % loses its own lane B; fewer than {p.clusterNMin} clusters, no lane B</Assumption>
           <Assumption k="Chain cap">{p.chainRate}</Assumption>
-          <Assumption k="Budget (proposal)">{p.budgetProposal}</Assumption>
-          <Assumption k="Settlement lag">{p.settlementLagDays} days (vest + veto)</Assumption>
-          <Assumption k="Genesis">{p.genesisSupplyM}M CLD at ${p.cldUsd0} (whitepaper; open decision)</Assumption>
+          <Assumption k="Budget">{p.budget}</Assumption>
+          <Assumption k="Settlement lag">24 h epochs: lane A, treasury and burn after {p.laneALagDays} days; lane B after {p.laneBLagDays} days (7-day vest)</Assumption>
+          <Assumption k="Genesis">{p.genesisSupplyM}M CLD at mainnet, ${p.cldUsd0} at start (allocations and vesting not modelled)</Assumption>
           <Assumption k="Demand">${p.demandUsd0PerMonth.toLocaleString("en-US")}/month at start, elasticity {p.demandElasticity}, hosting {p.hostingShare * 100} % (no subsidy)</Assumption>
-          <Assumption k="Price controller">target utilization {p.targetUtilization[0]}–{p.targetUtilization[1]}, ±12.5 %/month</Assumption>
+          <Assumption k="Price controller">hourly; holds when idle; ±{p.ctrlMaxStepPerHour * 100} %/h toward utilization {p.targetUtilization[0]}–{p.targetUtilization[1]}; 0.1×–10× the 30-day EMA</Assumption>
           <Assumption k="Velocity cap">fees ≤ {p.velocityCap}× supply per year, else CLD/USD is lifted</Assumption>
           <Assumption k="Verifiers">credits only, never CLD</Assumption>
         </ul>

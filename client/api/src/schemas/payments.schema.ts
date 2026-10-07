@@ -47,22 +47,6 @@ export const BalanceResponseSchema = successSchema({
   updatedAt: z.string(),
 });
 
-export const DepositCryptoRequestSchema = z.object({
-  txHash: z.string({ required_error: "txHash is required" }).min(1, "txHash is required"),
-  cldAmount: z
-    .number({ invalid_type_error: "cldAmount must be a positive number" })
-    .positive("cldAmount must be a positive number"),
-  chainId: z.union([z.string(), z.number()]).optional(),
-});
-
-export const DepositCryptoResponseSchema = successSchema({
-  address: z.string(),
-  cldCredited: z.number(),
-  txHash: z.string(),
-  transactionId: z.string(),
-  newBalance: z.number(),
-});
-
 export const HistoryQuerySchema = z.object({
   limit: z.string().optional().openapi({ description: "Page size (default 50, max 200)" }),
   offset: z.string().optional().openapi({ description: "Offset (default 0)" }),

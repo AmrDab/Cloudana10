@@ -1,25 +1,13 @@
-// Payment hooks — balance, add funds mutation, transaction history
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAccount } from "wagmi";
+// Payment hooks — balance and transaction history
+import { useQuery } from "@tanstack/react-query";
 import { useWalletAuth } from "@/hooks/useWalletAuth";
-import { useToast } from "@/hooks/use-toast";
-import {
-  getBalance,
-  createCheckoutSession,
-  depositCrypto,
-  getTransactionHistory,
-  getConversionRate,
-  type PaymentBalance,
-  type Transaction,
-  type CheckoutSession,
-} from "@/lib/payments";
+import { getBalance, getTransactionHistory, type PaymentBalance, type Transaction } from "@/lib/payments";
 
 // ── Query keys ─────────────────────────────────────────────────────────────
 
 export const paymentQueryKeys = {
   balance: (wallet: string) => ["payments", "balance", wallet] as const,
   transactions: (wallet: string) => ["payments", "transactions", wallet] as const,
-  rate: () => ["payments", "rate"] as const,
 };
 
 // ── useBalance ─────────────────────────────────────────────────────────────
@@ -51,101 +39,6 @@ export function useBalance() {
     isError: query.isError,
     error: query.error,
     refetch: query.refetch,
-  };
-}
-
-// ── useConversionRate ──────────────────────────────────────────────────────
-
-/**
- * Fetch the current USD ↔ CLD conversion rate.
- * Cached for 5 minutes — rates don't change frequently.
- */
-export function useConversionRate() {
-  const query = useQuery<{ usdToCld: number; cldToUsd: number }, Error>({
-    queryKey: paymentQueryKeys.rate(),
-    queryFn: getConversionRate,
-    staleTime: 5 * 60_000,
-    // Fallback while loading — matches the backend default CLD_USD_RATE=100
-    placeholderData: { usdToCld: 100, cldToUsd: 0.01 },
-  });
-
-  return {
-    rate: query.data,
-    isLoading: query.isLoading,
-    error: query.error,
-  };
-}
-
-// ── useAddFunds ────────────────────────────────────────────────────────────
-
-export interface AddFundsCardParams {
-  method: "card";
-  amountUsd: number;
-}
-
-export interface AddFundsCryptoParams {
-  method: "crypto";
-  txHash: string;
-  amountCld: number;
-}
-
-export type AddFundsParams = AddFundsCardParams | AddFundsCryptoParams;
-
-export interface AddFundsResult {
-  method: "card" | "crypto";
-  /** For card: Stripe checkout session (redirect or embed) */
-  session?: CheckoutSession;
-  /** For crypto: deposit confirmation */
-  creditsAdded?: number;
-  newBalance?: number;
-}
-
-/**
- * Mutation to add funds to the user's account.
- * - Card: creates a Stripe checkout session → caller handles redirect/embed
- * - Crypto: records the on-chain deposit tx after confirmation
- */
-export function useAddFunds() {
-  const { address, chainId } = useAccount();
-  const qc = useQueryClient();
-  const { toast } = useToast();
-  const wallet = address ?? "";
-
-  const mutation = useMutation<AddFundsResult, Error, AddFundsParams>({
-    mutationFn: async (params) => {
-      if (params.method === "card") {
-        const session = await createCheckoutSession(params.amountUsd);
-        return { method: "card", session };
-      } else {
-        const result = await depositCrypto(params.txHash, params.amountCld, chainId);
-        return {
-          method: "crypto",
-          creditsAdded: result.creditsAdded,
-          newBalance: result.newBalance,
-        };
-      }
-    },
-    onSuccess: () => {
-      // Invalidate balance so it refetches after a successful deposit
-      if (wallet) {
-        qc.invalidateQueries({ queryKey: paymentQueryKeys.balance(wallet) });
-        qc.invalidateQueries({ queryKey: paymentQueryKeys.transactions(wallet) });
-      }
-    },
-    onError: (err) => {
-      toast({ title: "Payment failed", description: err.message, variant: "destructive" });
-    },
-  });
-
-  return {
-    addFunds: mutation.mutate,
-    addFundsAsync: mutation.mutateAsync,
-    isPending: mutation.isPending,
-    isSuccess: mutation.isSuccess,
-    isError: mutation.isError,
-    error: mutation.error,
-    data: mutation.data,
-    reset: mutation.reset,
   };
 }
 

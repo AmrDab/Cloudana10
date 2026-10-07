@@ -1,12 +1,11 @@
 /**
- * Orchestrator loop: periodically find placement decisions, deploy to provider first, then record on-chain.
- * Confirms provider accepted workload before broadcasting recordPlacement.
+ * Orchestrator loop: periodically find placement decisions and deploy to the provider.
+ * The API holds no chain key, so placements are tracked by the status poller, not the WorkloadRegistry.
  */
 import { findPlacements } from "./placement.service.js";
-import { recordPlacement } from "./chain-client.js";
 import { getWorkloadManifestByWorkloadId } from "./ipfs.service.js";
 import { deployToProvider } from "./deploy-to-provider.service.js";
-import { registerWorkloadForPolling } from "./workload-status-poller.service.js";
+import { getPlacementByWorkloadId, registerWorkloadForPolling } from "./workload-status-poller.service.js";
 import { log } from "../lib/logger.js";
 import { getEnv } from "../config/env.js";
 
@@ -39,16 +38,19 @@ async function runPlacementCycle(): Promise<void> {
     for (let i = 0; i < result.decisions.length; i++) {
       const d = result.decisions[i];
       L.log(
-        `[cycle ${id}] action ${i + 1}/${result.decisions.length}: deploy first then recordPlacement workloadId=${d.workloadId} provider=${d.provider}`
+        `[cycle ${id}] action ${i + 1}/${result.decisions.length}: deploy workloadId=${d.workloadId} provider=${d.provider}`
       );
       try {
-        const deployOk = await deployToProvider(d);
-        if (!deployOk) {
-          L.error(`[cycle ${id}] deployToProvider failed for workloadId=${d.workloadId} -> skip recordPlacement`);
+        if (getPlacementByWorkloadId(d.workloadId)) {
+          L.dim(`[cycle ${id}] workloadId=${d.workloadId} already deployed (tracked by the status poller) -> skip`);
           continue;
         }
-        const receipt = await recordPlacement(d.workloadId, d.provider, d.instanceId);
-        L.success(`[cycle ${id}] recordPlacement SUCCESS workloadId=${d.workloadId} tx=${receipt.transactionHash}`);
+        const deployOk = await deployToProvider(d);
+        if (!deployOk) {
+          L.error(`[cycle ${id}] deployToProvider failed for workloadId=${d.workloadId}`);
+          continue;
+        }
+        L.success(`[cycle ${id}] deploy SUCCESS workloadId=${d.workloadId}`);
         
         // Register workload for status polling
         registerWorkloadForPolling(d.workloadId, d.instanceId, d.provider, d.endpoint, d.deviceId, d.ownerAddress);
@@ -63,7 +65,7 @@ async function runPlacementCycle(): Promise<void> {
         }
       } catch (e) {
         L.error(
-          `[cycle ${id}] recordPlacement FAILED workloadId=${d.workloadId} provider=${d.provider}:`,
+          `[cycle ${id}] placement FAILED workloadId=${d.workloadId} provider=${d.provider}:`,
           e instanceof Error ? e.message : e
         );
       }

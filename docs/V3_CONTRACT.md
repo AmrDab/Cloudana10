@@ -1,5 +1,7 @@
 # V3 — hosting, templates, provider depth, security, 20-year economics
 
+> **Superseded values (2026-10-05).** Fee split is now 95 % provider / 3 % treasury / 2 % net burn, price unit nCLD/TMAC + base fee, 1 h testnet epochs, per-operator cluster gate with N_MIN 3, 100M mainnet genesis — see [DECISIONS_CONSENSUS.md](DECISIONS_CONSENSUS.md) and [IMPL_SPEC_2026-10.md](IMPL_SPEC_2026-10.md). Figures below (0.975 / 0.005, 250M, 120 s epochs) are kept as the historical record of this analysis.
+
 Status: build contract · 2026-10-01 · owner ask: "functional end to end, not an MVP; bring back the templates;
 add what Cloudflare does; a coming-up list; mention security and encryption; reuse legacy; prove the chain and
 tokenomics over 20 years."

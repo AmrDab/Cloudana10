@@ -4,9 +4,13 @@ import {
   Activity, Blocks, Box, Brain, Code2, Database, FileCode2, Gamepad2, Globe, HardDrive, MessageSquare, Server, Wrench,
   type LucideIcon,
 } from "lucide-react";
-import type { Template } from "@/components/console/data";
+import type { Deployment, Template } from "@/components/console/data";
 
 export type Kind = "static" | "container";
+
+/** Public gateway address (https://{id}.sites.cloudana.io) from the API's `url`; `endpoint` stays the node origin. */
+export const publicUrl = (d: Deployment): string | null => (d as Deployment & { url?: string | null }).url ?? null;
+export const hostOf = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
 /** The API marks curated starters with `kind`; for imported (awesome-akash) entries, an SDL with an image is a container. */
 export function kindOf(t: Template): Kind {

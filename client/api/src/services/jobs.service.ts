@@ -11,7 +11,8 @@ import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { capture, hold } from "./balance.service.js";
 import { getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
-import { priceUcld, recordJobRewards } from "./ledger.service.js";
+import { recordJobRewards } from "./ledger.service.js";
+import { feeUcld, getPriceQuote } from "./pricing.service.js";
 import { getWorkType } from "./work-types.js";
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 
@@ -79,18 +80,19 @@ export function weightedDraw(drawSeedHex: string, candidates: Candidate[]): stri
 }
 
 /**
- * Cluster test (v1: cluster = payout wallet). Passes when there are ≥ nMin distinct
- * wallets and the largest wallet holds ≤ sCap of eligible throughput; the share
- * check is skipped when only one wallet exists and nMin ≤ 1.
+ * Per-operator cluster gate (cluster = payout wallet). Lane B is withheld for everyone when fewer
+ * than nMin distinct wallets are eligible, and only for `operator` when that wallet holds more than
+ * sCap of eligible throughput — other operators keep their subsidy. The share check is skipped when
+ * only one wallet exists and nMin ≤ 1 (single-node local dev).
  */
-export function clusterTest(candidates: Candidate[], nMin: number, sCap: number): boolean {
+export function clusterTest(candidates: Candidate[], nMin: number, sCap: number, operator: string): boolean {
   const byWallet = new Map<string, number>();
   for (const c of candidates) byWallet.set(c.payout, (byWallet.get(c.payout) ?? 0) + Math.max(c.weight, 0));
   if (byWallet.size < nMin) return false;
   if (byWallet.size === 1 && nMin <= 1) return true;
   const total = [...byWallet.values()].reduce((a, b) => a + b, 0);
   if (total <= 0) return false;
-  return Math.max(...byWallet.values()) / total <= sCap;
+  return (byWallet.get(operator) ?? 0) / total <= sCap;
 }
 
 /** Latest block hash from CHAIN_RPC_URL; "local:<ms>" when unavailable (the prefix flags the fallback). */
@@ -163,7 +165,8 @@ export async function enqueueWorkJob(input: {
   if (invalid) return { ok: false, code: "validation_failed", message: invalid };
 
   const owner = normalizeAddress(input.owner);
-  const price = priceUcld(wt.meter(input));
+  const quote = await getPriceQuote();
+  const price = feeUcld(wt.meter(input), quote.priceNcldPerTmac, getEnv().BASE_FEE_UCLD);
   if (input.maxPriceUcld !== undefined && price > input.maxPriceUcld) {
     return { ok: false, code: "unprocessable", message: `Price ${price} µCLD is above your ceiling of ${input.maxPriceUcld} µCLD` };
   }
@@ -241,7 +244,7 @@ export async function runAssignment(now = Date.now()): Promise<number> {
     const node = weightedDraw(drawSeed, eligible);
     const nonce = crypto.randomUUID();
     const sigma = sha256(job.id + node + nonce + seedSource);
-    const clusterOk = clusterTest(eligible, env.CLUSTER_N_MIN, env.CLUSTER_S_CAP) ? 1 : 0;
+    const clusterOk = clusterTest(eligible, env.CLUSTER_N_MIN, env.CLUSTER_S_CAP, pool.get(node)!.payout!) ? 1 : 0;
 
     const r = await db
       .prepare(

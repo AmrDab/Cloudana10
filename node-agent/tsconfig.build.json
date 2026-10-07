@@ -1,0 +1,16 @@
+{
+  // Production build: compile the agent plus the shared sources it imports (../pouw/src, ../shared) to plain JS,
+  // so the image runs `node dist/node-agent/src/index.js` without tsx. Relative ".ts" imports are rewritten to ".js".
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "..",
+    "outDir": "dist",
+    "sourceMap": false,
+    "declaration": false
+  },
+  "include": ["src/**/*", "../pouw/src/**/*", "../shared/sealed.ts"],
+  "exclude": ["node_modules", "src/**/*.selftest.ts", "src/selftest.ts", "../pouw/src/test*.ts"]
+}

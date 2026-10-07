@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { open } from "../../shared/sealed.ts";
 import { findFreePort, serveSite, writeSite, type StaticSpec } from "./hosting.ts";
-import { dockerRunArgs, realDocker, type ContainerSpec, type DockerOps } from "./container.ts";
+import { dockerRunArgs, imageAllowed, realDocker, type ContainerSpec, type DockerOps } from "./container.ts";
+import { preStartCheck, type HardeningResult } from "./hardening.ts";
 import {
   dueVolumes,
   gpuCountOf,
@@ -29,7 +30,12 @@ export interface DeploymentCommand {
   kind: Kind;
   spec: unknown;
   sealedEnv?: string;
+  /** API: the image is on the curated list. Containers/workstations without it (or a CLOUDANA_IMAGE_ALLOWLIST match) are refused. */
+  imageAllowed?: boolean;
 }
+
+/** Prefix of the `failed` message when this node cannot serve a deployment at all (the API re-queues it elsewhere). */
+export const NODE_CANNOT_SERVE = "node cannot serve:";
 
 /** Body of POST /v1/nodes/deployments/{id}/status. */
 export interface StatusBody {
@@ -45,6 +51,7 @@ export interface DeploymentRecord {
   id: string;
   kind: Kind;
   port: number | null; // host port of the first exposed port (null: container with no ports)
+  ports?: number[]; // every host port it holds (absent on records written by agents < 1.1.0: then [port])
   specHash: string; // sha256 hex of JSON.stringify(spec)
   startedAt: number; // ms epoch
   keepDays?: number; // workstation: days to keep the volume after stop
@@ -52,8 +59,12 @@ export interface DeploymentRecord {
   report?: StatusBody; // workstation: the running report (endpoint with token, sshEndpoint), re-sent on resume
 }
 
-/** Sends a status report. Resolve true = delivered or permanently rejected; false = retry later. */
-export type Reporter = (id: string, body: StatusBody) => Promise<boolean>;
+/**
+ * Sends a status report. true = delivered; false = API unreachable, retry later; { rejected } = the API refused it
+ * for good (a rejected `running` makes the manager tear the deployment down and report it as unservable).
+ */
+export type ReportOutcome = boolean | { rejected: string };
+export type Reporter = (id: string, body: StatusBody) => Promise<ReportOutcome>;
 
 export interface ManagerOptions {
   dataDir: string;
@@ -61,7 +72,11 @@ export interface ManagerOptions {
   ports: [number, number];
   privateKey: string;
   gpuCount?: number; // GPUs nvidia-smi reported (0 or absent: no gpu capability)
+  /** Operator opted in AND the boot hardening self-check passed. Absent/false: container and workstation starts are refused. */
+  containersReady?: boolean;
   docker?: DockerOps; // default: the real docker CLI (selftests inject a fake)
+  /** Re-checks the egress rules and tenant network before each container start (default: the real iptables/docker). */
+  hardening?: () => Promise<HardeningResult>;
   report: Reporter;
   log: (msg: string) => void;
 }
@@ -121,8 +136,9 @@ export class DeploymentManager {
     return [...this.kept.values()];
   }
 
+  /** Every host port held by a known deployment (all ports of multi-port containers, not just the first). */
   private takenPorts() {
-    return new Set([...this.records.values()].map((r) => r.port).filter((p): p is number => p !== null));
+    return new Set([...this.records.values()].flatMap((r) => r.ports ?? (r.port === null ? [] : [r.port])));
   }
 
   /** Queue a report and try to deliver it now; undelivered reports retry on flush(). */
@@ -145,14 +161,32 @@ export class DeploymentManager {
   private async flushOnce(): Promise<void> {
     for (const [id, body] of [...this.pending]) {
       if (this.pending.get(id) !== body) continue;
-      let done = false;
+      let outcome: ReportOutcome = false;
       try {
-        done = await this.o.report(id, body);
+        outcome = await this.o.report(id, body);
       } catch (err) {
         this.o.log(`deployment ${id}: status report error: ${(err as Error).message}`);
       }
-      if (done && this.pending.get(id) === body) this.pending.delete(id);
+      if (outcome === false) continue;
+      if (this.pending.get(id) === body) this.pending.delete(id);
+      if (typeof outcome === "object" && body.status === "running") await this.refuse(id, outcome.rejected);
     }
+  }
+
+  /**
+   * The API refused our `running` report (e.g. the endpoint host is not the one we announced): keeping the
+   * deployment up would leave it stuck in "assigned" forever. Tear it down and report it as unservable so the
+   * API can place it on another node.
+   */
+  private async refuse(id: string, why: string) {
+    // Usually reached from the start() that just reported, so this id is still marked busy: no extra guard here.
+    const rec = this.records.get(id);
+    if (!rec) return;
+    this.o.log(`deployment ${id}: running report rejected (${why}) — releasing it`);
+    this.records.delete(id);
+    this.save();
+    await this.cleanup(id, rec.kind, rec.keepDays);
+    this.pending.set(id, { status: "failed", message: `${NODE_CANNOT_SERVE} ${why}`.slice(0, 500) });
   }
 
   /** Re-serve persisted static sites and re-check containers after a restart. */
@@ -178,7 +212,7 @@ export class DeploymentManager {
             server = await serveSite(this.siteDir(r.id), port);
           }
           this.servers.set(r.id, server);
-          this.records.set(r.id, { ...r, port });
+          this.records.set(r.id, { ...r, port, ports: [port] });
           this.o.log(`deployment ${r.id}: resumed static site on :${port}`);
           await this.send(r.id, { status: "running", endpoint: this.endpoint(port) });
         } else if (await this.dk.running(r.id)) {
@@ -235,20 +269,32 @@ export class DeploymentManager {
       return;
     }
     const specHash = createHash("sha256").update(JSON.stringify(cmd.spec)).digest("hex");
-    let port: number | null;
+    let ports: number[];
     let extra: Pick<DeploymentRecord, "keepDays" | "report" | "gpus"> = {};
     try {
-      if (kind === "static") port = await this.startStatic(id, cmd.spec as StaticSpec);
-      else if (kind === "container") port = await this.startContainer(id, cmd.spec as ContainerSpec, cmd.sealedEnv);
-      else if (kind === "workstation") ({ port, ...extra } = await this.startWorkstation(id, cmd.spec as WorkstationSpec, cmd.sealedEnv));
+      if (kind === "container" || kind === "workstation") {
+        // Not opted in / hardening failed at boot: the API should not have sent this; hand it back for re-placement.
+        if (!this.o.containersReady) throw new Error(`${NODE_CANNOT_SERVE} this node does not run containers`);
+        const image = (cmd.spec as ContainerSpec | undefined)?.image;
+        if (typeof image !== "string" || !imageAllowed(image, cmd.imageAllowed)) {
+          throw new Error("image is not on the curated list (set CLOUDANA_IMAGE_ALLOWLIST to allow it on this node)");
+        }
+        // Rules can be flushed and networks recreated while the agent runs: verify again right before each start.
+        const h = await (this.o.hardening ?? preStartCheck)();
+        if (!h.ok) throw new Error(`${NODE_CANNOT_SERVE} hardening check failed: ${h.reason}`);
+      }
+      if (kind === "static") ports = [await this.startStatic(id, cmd.spec as StaticSpec)];
+      else if (kind === "container") ports = await this.startContainer(id, cmd.spec as ContainerSpec, cmd.sealedEnv);
+      else if (kind === "workstation") ({ ports, ...extra } = await this.startWorkstation(id, cmd.spec as WorkstationSpec, cmd.sealedEnv));
       else throw new Error(`unknown kind ${JSON.stringify(kind)}`);
     } catch (err) {
       await this.cleanup(id, kind, keepDaysOf(cmd.spec));
       throw err;
     }
-    this.records.set(id, { id, kind, port, specHash, startedAt: Date.now(), ...extra });
+    const port = ports[0] ?? null;
+    this.records.set(id, { id, kind, port, ports, specHash, startedAt: Date.now(), ...extra });
     this.save();
-    this.o.log(`deployment ${id}: ${kind} running${port === null ? "" : ` on :${port}`}`);
+    this.o.log(`deployment ${id}: ${kind} running${port === null ? "" : ` on :${ports.join(",")}`}`);
     await this.send(id, extra.report ?? { status: "running", endpoint: this.endpoint(port) });
   }
 
@@ -259,7 +305,7 @@ export class DeploymentManager {
     return port;
   }
 
-  private async startContainer(id: string, spec: ContainerSpec, sealedEnv?: string): Promise<number | null> {
+  private async startContainer(id: string, spec: ContainerSpec, sealedEnv?: string): Promise<number[]> {
     if (!spec || !Array.isArray(spec.ports)) throw new Error("container spec has no ports array");
     const env: Record<string, string> = { ...(spec.env ?? {}), ...this.openSealed(sealedEnv) };
     const taken = this.takenPorts();
@@ -271,7 +317,7 @@ export class DeploymentManager {
     }
     await this.dk.remove(id); // a stale container with this name would make `docker run` fail
     await this.dk.run(dockerRunArgs(id, spec, env, hostPorts));
-    return hostPorts[0] ?? null;
+    return hostPorts;
   }
 
   private openSealed(sealedEnv?: string): Record<string, string> {
@@ -291,7 +337,7 @@ export class DeploymentManager {
     id: string,
     spec: WorkstationSpec,
     sealedEnv?: string,
-  ): Promise<{ port: number | null; keepDays: number; report: StatusBody; gpus: number[] }> {
+  ): Promise<{ ports: number[]; keepDays: number; report: StatusBody; gpus: number[] }> {
     validateWorkstation(spec);
     // Reserve GPUs before the first await so concurrent starts cannot pick the same device.
     const used = new Set([...this.gpuAlloc.values()].flat());
@@ -316,7 +362,7 @@ export class DeploymentManager {
     if (gpus.length) this.o.log(`deployment ${id}: GPU device(s) ${gpus.join(",")}`);
     return {
       gpus,
-      port: ports.web ?? ports.ssh ?? null,
+      ports: [ports.web, ports.ssh].filter((p): p is number => p !== undefined),
       keepDays: keepDaysOf(spec),
       report: workstationReport(this.o.publicHost, spec, ports, token),
     };

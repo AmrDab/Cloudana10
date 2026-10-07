@@ -58,10 +58,10 @@ const STEPS = [
         </div>
         <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
           <p className="font-medium text-foreground">CLD Tokens (deployments)</p>
-          <p>Get 100 free testnet CLD from our faucet to start deploying:</p>
-          <a href="/faucet">
+          <p>Claim 10 CLD of test credits per day in the console (no monetary value):</p>
+          <a href="/control/run">
             <Button variant="outline" size="sm" className="gap-1 text-xs border-primary/30 text-primary hover:bg-primary/10">
-              Open CLD Faucet <ExternalLink className="h-3 w-3" />
+              Test credits <ExternalLink className="h-3 w-3" />
             </Button>
           </a>
         </div>

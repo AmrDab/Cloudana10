@@ -68,17 +68,17 @@ export function HowItPays() {
       id="pays"
       kicker="How it pays"
       title="No bidding. No idle emission."
-      lede="You pay a fee. The orchestrator assigns the job; the provider computes and proves it. The fee is burned and CLD worth 97.5 % of it is minted to the provider, plus a capped subsidy when the random draw picks them."
+      lede="You pay a fee in CLD. The orchestrator assigns the job; the provider computes and proves it. The fee is burned; the provider is minted 95 % of it, the treasury 3 %, and 2 % is gone for good — plus a capped, declining subsidy when the random draw picks them."
     >
       <Reveal>
         <Diagram />
         <div className="mt-4 grid grid-cols-[1fr_1fr_2fr] gap-4 max-md:grid-cols-2">
-          <Param value="97.5 %" label="of the fee, minted to provider" tone={OK} />
-          <Param value="2 %" label="net burn before subsidy · 0.5 % treasury" tone={BURN} />
+          <Param value="95 %" label="of the fee, minted to provider" tone={OK} />
+          <Param value="2 %" label="net burn · 3 % treasury" tone={BURN} />
           <div className="flex flex-col justify-center rounded-lg border border-line bg-bg-2 px-5 py-4 font-mono text-xs leading-[1.7] text-muted-foreground max-md:col-span-2">
             <span className="text-text">Minted per verified job. Settled on-chain in batches.</span>
             <span className="text-faint">
-              Current price · {data ? `${data.priceUcldPerMmac.toLocaleString("en-US")} µCLD per M multiply-adds` : "—"}
+              Current price · {data ? `${data.priceNcldPerTmac.toLocaleString("en-US")} nCLD per TMAC + ${data.baseFeeUcld.toLocaleString("en-US")} µCLD per job` : "—"}
             </span>
           </div>
         </div>

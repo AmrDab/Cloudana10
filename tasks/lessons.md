@@ -83,3 +83,11 @@
 ## Rebuilt shells must keep every entry point of the old one
 - Pattern: the v2 console layout replaced the legacy AppLayout and silently dropped its `<appkit-button />`; with the test wallet off in production, sign-in had no way to connect a wallet. Also the production build fell back to `demo-project-id`, so the Reown modal 403d.
 - Rule: before replacing a layout/shell, grep the old one for user entry points (connect, sign in, nav, CTAs) and list where each lives in the new one. Test production-only paths with the production flags (`VITE_DEV_BURNER=false`), not the dev burner.
+
+## 2026-10-06 — multi-file edits via inline heredocs stall
+- Twice an inline `python - <<'EOF'` with TS/Go template strings (`'{{index . 0}}'`, nested quotes) broke bash parsing
+  and nothing was applied; the coordinator had to nudge. Rule: any edit script longer than a few lines goes to a
+  scratchpad file (Write tool) and is run by path; single-site edits use the Edit tool. Never rely on heredoc quoting
+  for content that itself contains quotes.
+- A default parameter (`nonce = random()`) is NOT bypassed by passing `undefined` explicitly — a "legacy nonce-less"
+  test had been sending a nonce all along. Use `null` for "absent" when a default exists.

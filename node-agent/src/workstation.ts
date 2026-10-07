@@ -1,7 +1,7 @@
 // Cloud workstations (docs/WORKSTATIONS.md §1, §5): pure helpers — argv, env, status report, volume schedule.
 // Everything here is side-effect free so it can be tested on a machine without Docker or a GPU.
 import { randomBytes } from "node:crypto";
-import { containerName, ENV_KEY, volumeName, type ContainerSpec } from "./container.ts";
+import { containerName, ENV_KEY, hardeningArgs, sanitizeTenantEnv, userArgs, volumeName, type ContainerSpec } from "./container.ts";
 import type { GpuInfo } from "./hardware.ts";
 
 /**
@@ -50,9 +50,13 @@ function port(p: unknown, what: string): number {
   return p as number;
 }
 
-/** Capabilities to announce. `gpu` needs Docker (to run the workstation) and a working nvidia-smi. */
-export function workTypes(hasDocker: boolean, gpus: GpuInfo[]): string[] {
-  return ["matmul", "hosting", ...(hasDocker ? ["container"] : []), ...(hasDocker && gpus.length > 0 ? ["gpu"] : [])];
+/**
+ * Capabilities to announce. Every node does `matmul` + `hosting` (static sites). `container` only when the operator
+ * opted in (CLOUDANA_ALLOW_CONTAINERS=1), Docker answers and the hardening self-check passed (`containersReady`);
+ * `gpu` additionally needs a working nvidia-smi.
+ */
+export function workTypes(containersReady: boolean, gpus: GpuInfo[]): string[] {
+  return ["matmul", "hosting", ...(containersReady ? ["container"] : []), ...(containersReady && gpus.length > 0 ? ["gpu"] : [])];
 }
 
 /** GPUs a workstation asks for (0 = CPU workstation). */
@@ -143,7 +147,9 @@ export function workstationRunArgs(
     throw new Error("command must be an array of strings");
 
   const args = ["run", "-d", "--name", containerName(id), "--restart", "unless-stopped"];
-  args.push("--memory", `${Math.floor(spec.memMb)}m`, "--cpus", String(spec.cpu / 1000), "--shm-size=1g");
+  // Same hardening as plain containers; the user stays the image's (sshd, code-server…) unless the spec pins one.
+  args.push(...hardeningArgs(spec.memMb, spec.storageMb), "--cpus", String(spec.cpu / 1000), "--shm-size=1g");
+  args.push(...userArgs(spec.user, undefined));
 
   if (devices.length !== gpuCountOf(spec) || devices.some((d) => !Number.isInteger(d) || d < 0))
     throw new Error("GPU devices do not match gpu.count");
@@ -160,7 +166,8 @@ export function workstationRunArgs(
     if (ports.ssh === undefined) throw new Error("no host port for ssh access");
     args.push("-p", `${port(ports.ssh, "host port")}:${sshPortOf(spec)}`);
   }
-  for (const [k, v] of Object.entries(env)) {
+  // NVIDIA_* / CUDA_VISIBLE_DEVICES from the tenant are dropped; NVIDIA_VISIBLE_DEVICES names exactly these devices.
+  for (const [k, v] of Object.entries(sanitizeTenantEnv(env, devices))) {
     if (!ENV_KEY.test(k)) throw new Error(`invalid env key ${JSON.stringify(k)}`);
     args.push("-e", `${k}=${String(v)}`);
   }

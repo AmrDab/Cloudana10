@@ -13,6 +13,16 @@ CHAIN_NETWORK = "baseSepolia"
 CLD_USD_RATE = "100"
 # Public testnet: test credits (no value), once per wallet per day. Remove before CLD carries value.
 TESTNET_CREDITS = "true"
+# Economics (docs/IMPL_SPEC_2026-10.md). Price is the controller's initial/reset value, nCLD per TMAC.
+PRICE_NCLD_PER_TMAC = "14000"
+BASE_FEE_UCLD = "1000"
+PRICE_CONTROLLER = "on"
+EPOCH_SECONDS = "3600"
+VEST_B_SECONDS = "3600"
+SUBSIDY_RHO = "0.25"
+EPOCH_SUBSIDY_BUDGET_UCLD = "7300000"
+CLUSTER_N_MIN = "3"
+CLUSTER_S_CAP = "0.5"
 
 [[d1_databases]]
 binding = "DB"
@@ -22,3 +32,7 @@ database_id = "682f013a-90bb-4065-8787-2501ea3de81d"
 [[kv_namespaces]]
 binding = "CLOUDANA_KV"
 id = "9b7d684cf36a4d7680b5c374d1228246"
+
+# Node duties, price controller, deposit watcher (src/worker.ts scheduled()).
+[triggers]
+crons = ["* * * * *"]

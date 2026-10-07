@@ -16,10 +16,13 @@ export const SECURITY: { live: SecurityItem[]; building: SecurityItem[]; planned
     { label: "Hashed fleet tokens", tag: "SHA-256", icon: Hash, detail: "Stored as SHA-256 hashes and shown once." },
     { label: "Re-checked proofs", tag: "Freivalds", icon: Binary, detail: "σ-bound cuPOW transcripts, Freivalds re-check, planted verifier tasks." },
     { label: "Rate limits & CORS", tag: "allow-list", icon: Gauge, detail: "Per-route rate limits and a CORS allow-list." },
-    { label: "Guarded settlement", tag: "veto window", icon: Landmark, detail: "Merkle root on Base with a veto window and a guardian." },
+    { label: "Guarded settlement", tag: "veto window", icon: Landmark, detail: "One Merkle root per epoch on Base with a veto window and a guardian." },
     { label: "TLS in transit", tag: "production", icon: Lock, detail: "Every production connection is TLS." },
   ],
   building: [
+    { label: "Signed node instructions", tag: "pinned signer", icon: PenLine, detail: "Work and deployment instructions are signed by a key that holds no funds; nodes ignore anything unsigned or stale." },
+    { label: "Hash-checked hosting probes", tag: "SHA-256", icon: Hash, detail: "Sites are served through a Cloudana gateway and probed against the hash of the files you uploaded." },
+    { label: "Isolated settlement keeper", tag: "separate Worker", icon: Landmark, detail: "The epoch poster runs apart from the API; the API holds no chain key." },
     { label: "Sealed secrets", tag: "browser → node", icon: KeyRound, detail: "Container env encrypted in your browser to the assigned node's key; the orchestrator never sees plaintext." },
   ],
   planned: [

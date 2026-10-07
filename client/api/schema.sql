@@ -114,7 +114,9 @@ CREATE TABLE IF NOT EXISTS nodes (
   announced_at INTEGER, bound_at INTEGER, last_seen INTEGER,
   bind_code TEXT,  -- one-time code shown only to the node operator; required to bind, cleared after
   fleet_id TEXT,   -- set when the node joined through a fleet token
-  pubkey TEXT      -- uncompressed secp256k1 hex of the node key (sealed secrets)
+  pubkey TEXT,     -- uncompressed secp256k1 hex of the node key (sealed secrets)
+  public_host TEXT, -- host the node announced; hosting endpoints must use exactly this host
+  agent_version TEXT -- work is refused below MIN_AGENT_VERSION
 );
 
 CREATE TABLE IF NOT EXISTS work_jobs (
@@ -144,9 +146,11 @@ CREATE TABLE IF NOT EXISTS fleets (
 );
 CREATE INDEX IF NOT EXISTS idx_fleets_owner ON fleets(owner, created_at);
 
+-- Settlement v2: mint_a/mint_b = lane totals, treasury_ucld is posted as an amount (not a leaf), root is computed at close.
 CREATE TABLE IF NOT EXISTS epochs (
   id INTEGER PRIMARY KEY, closed_at INTEGER, fees_burned_ucld INTEGER, mint_a_ucld INTEGER,
-  mint_b_ucld INTEGER, leaves_json TEXT, root TEXT, tx_hash TEXT, status TEXT
+  mint_b_ucld INTEGER, leaves_json TEXT, root TEXT, tx_hash TEXT, status TEXT,
+  treasury_ucld INTEGER, settled_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS verify_tasks (
@@ -195,7 +199,8 @@ CREATE TABLE IF NOT EXISTS deployments (
   workstation INTEGER NOT NULL DEFAULT 0,  -- 1 = workstation (kind stays 'container'; docs/WORKSTATIONS.md)
   ssh_endpoint TEXT,                      -- workstation sshd "host:port" reported by the node
   web_token TEXT,                         -- workstation web token not carried in the URL (owner-only)
-  purge_pending INTEGER NOT NULL DEFAULT 0 -- 1 = node owes a "purge" (container + volume removed)
+  purge_pending INTEGER NOT NULL DEFAULT 0, -- 1 = node owes a "purge" (container + volume removed)
+  probe_path TEXT, probe_hash TEXT         -- static: file + sha256 the 60 s probe must match
 );
 CREATE INDEX IF NOT EXISTS idx_deployments_owner ON deployments(owner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deployments_node ON deployments(node, status);
@@ -215,3 +220,16 @@ CREATE TABLE IF NOT EXISTS deployment_stale_nodes (
   deployment_id TEXT NOT NULL, node TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (deployment_id, node)
 );
 CREATE INDEX IF NOT EXISTS idx_deployment_stale_nodes_node ON deployment_stale_nodes(node);
+-- Guards one-off data migrations (key 'epoch_seconds' = the EPOCH_SECONDS reward_entries.epoch was computed with).
+CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Price controller state (docs/IMPL_SPEC_2026-10.md): one row, id = 1.
+CREATE TABLE IF NOT EXISTS price_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1), price_ncld_per_tmac INTEGER NOT NULL, ema_ncld_per_tmac REAL NOT NULL,
+  stepped_at INTEGER, quote_price INTEGER, quote_expires_at INTEGER
+);
+
+-- Testnet credit caps (routes/v1/dev.ts): one row per wallet / IP bucket / ASN-day, claimed with an atomic upsert.
+CREATE TABLE IF NOT EXISTS testnet_claims (key TEXT PRIMARY KEY, at INTEGER NOT NULL, n INTEGER NOT NULL DEFAULT 1);
+-- Node request nonces (middleware/node-auth.ts): INSERT … ON CONFLICT DO NOTHING makes the replay check atomic.
+CREATE TABLE IF NOT EXISTS node_nonces (key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_node_nonces_expires ON node_nonces(expires_at);

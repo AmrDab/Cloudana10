@@ -1,17 +1,12 @@
 process.env.JWT_SECRET = "x".repeat(40);
 
-import { describe, it, expect, beforeEach } from "vitest";
-import { resetEnv } from "../src/config/env.js";
+import { describe, it, expect } from "vitest";
 import { recordOnChain } from "../src/services/pouw-chain-recorder.service.js";
 
-beforeEach(() => {
-  delete process.env.POUW_VERIFIER_CONTRACT_ADDRESS;
-  delete process.env.ORCHESTRATOR_PRIVATE_KEY;
-  resetEnv();
-});
-
-describe("recordOnChain", () => {
-  it("returns not_configured when unconfigured, without calling the chain", async () => {
+describe("recordOnChain (legacy POUWVerifier recording retired)", () => {
+  it("returns not_configured without calling the chain, even with a verifier address and key set", async () => {
+    process.env.POUW_VERIFIER_CONTRACT_ADDRESS = "0x" + "1".repeat(40);
+    process.env.ORCHESTRATOR_PRIVATE_KEY = "a".repeat(64);
     const cert = {
       providerAddress: "0x" + "1".repeat(40),
       deviceId: "0x" + "2".repeat(64),
@@ -23,6 +18,8 @@ describe("recordOnChain", () => {
     } as any;
 
     const outcome = await recordOnChain(cert);
-    expect(outcome).toEqual({ status: "not_configured", tx: null, reason: "verifier contract or orchestrator signer not provisioned" });
+    expect(outcome.status).toBe("not_configured");
+    expect(outcome.tx).toBeNull();
+    expect(outcome.reason).toMatch(/retired/i);
   });
 });

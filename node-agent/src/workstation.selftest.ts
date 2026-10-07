@@ -146,6 +146,8 @@ async function main() {
     publicHost: "127.0.0.1",
     ports: [42000, 42100],
     privateKey: "0x" + "11".repeat(32),
+    containersReady: true,
+    hardening: async () => ({ ok: true, notes: [] }),
     log: (s) => logs.push(s),
     report: async (_id, body) => (reports.push(body), true),
   });
@@ -157,7 +159,7 @@ async function main() {
   const left = m.keptVolumes().find((v) => v.id === "wsA");
   check(!left || left.keepUntil <= Date.now(), "purge removes now (or marks due when Docker is absent)");
   // A start that cannot run (no GPU on this node) fails cleanly and never leaks the token into logs or messages.
-  await m.handle({ id: "wsB", action: "start", kind: "workstation", spec: base });
+  await m.handle({ id: "wsB", action: "start", kind: "workstation", spec: base, imageAllowed: true });
   check(reports.at(-1)?.status === "failed" && /no usable GPU/.test(reports.at(-1)?.message ?? ""), "GPU start on GPU-less node fails");
   check(!JSON.stringify({ logs, reports }).match(/JUPYTER_TOKEN=|\?token=/), "no token in logs or failure reports");
   check(logs.every((l) => !l.includes(KEY)), "no ssh key in logs");
@@ -184,18 +186,19 @@ async function main() {
     volumeRemove: async () => true,
     gpuDevices: async (id) => live.get(id) ?? null,
   };
-  const gopts = { dataDir: gpuDir, publicHost: "h", ports: [42200, 42300] as [number, number], privateKey: "0x" + "11".repeat(32), gpuCount: 2, docker: fake, log: () => {} };
+  const hardening = async () => ({ ok: true, notes: [] });
+  const gopts = { dataDir: gpuDir, publicHost: "h", ports: [42200, 42300] as [number, number], privateKey: "0x" + "11".repeat(32), gpuCount: 2, docker: fake, containersReady: true, hardening, log: () => {} };
   const g1 = new DeploymentManager({ ...gopts, report: async (_i, b) => (reports.push(b), true) });
   const one = { ...base, gpu: { count: 1 } };
-  await g1.handle({ id: "g1", action: "start", kind: "workstation", spec: one });
-  await g1.handle({ id: "g2", action: "start", kind: "workstation", spec: one });
+  await g1.handle({ id: "g1", action: "start", kind: "workstation", spec: one, imageAllowed: true });
+  await g1.handle({ id: "g2", action: "start", kind: "workstation", spec: one, imageAllowed: true });
   check(after(runs.get("g1")!, "--gpus") === '"device=0"' && after(runs.get("g2")!, "--gpus") === '"device=1"', "two 1-GPU starts → device=0, device=1");
-  await g1.handle({ id: "g3", action: "start", kind: "workstation", spec: one });
+  await g1.handle({ id: "g3", action: "start", kind: "workstation", spec: one, imageAllowed: true });
   check(reports.at(-1)?.status === "failed" && reports.at(-1)?.message === "not enough free GPUs" && !runs.has("g3"), "third start: not enough free GPUs");
   check(g1.allocatedGpus().g3 === undefined, "failed start releases its reservation");
   await g1.handle({ id: "g1", action: "stop", kind: "workstation", spec: one });
   check(g1.allocatedGpus().g1 === undefined, "stop frees device 0");
-  await g1.handle({ id: "g3", action: "start", kind: "workstation", spec: one });
+  await g1.handle({ id: "g3", action: "start", kind: "workstation", spec: one, imageAllowed: true });
   check(after(runs.get("g3")!, "--gpus") === '"device=0"', "freed device is reused");
   const saved = JSON.parse(readFileSync(path.join(gpuDir, "deployments.json"), "utf8")) as { id: string; gpus?: number[] }[];
   check(saved.find((r) => r.id === "g2")?.gpus?.join() === "1", "gpus persisted in deployments.json");
@@ -206,7 +209,7 @@ async function main() {
   await g2.resume();
   const alloc = g2.allocatedGpus();
   check(alloc.g2?.join() === "0" && alloc.g3 === undefined, "boot reconciles GPU map with docker inspect");
-  await g2.handle({ id: "g4", action: "start", kind: "workstation", spec: one });
+  await g2.handle({ id: "g4", action: "start", kind: "workstation", spec: one, imageAllowed: true });
   check(after(runs.get("g4")!, "--gpus") === '"device=1"', "after reconcile the stale index is free again");
   rmSync(gpuDir, { recursive: true, force: true });
 

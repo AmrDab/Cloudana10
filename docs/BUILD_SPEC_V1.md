@@ -1,5 +1,14 @@
 # Cloudana v1 local build — shared spec
 
+> **Superseded values (2026-10-05).** The economics below were the v1 local build; the October 2026 consensus
+> ([DECISIONS_CONSENSUS.md](DECISIONS_CONSENSUS.md), implemented per [IMPL_SPEC_2026-10.md](IMPL_SPEC_2026-10.md)) changes:
+> price unit `PRICE_NCLD_PER_TMAC` (14,000) + `BASE_FEE_UCLD` (1,000) replaces `PRICE_UCLD_PER_MMAC`; fee split
+> **95 % provider / 3 % treasury / 2 % net burn** (`LANE_A_PER_MILLE=950`, `TREASURY_PER_MILLE=30`) replaces 0.975 / 0.005;
+> `EPOCH_SECONDS=3600` and `VEST_B_SECONDS=3600` on testnet (86,400 / 604,800 at mainnet) replace 120 / 86,400;
+> `EPOCH_SUBSIDY_BUDGET_UCLD=7,300,000` per hourly epoch replaces 200 CLD; `CLUSTER_N_MIN=3`, `CLUSTER_S_CAP=0.5`,
+> gate **per operator**; treasury is posted as `treasuryAmount` (not a leaf); `/network` exposes `priceNcldPerTmac`
+> and `baseFeeUcld`. Where this file and IMPL_SPEC disagree, IMPL_SPEC wins.
+
 The contract between the parallel build tracks. **Local only: no commits, no deploys, no pushes.**
 Principle: **simple.** Design refs: `STRATEGY_NOTES.md`, `CLD_ISSUANCE_DESIGN.md`.
 

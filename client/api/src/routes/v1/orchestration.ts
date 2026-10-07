@@ -1,10 +1,10 @@
 import { createRoute } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
 import { findPlacements } from "../../services/placement.service.js";
-import { getActiveProviders, getProviderByDevice, recordPlacement } from "../../services/chain-client.js";
+import { getActiveProviders, getProviderByDevice } from "../../services/chain-client.js";
 import { getWorkloadManifestByWorkloadId } from "../../services/ipfs.service.js";
 import { deployToProvider } from "../../services/deploy-to-provider.service.js";
-import { registerWorkloadForPolling } from "../../services/workload-status-poller.service.js";
+import { getPlacementByWorkloadId, registerWorkloadForPolling } from "../../services/workload-status-poller.service.js";
 import {
   ExecutePlacementResponseSchema,
   OrchestrationStatusResponseSchema,
@@ -64,8 +64,8 @@ orchestrationRouter.openapi(statusRoute, async (c) => {
   }
 });
 
-// POST /v1/orchestration/placement/execute — run placement now: find placements, deploy to provider nodes via HTTP POST /deploy,
-// then record on-chain. Provider nodes are orchestrator-controlled via HTTP, not event-driven. Requires ORCHESTRATOR_PRIVATE_KEY.
+// POST /v1/orchestration/placement/execute — run placement now: find placements and deploy to provider nodes via
+// HTTP POST /deploy. The API holds no chain key, so nothing is written to the WorkloadRegistry.
 const executePlacementRoute = createRoute({
   method: "post",
   path: "/orchestration/placement/execute",
@@ -81,6 +81,7 @@ orchestrationRouter.openapi(executePlacementRoute, async (c) => {
     let placed = 0;
     let failed = 0;
     for (const d of result.decisions) {
+      if (getPlacementByWorkloadId(d.workloadId)) continue;
       try {
         const deployOk = await deployToProvider(d);
         if (!deployOk) {
@@ -94,16 +95,12 @@ orchestrationRouter.openapi(executePlacementRoute, async (c) => {
           failed += 1;
           continue;
         }
-        const receipt = await recordPlacement(d.workloadId, d.provider, d.instanceId);
-
-        // Register workload for status polling
         registerWorkloadForPolling(d.workloadId, d.instanceId, d.provider, d.endpoint, d.deviceId, d.ownerAddress);
 
         transactions.push({
           workloadId: d.workloadId.toString(),
           provider: d.provider,
           instanceId: d.instanceId.toString(),
-          txHash: receipt.transactionHash,
         });
         placed += 1;
       } catch (e) {

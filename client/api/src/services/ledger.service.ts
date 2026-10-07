@@ -1,33 +1,31 @@
 /**
- * Reward ledger (docs/BUILD_SPEC_V1.md §2–§3, CLD_ISSUANCE_DESIGN §5–§6).
- * All amounts are integer µCLD; every split rounds down.
+ * Reward ledger (docs/IMPL_SPEC_2026-10.md "Fee split", "Epochs"; docs/BUILD_SPEC_V1.md §2–§3).
+ * All amounts are integer µCLD. The treasury share rounds UP and lane A is trimmed so A + treasury
+ * never exceeds floor(0.98F): the settlement contract enforces treasury ≥ 3% and A + treasury ≤ 98%
+ * of fees exactly, so per-job rounding must hold both bounds (summed over an epoch they still hold).
  *
  * Per completed job with fee F:
- *   lane A    provider payout +floor(0.975F)       claimable at epoch settlement
- *   treasury  +floor(0.005F)
- *   lane B    floor(ρF) if the cluster test passed, capped by the epoch budget; vests VEST_B_SECONDS later
- *   the user's F is burned (epoch fees_burned)
+ *   lane A    provider payout min(floor(0.950F), floor(0.980F) − treasury)   claimable after finalize
+ *   treasury  ceil(0.030F)                         posted per epoch as an amount (not a Merkle leaf)
+ *   lane B    floor(ρF) if the per-operator cluster gate passed, capped by the epoch budget; vests on-chain
+ *   the user's F is burned (epoch fees_burned); the remaining 20‰ is the net burn
  * Browser verifiers earn lane "verify" credits (points) — never minted.
  */
 import { getD1 } from "../lib/storage.js";
 import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
+import { epochRoot } from "./epoch-merkle.js";
 
-export const LANE_A_PER_MILLE = 975;
-export const TREASURY_PER_MILLE = 5;
+export const LANE_A_PER_MILLE = 950;
+export const TREASURY_PER_MILLE = 30;
+/** reward_entries.address of treasury-lane entries; the on-chain treasury address is immutable in the contract. */
+export const TREASURY_ACCOUNT = "treasury";
 
 export type Lane = "A" | "B" | "treasury" | "verify";
 
 export function epochOf(ms: number, epochSeconds = getEnv().EPOCH_SECONDS): number {
   return Math.floor(ms / (epochSeconds * 1000));
-}
-
-/** price_ucld = max(1, ceil(units × PRICE_UCLD_PER_MMAC / 1e6)). */
-export function priceUcld(units: number, pricePerMmac = getEnv().PRICE_UCLD_PER_MMAC): number {
-  const numerator = BigInt(units) * BigInt(pricePerMmac);
-  const price = (numerator + 999_999n) / 1_000_000n;
-  return Math.max(1, Number(price));
 }
 
 export interface LaneSplit {
@@ -40,8 +38,11 @@ export interface LaneSplit {
 export function splitFee(fee: number, opts: { rho: number; clusterOk: boolean; budgetRemaining: number }): LaneSplit {
   const F = BigInt(fee);
   const rhoPpm = BigInt(Math.round(opts.rho * 1_000_000));
-  const laneA = Number((F * BigInt(LANE_A_PER_MILLE)) / 1000n);
-  const treasury = Number((F * BigInt(TREASURY_PER_MILLE)) / 1000n);
+  const treasuryB = (F * BigInt(TREASURY_PER_MILLE) + 999n) / 1000n;
+  const capB = (F * BigInt(LANE_A_PER_MILLE + TREASURY_PER_MILLE)) / 1000n - treasuryB;
+  const floorA = (F * BigInt(LANE_A_PER_MILLE)) / 1000n;
+  const laneA = Number(floorA < capB ? floorA : capB > 0n ? capB : 0n);
+  const treasury = Number(treasuryB);
   const wanted = opts.clusterOk ? Number((F * rhoPpm) / 1_000_000n) : 0;
   const subsidy = Math.max(0, Math.min(wanted, opts.budgetRemaining));
   return { laneA, treasury, subsidy };
@@ -113,23 +114,10 @@ export async function recordJobRewards(input: {
     budgetRemaining: Number.MAX_SAFE_INTEGER,
   });
   const vestsAt = now + env.VEST_B_SECONDS * 1000;
-  const treasury = env.TREASURY_ADDRESS ?? env.CLD_TREASURY_ADDRESS;
-
-  const rows: [Lane, string, number, number][] = [["A", input.provider, split.laneA, now]];
-  if (treasury) rows.push(["treasury", treasury, split.treasury, now]);
-
-  const db = getD1();
-  const stmts = rows
-    .filter(([, , amount]) => amount > 0)
-    .map(([lane, address, amount, vests]) =>
-      db
-        .prepare(
-          "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-        )
-        .bind(crypto.randomUUID(), input.jobId, epoch, normalizeAddress(address), lane, input.workType, amount, vests, now),
-    );
-  if (stmts.length) await db.batch(stmts);
+  await insertLanes(input.jobId, epoch, input.workType, [
+    ["A", normalizeAddress(input.provider), split.laneA],
+    ["treasury", TREASURY_ACCOUNT, split.treasury],
+  ], now);
   const granted = await reserveSubsidy({
     jobId: input.jobId,
     epoch,
@@ -140,17 +128,27 @@ export async function recordJobRewards(input: {
     vestsAt,
     now,
   });
-  return {
-    laneAUcld: split.laneA,
-    laneBUcld: granted,
-    treasuryUcld: treasury ? split.treasury : 0,
-    vestsAt,
-    epoch,
-  };
+  return { laneAUcld: split.laneA, laneBUcld: granted, treasuryUcld: split.treasury, vestsAt, epoch };
+}
+
+/** Insert the non-zero A/treasury entries of one job or bill (vests_at = now: lane A has no vest). */
+async function insertLanes(jobId: string, epoch: number, workType: string, rows: [Lane, string, number][], now: number): Promise<void> {
+  const db = getD1();
+  const stmts = rows
+    .filter(([, , amount]) => amount > 0)
+    .map(([lane, address, amount]) =>
+      db
+        .prepare(
+          "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+        )
+        .bind(crypto.randomUUID(), jobId, epoch, address, lane, workType, amount, now, now),
+    );
+  if (stmts.length) await db.batch(stmts);
 }
 
 /**
- * Reward entries for one hosting charge (V3 §4): lane A 0.975F + treasury 0.005F, no lane B —
+ * Reward entries for one hosting charge (V3 §4): lane A 0.95F + treasury 0.03F, no lane B —
  * hosting is probed, not proven, so it earns no subsidy. `billId` is a deployment_bills id;
  * epoch close burns that bill's fee.
  */
@@ -161,26 +159,14 @@ export async function recordHostingRewards(input: {
   feeUcld: number;
   now?: number;
 }): Promise<{ laneAUcld: number; treasuryUcld: number; epoch: number }> {
-  const env = getEnv();
   const now = input.now ?? Date.now();
   const epoch = epochOf(now);
   const split = splitFee(input.feeUcld, { rho: 0, clusterOk: false, budgetRemaining: 0 });
-  const treasury = env.TREASURY_ADDRESS ?? env.CLD_TREASURY_ADDRESS;
-  const rows: [Lane, string, number][] = [["A", input.provider, split.laneA]];
-  if (treasury) rows.push(["treasury", treasury, split.treasury]);
-  const db = getD1();
-  const stmts = rows
-    .filter(([, , amount]) => amount > 0)
-    .map(([lane, address, amount]) =>
-      db
-        .prepare(
-          "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-        )
-        .bind(crypto.randomUUID(), input.billId, epoch, normalizeAddress(address), lane, input.workType, amount, now, now),
-    );
-  if (stmts.length) await db.batch(stmts);
-  return { laneAUcld: split.laneA, treasuryUcld: treasury ? split.treasury : 0, epoch };
+  await insertLanes(input.billId, epoch, input.workType, [
+    ["A", normalizeAddress(input.provider), split.laneA],
+    ["treasury", TREASURY_ACCOUNT, split.treasury],
+  ], now);
+  return { laneAUcld: split.laneA, treasuryUcld: split.treasury, epoch };
 }
 
 /** Browser-verifier credit (points, lane "verify"). `address` may be a "session:<id>" key. */
@@ -284,85 +270,126 @@ export async function ledgerSummary(address: string, now = Date.now()): Promise<
 
 // ─── Epoch settlement ─────────────────────────────────────────────────────────
 
-export interface ClosedEpoch {
-  id: number;
+export interface EpochLeaf {
+  account: string;
+  laneAUcld: number;
+  laneBUcld: number;
+}
+
+/** What the keeper posts (docs/IMPL_SPEC_2026-10.md "Admin epochs API"). Amounts µCLD; the keeper converts ×1e12. */
+export interface EpochPayload {
+  epoch: number;
+  root: string;
   feesBurnedUcld: number;
-  mintAUcld: number;
-  mintBUcld: number;
-  leaves: { address: string; amountUcld: number }[];
+  totalLaneAUcld: number;
+  totalLaneBUcld: number;
+  treasuryUcld: number;
+  leaves: EpochLeaf[];
+  status: string;
+}
+
+interface EpochRow {
+  id: number;
+  fees_burned_ucld: number | null;
+  mint_a_ucld: number | null;
+  mint_b_ucld: number | null;
+  treasury_ucld: number | null;
+  leaves_json: string | null;
+  root: string | null;
+  status: string;
+}
+
+function toPayload(r: EpochRow): EpochPayload {
+  // Rows closed before settlement v2 stored { address, amountUcld } leaves (all lanes summed).
+  const raw = JSON.parse(r.leaves_json ?? "[]") as (EpochLeaf | { address: string; amountUcld: number })[];
+  const leaves = raw.map((l) => ("account" in l ? l : { account: l.address, laneAUcld: l.amountUcld, laneBUcld: 0 }));
+  return {
+    epoch: r.id,
+    root: r.root ?? epochRoot(r.id, leaves),
+    feesBurnedUcld: r.fees_burned_ucld ?? 0,
+    totalLaneAUcld: r.mint_a_ucld ?? 0,
+    totalLaneBUcld: r.mint_b_ucld ?? 0,
+    treasuryUcld: r.treasury_ucld ?? 0,
+    leaves,
+    status: r.status,
+  };
 }
 
 /**
- * Close every past epoch that has pending A/B/treasury entries, once all of them
- * have vested (an epoch waits for its lane-B vesting so it is posted exactly once).
- * Leaves are aggregated per address; the entries move to "posted".
- * A vetoed epoch (markEpochVetoed) is closed again under the same id from its remaining
- * pending entries, so the keeper can re-post it; any other already-closed epoch is skipped.
+ * Close every ended epoch that has pending A/B/treasury entries — as soon as it has ended; lane B
+ * vests on-chain, so nothing waits for vests_at. Leaves are { account, laneA, laneB } per address,
+ * the treasury lane is an epoch amount, and the root is computed here (the keeper re-verifies it).
+ * The entries move to "posted". A vetoed epoch (markEpochVetoed) is closed again under the same id
+ * from its remaining pending entries, so the keeper can re-post it; any other closed epoch is skipped.
  */
-export async function closeEpochs(now = Date.now()): Promise<ClosedEpoch[]> {
+export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
   const db = getD1();
   const current = epochOf(now);
   const candidates = await db
     .prepare(
-      "SELECT epoch, MAX(vests_at) AS last_vest FROM reward_entries " +
-        "WHERE status = 'pending' AND lane IN ('A','B','treasury') AND epoch < ? GROUP BY epoch ORDER BY epoch",
+      "SELECT DISTINCT epoch FROM reward_entries WHERE status = 'pending' AND lane IN ('A','B','treasury') AND epoch < ? ORDER BY epoch",
     )
     .bind(current)
-    .all<{ epoch: number; last_vest: number }>();
+    .all<{ epoch: number }>();
 
-  const closed: ClosedEpoch[] = [];
-  for (const { epoch, last_vest } of candidates.results ?? []) {
-    if (last_vest > now) continue;
+  const closed: EpochPayload[] = [];
+  for (const { epoch } of candidates.results ?? []) {
     const exists = await db.prepare("SELECT status FROM epochs WHERE id = ?").bind(epoch).first<{ status: string }>();
-    if (exists && exists.status !== "vetoed") continue; // an epoch is posted once, unless vetoed
+    if (exists && exists.status !== "vetoed") {
+      // An epoch is posted once, unless vetoed. Entries that committed after it closed (boundary
+      // race) move to the open epoch instead of staying pending forever.
+      await db
+        .prepare("UPDATE reward_entries SET epoch = ? WHERE epoch = ? AND status = 'pending' AND lane IN ('A','B','treasury')")
+        .bind(current, epoch)
+        .run();
+      continue;
+    }
 
+    const pending = "epoch = ?1 AND status = 'pending'";
     const leafRows = await db
       .prepare(
-        "SELECT address, SUM(amount_ucld) AS amount FROM reward_entries " +
-          "WHERE epoch = ? AND status = 'pending' AND lane IN ('A','B','treasury') GROUP BY address ORDER BY address",
+        "SELECT address, SUM(CASE WHEN lane = 'A' THEN amount_ucld ELSE 0 END) AS a, SUM(CASE WHEN lane = 'B' THEN amount_ucld ELSE 0 END) AS b " +
+          `FROM reward_entries WHERE ${pending} AND lane IN ('A','B') GROUP BY address ORDER BY address`,
       )
       .bind(epoch)
-      .all<{ address: string; amount: number }>();
-    const laneRows = await db
-      .prepare(
-        "SELECT lane, SUM(amount_ucld) AS amount FROM reward_entries " +
-          "WHERE epoch = ? AND status = 'pending' AND lane IN ('A','B','treasury') GROUP BY lane",
-      )
-      .bind(epoch)
-      .all<{ lane: Lane; amount: number }>();
+      .all<{ address: string; a: number; b: number }>();
     // Fees burned = verified jobs' prices + hosting charges (deployment_bills) in this epoch.
-    const inEpoch = "(SELECT DISTINCT job_id FROM reward_entries WHERE epoch = ?1 AND status = 'pending' AND lane IN ('A','B','treasury'))";
-    const fees = await db
+    const inEpoch = `(SELECT DISTINCT job_id FROM reward_entries WHERE ${pending} AND lane IN ('A','B','treasury'))`;
+    const totals = await db
       .prepare(
         `SELECT COALESCE((SELECT SUM(price_ucld) FROM work_jobs WHERE id IN ${inEpoch}), 0) + ` +
-          `COALESCE((SELECT SUM(fee_ucld) FROM deployment_bills WHERE id IN ${inEpoch}), 0) AS fees`,
+          `COALESCE((SELECT SUM(fee_ucld) FROM deployment_bills WHERE id IN ${inEpoch}), 0) AS fees, ` +
+          `COALESCE((SELECT SUM(amount_ucld) FROM reward_entries WHERE ${pending} AND lane = 'treasury'), 0) AS treasury`,
       )
       .bind(epoch)
-      .first<{ fees: number }>();
+      .first<{ fees: number; treasury: number }>();
 
-    const byLane = Object.fromEntries((laneRows.results ?? []).map((r) => [r.lane, r.amount]));
-    const leaves = (leafRows.results ?? []).map((r) => ({ address: r.address, amountUcld: r.amount }));
-    const out: ClosedEpoch = {
-      id: epoch,
-      feesBurnedUcld: fees?.fees ?? 0,
-      // The on-chain invariant bounds lane-A-style minting by fees, so treasury counts with A.
-      mintAUcld: (byLane.A ?? 0) + (byLane.treasury ?? 0),
-      mintBUcld: byLane.B ?? 0,
+    const leaves: EpochLeaf[] = (leafRows.results ?? []).map((r) => ({ account: r.address, laneAUcld: r.a, laneBUcld: r.b }));
+    const out: EpochPayload = {
+      epoch,
+      root: epochRoot(epoch, leaves),
+      feesBurnedUcld: totals?.fees ?? 0,
+      totalLaneAUcld: leaves.reduce((s, l) => s + l.laneAUcld, 0),
+      totalLaneBUcld: leaves.reduce((s, l) => s + l.laneBUcld, 0),
+      treasuryUcld: totals?.treasury ?? 0,
       leaves,
+      status: "closed",
     };
+    const cols = [now, out.feesBurnedUcld, out.totalLaneAUcld, out.totalLaneBUcld, out.treasuryUcld, JSON.stringify(leaves), out.root];
     await db.batch([
       exists
         ? db
             .prepare(
-              "UPDATE epochs SET closed_at = ?, fees_burned_ucld = ?, mint_a_ucld = ?, mint_b_ucld = ?, leaves_json = ?, " +
-                "root = NULL, tx_hash = NULL, status = 'closed' WHERE id = ? AND status = 'vetoed'",
+              "UPDATE epochs SET closed_at = ?, fees_burned_ucld = ?, mint_a_ucld = ?, mint_b_ucld = ?, treasury_ucld = ?, leaves_json = ?, " +
+                "root = ?, tx_hash = NULL, status = 'closed' WHERE id = ? AND status = 'vetoed'",
             )
-            .bind(now, out.feesBurnedUcld, out.mintAUcld, out.mintBUcld, JSON.stringify(leaves), epoch)
+            .bind(...cols, epoch)
         : db
             .prepare(
-              "INSERT INTO epochs (id, closed_at, fees_burned_ucld, mint_a_ucld, mint_b_ucld, leaves_json, status) VALUES (?, ?, ?, ?, ?, ?, 'closed')",
+              "INSERT INTO epochs (closed_at, fees_burned_ucld, mint_a_ucld, mint_b_ucld, treasury_ucld, leaves_json, root, id, status) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'closed')",
             )
-            .bind(epoch, now, out.feesBurnedUcld, out.mintAUcld, out.mintBUcld, JSON.stringify(leaves)),
+            .bind(...cols, epoch),
       db
         .prepare("UPDATE reward_entries SET status = 'posted' WHERE epoch = ? AND status = 'pending' AND lane IN ('A','B','treasury')")
         .bind(epoch),
@@ -372,25 +399,41 @@ export async function closeEpochs(now = Date.now()): Promise<ClosedEpoch[]> {
   return closed;
 }
 
+/** Epochs by status, oldest first — lets a stateless keeper re-read what it has to post or finalize. */
+export async function listEpochs(status: "closed" | "posted" | "settled" | "vetoed"): Promise<EpochPayload[]> {
+  const rows = await getD1().prepare("SELECT * FROM epochs WHERE status = ? ORDER BY id").bind(status).all<EpochRow>();
+  return (rows.results ?? []).map(toPayload);
+}
+
+/** When the most recent epoch was finalized on-chain (ms), or null. */
+export async function lastSettledEpochAt(): Promise<number | null> {
+  const row = await getD1().prepare("SELECT MAX(settled_at) AS at FROM epochs WHERE status = 'settled'").first<{ at: number | null }>();
+  return row?.at ?? null;
+}
+
 export type EpochUpdate = { ok: true } | { ok: false; code: "not_found" | "conflict"; message: string };
 
+/** The keeper posted `root` on-chain; it must be the root this API computed at close. */
 export async function markEpochPosted(id: number, root: string, txHash: string): Promise<EpochUpdate> {
   const db = getD1();
-  const row = await db.prepare("SELECT status FROM epochs WHERE id = ?").bind(id).first<{ status: string }>();
+  const row = await db.prepare("SELECT status, root FROM epochs WHERE id = ?").bind(id).first<{ status: string; root: string | null }>();
   if (!row) return { ok: false, code: "not_found", message: `epoch ${id} is not closed` };
   if (row.status !== "closed") return { ok: false, code: "conflict", message: `epoch ${id} is already ${row.status}` };
+  if (row.root && row.root.toLowerCase() !== root.toLowerCase()) {
+    return { ok: false, code: "conflict", message: `root ${root} differs from the root computed at close (${row.root})` };
+  }
   await db.prepare("UPDATE epochs SET root = ?, tx_hash = ?, status = 'posted' WHERE id = ?").bind(root, txHash, id).run();
   return { ok: true };
 }
 
-export async function markEpochSettled(id: number, txHash: string): Promise<EpochUpdate> {
+export async function markEpochSettled(id: number, txHash: string, now = Date.now()): Promise<EpochUpdate> {
   const db = getD1();
   const row = await db.prepare("SELECT status FROM epochs WHERE id = ?").bind(id).first<{ status: string }>();
   if (!row) return { ok: false, code: "not_found", message: `epoch ${id} is not closed` };
   if (row.status === "settled") return { ok: true };
   if (row.status !== "posted") return { ok: false, code: "conflict", message: `epoch ${id} must be posted first` };
   await db.batch([
-    db.prepare("UPDATE epochs SET tx_hash = ?, status = 'settled' WHERE id = ?").bind(txHash, id),
+    db.prepare("UPDATE epochs SET tx_hash = ?, settled_at = ?, status = 'settled' WHERE id = ?").bind(txHash, now, id),
     db
       .prepare("UPDATE reward_entries SET status = 'settled' WHERE epoch = ? AND status = 'posted' AND lane IN ('A','B','treasury')")
       .bind(id),
@@ -441,6 +484,10 @@ export async function clawEntry(epoch: number, entryId: string): Promise<EpochUp
     .first<{ status: string; lane: Lane; address: string; amount_ucld: number }>();
   if (!row) return { ok: false, code: "not_found", message: `entry ${entryId} not found in epoch ${epoch}` };
   if (row.status === "clawed") return { ok: true };
+  if (row.lane === "treasury") {
+    // The fee stays burned, so clawing the treasury share would break the contract's treasury ≥ 3% bound.
+    return { ok: false, code: "conflict", message: "treasury entries cannot be clawed; claw the provider's entries instead" };
+  }
   if (row.status !== "pending") {
     return { ok: false, code: "conflict", message: `entry is ${row.status}; only pending entries can be clawed (veto the epoch first)` };
   }

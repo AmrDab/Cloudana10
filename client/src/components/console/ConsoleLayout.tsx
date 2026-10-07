@@ -29,7 +29,7 @@ export const NAV: NavItem[] = [
   { label: "Earnings", href: "/earnings", icon: Wallet },
   { label: "Docs", href: "/docs", icon: BookOpen },
 ];
-const EXTRA_TITLES: Record<string, string> = { "/litepaper": "Litepaper", "/faucet": "On-chain faucet", "/economics": "Economics" };
+const EXTRA_TITLES: Record<string, string> = { "/litepaper": "Litepaper", "/economics": "Economics" };
 
 const isActive = (loc: string, href: string) => (href === "/" ? loc === "/" || loc === "" : loc === href || loc.startsWith(href + "/"));
 const titleFor = (loc: string) => NAV.find((n) => isActive(loc, n.href))?.label ?? EXTRA_TITLES[loc] ?? "Not found";
@@ -164,8 +164,8 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
         <WalletCard />
         <div className="flex items-center justify-between px-1">
           <Pill tone="work">Testnet</Pill>
-          <Link href="/faucet" onClick={onNavigate} className="text-xs text-muted-foreground hover:text-text hover:underline underline-offset-4">
-            On-chain faucet
+          <Link href="/run" onClick={onNavigate} className="text-xs text-muted-foreground hover:text-text hover:underline underline-offset-4">
+            Test credits
           </Link>
         </div>
       </div>

@@ -63,8 +63,6 @@ export const envSchema = z.object({
 
   // ── PoUW ─────────────────────────────────────────────────────────────────
   POUW_MIN_DIFFICULTY: int(8),
-  /** CLD credits charged for a paid matrix job at n=64; scales with (n/64)^1.5 like the reward. */
-  POUW_JOB_PRICE_CLD: z.coerce.number().positive().default(1),
   /** How many times the API retries an on-chain certificate record before giving up. */
   POUW_CHAIN_RECORD_MAX_ATTEMPTS: int(5),
   POUW_MINING_POOL_WORKLOAD_ID: z.coerce.number().int().optional(),
@@ -78,19 +76,41 @@ export const envSchema = z.object({
   DEV_MODE: flag(false),
   /** Public testnet: /v1/dev/credits gives 10 test CLD once per wallet per day. Never on a value-bearing deployment. */
   TESTNET_CREDITS: flag(false),
-  EPOCH_SECONDS: int(120),
-  VEST_B_SECONDS: int(120),
+  /** Testnet 3600 / 3600; mainnet 86400 / 604800 (docs/IMPL_SPEC_2026-10.md). */
+  EPOCH_SECONDS: int(3600),
+  VEST_B_SECONDS: int(3600),
   SUBSIDY_RHO: z.coerce.number().min(0).max(1).default(0.25),
-  CLUSTER_N_MIN: int(1),
+  CLUSTER_N_MIN: int(3),
   CLUSTER_S_CAP: z.coerce.number().min(0).max(1).default(0.5),
-  PRICE_UCLD_PER_MMAC: int(1000),
-  /** Lane-B subsidy per epoch. Must never exceed the chain allowance (≈0.304 CLD per 120 s epoch on the local 1M supply). */
-  EPOCH_SUBSIDY_BUDGET_UCLD: int(300_000),
-  TREASURY_ADDRESS: address.optional(),
-  NODE_ACTIVE_SECONDS: int(15),
+  /** Initial/reset price in nano-CLD per tera-MAC; the hourly controller moves it from here. */
+  PRICE_NCLD_PER_TMAC: int(14_000),
+  /** Flat part of every job fee, µCLD. */
+  BASE_FEE_UCLD: int(1000),
+  PRICE_CONTROLLER: z.enum(["on", "off"]).default("on"),
+  /** Lane-B subsidy per epoch: 80 % of the chain allowance for a 1 h epoch at 1M supply, 8 %/yr. */
+  EPOCH_SUBSIDY_BUDGET_UCLD: int(7_300_000),
+  NODE_ACTIVE_SECONDS: int(45),
   ASSIGNMENT_TTL_SECONDS: int(60),
   /** Source of the assignment seed (latest block hash). Unset → local fallback seed. */
   CHAIN_RPC_URL: z.string().url().optional(),
+  /** v2 CloudanaSettlement on Base Sepolia; the Deposited watcher is inactive while unset. */
+  SETTLEMENT_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  DEPOSIT_WATCHER_START_BLOCK: z.coerce.number().int().nonnegative().optional(),
+  /** Blocks behind the chain head the deposit watcher stays, so a reorged Deposited log is never credited. */
+  DEPOSIT_CONFIRMATIONS: int(10),
+  /**
+   * Node runtime only: trust CF-Connecting-IP / X-Forwarded-For for the client IP (set when a trusted proxy fronts
+   * the orchestrator). Off: the socket address is used. The Worker always trusts CF-Connecting-IP (Cloudflare sets it).
+   */
+  TRUST_PROXY: flag(false),
+  /** Card payments (Stripe) are off unless explicitly enabled. */
+  STRIPE_ENABLED: flag(false),
+  /** Public hosting gateway domain: https://{deploymentId}.{SITES_DOMAIN}. */
+  SITES_DOMAIN: z.string().default("sites.cloudana.io"),
+  /** Node instructions: signer key (Worker secret, not a chain key), minimum agent, extra image regexes. */
+  INSTRUCTION_SIGNING_KEY: z.string().optional(),
+  MIN_AGENT_VERSION: z.string().default("1.1.0"),
+  IMAGE_ALLOWLIST: z.string().optional(),
 
   // ── V3 hosting (docs/V3_CONTRACT.md §3–§4) ──────────────────────────────
   PRICE_HOSTING_UCLD_PER_HOUR: int(50),

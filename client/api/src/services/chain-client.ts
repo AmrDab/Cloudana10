@@ -1,20 +1,19 @@
 /**
- * Chain client for orchestrator backend: read registries, write placement/status/rewards.
+ * Read-only chain client for the legacy orchestrator: reads the workload and
+ * provider registries and subscribes to their events. The API holds no chain
+ * key, so there are no write paths here; on-chain settlement is the keeper's job.
  * Supports both WebSocket and HTTP polling transports based on configuration.
  */
-import { createPublicClient, createWalletClient, http, webSocket, fallback, type Abi, type Address, type Transport } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { createPublicClient, http, webSocket, fallback, type Abi, type Address, type Transport } from "viem";
 import { baseSepolia } from "viem/chains";
 import {
   WorkloadRegistryABI,
   ProviderRegistryABI,
-  RewardContractABI,
 } from "../lib/abi-data.js";
 import {
   contractAddresses,
   getChainId,
   getRpcUrl,
-  getOrchestratorPrivateKey,
   getRpcTransportMode,
   getWssUrl,
   getWebsocketRetryCount,
@@ -89,34 +88,16 @@ function buildChain() {
 function makePublicClient() {
   return createPublicClient({ chain: buildChain(), transport: createRpcTransport() });
 }
-function makeWalletClient(pk: string) {
-  return createWalletClient({
-    account: privateKeyToAccount(("0x" + pk.replace(/^0x/, "")) as `0x${string}`),
-    chain: buildChain(),
-    transport: createRpcTransport(),
-  });
-}
 
 let _publicClient: ReturnType<typeof makePublicClient> | null = null;
-let _walletClient: ReturnType<typeof makeWalletClient> | null | undefined;
 
 export function getPublicClient() {
   if (!_publicClient) _publicClient = makePublicClient();
   return _publicClient;
 }
 
-/** Signing client for the orchestrator wallet, or null when no key is configured. */
-export function getWalletClient() {
-  if (_walletClient === undefined) {
-    const pk = getOrchestratorPrivateKey();
-    _walletClient = pk ? makeWalletClient(pk) : null;
-  }
-  return _walletClient;
-}
-
 const WorkloadRegistryAbi = WorkloadRegistryABI as unknown as Abi;
 const ProviderRegistryAbi = ProviderRegistryABI as unknown as Abi;
-const RewardContractAbi = RewardContractABI as unknown as Abi;
 
 export function getWorkloadRegistryAddress(): Address {
   const a = contractAddresses.WorkloadRegistry;
@@ -127,12 +108,6 @@ export function getWorkloadRegistryAddress(): Address {
 export function getProviderRegistryAddress(): Address {
   const a = contractAddresses.ProviderRegistry;
   if (!a || a === "0x0000000000000000000000000000000000000000") return "0x0000000000000000000000000000000000000000" as Address;
-  return a as Address;
-}
-
-export function getRewardContractAddress(): Address {
-  const a = contractAddresses.RewardContract;
-  if (!a || a === "0x0000000000000000000000000000000000000000") throw new Error("RewardContract address not set");
   return a as Address;
 }
 
@@ -320,85 +295,6 @@ export async function getDeviceOwner(deviceId: DeviceId): Promise<Address | null
  */
 export async function getProviderByAddress(providerAddress: Address): Promise<ChainProvider | null> {
   return getProviderByDevice(providerAddress as DeviceId);
-}
-
-// --- Write (orchestrator) ---
-async function ensureWallet() {
-  const walletClient = getWalletClient();
-  if (!walletClient?.account) throw new Error("Orchestrator private key not set (ORCHESTRATOR_PRIVATE_KEY)");
-  return { walletClient, account: walletClient.account };
-}
-
-export async function recordPlacement(workloadId: bigint, provider: Address, instanceId: bigint) {
-  const { walletClient: w, account: a } = await ensureWallet();
-  const contractAddress = getWorkloadRegistryAddress();
-  
-  BlockchainLog.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  BlockchainLog.info(`📝 RECORDING PLACEMENT ON BLOCKCHAIN`);
-  BlockchainLog.info(`   Function: WorkloadRegistry.recordPlacement()`);
-  BlockchainLog.info(`   Contract: ${contractAddress}`);
-  BlockchainLog.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  BlockchainLog.info(`   Parameters:`);
-  BlockchainLog.info(`     workloadId: ${workloadId}`);
-  BlockchainLog.info(`     provider: ${provider}`);
-  BlockchainLog.info(`     instanceId: ${instanceId}`);
-  BlockchainLog.info(`   Transaction from: ${a.address}`);
-  BlockchainLog.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  
-  const startTime = Date.now();
-  BlockchainLog.info(`🔄 Step 1/3: Sending transaction to blockchain...`);
-  
-  const hash = await w.writeContract({
-    address: contractAddress,
-    abi: WorkloadRegistryAbi,
-    functionName: "recordPlacement",
-    args: [workloadId, provider, instanceId],
-    account: a,
-  });
-  const sendDuration = Date.now() - startTime;
-  
-  BlockchainLog.success(`✅ Step 2/3: Transaction sent to mempool (${sendDuration}ms)`);
-  BlockchainLog.info(`   TX Hash: ${hash}`);
-  BlockchainLog.info(`   View on explorer: https://sepolia.basescan.org/tx/${hash}`);
-  BlockchainLog.info(`⏳ Step 3/3: Waiting for block confirmation...`);
-  
-  const confirmStartTime = Date.now();
-  const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-  const confirmDuration = Date.now() - confirmStartTime;
-  const totalDuration = Date.now() - startTime;
-  
-  BlockchainLog.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  if (receipt.status === 'success') {
-    BlockchainLog.success(`🎉 TRANSACTION CONFIRMED!`);
-    BlockchainLog.success(`   Status: SUCCESS ✅`);
-    BlockchainLog.info(`   Block Number: ${receipt.blockNumber}`);
-    BlockchainLog.info(`   Gas Used: ${receipt.gasUsed.toString()}`);
-    BlockchainLog.info(`   Confirmation Time: ${confirmDuration}ms`);
-    BlockchainLog.info(`   Total Time: ${totalDuration}ms`);
-    BlockchainLog.info(`   TX Hash: ${hash}`);
-    BlockchainLog.success(`   🔗 Workload ${workloadId} is now officially placed on-chain!`);
-  } else {
-    BlockchainLog.error(`❌ TRANSACTION REVERTED!`);
-    BlockchainLog.error(`   Status: FAILED ❌`);
-    BlockchainLog.error(`   Block Number: ${receipt.blockNumber}`);
-    BlockchainLog.error(`   Total Time: ${totalDuration}ms`);
-    BlockchainLog.error(`   The placement was NOT recorded on blockchain`);
-  }
-  BlockchainLog.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  
-  return receipt;
-}
-
-export async function rewardProvider(provider: Address, workloadId: bigint, amount: bigint) {
-  const { walletClient: w, account: a } = await ensureWallet();
-  const hash = await w.writeContract({
-    address: getRewardContractAddress(),
-    abi: RewardContractAbi,
-    functionName: "rewardProvider",
-    args: [provider, workloadId, amount],
-    account: a,
-  });
-  return getPublicClient().waitForTransactionReceipt({ hash });
 }
 
 // --- Event subscriptions (event-driven orchestrator) ---

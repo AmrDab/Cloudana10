@@ -1,0 +1,19 @@
+{
+  "name": "cloudana-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that serves hosted Cloudana sites at *.sites.cloudana.io by proxying to the node that runs each deployment",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.2",
+    "wrangler": "^4.0.0"
+  }
+}

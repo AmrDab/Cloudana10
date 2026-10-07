@@ -1,8 +1,9 @@
 // Payment API client functions for Cloudana
-// Handles Stripe checkout sessions, CLD credit balances, and crypto deposits
+// Handles the CLD credit balance and transaction history. Card checkout and the
+// client-reported crypto deposit were removed for the testnet: card payments are
+// off, and escrow deposits are credited by the API's Settlement `Deposited` watcher.
 
 import { authFetch } from "@/lib/auth";
-import { edgeApiBase } from "@/lib/api-base";
 import { ApiError, readJson } from "@/lib/api-error";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -23,27 +24,6 @@ export interface Transaction {
   description?: string;
 }
 
-export interface CheckoutSession {
-  sessionId: string;
-  url: string;               // Stripe hosted checkout URL (for redirect flow)
-  clientSecret?: string;     // For embedded Stripe Elements flow
-}
-
-export interface DepositCryptoResult {
-  success: boolean;
-  creditsAdded: number;
-  newBalance: number;
-  message?: string;
-}
-
-export interface CheckoutSessionStatus {
-  sessionId: string;
-  paymentStatus: "paid" | "unpaid" | "no_payment_required";
-  cldAmount: number;
-  amountUsd: number;
-  userId: string;
-}
-
 // Raw API shapes (see client/api/src/routes/v1/payments.ts)
 interface ApiBalance {
   balance: number;
@@ -58,17 +38,6 @@ interface ApiTransaction {
   description?: string;
   timestamp: string;
   metadata?: Record<string, unknown>;
-}
-
-interface ApiDeposit {
-  cldCredited: number;
-  newBalance: number;
-}
-
-interface ApiConvert {
-  usd: number;
-  cld: number;
-  rate: number;
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -93,43 +62,11 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 // The wallet is identified by the JWT (lib/auth.ts); no address is sent.
 
 /**
- * Create a Stripe Checkout session for adding funds.
- * @param amountUsd - Amount in USD (e.g. 10, 25, 50, 100)
- * @returns Session ID and URL for redirect
- */
-export async function createCheckoutSession(amountUsd: number): Promise<CheckoutSession> {
-  return apiFetch<CheckoutSession>("/payments/checkout", {
-    method: "POST",
-    body: JSON.stringify({ amountUsd }),
-  });
-}
-
-/**
  * Get the user's current CLD credit balance on the platform.
- * Credits are accumulated via card or crypto deposits and spent on deployments.
  */
 export async function getBalance(): Promise<PaymentBalance> {
   const data = await apiFetch<ApiBalance>("/payments/balance");
   return { cldCredits: data.balance, usdEquivalent: data.usdEquivalent };
-}
-
-/**
- * Record a crypto deposit after the on-chain transaction is confirmed.
- * Backend verifies the tx on-chain and credits the account.
- * @param txHash - On-chain transaction hash
- * @param amountCld - Amount of CLD tokens sent
- * @param chainId - Chain the transfer was sent on
- */
-export async function depositCrypto(
-  txHash: string,
-  amountCld: number,
-  chainId?: number
-): Promise<DepositCryptoResult> {
-  const data = await apiFetch<ApiDeposit>("/payments/deposit-crypto", {
-    method: "POST",
-    body: JSON.stringify({ txHash, cldAmount: amountCld, chainId }),
-  });
-  return { success: true, creditsAdded: data.cldCredited, newBalance: data.newBalance };
 }
 
 /**
@@ -155,23 +92,4 @@ export async function getTransactionHistory(limit = 10, offset = 0): Promise<Tra
     txHash: typeof tx.metadata?.txHash === "string" ? tx.metadata.txHash : undefined,
     description: tx.description,
   }));
-}
-
-/**
- * Get current CLD/USD conversion rate.
- * 1 USD = X CLD credits on the platform.
- */
-export async function getConversionRate(): Promise<{ usdToCld: number; cldToUsd: number }> {
-  // Public route — must not trigger a wallet signature just to show a rate.
-  const res = await fetch(`${edgeApiBase()}/payments/convert?usd=1`);
-  if (!res.ok) throw new Error(`${res.status}: could not load conversion rate`);
-  const data = (await res.json()) as ApiConvert;
-  return { usdToCld: data.rate, cldToUsd: 1 / data.rate };
-}
-
-/**
- * Look up a Stripe checkout session after redirect return.
- */
-export async function verifyCheckoutSession(sessionId: string): Promise<CheckoutSessionStatus> {
-  return apiFetch<CheckoutSessionStatus>(`/payments/session/${encodeURIComponent(sessionId)}`);
 }

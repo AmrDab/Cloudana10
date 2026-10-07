@@ -3,7 +3,8 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { getD1 } from "../../lib/storage.js";
 import { getEnv } from "../../config/env.js";
 import { ok } from "../../lib/http.js";
-import { epochOf } from "../../services/ledger.service.js";
+import { epochOf, lastSettledEpochAt } from "../../services/ledger.service.js";
+import { getPriceQuote } from "../../services/pricing.service.js";
 import { createRouter, json, responses } from "./_openapi.js";
 
 export const networkRouter = createRouter();
@@ -26,7 +27,10 @@ const networkRoute = createRoute({
         burnedUcld: int,
         verifiersToday: int,
         epoch: int,
-        priceUcldPerMmac: int,
+        priceNcldPerTmac: int.openapi({ description: "Current quote, nano-CLD per tera-MAC; locked until priceExpiresAt" }),
+        priceExpiresAt: z.number(),
+        baseFeeUcld: int,
+        lastSettledEpochAt: z.number().nullable(),
         deploymentsRunning: int,
         gpusOnline: int.openapi({ description: "GPUs in manifests of online, bound nodes that advertise the gpu capability" }),
         workstationsRunning: int,
@@ -55,10 +59,11 @@ const STATS_SQL = `SELECT
 networkRouter.openapi(networkRoute, async (c) => {
   const env = getEnv();
   const now = Date.now();
-  const row = await getD1()
-    .prepare(STATS_SQL)
-    .bind(now - env.NODE_ACTIVE_SECONDS * 1000, now - 86_400_000)
-    .first<Record<string, number>>();
+  const [row, quote, settledAt] = await Promise.all([
+    getD1().prepare(STATS_SQL).bind(now - env.NODE_ACTIVE_SECONDS * 1000, now - 86_400_000).first<Record<string, number>>(),
+    getPriceQuote(now),
+    lastSettledEpochAt(),
+  ]);
   return ok(c, {
     nodesOnline: row?.nodesOnline ?? 0,
     nodesBound: row?.nodesBound ?? 0,
@@ -69,7 +74,10 @@ networkRouter.openapi(networkRoute, async (c) => {
     burnedUcld: row?.burnedUcld ?? 0,
     verifiersToday: row?.verifiersToday ?? 0,
     epoch: epochOf(now),
-    priceUcldPerMmac: env.PRICE_UCLD_PER_MMAC,
+    priceNcldPerTmac: quote.priceNcldPerTmac,
+    priceExpiresAt: quote.expiresAt,
+    baseFeeUcld: env.BASE_FEE_UCLD,
+    lastSettledEpochAt: settledAt,
     deploymentsRunning: row?.deploymentsRunning ?? 0,
     gpusOnline: row?.gpusOnline ?? 0,
     workstationsRunning: row?.workstationsRunning ?? 0,

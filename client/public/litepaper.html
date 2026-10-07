@@ -210,8 +210,8 @@
     <div class="kicker">04 · Services</div>
     <h2 id="h-svc">What runs today</h2>
     <ul>
-      <li><b>Live on testnet:</b> GPU / CPU compute (verified matrix jobs) and static hosting &mdash; node agents serve your site and the orchestrator probes it every minute. Hosting is paid by fees only, with no subsidy.</li>
-      <li><b>Early access:</b> containers (Docker-capable nodes only), AI inference, storage.</li>
+      <li><b>Live on testnet:</b> GPU / CPU compute (verified matrix jobs) and static hosting &mdash; node agents serve your site through a Cloudana gateway and the orchestrator probes its content hash every minute. Hosting is paid by fees only, with no subsidy.</li>
+      <li><b>Early access:</b> containers (hardened fleet nodes only), AI inference, storage.</li>
       <li><b>Planned:</b> CDN, DNS, TLS, DDoS shielding, WAF, edge functions, object storage, KV &amp; queues, tunnels, zero-trust access, databases, confidential VMs, a website builder, an AI gateway, and desktops for agents.</li>
     </ul>
   </section>
@@ -219,19 +219,21 @@
   <section class="sec" aria-labelledby="h-token">
     <div class="kicker w">05 · The token</div>
     <h2 id="h-token">How CLD is issued</h2>
-    <p>Every fee is burned, and CLD is minted per verified job &mdash; so issuance follows paid work:</p>
+    <p>CLD is the unit of account for compute on Cloudana: every job is priced and settled in CLD. When a verified job is paid for, the fee is burned and the provider who did the work is minted most of it &mdash; so new CLD exists only because someone paid for real, verified computation:</p>
     <div class="params">
-      <div class="param"><div class="v" style="color:var(--burn)">100%</div><div class="l">of the fee burned</div></div>
-      <div class="param"><div class="v" style="color:var(--work)">97.5%</div><div class="l">minted to the provider</div></div>
-      <div class="param"><div class="v">0.5%</div><div class="l">minted to the treasury</div></div>
-      <div class="param"><div class="v" style="color:var(--ok)">capped</div><div class="l">subsidy, random-draw jobs only</div></div>
+      <div class="param"><div class="v" style="color:var(--work)">95%</div><div class="l">of the fee minted to the provider</div></div>
+      <div class="param"><div class="v">3%</div><div class="l">minted to the treasury</div></div>
+      <div class="param"><div class="v" style="color:var(--burn)">2%</div><div class="l">net burn, destroyed for good</div></div>
+      <div class="param"><div class="v" style="color:var(--ok)">capped</div><div class="l">declining subsidy, random-draw jobs only</div></div>
     </div>
     <ul>
-      <li><b>Burn the fee, mint 97.5 % of it to the provider.</b> 0.5 % goes to the treasury. A capped subsidy is added only when the orchestrator's random draw picked that provider &mdash; so routing a job to yourself doesn't pay.</li>
-      <li><b>Minted per verified job, settled on Base in batches.</b> Each batch is posted as a Merkle root, with a veto window and a guardian before claims open.</li>
+      <li><b>Burn the fee, mint for the verified job.</b> The whole fee is burned at settlement; the provider is minted 95 % of it and the treasury 3 %. A small, capped, declining subsidy is added only when the orchestrator's random draw picked a provider in a genuinely independent cluster &mdash; so routing a job to yourself doesn't pay.</li>
+      <li><b>Priced from utilization.</b> Compute is priced in nano-CLD per tera-MAC plus a small per-job base fee; the price moves with utilization, with no oracle. USD is shown for display only.</li>
+      <li><b>Minted per verified job, settled on Base in batches.</b> Each epoch (hourly on testnet, daily at mainnet) is posted as a Merkle root, with a veto window and a guardian before claims open.</li>
+      <li><b>Paying.</b> If you hold another asset, your own wallet can swap it into CLD at the moment you pay; Cloudana never holds it. Cards are off during testnet. One static site per verified identity is free, paid for by the ecosystem treasury at normal fees.</li>
       <li><b>No stake to lose.</b> A misbehaving node is unbound and banned. Verifier credits are points, not CLD.</li>
     </ul>
-    <p>Supply depends on usage; see the <a href="/control/economics">20-year simulation</a> (a simulation, not a forecast). On testnet, CLD has no monetary value (see <a href="/terms.html">Terms §2</a>).</p>
+    <p>Mainnet genesis is 100M CLD with on-chain vesting (whitepaper &sect;6); testnet uses a fresh 1M token. Testnet CLD has no monetary value and there is no points or airdrop formula (see <a href="/terms.html">Terms &sect;2</a>). Supply depends on usage; see the <a href="/control/economics">20-year simulation</a> (a simulation, not a forecast). Nothing about CLD is a promise of price or return.</p>
   </section>
 
   <section class="sec" aria-labelledby="h-status">
@@ -249,7 +251,7 @@
     <h2 id="h-diff">What's different</h2>
     <ul>
       <li><b>Proof of Useful Work</b> for compute &mdash; proof and product coincide.</li>
-      <li><b>One orchestrator, one price</b> &mdash; the price comes from supply and demand, and placement is a random draw.</li>
+      <li><b>One orchestrator, one price</b> &mdash; the price comes from utilization, and placement is a random draw.</li>
       <li><b>Fee-first issuance</b> &mdash; every fee burned, CLD minted per verified job.</li>
       <li><b>Plug-and-play onboarding</b> &mdash; hardware detection, not configuration.</li>
     </ul>

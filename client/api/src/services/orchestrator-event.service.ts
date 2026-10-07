@@ -9,7 +9,6 @@
 import { 
   watchWorkloadRegistryEvents, 
   watchProviderRegistryEvents,
-  recordPlacement, 
   readWorkload,
   getWorkloadRegistryAddress,
   getProviderRegistryAddress
@@ -92,37 +91,31 @@ async function runPlacementCycle(): Promise<void> {
       const placementStart = Date.now();
       
       try {
-        // Step 1: Deploy to provider
-        L.info(`📤 Step 1/2: Deploying workload to provider...`);
+        // The API holds no chain key, so placements are not written to the
+        // WorkloadRegistry; the poller cache is what stops a re-deploy next cycle.
+        if (getPlacementByWorkloadId(d.workloadId)) {
+          L.dim(`   Workload ${d.workloadId} already deployed (tracked by the status poller) - skipping`);
+          continue;
+        }
+
+        L.info(`📤 Deploying workload to provider...`);
         const deployOk = await deployToProvider(d);
-        
+
         if (!deployOk) {
-          L.error(`❌ Provider deployment FAILED - Skipping blockchain recording`);
-          L.error(`   Workload ${d.workloadId} will remain unplaced on-chain`);
+          L.error(`❌ Provider deployment FAILED`);
           failCount++;
           continue;
         }
-        
+
         L.success(`✅ Provider accepted deployment`);
-        
-        // Step 2: Record on blockchain
-        L.info(`📝 Step 2/2: Recording placement on blockchain...`);
-        const txStart = Date.now();
-        const receipt = await recordPlacement(d.workloadId, d.provider, d.instanceId);
-        const txDuration = Date.now() - txStart;
-        
-        // Step 3: Register workload for status polling
+
         registerWorkloadForPolling(d.workloadId, d.instanceId, d.provider, d.endpoint, d.deviceId, d.ownerAddress);
         L.info(`📊 Registered workload ${d.workloadId}/${d.instanceId} for status polling`);
-        
+
         L.success(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         L.success(`✅ PLACEMENT SUCCESSFUL!`);
         L.success(`   Workload: ${d.workloadId}/${d.instanceId}`);
         L.success(`   Provider: ${d.provider.slice(0, 10)}...`);
-        L.success(`   TX Hash: ${receipt.transactionHash}`);
-        L.success(`   Block: ${receipt.blockNumber}`);
-        L.success(`   Gas Used: ${receipt.gasUsed}`);
-        L.success(`   TX Time: ${txDuration}ms`);
         L.success(`   Total Time: ${Date.now() - placementStart}ms`);
         
         // Show manifest info

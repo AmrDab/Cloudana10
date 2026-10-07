@@ -5,7 +5,7 @@ A decentralized physical infrastructure network (DePIN) for compute resource sha
 ## 🎯 Architecture
 
 This is a **trust-minimized DePIN application**:
-- ✅ **On-chain settlement** - Provider registry, staking, slashing, and CLD rewards live in smart contracts on Base Sepolia
+- ✅ **On-chain settlement** - Epoch Merkle roots post to CloudanaSettlement on Base Sepolia: fees burned, CLD minted per verified job (95% provider / 3% treasury / 2% net burn), guardian veto window
 - ✅ **Orchestrator-coordinated (testnet)** - An open-source orchestrator verifies PoUW certificates and coordinates workloads; mainnet replaces its attestation with zkSNARK verification (see `circuits/`)
 - ✅ **Decentralized storage** - IPFS for metadata
 - ✅ **Honest about the trust model** - see `DECENTRALIZATION_ROADMAP.md` for what is decentralized today vs. planned
@@ -167,7 +167,7 @@ similar to Akash's architecture. See [Provider Node README](./provider-node-serv
 5. Start earning from compute jobs
 
 ### Contract Interaction
-- Registration, staking, and rewards settle on-chain
+- Rewards settle on-chain in hourly testnet epochs (no staking; planted tasks and lane-B vesting act as the bond)
 - Real-time blockchain events
 - PoUW certificates verified by the orchestrator on testnet; zkSNARK on-chain verification is the mainnet milestone
 - Transparent on-chain data

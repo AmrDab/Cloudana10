@@ -18,7 +18,6 @@ import { templatesRouter } from "./routes/v1/templates.js";
 import { pouwRouter } from "./routes/v1/pouw.js";
 import { hardwareScanRouter } from "./routes/v1/hardware-scan.js";
 import { paymentsRouter } from "./routes/v1/payments.js";
-import { faucetRouter } from "./routes/v1/faucet.js";
 import { ipfsRouter } from "./routes/v1/ipfs.js";
 import { devRouter } from "./routes/v1/dev.js";
 import { accountRouter } from "./routes/v1/account.js";
@@ -111,7 +110,6 @@ export function buildApp<B extends object = Record<string, unknown>>(opts: Build
   app.route("/v1", pouwRouter);
   app.route("/v1", hardwareScanRouter);
   app.route("/v1", paymentsRouter);
-  app.route("/v1", faucetRouter);
   app.route("/v1", ipfsRouter);
   // v1 work pipeline (docs/BUILD_SPEC_V1.md §5)
   app.route("/v1", devRouter);

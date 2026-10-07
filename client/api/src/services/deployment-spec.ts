@@ -57,6 +57,8 @@ export const ContainerSpecSchema = z.object({
   storageMb: z.number().int().min(64).max(1_048_576),
   /** The browser will PATCH sealedEnv after assignment: hold the start until it arrives. */
   expectsSecrets: z.boolean().optional(),
+  /** Container user as "uid[:gid]" (numeric). Plain containers default to 1000:1000 on the node; workstations to the image's user. */
+  user: z.string().regex(/^\d{1,7}(:\d{1,7})?$/, "user must be numeric uid[:gid]").optional(),
 });
 
 /** ssh-ed25519 / ssh-rsa / ecdsa-sha2-nistp* <base64> [comment] — printable ASCII only (it becomes an env value). */
@@ -76,7 +78,8 @@ const WorkstationFields = z.object({
     web: z
       .object({
         port: z.number().int().min(1).max(65535),
-        path: z.string().max(200).regex(/^\/[!-~]*$/, "path must start with /").optional(),
+        // Same alphabet the node agent accepts (node-agent/src/workstation.ts WEB_PATH): a spec the API takes must never fail on the node.
+        path: z.string().max(200).regex(/^\/[A-Za-z0-9._~/-]*$/, "path must start with / and use only [A-Za-z0-9._~/-]").optional(),
       })
       .optional(),
     ssh: z
@@ -149,6 +152,10 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
   }
   const parsed = (kind === "workstation" ? WorkstationSpecSchema : ContainerSpecSchema).safeParse(raw);
   if (!parsed.success) return invalid(parsed.error);
+  // Plain containers never run as root (the node refuses it too); workstations keep the image's user model.
+  if (kind === "container" && parsed.data.user && /^0(:|$)/.test(parsed.data.user)) {
+    return { ok: false, code: "validation_failed", message: "spec.user: containers cannot run as root (uid 0)" };
+  }
   if (JSON.stringify(parsed.data).length > CONTAINER_SPEC_MAX_BYTES) {
     return { ok: false, code: "payload_too_large", message: `container spec exceeds ${CONTAINER_SPEC_MAX_BYTES} bytes` };
   }

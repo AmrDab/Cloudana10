@@ -1,5 +1,6 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { randomBytes } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { buildApp } from "../src/app.js";
 import { getD1 } from "../src/lib/storage.js";
@@ -8,6 +9,7 @@ import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
 import { closeEpochs } from "../src/services/ledger.service.js";
 import { endpointAllowed, priceUcldPerHour } from "../src/services/deployment-spec.js";
+import { runDutiesCron } from "../src/services/deployment-duties.service.js";
 
 const TREASURY = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
 let app: ReturnType<typeof buildApp>;
@@ -31,23 +33,31 @@ function authed(jwt: string, method: string, path: string, body?: unknown) {
 async function signed(node: PrivateKeyAccount, path: string, payload: unknown = {}) {
   const body = JSON.stringify(payload);
   const ts = String(Date.now());
-  const signature = await node.signMessage({ message: nodeSigningMessage("POST", path, ts, body) });
+  const nonce = randomBytes(16).toString("hex");
+  const signature = await node.signMessage({ message: nodeSigningMessage("POST", path, ts, body, nonce) });
   return call(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Node": node.address, "X-Node-Timestamp": ts, "X-Node-Signature": signature },
+    headers: { "Content-Type": "application/json", "X-Node": node.address, "X-Node-Timestamp": ts, "X-Nonce": nonce, "X-Node-Signature": signature },
     body,
   });
 }
 
 const MANIFEST = { cpuThreads: 8, ramGB: 16, gpus: [], os: "linux" };
 
-/** A bound node with the given capabilities (payout = a fresh wallet). */
+/** A bound fleet node with the given capabilities (payout = a fresh wallet); it serves on 127.0.0.1 (DEV_MODE). */
 async function boundNode(workTypes: string[]) {
   const node = privateKeyToAccount(generatePrivateKey());
-  const res = await signed(node, "/v1/nodes/announce", { manifest: MANIFEST, benchmarkMmacPerSec: 100, workTypes, pubkey: node.publicKey.slice(2) });
+  const res = await signed(node, "/v1/nodes/announce", {
+    manifest: MANIFEST,
+    benchmarkMmacPerSec: 100,
+    workTypes,
+    pubkey: node.publicKey.slice(2),
+    publicHost: "127.0.0.1",
+    agentVersion: "1.1.0",
+  });
   expect(res.status).toBe(200);
   const payout = "0x" + (++userSeq).toString(16).padStart(40, "e");
-  await getD1().prepare("UPDATE nodes SET payout = ? WHERE address = ?").bind(payout, node.address.toLowerCase()).run();
+  await getD1().prepare("UPDATE nodes SET payout = ?, fleet_id = 'flt_test' WHERE address = ?").bind(payout, node.address.toLowerCase()).run();
   return { node, payout };
 }
 
@@ -86,7 +96,7 @@ async function runningSite(credits = 10_000) {
 }
 
 beforeAll(async () => {
-  await setupV1Db({ DEV_MODE: "true", TREASURY_ADDRESS: TREASURY });
+  await setupV1Db({ DEV_MODE: "true", TREASURY_ADDRESS: TREASURY, NODE_ACTIVE_SECONDS: "15" });
   app = buildApp({ runtime: "node" });
 });
 
@@ -190,10 +200,11 @@ describe("node side", () => {
       await heartbeat(node);
       expect((await row(id))!.probe_fail).toBe(i);
     }
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:42001", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:42001/index.html", expect.objectContaining({ method: "GET" }));
     expect(await row(id)).toMatchObject({ status: "unreachable" });
 
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("ok", { status: 200 })));
+    // The content probe fetches probe_path and requires the uploaded bytes (sha256 of index.html), not just a 200.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<h1>hi</h1>", { status: 200 })));
     await shift(id, "last_probe_at", 61_000);
     await heartbeat(node);
     expect(await row(id)).toMatchObject({ status: "running", probe_fail: 0 });
@@ -214,7 +225,7 @@ describe("node side", () => {
     await shift(id, "last_billed_at", 3_600_000);
     await heartbeat(node);
     const entries = await getD1().prepare("SELECT lane, address, amount_ucld, job_id FROM reward_entries WHERE address = ?").bind(payout).all<Record<string, any>>();
-    expect(entries.results).toEqual([{ lane: "A", address: payout, amount_ucld: 48, job_id: expect.any(String) }]);
+    expect(entries.results).toEqual([{ lane: "A", address: payout, amount_ucld: 47, job_id: expect.any(String) }]);
     const lanes = await getD1()
       .prepare("SELECT lane FROM reward_entries WHERE job_id = ?")
       .bind(entries.results![0].job_id)
@@ -223,8 +234,8 @@ describe("node side", () => {
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 900, heldUcld: 50 });
     expect((await row(id))!.status).toBe("running");
 
-    const closed = await closeEpochs(Date.now() + 10 * 120_000);
-    const epoch = closed.find((e) => e.leaves.some((l) => l.address === payout));
+    const closed = await closeEpochs(Date.now() + 2 * 3_600_000);
+    const epoch = closed.find((e) => e.leaves.some((l) => l.account === payout));
     expect(epoch!.feesBurnedUcld).toBeGreaterThanOrEqual(50);
   });
 
@@ -273,7 +284,9 @@ describe("owner actions", () => {
     }
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${viaFlag}/secrets`, { sealedEnv: b64("sealed") })).status).toBe(200);
     const hb = await heartbeat(node);
-    expect(hb.deployments).toEqual([{ id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: b64("sealed") }]);
+    expect(hb.deployments).toEqual([
+      { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: b64("sealed"), imageAllowed: false },
+    ]);
   });
 
   it("DELETE stops now; the node gets 'stop' until it confirms", async () => {
@@ -321,11 +334,11 @@ describe("totals", () => {
     await heartbeat(node);
     const after = await (await call("/v1/network")).json();
     expect(after.burnedUcld - before.burnedUcld).toBe(50);
-    // lane A 48 to the provider; treasury floor(0.005 × 50) = 0 writes no entry
-    expect(after.mintedUcld - before.mintedUcld).toBe(48);
+    // lane A 47 to the provider + treasury ceil(0.03 × 50) = 2 (A trimmed so A + treasury ≤ floor(0.98 × 50))
+    expect(after.mintedUcld - before.mintedUcld).toBe(49);
     const mine = await (await authed(await generateToken(payout), "GET", "/v1/nodes/mine")).json();
     expect(mine.nodes).toEqual([
-      expect.objectContaining({ address: node.address.toLowerCase(), earnedUcld: 48, deploymentsRunning: 1 }),
+      expect.objectContaining({ address: node.address.toLowerCase(), earnedUcld: 47, deploymentsRunning: 1 }),
     ]);
   });
 });
@@ -363,11 +376,13 @@ describe("dead-node requeue", () => {
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 950, heldUcld: 50 });
   });
 
-  it("a heartbeat re-queues too; a node that comes back can take its deployment again without a stop", async () => {
+  it("the duties cron re-queues too; a node that comes back can take its deployment again without a stop", async () => {
     const { node: old, id } = await runningSite(1000);
     await kill(old);
-    const { node: other } = await boundNode(["matmul"]); // not hosting-capable: re-queues, cannot take it
-    await heartbeat(other);
+    const { node: other } = await boundNode(["matmul"]); // not hosting-capable: cannot take it
+    await heartbeat(other); // a heartbeat alone never re-queues (global duties are off the heartbeat)
+    expect(await row(id)).toMatchObject({ status: "running" });
+    expect(await runDutiesCron()).toMatchObject({ requeued: 1 });
     expect(await row(id)).toMatchObject({ status: "queued", node: null });
     expect((await heartbeat(old)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE }]);
     expect((await heartbeat(old)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE }]);

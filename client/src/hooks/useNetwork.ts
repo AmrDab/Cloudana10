@@ -14,7 +14,12 @@ export type NetworkStats = {
   burnedUcld: number;
   verifiersToday: number;
   epoch: number;
-  priceUcldPerMmac: number;
+  /** Current quote, nano-CLD per tera-MAC (1e12 multiply-adds); locked until priceExpiresAt. */
+  priceNcldPerTmac: number;
+  priceExpiresAt: number;
+  /** Flat part of every job fee, µCLD. */
+  baseFeeUcld: number;
+  lastSettledEpochAt: number | null;
 };
 
 type State = { data: NetworkStats | null; offline: boolean; updatedAt: number | null };

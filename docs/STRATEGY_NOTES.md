@@ -1,5 +1,7 @@
 # Cloudana — strategy working notes (2026-09-28)
 
+> **Superseded values (2026-10-05).** Fee split is now 95 % provider / 3 % treasury / 2 % net burn, price unit nCLD/TMAC + base fee, 1 h testnet epochs, per-operator cluster gate with N_MIN 3, 100M mainnet genesis — see [DECISIONS_CONSENSUS.md](DECISIONS_CONSENSUS.md) and [IMPL_SPEC_2026-10.md](IMPL_SPEC_2026-10.md). Figures below (0.975 / 0.005, 250M, 120 s epochs) are kept as the historical record of this analysis.
+
 Compiled from the owner ↔ engineering discussion. **Nothing here is implemented yet unless marked ✅.**
 Status: draft for review. Supersedes nothing until the owner signs off; the whitepaper is unchanged.
 

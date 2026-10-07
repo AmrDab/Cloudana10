@@ -302,3 +302,29 @@ SSH + web access; persistent volumes with keep-days; max hours + extend; capacit
 - [x] Console header + sidebar "Connect wallet" opens the Reown modal (wallets, email, socials), then signs in; every in-page Sign in goes through the same flow
 - [x] Production build uses the real Reown project ID (was demo-project-id → 403s)
 - [x] Verified live on app.cloudana.io: modal lists WalletConnect/Trust/MetaMask/110+, no console errors
+
+## 2026-10-05 — Consensus build (owner approved "do all")
+Spec: docs/IMPL_SPEC_2026-10.md. Six parallel workstreams with disjoint file ownership; integration by main session.
+- [ ] A Economics (API): nCLD/TMAC + base fee, price controller, 95/3/2, per-operator gate N_MIN 3, 1 h epochs + migration, lane-aware epoch payloads
+- [ ] B Payments/legacy: delete faucet + legacy chain writes, IP/ASN credit caps, Stripe off by default, Deposited watcher, retire legacy pages
+- [ ] C Contracts + keeper: Settlement v2 (lanes, treasury min, claw), CLDToken v2 (annual mint ceiling), v2 deploy script, keeper Worker
+- [ ] D Node security: signed instructions, nonces, hardening + capability gating, 15 s heartbeat, duties off heartbeat, agent fixes, GHCR + cosign workflow
+- [ ] E Hosting gateway: *.sites.cloudana.io proxy Worker, probe hash at upload, public route + admin stop
+- [ ] F Docs/copy: whitepaper §6, litepaper, roadmap, site copy (95/3/2, wallet-swap messaging), contacts, discord link
+- [ ] Integrate: wire crons + migrations, full tests, build, code review, D1 backup, deploy API + Pages; keeper/gateway deploy after owner contract deploy
+Owner-only after build: Safe 2-of-3, poster key + funding, run v2 deploy script, Worker secrets (INTERNAL_API_KEY, INSTRUCTION_SIGNING_KEY, POSTER_PRIVATE_KEY), delete ORCHESTRATOR_PRIVATE_KEY, mailboxes, counsel.
+- [x] Workstreams A–F complete (see agent reports summarized in session); integration: migrations wired, env vars, public gateway route, Worker + Node cron, fee-split rounding fix (treasury ceil, A trimmed to 98% cap) + bounds test — API vitest 238/238 green, api tsc clean
+- [ ] REMAINING: repo-root tsc + vite build, mirror probe/public_host columns in schema.sql, "Test credits" link → /control/run, README staking lines, rerun 20y sim on decided params, code review, commit/PR, D1 backup, deploy Worker + Pages; keeper/gateway after owner contract deploy + secrets
+
+## 2026-10-06 — review fixes (gateway, test credits, deposits, node security)
+- [x] Gateway: host-preserving target URL, CSP on every response, null-body statuses, drop content-length with content-encoding, cf cacheTtl 0, timeout bounds headers only
+- [x] Test credits: atomic D1 testnet_claims (wallet/IP/ASN), IPv6 /64, unknown IP refused, TRUST_PROXY on Node
+- [x] Deposit watcher: batch credit (all-or-nothing), DEPOSIT_CONFIRMATIONS
+- [x] Stripe flag via getEnv; public route gets its own rate bucket
+- [x] Nodes: publicHost must equal client IP outside DEV_MODE, no host change with live deployments, IPv6 stored without brackets
+- [x] Node auth: per-address limits after signature check, per-IP 2000/min, X-Nonce mandatory + atomic D1 nonce table
+- [x] Agent: serverNow() for instruction ts, uid 0 refused (both sides), storage quota + driver check, containersReady gate, pre-start hardening re-check, zero-address signer refused
+- [x] Workflow: login before overwrite guard, permissions, exact cosign identity
+- [x] All suites green: client/api vitest + tsc, gateway vitest + tsc, node-agent tsc + selftest
+Review: client/api 251/251 + tsc clean; gateway 14/14 + tsc clean; node-agent tsc clean + 5 selftests (security 84 checks).
+Not done (needs a real host, not unit-testable here): zero-address signer refusal and serverNow() wiring are in index.ts top level/loop; covered by the instructions selftest for the verify side only.

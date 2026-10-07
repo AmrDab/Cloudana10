@@ -1,4 +1,6 @@
 import { setupV1Db } from "./helpers/v1-db.js";
+import { randomBytes } from "node:crypto";
+import { runDutiesCron } from "../src/services/deployment-duties.service.js";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { buildApp } from "../src/app.js";
@@ -31,10 +33,11 @@ function authed(jwt: string, method: string, path: string, body?: unknown) {
 async function signed(node: PrivateKeyAccount, path: string, payload: unknown = {}) {
   const body = JSON.stringify(payload);
   const ts = String(Date.now());
-  const signature = await node.signMessage({ message: nodeSigningMessage("POST", path, ts, body) });
+  const nonce = randomBytes(16).toString("hex");
+  const signature = await node.signMessage({ message: nodeSigningMessage("POST", path, ts, body, nonce) });
   return call(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Node": node.address, "X-Node-Timestamp": ts, "X-Node-Signature": signature },
+    headers: { "Content-Type": "application/json", "X-Node": node.address, "X-Node-Timestamp": ts, "X-Nonce": nonce, "X-Node-Signature": signature },
     body,
   });
 }
@@ -48,10 +51,18 @@ const GPU_CAPS = ["matmul", "container", "gpu"];
 async function boundNode(workTypes: string[], gpus: G[] = []) {
   const node = privateKeyToAccount(generatePrivateKey());
   const manifest = { cpuThreads: 16, ramGB: 64, gpus, os: "linux" };
-  const res = await signed(node, "/v1/nodes/announce", { manifest, benchmarkMmacPerSec: 100, workTypes, pubkey: node.publicKey.slice(2) });
+  const res = await signed(node, "/v1/nodes/announce", {
+    manifest,
+    benchmarkMmacPerSec: 100,
+    workTypes,
+    pubkey: node.publicKey.slice(2),
+    publicHost: "127.0.0.1",
+    agentVersion: "1.1.0",
+  });
   expect(res.status).toBe(200);
   const payout = "0x" + (++userSeq).toString(16).padStart(40, "e");
-  await getD1().prepare("UPDATE nodes SET payout = ? WHERE address = ?").bind(payout, node.address.toLowerCase()).run();
+  // Containers/workstations are placed only on fleet nodes.
+  await getD1().prepare("UPDATE nodes SET payout = ?, fleet_id = 'flt_test' WHERE address = ?").bind(payout, node.address.toLowerCase()).run();
   return node;
 }
 
@@ -246,6 +257,7 @@ describe("preemption", () => {
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 97_680, heldUcld: 2320 });
 
     const onDemand = await createId(u.jwt, WS());
+    expect(await runDutiesCron()).toMatchObject({ preempted: 1 });
     const hb = await heartbeat(node);
     expect(hb.map((d) => [d.id, d.action])).toEqual([[younger, "stop"], [onDemand, "start"]]);
     expect(await row(younger)).toMatchObject({ status: "stopped", status_reason: "preempted by on-demand work" });
@@ -261,6 +273,7 @@ describe("preemption", () => {
     const node = await boundNode(GPU_CAPS, [A100]);
     const first = await running(node, u.jwt, WS());
     const waiting = await createId(u.jwt, WS());
+    await runDutiesCron();
     await heartbeat(node);
     expect((await row(first))!.status).toBe("running");
     expect((await row(waiting))!.status).toBe("queued");
@@ -269,6 +282,7 @@ describe("preemption", () => {
     const other = await boundNode(GPU_CAPS, [A100]);
     const spot = await running(other, u.jwt, WS({ tier: "interruptible" }));
     const spot2 = await createId(u.jwt, WS({ tier: "interruptible" }));
+    await runDutiesCron();
     await heartbeat(other);
     expect((await row(spot))!.status).toBe("running");
     expect((await row(spot2))!.status).toBe("queued");
@@ -280,6 +294,7 @@ describe("preemption", () => {
     const spot = await running(busy, u.jwt, WS({ tier: "interruptible" }));
     await boundNode(GPU_CAPS, [A100]); // free, online (announce counts as seen)
     await createId(u.jwt, WS());
+    await runDutiesCron();
     await heartbeat(busy);
     expect((await row(spot))!.status).toBe("running");
   });
