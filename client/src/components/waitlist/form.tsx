@@ -8,7 +8,6 @@ import { SERVICES, type ServiceId } from "@/lib/services";
 import { Segmented, ToggleChips } from "@/components/cld/segmented";
 import { CopyButton } from "@/components/cld/copy-button";
 import { btn, monoLabel } from "@/components/cld/cta";
-import { NumberTicker } from "@/components/magicui/number-ticker";
 import { countries } from "./countries";
 import { registerInline, signupSource, storedReferral, type WaitlistRole } from "./store";
 
@@ -263,7 +262,7 @@ function Success({ joined, compact }: { joined: Joined; compact: boolean }) {
     <div className="animate-in fade-in-0 duration-400" role="status">
       <p className={monoLabel}>{joined.existing ? "You're already on the list" : "You're in"}</p>
       <h3 className={cn("mt-2 font-head font-medium tracking-[-.03em] text-text", compact ? "text-[28px]" : "text-[40px] leading-[1.05]")}>
-        You're #<NumberTicker value={joined.position} className="tracking-[-.03em] text-text" />.
+        You're #<span className="tabular-nums tracking-[-.03em] text-text">{joined.position.toLocaleString()}</span>.
       </h3>
       <p className="mt-2 text-sm text-muted-foreground">{ROLE_NAME[joined.role]} branch · we email when it opens.</p>
 
