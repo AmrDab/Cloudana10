@@ -37,23 +37,31 @@ describe("assignment draw", () => {
   });
 });
 
-describe("cluster test", () => {
+describe("per-operator cluster gate", () => {
   const c = (payout: string, weight: number, i: number): Candidate => ({ address: `0x${i}`, payout, weight });
 
   it("passes a single wallet when N_MIN = 1 (share check skipped)", () => {
-    expect(clusterTest([c("w1", 5, 1), c("w1", 5, 2)], 1, 0.5)).toBe(true);
+    expect(clusterTest([c("w1", 5, 1), c("w1", 5, 2)], 1, 0.5, "w1")).toBe(true);
   });
 
-  it("fails with fewer wallets than N_MIN", () => {
-    expect(clusterTest([c("w1", 1, 1), c("w2", 1, 2)], 3, 0.5)).toBe(false);
+  it("withholds lane B from everyone with fewer distinct wallets than N_MIN", () => {
+    const two = [c("w1", 1, 1), c("w2", 1, 2)];
+    expect(clusterTest(two, 3, 0.5, "w1")).toBe(false);
+    expect(clusterTest(two, 3, 0.5, "w2")).toBe(false);
   });
 
-  it("fails when the largest wallet holds more than S_CAP of throughput", () => {
-    expect(clusterTest([c("w1", 6, 1), c("w2", 2, 2), c("w3", 2, 3)], 3, 0.5)).toBe(false);
-    expect(clusterTest([c("w1", 5, 1), c("w2", 3, 2), c("w3", 2, 3)], 3, 0.5)).toBe(true);
+  it("withholds lane B only from the operator above S_CAP; the others keep it", () => {
+    const dominated = [c("w1", 6, 1), c("w2", 2, 2), c("w3", 2, 3)]; // w1 = 60 %
+    expect(clusterTest(dominated, 3, 0.5, "w1")).toBe(false);
+    expect(clusterTest(dominated, 3, 0.5, "w2")).toBe(true);
+    expect(clusterTest(dominated, 3, 0.5, "w3")).toBe(true);
+    const balanced = [c("w1", 5, 1), c("w2", 3, 2), c("w3", 2, 3)]; // w1 = 50 % — at the cap passes
+    expect(clusterTest(balanced, 3, 0.5, "w1")).toBe(true);
   });
 
   it("groups nodes by payout wallet (splitting identities gains nothing)", () => {
-    expect(clusterTest([c("w1", 2, 1), c("w1", 2, 2), c("w1", 2, 3), c("w2", 2, 4)], 1, 0.5)).toBe(false);
+    const split = [c("w1", 2, 1), c("w1", 2, 2), c("w1", 2, 3), c("w2", 2, 4)]; // w1 = 75 % over three nodes
+    expect(clusterTest(split, 1, 0.5, "w1")).toBe(false);
+    expect(clusterTest(split, 1, 0.5, "w2")).toBe(true);
   });
 });

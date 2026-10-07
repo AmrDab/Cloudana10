@@ -70,7 +70,7 @@ export default function DocsPage() {
             </p>
             <p>
               Or deploy a <b>static site</b> from Run → Deploy: a node serves it, the orchestrator probes it every minute,
-              and you pay by the hour. Containers run on Docker-capable nodes (early access).
+              and you pay by the hour. Containers run on hardened fleet nodes (early access).
             </p>
             <Link href="/run" className={linkCls}>Run a job <ArrowRight className="size-3.5" /></Link>
           </Doc>
@@ -103,27 +103,42 @@ export default function DocsPage() {
           </Doc>
 
           <Doc id="cld" title="How CLD is minted">
-            <p>For each verified job with fee F:</p>
+            <p>
+              CLD is the unit of account for compute on Cloudana: every job is priced and settled in CLD. New CLD exists
+              only because someone paid for real, verified computation. For each verified job with fee F:
+            </p>
             <ul className="grid gap-2 pl-5 [list-style:disc]">
-              <li>F is burned.</li>
-              <li><b>0.975 F</b> is minted to the provider and 0.005 F to the treasury — a net burn of 2 %.</li>
+              <li>F is burned at settlement.</li>
+              <li><b>0.95 F</b> is minted to the provider and <b>0.03 F</b> to the treasury; <b>0.02 F</b> is destroyed for good.</li>
               <li>
-                A <b>capped subsidy</b> is added only when the orchestrator's random draw chose that provider, so routing
-                jobs to yourself doesn't pay.
+                A <b>small, capped, declining subsidy</b> is added only when the orchestrator's random draw chose a provider
+                in a genuinely independent cluster, so routing jobs to yourself doesn't pay. It is withheld from any operator
+                above the cluster share cap, and from everyone while fewer than three independent clusters are online.
               </li>
             </ul>
             <p>
               The amount is fixed when the job verifies. Entries are then posted to Base in batches (one Merkle root per
-              window), with a challenge window of days; the subsidy part vests before it settles. Batching is delivery, not
-              the reward unit.
+              epoch — hourly on testnet, daily at mainnet), with a veto window of the same length; the subsidy part vests
+              before it can be claimed. Batching is delivery, not the reward unit.
+            </p>
+            <p>
+              <b>Paying.</b> If you hold another asset, your own wallet swaps it into CLD at the moment you pay; Cloudana
+              never holds customer assets other than escrowed CLD. USD figures are display only. Card payments are off during
+              testnet. One static site per verified identity is free, paid for by the ecosystem treasury at normal fees.
+            </p>
+            <p>
+              <b>Testnet CLD has no monetary value.</b> Testnet credits are 10 CLD per day per verified identity. There is no
+              points or airdrop formula; reliable testnet providers carry "founding provider" status to mainnet.
             </p>
             <div className="flex flex-wrap gap-5"><Link href="/earnings" className={linkCls}>See your earnings <ArrowRight className="size-3.5" /></Link><Link href="/economics" className={linkCls}>20-year simulation <ArrowRight className="size-3.5" /></Link></div>
           </Doc>
 
           <Doc id="price" title="Price">
             <p>
-              The protocol sets the price per unit of work from supply and demand — today, for compute, a fixed price per
-              million multiply-adds shown live in the console. Users may add a ceiling; providers may add a floor. Both
+              The protocol sets the price per unit of work from utilization. Compute is priced in nano-CLD per tera-MAC
+              (nCLD/TMAC) plus a small per-job base fee; hosting, containers and workstations are priced per hour. The price
+              moves at most ±2 % per hour toward a 70 % utilization target and holds when the network is idle; there is no
+              price oracle, and a quote is locked for five minutes. Users may add a ceiling; providers may add a floor. Both
               are optional.
             </p>
           </Doc>
@@ -136,7 +151,9 @@ export default function DocsPage() {
               Rate limits, CORS allow-list, TLS in transit; settlement on Base has a veto window and guardian.
             </p>
             <p>
-              <b>Building:</b> sealed secrets — container env encrypted in your browser to the assigned node's key.{" "}
+              <b>Building:</b> signed node instructions (nodes ignore anything unsigned or stale); hash-checked hosting
+              probes behind a Cloudana gateway; a settlement keeper that runs isolated from the API; sealed secrets —
+              container env encrypted in your browser to the assigned node's key.{" "}
               <b>Planned:</b> encrypted job data at rest, confidential VMs, browser witness probes.
             </p>
           </Doc>

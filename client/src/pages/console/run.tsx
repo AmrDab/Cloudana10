@@ -165,8 +165,7 @@ function NewJob({ className }: { className?: string }) {
   const [max, setMax] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const pricePer = net.data?.priceUcldPerMmac ?? null;
-  const est = pricePer == null ? null : jobPriceUcld(n, pricePer);
+  const est = net.data ? jobPriceUcld(n, net.data.priceNcldPerTmac, net.data.baseFeeUcld) : null;
   const maxUcld = max.trim() === "" ? null : Math.round(Number(max) * 1e6);
   const maxInvalid = maxUcld != null && (!Number.isFinite(maxUcld) || maxUcld <= 0);
   const overCeiling = maxUcld != null && est != null && !maxInvalid && est > maxUcld;
@@ -231,7 +230,11 @@ function NewJob({ className }: { className?: string }) {
               {est == null ? <span className="text-faint">—</span> : <>≈ {cld(est)}</>}
             </div>
             <p className="mt-1 font-mono text-[12px] text-faint">
-              {pricePer == null ? (net.offline ? "api offline — price unknown" : "reading price…") : `${int(pricePer)} µCLD per million multiply-adds · set by the orchestrator`}
+              {!net.data
+                ? net.offline
+                  ? "api offline — price unknown"
+                  : "reading price…"
+                : `${int(net.data.baseFeeUcld)} µCLD base + ${int(net.data.priceNcldPerTmac)} nCLD per tera multiply-adds · set by the orchestrator`}
             </p>
           </div>
           <Field label="Max price (optional)" htmlFor="max" hint="The job is only queued at or below this price.">

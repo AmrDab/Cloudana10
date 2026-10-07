@@ -1,143 +1,97 @@
 # Cloudana Progressive Decentralization Roadmap
 
-**Status: v0.1 — public. Last updated: May 2026.**
+**Status: v1.0 — public. Last updated: October 2026.** Supersedes v0.1 (May 2026), which described a libp2p / first-claim / staked-rotation design that was never built. Decision record: [docs/DECISIONS_CONSENSUS.md](docs/DECISIONS_CONSENSUS.md).
 
-Cloudana is building a decentralized compute network where anyone can plug in **any
-hardware** and start earning, and where — over time — **no single party (including
-Cloudana Inc.) controls the network.** We are not fully there yet, and we will not
-pretend to be. This document is the honest map from where we are to where we're going.
+Cloudana is a decentralized datacenter: home PCs and full racks joined under **one orchestrator** that assigns every job by a weighted random draw and sets its price from utilization. Nobody bids and users never pick a provider. The orchestrator is the trusted part today. This document is the honest map of how that trust shrinks, phase by phase, without pretending it is gone.
 
 ## The litmus test
 
 Every phase is judged by one question:
 
-> **"If Cloudana Inc. vanished tonight, would the network keep matching jobs and paying providers?"**
+> **"If Cloudana vanished tonight, would the network keep assigning jobs and paying providers?"**
 
-We only advance a phase when the answer improves. The states are **FAIL** (the network
-stops), **PARTIAL** (it degrades but the economic loop survives), and **PASS** (it keeps
-running).
+The states are **FAIL** (the network stops), **PARTIAL** (new work stops but everything already earned is claimable and every past settlement is checkable by anyone), and **PASS** (it keeps running). We only advance a phase when the answer improves.
 
 ## The honest baseline (today)
 
 | Component | State | Reality |
 |---|---|---|
-| API / control plane | 🔴 Centralized | Cloudflare Worker + D1 + KV |
-| Matchmaking | 🔴 Centralized | Off-chain orchestrator picks one provider (`ORCHESTRATOR_ROLE`) |
-| Reward routing | 🔴 Centralized | `RewardContract.rewardProvider()` is `onlyRole(ORCHESTRATOR_ROLE)` |
-| POUW verification | 🔴 Centralized | Orchestrator is trusted; no on-chain re-verification yet |
-| Templates / frontend | 🔴 Centralized | D1 + Cloudflare Pages |
-| Provider & workload registration | 🟢 Decentralized | On-chain (`ProviderRegistry`, `WorkloadRegistry`) |
-| Provider withdrawals | 🟢 Decentralized | `withdrawEarnings()` is permissionless |
-| Fraud / slashing layer | 🟢 Decentralized | `StakingManager` + `ChallengeManager` (optimistic fraud proofs) |
+| API / orchestrator | Centralized | Cloudflare Worker + D1 + KV assigns work and sets the price |
+| Assignment | Centralized, replayable | Weighted random draw seeded from a Base block hash; `eligible_hash` and `draw_seed` are stored per job but not yet published |
+| PoUW verification | Centralized | Orchestrator re-runs each transcript and Freivalds-checks the result; browsers re-check public jobs with planted tasks |
+| Settlement | Guarded | One Merkle root per hourly epoch on Base Sepolia, posted by a keeper; guardian veto window; fee split checked by the contract on every post |
+| Mint authority | Bounded | Settlement contract is the token's only minter; `mint ≤ 98 % of fees burned + subsidy allowance`; annual ceiling on the token |
+| Claims | Permissionless | `claim` / `claimFor` with a Merkle proof once an epoch is finalized |
+| Node instructions | Signed (building) | Work and deployment instructions signed by a funds-less key the agent pins |
+| Keys | Safe 2-of-3 | Fresh token and settlement under a Safe; poster key separate from the API; no hot chain key in the Worker |
+| Hosting | Gatewayed | `*.sites.cloudana.io` proxy; content-hash probe; admin stop |
+| Frontend / templates | Centralized | Cloudflare Pages + D1 |
 
-**Litmus test today: FAIL.** The contracts and your earned balance survive on-chain, but
-new jobs and reward issuance depend on us. We're saying so plainly.
-
-**The tension we own:** Cloudana competes with Cloudflare, yet our live API runs on
-Cloudflare. That's pragmatic for bootstrapping and is scheduled to end by Phase 3.
+**Litmus test today: FAIL.** Earned CLD is claimable from the contract without us, and the guardian can stop a bad batch, but new assignments and proofs depend on the orchestrator. We say so plainly.
 
 ---
 
-## Phase 1 — Testnet Bootstrap *("engine running, training wheels on")*
+## Phase 1 — Before mainnet *("everything checkable")*
 
-**Goal:** real providers earning testnet CLD with the full on-chain payment loop working.
+**Goal:** anyone can recompute every settlement and replay every draw; no single person can mint, veto or instruct nodes alone.
 
-- Deploy the orchestrator off the laptop (rented Akash / VPS — $0 owned hardware).
-- Onboard 3–5 providers; full POUW certificate flow recorded on-chain.
-- Public status page (this page) + open-source the orchestrator & provider software.
-- Rotate `ORCHESTRATOR_ROLE` off a personal wallet.
+- **Publish the leaves.** For each epoch, publish the leaf list (account, lane A, lane B), the fees burned and the treasury amount so anyone can rebuild the Merkle root and compare it with the one posted on Base.
+- **Publish the draw.** For each job, publish `eligible_hash`, `draw_seed` and σ so anyone can replay the weighted draw and confirm the orchestrator assigned the job to the node the seed selected.
+- **Signed network data.** `/v1/network` and the epoch leaves are signed by a published key, so mirrors and third-party dashboards can prove what the orchestrator claimed.
+- **Guardian multisig with a non-owner signer.** The veto / claw role moves to a multisig that includes at least one signer outside the team, with a 24-hour window at mainnet.
+- **Safe + timelock.** Admin, poster-rotation and treasury roles sit under a Safe behind a 48-hour timelock; audits before mainnet.
+- **Signed node instructions** finished; **isolated keeper** finished; the API Worker holds no chain key.
 
-**Litmus: FAIL** (matching + rewards still need us; withdrawals already don't).
-**Exit:** ≥5 providers earning CLD they didn't supply; disaster-recovery test passed.
+**Litmus: FAIL → PARTIAL.** New work still needs the orchestrator, but every past payment is independently checkable and no single key can mint, veto or instruct the fleet.
+**Exit:** 30 days of epochs finalized with published leaves and draw seeds, one veto drill passed, a non-owner guardian signer live, timelock live.
 
-## Phase 2 — P2P + On-Chain First-Claim *("first steps to trustlessness")*
+## Phase 2 — After mainnet *("the orchestrator becomes replaceable")*
 
-**Goal:** the orchestrator becomes *optional* for routing.
+**Goal:** the orchestrator's remaining powers — posting, verifying, assigning — each get an on-chain or multi-party check.
 
-- **libp2p** provider network (DHT discovery + NAT traversal — no central coordinator).
-- **Permissionless claim**: any staked provider can claim an unmatched workload directly
-  on-chain (`claimWorkload`). The orchestrator only accelerates; it no longer gates.
-- **Stake-gated** claims via `StakingManager`; slashing for failed jobs.
-- **Trustless POUW**: Groth16 zkSNARK verified on-chain, *or* optimistic accept + the
-  existing `ChallengeManager` window — orchestrator leaves the trust path.
-- Move the API off Cloudflare-only (Cloudflare becomes an optional cache).
+- **k-of-n posters.** An epoch root must be signed by k of n independent posters before the contract accepts it; one poster can neither fabricate nor censor an epoch.
+- **On-chain Freivalds challenge with a poster bond.** Anyone can challenge a posted result; the contract runs a Freivalds check on the disputed job and slashes the poster bond if the result was wrong. This replaces the guardian's manual claw for fraud.
+- **Verifier quorum.** Browser and node verifiers sign attestations; an epoch needs a quorum of independent attestations before finalize, moving verification out of the orchestrator alone.
+- **Pull-based assignment.** Nodes pull from a published, seeded queue instead of being told what to run; the draw is verifiable by the node before it starts, so the orchestrator can no longer steer work.
+- **Groth16 verifier on-chain** for PoUW certificates; the orchestrator leaves the verification path.
 
-**Litmus: PARTIAL** — providers self-claim new jobs; rewards open to any staked party.
-**Exit:** a workload matched & run with the orchestrator offline; on-chain POUW verified;
-10+ community providers; `ORCHESTRATOR_ROLE` → multisig.
+**Litmus: PARTIAL → PASS.** Posting, verification and assignment each survive the loss of any single party.
+**Exit:** an epoch posted and finalized with the team's poster offline; a challenge slashes a wrong poster on mainnet; team-operated nodes under 20 % of capacity.
 
-## Phase 3 — The Cloudflare Divorce *("community providers")*
+## Phase 3 — Open protocol
 
-**Goal:** anyone with a machine + wallet plugs in with zero Cloudana involvement.
+**Goal:** Cloudana is a spec multiple teams implement; we are a contributor, not a controller.
 
-- One-command provider agent (`docker run cloudana-provider …`) — no SSH from us.
-- IPFS/ENS-hosted console; templates move to an on-chain + IPFS registry.
-- Staked **orchestrator rotation** (epoch-based) replaces the single key.
-- On-chain **governance** (Governor) over minting, fees, curation.
-- **Workload sandboxing** (gVisor/Kata) enforced — non-negotiable before open providers.
-- Remove the hard Cloudflare dependency entirely.
+- Published protocol spec; independent orchestrator and node implementations.
+- Governance over the subsidy floor, the treasury share (one-way-down) and the mint ceiling.
 
-**Litmus: PARTIAL → PASS.** Running providers keep executing; new ones self-install.
-**Exit:** 20+ independent providers onboarded with no team involvement; minting behind
-governance; API confirmed working off Cloudflare; sandbox enforced.
-
-## Phase 4 — Trustless Execution *("network runs without us")*
-
-**Goal:** Cloudana Inc. can step back from operations.
-
-- `ChallengeManager` disputes fully wired; permissionless fraud-proof finalization.
-- Decentralized libp2p bootstrap (ENS/DHT, no team-run nodes required).
-- GPU-native POUW (CUDA) + on-chain difficulty adjustment.
-- Team wallet renounces unilateral roles; admin behind a timelocked Governor.
-
-**Litmus: PASS.** New providers join, jobs route via first-claim + staked rotation,
-rewards flow from the on-chain pool, the console resolves via ENS/IPFS.
-**Exit:** 72-hour team-offline chaos test passes; community executes a governance
-proposal; team providers < 20% of capacity.
-
-## Phase 5 — Open Protocol *("protocol, not product")*
-
-**Goal:** Cloudana is a spec multiple teams implement; we're a contributor, not a controller.
-
-- Published protocol spec; independent provider/frontend implementations.
-- DAO treasury self-funds development; cross-chain CLD.
-
-**Litmus: FULL PASS.**
+**Litmus: PASS.**
 
 ---
 
 ## Summary
 
-| Phase | Name | Litmus | Cloudflare | Matchmaking | POUW |
-|---|---|---|---|---|---|
-| Today | Baseline | FAIL | Hard dep | Orchestrator | Trusted |
-| 1 | Testnet Bootstrap | FAIL | Hard dep | Orchestrator | Trusted (labeled) |
-| 2 | P2P + First-Claim | PARTIAL | Optional | On-chain + helper | zkSNARK / challenge |
-| 3 | Cloudflare Divorce | PARTIAL→PASS | Removed | Staked rotation | zkSNARK |
-| 4 | Trustless Execution | PASS | Removed | Decentralized | On-chain + challenge |
-| 5 | Open Protocol | FULL PASS | n/a | Protocol-defined | Protocol-defined |
+| Phase | Litmus | Posting | Verification | Assignment |
+|---|---|---|---|---|
+| Today | FAIL | One keeper, guardian veto | Orchestrator + browser re-checks | Orchestrator draw (stored, unpublished) |
+| 1 — Before mainnet | PARTIAL | Published leaves, multisig guardian, timelock | Published, replayable | Published draw seeds |
+| 2 — After mainnet | PASS | k-of-n posters, bonded challenge | On-chain Freivalds + verifier quorum, Groth16 | Pull-based from a seeded queue |
+| 3 — Open protocol | PASS | Protocol-defined | Protocol-defined | Protocol-defined |
 
-## Honest tradeoffs (we won't hide these)
+## Honest tradeoffs
 
-- **Decentralization is slower & costlier.** On-chain first-claim adds block-confirmation
-  latency (workload-to-running may go from ~90s to ~150s) and per-event gas. That's the
-  price of trustlessness.
-- **First-claim can be gamed** by low-latency providers until an auction lands (Phase 3+).
-- **Untrusted workloads need real sandboxing** before open providers (Phase 3 gate).
-- **DNS/ingress resists full decentralization** — mitigated with multiple independent
-  gateway operators + ENS, not a single authority.
+- **Decentralization is slower and costlier.** k-of-n posting and on-chain challenges add latency and gas to settlement. That is the price of trustlessness, and it is why epochs are daily at mainnet.
+- **Containers and GPUs on home hardware wait for hardening.** Until the sandbox checklist is met, only compute (matrix jobs) and static hosting run on home nodes.
+- **DNS and ingress resist full decentralization.** The hosting gateway is a Cloudana-run proxy today; the mitigation is multiple independent gateway operators, not a single authority.
+- **The subsidy floor is a governance choice.** The 1 %-of-supply floor exists to counter long-run deflation; governance can set it to 0.
 
-## Transparency commitments (from Phase 1 onward)
+## Transparency commitments
 
-1. This status page reflects **verifiable facts** (contract addresses, role holders,
-   hosting origin), not aspirations.
-2. We won't market Cloudana as "decentralized" before Phase 3 exit — only
-   "progressively decentralizing."
-3. Testnet POUW is **trust-based until the zkSNARK ships**, and is labeled as such.
-4. Orchestrator & provider software are **open source** before Phase 2.
+1. This page reflects **verifiable facts** (contract addresses, role holders, hosting origin), not aspirations.
+2. We will not market Cloudana as "decentralized" before Phase 2 exit — only "progressively decentralizing."
+3. Testnet PoUW is **orchestrator-verified until the on-chain verifier ships**, and is labeled as such.
+4. Orchestrator, keeper and node software are open source.
 
 ## What this is not
 
-This roadmap does **not** promise fixed dates (phases are technical gates), equal
-speed/cost to the centralized version, the elimination of all trust, or bug-free
-contracts (audits precede mainnet but don't guarantee safety).
+This roadmap does **not** promise fixed dates (phases are technical gates), equal speed or cost to the centralized version, the elimination of all trust, or bug-free contracts (audits precede mainnet but don't guarantee safety). Nothing here is a statement about the value of CLD.

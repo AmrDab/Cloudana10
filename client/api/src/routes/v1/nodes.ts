@@ -2,21 +2,28 @@
  * Provider nodes.
  *   POST /v1/nodes/announce  (node-signed) — register hardware + work types; optional fleetToken binds at once
  *   POST /v1/nodes/bind      (payout wallet signs the binding message)
- *   POST /v1/nodes/heartbeat (node-signed) — liveness; runs assignment + hosting duties; returns this node's work
+ *   POST /v1/nodes/heartbeat (node-signed) — liveness; runs this node's hosting duties; returns its signed work
+ *   GET  /v1/nodes/instruction-key — address of the key that signs node instructions (agents pin it)
  *   GET  /v1/nodes/mine      (JWT) — nodes bound to the caller's wallet
+ * Global duties (dead-node requeue, preemption, matmul assignment) run from the cron, not here.
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
 import { requireNode, type NodeVariables } from "../../middleware/node-auth.js";
+import { rateLimit, trustedClientIp, verifiedNodeKey } from "../../middleware/rate-limit.js";
 import type { AuthVariables } from "../../middleware/auth.js";
 import { EthAddressSchema } from "../../schemas/common.schema.js";
-import { announceNode, bindNode, bindNodeToFleet, listNodesForPayout, touchNode } from "../../services/nodes.service.js";
+import { announceNode, bindNode, bindNodeToFleet, getNode, listNodesForPayout, touchNode } from "../../services/nodes.service.js";
 import { fleetForToken } from "../../services/fleets.service.js";
-import { getActiveAssignment, runAssignment } from "../../services/jobs.service.js";
+import { getActiveAssignment } from "../../services/jobs.service.js";
 import { workTypeIds } from "../../services/work-types.js";
 import { runDeploymentDuties } from "../../services/deployment-duties.service.js";
+import { endpointAllowed } from "../../services/deployment-spec.js";
+import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
+import { getEnv } from "../../config/env.js";
 import { pubkeyMatchesAddress } from "../../lib/eth.js";
 import { log } from "../../lib/logger.js";
+import { getD1 } from "../../lib/storage.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
 export const nodesRouter = createRouter<AuthVariables & NodeVariables>();
@@ -24,7 +31,15 @@ const TAGS = ["Nodes"];
 /** Capabilities a node may advertise besides registered work types (V3 §2). */
 const HOSTING_CAPABILITIES = ["hosting", "container", "gpu"];
 const NODE_SIGNED =
-  "Node-signed: X-Node, X-Node-Timestamp (ms, ±60 s), X-Node-Signature = personal_sign(\"<METHOD> <path> <timestamp> <sha256(body) hex>\").";
+  "Node-signed: X-Node, X-Node-Timestamp (ms, ±60 s), X-Nonce (16 bytes hex, single use within 120 s), " +
+  "X-Node-Signature = personal_sign(\"<METHOD> <path> <timestamp> <sha256(body) hex> <nonce>\").";
+const HOST = /^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*)$/;
+const SEMVER = /^\d+\.\d+\.\d+$/;
+/** Per-node limits, after requireNode so they key on the verified address (see middleware/security.ts). */
+const announceLimit = rateLimit({ bucket: "nodes-announce", limit: 10, windowSec: 60, keyBy: verifiedNodeKey });
+const heartbeatLimit = rateLimit({ bucket: "nodes-heartbeat", limit: 12, windowSec: 60, keyBy: verifiedNodeKey });
+/** A hostname or IP as the node stores and compares it: lowercase, IPv6 without brackets. */
+export const normalizeHost = (host: string) => host.toLowerCase().replace(/^\[|\]$/g, "");
 
 const AnnounceSchema = z.object({
   manifest: z.object({
@@ -43,6 +58,10 @@ const AnnounceSchema = z.object({
     .optional(),
   /** Datacenter fleet token (cft_…): binds the node to the fleet owner's payout, no bind code. */
   fleetToken: z.string().min(1).max(128).optional(),
+  /** Host the node serves hosting endpoints on; every endpoint it reports must use exactly this host. */
+  publicHost: z.string().max(253).regex(HOST, "publicHost must be a hostname or IP").optional(),
+  /** Agent version (semver). Nodes below MIN_AGENT_VERSION receive no work. */
+  agentVersion: z.string().regex(SEMVER, "agentVersion must be x.y.z").optional(),
 });
 
 const announceRoute = createRoute({
@@ -52,7 +71,7 @@ const announceRoute = createRoute({
   description:
     `${NODE_SIGNED} With fleetToken the node is bound to the fleet owner's payout immediately (bindCode null); ` +
     "an unknown or revoked token is 401, a node already bound to another wallet is 409.",
-  middleware: [requireNode] as const,
+  middleware: [requireNode, announceLimit] as const,
   request: { body: { required: true, content: { "application/json": { schema: AnnounceSchema } } } },
   responses: responses(
     {
@@ -76,8 +95,27 @@ const announceRoute = createRoute({
 nodesRouter.openapi(announceRoute, async (c) => {
   const body = c.req.valid("json");
   const known = [...workTypeIds(), ...HOSTING_CAPABILITIES];
-  const workTypes = body.workTypes.filter((w) => known.includes(w));
+  let workTypes = body.workTypes.filter((w) => known.includes(w));
   if (workTypes.length === 0) return fail(c, "validation_failed", `workTypes must include one of: ${known.join(", ")}`);
+  // A node whose announced host is not publicly reachable (or missing) cannot serve hosting: never place it there,
+  // so a misconfigured home node is not handed sites it then has to refuse. Reported endpoints are later checked
+  // against this host, so outside DEV_MODE it must also be the IP the announce itself came from: a self-chosen
+  // host would let a node bill for sites that another machine serves.
+  const dev = getEnv().DEV_MODE;
+  const publicHost = body.publicHost ? normalizeHost(body.publicHost) : undefined;
+  const hostPublic = !!publicHost && endpointAllowed(`http://${body.publicHost}/`, dev) && (dev || publicHost === normalizeHost(trustedClientIp(c)));
+  if (!hostPublic) workTypes = workTypes.filter((w) => !HOSTING_CAPABILITIES.includes(w));
+  if (workTypes.length === 0) return fail(c, "validation_failed", "hosting capabilities need a public publicHost equal to the node's own IP");
+  // The host of a live deployment's endpoint cannot move: changing it would orphan the endpoint checks on sites
+  // still being billed. Stop them first (the node re-announces every few heartbeats while unbound anyway).
+  const current = await getNode(c.get("node"));
+  if (current?.public_host && current.public_host !== (publicHost ?? null)) {
+    const live = await getD1()
+      .prepare("SELECT COUNT(*) AS n FROM deployments WHERE node = ? AND status IN ('assigned','running','unreachable')")
+      .bind(c.get("node"))
+      .first<{ n: number }>();
+    if ((live?.n ?? 0) > 0) return fail(c, "conflict", "publicHost cannot change while this node has live deployments");
+  }
   const fleet = body.fleetToken ? await fleetForToken(body.fleetToken) : null;
   if (body.fleetToken && !fleet) return fail(c, "unauthorized", "Invalid or revoked fleet token");
   // Stored as sent (the agent sends 130 hex chars, no 0x) and returned to owners as nodePubkey.
@@ -85,7 +123,10 @@ nodesRouter.openapi(announceRoute, async (c) => {
   if (pubkey && !pubkeyMatchesAddress(pubkey, c.get("node"))) {
     return fail(c, "validation_failed", "pubkey is not the public key of the signing node");
   }
-  const node = await announceNode(c.get("node"), body.manifest, body.benchmarkMmacPerSec, workTypes, pubkey);
+  const node = await announceNode(c.get("node"), body.manifest, body.benchmarkMmacPerSec, workTypes, pubkey, {
+    publicHost,
+    agentVersion: body.agentVersion,
+  });
   if (fleet) {
     const r = await bindNodeToFleet(node.address, fleet);
     if (!r.ok) return fail(c, r.code, r.message);
@@ -141,6 +182,20 @@ const NodeDeploymentSchema = z.object({
   kind: z.enum(["static", "container", "workstation"]),
   spec: z.record(z.unknown()).nullable(),
   sealedEnv: z.string().optional(),
+  imageAllowed: z.boolean().optional(),
+});
+
+const HeartbeatResponseSchema = z.object({
+  status: z.literal("success"),
+  assignment: AssignmentSchema.nullable(),
+  deployments: z.array(NodeDeploymentSchema),
+  /** Signature over { nodeAddress, ts, nonce, body: { assignment, deployments } } — see GET /v1/nodes/instruction-key. Absent only when the API has no signing key. */
+  sig: z.string().optional(),
+  ts: z.number().optional(),
+  nonce: z.string().optional(),
+  minAgentVersion: z.string(),
+  /** True when this node's agent is below minAgentVersion: it got no work (stops are still delivered). */
+  upgradeRequired: z.boolean(),
 });
 
 const heartbeatRoute = createRoute({
@@ -148,35 +203,50 @@ const heartbeatRoute = createRoute({
   path: "/nodes/heartbeat",
   tags: TAGS,
   description:
-    `${NODE_SIGNED} Body {}. Unbound nodes never receive assignments. deployments: "start" (full spec, re-sent until ` +
+    `${NODE_SIGNED} Body {} (optionally { agentVersion }). Unbound nodes never receive assignments. deployments: "start" (full spec, re-sent until ` +
     `the node reports running/failed) and "stop" / "purge" (spec null, re-sent until the node reports stopped; "purge" also ` +
-      `deletes a workstation's volume). Stops/purges come before starts.`,
-  middleware: [requireNode] as const,
-  responses: responses(
-    {
-      200: json(
-        z.object({ status: z.literal("success"), assignment: AssignmentSchema.nullable(), deployments: z.array(NodeDeploymentSchema) }),
-        "Current assignment and hosting instructions",
-      ),
-    },
-    401,
-    404,
-  ),
+    `deletes a workstation's volume). Stops/purges come before starts. The response is signed (sig, ts, nonce) with the ` +
+    `instruction key; agents verify it against the pinned signer and ignore unsigned or stale instructions.`,
+  middleware: [requireNode, heartbeatLimit] as const,
+  responses: responses({ 200: json(HeartbeatResponseSchema, "Current assignment and hosting instructions, signed") }, 401, 404, 429),
 });
 
 nodesRouter.openapi(heartbeatRoute, async (c) => {
   const node = c.get("node");
   await touchNode(node);
-  try {
-    await runAssignment();
-  } catch (err) {
-    log.api.warn("[nodes] assignment on heartbeat failed:", err);
+  const body = (c.get("nodeBody") ?? {}) as { agentVersion?: unknown };
+  const row = await getNode(node);
+  const version = typeof body.agentVersion === "string" && SEMVER.test(body.agentVersion) ? body.agentVersion : row?.agent_version ?? null;
+  if (row && version && version !== row.agent_version) {
+    await getD1().prepare("UPDATE nodes SET agent_version = ? WHERE address = ?").bind(version, node).run();
   }
-  const deployments = await runDeploymentDuties(node).catch((err) => {
+  const allowed = agentVersionAllowed(version);
+  let deployments = await runDeploymentDuties(node).catch((err) => {
     log.api.warn("[nodes] deployment duties on heartbeat failed:", err);
     return [];
   });
-  return ok(c, { assignment: await getActiveAssignment(node), deployments });
+  // Below the minimum version: no new work (stops and purges still go out so the node winds down cleanly).
+  if (!allowed) deployments = deployments.filter((d) => d.action !== "start");
+  const instructions = { assignment: allowed ? await getActiveAssignment(node) : null, deployments };
+  const envelope = await signInstruction(node, instructions);
+  if (!envelope) log.api.warn("[nodes] INSTRUCTION_SIGNING_KEY is not set — heartbeat instructions go out unsigned (agents ignore them)");
+  return ok(c, { ...instructions, ...(envelope ?? {}), minAgentVersion: minAgentVersion(), upgradeRequired: !allowed });
+});
+
+const instructionKeyRoute = createRoute({
+  method: "get",
+  path: "/nodes/instruction-key",
+  tags: TAGS,
+  description:
+    "Address of the key that signs node instructions (heartbeat sig). Agents pin it (CLOUDANA_INSTRUCTION_SIGNER); " +
+    "this endpoint is for operators to confirm the pin, not a trust anchor. 503 when the API has no signing key.",
+  responses: responses({ 200: json(z.object({ status: z.literal("success"), signer: z.string(), minAgentVersion: z.string() }), "Signer") }, 503),
+});
+
+nodesRouter.openapi(instructionKeyRoute, async (c) => {
+  const signer = instructionSignerAddress();
+  if (!signer) return fail(c, "not_configured", "INSTRUCTION_SIGNING_KEY is not configured");
+  return ok(c, { signer, minAgentVersion: minAgentVersion() });
 });
 
 const MyNodeSchema = z.object({

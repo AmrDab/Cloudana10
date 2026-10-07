@@ -1,0 +1,130 @@
+name: Build & push node agent image
+
+# Builds node-agent/Dockerfile (context = repo root: the agent imports ../pouw and ../shared) and pushes it to GHCR
+# as ghcr.io/<owner>/cloudana-node-agent:<version> (from node-agent/package.json), :<major>.<minor>, :sha-<sha>.
+# The image is signed with cosign (keyless, GitHub OIDC) and ships an SPDX SBOM. Tags are never moved: bump the
+# version in package.json to release. No :latest — deploy/kubernetes-daemonset.yaml pins the semver tag.
+#
+# Verify a pulled image (exact identity — a regexp over the owner would also accept any other repo of theirs):
+#   cosign verify ghcr.io/amrdab/cloudana-node-agent:1.1.0 \
+#     --certificate-identity https://github.com/AmrDab/Cloudana10/.github/workflows/build-node-agent.yml@refs/heads/main \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "node-agent/**"
+      - "pouw/**"
+      - "shared/sealed.ts"
+      - ".github/workflows/build-node-agent.yml"
+  pull_request:
+    paths:
+      - "node-agent/**"
+      - "pouw/**"
+      - "shared/sealed.ts"
+      - ".github/workflows/build-node-agent.yml"
+  workflow_dispatch: {}
+
+# Least privilege by default; the build job widens its own token for packages + OIDC.
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/cloudana-node-agent
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: node-agent
+        run: npm ci
+      - name: Type check
+        working-directory: node-agent
+        run: npm run type-check
+      - name: Selftests
+        working-directory: node-agent
+        run: npm run selftest
+      - name: Production build compiles
+        working-directory: node-agent
+        run: npm run build
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    # Publish only from main — workflow_dispatch can be fired from any branch.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # cosign keyless signing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name and version tags
+        id: meta
+        run: |
+          ref="${IMAGE,,}"
+          version=$(node -p "require('./node-agent/package.json').version")
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "bad version '$version'"; exit 1; }
+          minor="${version%.*}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tags=$ref:$version,$ref:$minor,$ref:sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      # Login comes BEFORE the overwrite guard: unauthenticated, `manifest inspect` on a private package fails
+      # for every tag, which would read as "not published" and let a released version be overwritten.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refuse to overwrite a released version
+        run: |
+          if docker manifest inspect "${{ steps.meta.outputs.ref }}:${{ steps.meta.outputs.version }}" >/dev/null 2>&1; then
+            echo "::error::${{ steps.meta.outputs.version }} is already published — bump node-agent/package.json"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: node-agent/Dockerfile
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the image (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${{ steps.meta.outputs.ref }}@${{ steps.push.outputs.digest }}"
+
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.ref }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: node-agent-sbom.spdx.json
+          artifact-name: node-agent-${{ steps.meta.outputs.version }}-sbom.spdx.json
+      - name: Attach the SBOM to the image
+        env:
+          COSIGN_YES: "true"
+        run: cosign attest --type spdxjson --predicate node-agent-sbom.spdx.json "${{ steps.meta.outputs.ref }}@${{ steps.push.outputs.digest }}"

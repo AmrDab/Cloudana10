@@ -1,0 +1,23 @@
+name = "cloudana-keeper"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+# No routes: the only HTTP surface is GET /health on the workers.dev hostname.
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+API_URL = "https://api.cloudana.io"
+RPC_URL = "https://sepolia.base.org"
+# Set after `contract/scripts/v2/deploy.ts` has run (shared/addresses.baseSepolia.json -> v2.CloudanaSettlementV2).
+SETTLEMENT_ADDRESS = "0x0000000000000000000000000000000000000000"
+CHAIN_ID = "84532"
+# claimFor chunk size; 250 cold lane-A leaves ~15.5M gas, under the 2^24 per-tx cap (EIP-7825).
+CLAIM_CHUNK = "250"
+
+# Secrets (wrangler secret put ...): POSTER_PRIVATE_KEY, INTERNAL_API_KEY

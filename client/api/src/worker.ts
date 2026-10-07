@@ -47,4 +47,29 @@ const app = buildApp<Bindings>({
   },
 });
 
-export default app;
+/**
+ * Cron (wrangler.toml [triggers], every minute): node duties (requeue dead nodes, preempt, assign
+ * matmul work) moved off the heartbeat; the price controller (steps at most once per hour); and the
+ * v2 Settlement Deposited watcher (inactive until SETTLEMENT_ADDRESS is set). Each binds env/storage
+ * itself; one failing job never blocks the others.
+ */
+async function scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext): Promise<void> {
+  initStorage(env.DB, env.CLOUDANA_KV);
+  const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }] = await Promise.all([
+    import("./services/deployment-duties.service.js"),
+    import("./services/pricing.service.js"),
+    import("./services/deposit-watcher.service.js"),
+  ]);
+  const jobs: Array<[string, () => Promise<unknown>]> = [
+    ["duties", () => runDutiesCron(env as never)],
+    ["price", () => runPriceControllerCron(env)],
+    ["deposits", () => runDepositWatcherCron(env as never)],
+  ];
+  ctx.waitUntil(
+    Promise.all(
+      jobs.map(([name, run]) => run().catch((err) => console.error(`[cron] ${name} failed:`, err))),
+    ),
+  );
+}
+
+export default { fetch: app.fetch, scheduled };

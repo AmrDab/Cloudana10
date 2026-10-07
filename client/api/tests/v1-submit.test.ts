@@ -30,8 +30,9 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
   let bindCode = "";
 
   beforeAll(async () => {
-    await setupV1Db({ TREASURY_ADDRESS: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", EPOCH_SUBSIDY_BUDGET_UCLD: "300000" });
-    await creditUcld(user, 1_000);
+    // One node, one wallet: CLUSTER_N_MIN=1 keeps lane B flowing (the testnet default of 3 would withhold it).
+    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "300000", CLUSTER_N_MIN: "1" });
+    await creditUcld(user, 10_000);
     const announced = await announceNode(nodeAddr, { cpuThreads: 8, ramGB: 16, gpus: [], os: "test" }, 100, ["matmul"]);
     bindCode = announced.bind_code!;
     expect(bindCode).toMatch(/^[0-9a-f]{16}$/);
@@ -45,8 +46,8 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
     const q = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
     if (!q.ok) throw new Error(q.message);
     jobId = q.jobId;
-    expect(q.priceUcld).toBe(5);
-    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 995, heldUcld: 5 });
+    expect(q.priceUcld).toBe(1001); // 1000 base + ceil(16³ × 14000 / 1e15)
+    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 8999, heldUcld: 1001 });
   });
 
   it("rejects a binding signed by someone other than the payout wallet", async () => {
@@ -64,7 +65,7 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
     expect(r).toMatchObject({ ok: false, code: "unprocessable" });
     expect((await getWorkJob(jobId))!.status).toBe("queued");
     expect((await getNode(nodeAddr))!.jobs_failed).toBe(1);
-    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 995, heldUcld: 5 }); // hold kept
+    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 8999, heldUcld: 1001 }); // hold kept
   });
 
   it("rejects a certificate for other matrices (A-hash binding)", async () => {
@@ -97,14 +98,14 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
     const a = await getActiveAssignment(nodeAddr);
     const { certificate, result } = solveAssignedJob(a!.sigma, A, B, n, nodeAddr, "dev");
     const r = await submitWork(nodeAddr, { jobId, certificate, result });
-    expect(r).toMatchObject({ ok: true, units: 4096, earned: { laneAUcld: 4, laneBUcld: 1 } });
+    expect(r).toMatchObject({ ok: true, units: 4096, earned: { laneAUcld: 949, laneBUcld: 250 } });
 
     const job = (await getWorkJob(jobId))!;
     expect(job.status).toBe("done");
     expect(JSON.parse(job.result_json!)).toEqual(result);
-    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 995, heldUcld: 0 });
+    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 8999, heldUcld: 0 });
     const ledger = await ledgerSummary(payout.address);
-    expect(ledger.pending).toEqual({ A: 4, B: 1, treasury: 0 });
+    expect(ledger.pending).toEqual({ A: 949, B: 250, treasury: 0 });
     expect((await getNode(nodeAddr))!.jobs_done).toBe(1);
 
     const again = await submitWork(nodeAddr, { jobId, certificate, result });

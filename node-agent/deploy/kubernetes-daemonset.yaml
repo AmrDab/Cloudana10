@@ -3,11 +3,36 @@
 #   1. Create a fleet in the Cloudana app (or POST /v1/fleets) and copy its token — it is shown once.
 #   2. kubectl create namespace cloudana
 #      kubectl -n cloudana create secret generic cloudana-fleet --from-literal=CLOUDANA_FLEET_TOKEN=cft_...
-#   3. kubectl apply -f node-agent/deploy/kubernetes-daemonset.yaml
+#   3. Put the instruction signer address (GET https://api.cloudana.io/v1/nodes/instruction-key → signer) into the
+#      ConfigMap below, then kubectl apply -f node-agent/deploy/kubernetes-daemonset.yaml
 #
 # Each pod announces with the token and is bound to the fleet owner's wallet at once;
 # `kubectl -n cloudana logs ds/cloudana-node-agent` shows "Joined fleet <id> — earnings go to <payout>".
-# Revoking the fleet stops new pods from joining (they exit with "Invalid or revoked fleet token").
+# Revoking the fleet (or evicting a node) unbinds its nodes and re-queues their deployments elsewhere.
+#
+# What this manifest runs by default: compute (matmul) + static hosting, unprivileged. Static sites are served
+# straight from the host's network namespace (hostNetwork) on ports 42000-42100, so those ports must be reachable
+# from the internet on every node (security group / firewall), and CLOUDANA_PUBLIC_HOST must be the address
+# visitors reach the node on: the node's IP from the downward API when nodes have public IPs, or override it.
+#
+# Tenant containers / GPU workstations are NOT enabled here. They need, on fleet nodes only:
+#   - the host Docker socket mounted (the `docker-sock` volume below) — never on home or untrusted nodes;
+#   - CLOUDANA_ALLOW_CONTAINERS=1, and the agent running as root with NET_ADMIN so it can create the `cld-tenant`
+#     bridge and install the egress DROP rules (or pre-install them on the host; the agent only checks then);
+#   - for GPUs: NVIDIA driver + nvidia-container-toolkit on the host and `runtimeClassName: nvidia` so nvidia-smi works.
+# The commented blocks mark each piece.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudana-node-agent
+  namespace: cloudana
+data:
+  CLOUDANA_API: https://api.cloudana.io
+  # Address of the API's instruction-signing key. The agent refuses unsigned or foreign instructions and will not
+  # start without a pinned signer. Confirm it out of band before trusting a fleet to it.
+  CLOUDANA_INSTRUCTION_SIGNER: "0x0000000000000000000000000000000000000000"
+  CLOUDANA_PORTS: "42000-42100"
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -23,9 +48,13 @@ spec:
     metadata:
       labels: { app: cloudana-node-agent }
     spec:
+      # Static hosting binds 42000-42100 on the node itself; visitors connect to <node IP>:<port>.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       # Only schedule onto GPU nodes, for example:
       # nodeSelector:
       #   nvidia.com/gpu.present: "true"
+      # runtimeClassName: nvidia   # GPU detection (nvidia-smi) for workstations; see the header
       initContainers:
         # hostPath directories are created root-owned; hand the key directory to the agent's user.
         # (Not needed with emptyDir — drop this if you switch.)
@@ -38,38 +67,55 @@ spec:
               mountPath: /data
       containers:
         - name: agent
-          # Build and push it yourself: docker build -f node-agent/Dockerfile -t <registry>/cloudana-node-agent .
-          image: ghcr.io/amrdab/cloudana-node-agent:latest
+          # Built and signed by .github/workflows/build-node-agent.yml from node-agent/package.json's version
+          # (cosign keyless; verify with the exact identity, never an owner-wide regexp:
+          #   cosign verify <image> --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          #     --certificate-identity https://github.com/AmrDab/Cloudana10/.github/workflows/build-node-agent.yml@refs/heads/main).
+          # Pin the exact release you rolled out — never :latest.
+          image: ghcr.io/amrdab/cloudana-node-agent:1.1.0
+          envFrom:
+            - configMapRef: { name: cloudana-node-agent }
           env:
-            - name: CLOUDANA_API
-              value: https://api.cloudana.io
             - name: CLOUDANA_FLEET_TOKEN
               valueFrom:
                 secretKeyRef: { name: cloudana-fleet, key: CLOUDANA_FLEET_TOKEN }
+            # The node's address as the API and visitors see it. status.hostIP is right when nodes carry public IPs;
+            # behind NAT set a fixed public host per node instead (or "auto" to look it up at boot).
+            - name: CLOUDANA_PUBLIC_HOST
+              valueFrom:
+                fieldRef: { fieldPath: status.hostIP }
+            # Fleet nodes that run tenant containers (see header):
+            # - name: CLOUDANA_ALLOW_CONTAINERS
+            #   value: "1"
+            # - name: CLOUDANA_IMAGE_ALLOWLIST   # extra images beyond the curated list, comma-separated regexes
+            #   value: "ghcr.io/your-org/.*"
           resources:
             requests: { cpu: "1", memory: 512Mi }
             limits: { memory: 2Gi }
-            # The agent's matmul work is CPU today; request a GPU only if you pin it to GPU nodes:
-            # limits: { nvidia.com/gpu: 1 }
-            #
-            # GPU workstations: the agent starts them through the host Docker daemon (mount
-            # /var/run/docker.sock and ship a docker CLI), and Docker adds --gpus — so the GPUs are
-            # attached to the workstation containers by the host's nvidia-container-toolkit, not to
-            # this pod, and the pod needs no nvidia.com/gpu limit for them (one would just reserve a
-            # GPU from Kubernetes that workstations then share). The pod only runs nvidia-smi to
-            # detect GPUs: set `runtimeClassName: nvidia` on the pod spec (GPU Operator / toolkit
-            # installed) with NVIDIA_VISIBLE_DEVICES=all so nvidia-smi works without reserving GPUs.
-            # Without it the node announces no `gpu` capability.
+            # GPU workstations are started through the host Docker daemon with --gpus, so this pod needs no
+            # nvidia.com/gpu limit for them (one would just reserve a GPU that workstations then share).
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000   # the image's `node` user
             runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false   # tsx writes its compile cache to /tmp
+            readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
+            # Containers on fleet nodes: the agent must install iptables rules for the tenant bridge.
+            # securityContext:
+            #   runAsNonRoot: false
+            #   runAsUser: 0
+            #   allowPrivilegeEscalation: false
+            #   readOnlyRootFilesystem: true
+            #   capabilities: { drop: ["ALL"], add: ["NET_ADMIN", "NET_RAW"] }
           volumeMounts:
             - name: node-key
-              mountPath: /app/node-agent/.data
+              mountPath: /app/dist/node-agent/.data
+            - name: tmp
+              mountPath: /tmp
+            # Containers on fleet nodes only:
+            # - name: docker-sock
+            #   mountPath: /var/run/docker.sock
       volumes:
         # The node key (its identity) lives in this volume.
         #
@@ -86,3 +132,8 @@ spec:
         # goes offline (its earnings stay with the fleet owner's wallet either way).
         # - name: node-key
         #   emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        # Containers on fleet nodes only — the socket is root on the host:
+        # - name: docker-sock
+        #   hostPath: { path: /var/run/docker.sock, type: Socket }

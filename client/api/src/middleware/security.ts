@@ -4,7 +4,7 @@
  * Applied once in each entry point so the two never drift: which paths need a
  * JWT, and how hard each abuse-prone endpoint is rate limited.
  */
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { requireAuth } from "./auth.js";
 import { rateLimit } from "./rate-limit.js";
@@ -18,7 +18,6 @@ export function applySecurity(app: AnyHono): void {
 
   // Money and minting.
   app.use("/v1/payments/*", rateLimit({ bucket: "payments", limit: 60, windowSec: 60 }));
-  app.use("/v1/faucet/claim", rateLimit({ bucket: "faucet", limit: 10, windowSec: 3600 }));
 
   // Verification is CPU-heavy (full re-execution of the matrix multiply).
   app.use("/v1/pouw/submit", rateLimit({ bucket: "pouw-submit", limit: 60, windowSec: 60 }));
@@ -41,12 +40,18 @@ export function applySecurity(app: AnyHono): void {
   app.use("/v1/deploy", requireAuth);
   app.use("/v1/deploy/*", requireAuth);
   app.use("/v1/deployments", requireAuth);
-  app.use("/v1/deployments/*", requireAuth);
+  // GET /v1/deployments/:id/route is public (the hosting gateway resolves sites with it).
+  const isPublicRoute = (c: Context) => c.req.method === "GET" && /^\/v1\/deployments\/[^/]+\/route$/.test(c.req.path);
+  app.use("/v1/deployments/*", (c, next) => (isPublicRoute(c) ? next() : requireAuth(c, next)));
   // V3 hosted deployments (routes/v1/deployments.ts): create holds credits and stores up to ~2 MB.
   // Reads are polled by the console (list every 5 s + open rows); writes hold credits, so they stay tight.
+  // The public route lookup gets its own bucket: the gateway's requests all arrive from a few Cloudflare egress IPs,
+  // which would exhaust the per-IP read bucket for every site at once.
+  const routeRead = rateLimit({ bucket: "deployments-route", limit: 3000, windowSec: 60 });
   const deployRead = rateLimit({ bucket: "deployments-read", limit: 300, windowSec: 60 });
   const deployWrite = rateLimit({ bucket: "deployments-write", limit: 30, windowSec: 60 });
-  const deployLimit: MiddlewareHandler = (c, next) => (c.req.method === "GET" ? deployRead(c, next) : deployWrite(c, next));
+  const deployLimit: MiddlewareHandler = (c, next) =>
+    isPublicRoute(c) ? routeRead(c, next) : c.req.method === "GET" ? deployRead(c, next) : deployWrite(c, next);
   app.use("/v1/deployments", deployLimit);
   app.use("/v1/deployments/*", deployLimit);
   // Node-only provider verification router (routes/v1/verify.ts). Listed per
@@ -63,8 +68,13 @@ export function applySecurity(app: AnyHono): void {
   app.use("/v1/jobs/*", requireAuth);
   app.use("/v1/dev/credits", requireAuth);
   app.on("POST", "/v1/jobs", rateLimit({ bucket: "jobs-create", limit: 30, windowSec: 60 }));
-  // Nodes heartbeat every few seconds; submit re-executes the transcript (CPU-heavy).
-  app.use("/v1/nodes/*", rateLimit({ bucket: "nodes", limit: 120, windowSec: 60 }));
+  // Nodes heartbeat every 15 s and re-announce while unbound; submit re-executes the transcript (CPU-heavy).
+  // Before the signature check only a per-IP layer applies, sized for a datacenter NAT (hundreds of nodes behind
+  // one address). Per-node limits key on the VERIFIED address and live on the routes after requireNode
+  // (routes/v1/nodes.ts): keyed on the raw X-Node header they would let anyone 429 a victim node offline.
+  app.use("/v1/nodes/*", rateLimit({ bucket: "nodes", limit: 2000, windowSec: 60 }));
+  // Bind: a wallet signature check per call; the bind code is guessable only by brute force, so keep it tight per IP.
+  app.on("POST", "/v1/nodes/bind", rateLimit({ bucket: "nodes-bind", limit: 10, windowSec: 60 }));
   // Providers: the caller's own nodes and datacenter fleet tokens.
   app.use("/v1/nodes/mine", requireAuth);
   app.use("/v1/fleets", requireAuth);

@@ -50,7 +50,7 @@ Source of truth for claims: `docs/UNIVERSAL_POUW.md`, `docs/CLD_ISSUANCE_DESIGN.
 ## 2. Homepage — `/`
 
 Total visible copy target: ≤ 350 words (counted below at 331, excluding nav, footer link labels, chip labels and live numbers).
-Live data: one hook `useNetwork()` polling `GET /v1/network` every 15s (fields: `nodesOnline, nodesBound, jobsQueued, jobsDone, certificates, mintedUcld, burnedUcld, verifiersToday, epoch, priceUcldPerMmac`). Unavailable → show `—` with a faint "api offline" caption; never fake, never hide.
+Live data: one hook `useNetwork()` polling `GET /v1/network` every 15s (fields: `nodesOnline, nodesBound, jobsQueued, jobsDone, certificates, mintedUcld, burnedUcld, verifiersToday, epoch, priceNcldPerTmac, baseFeeUcld, lastSettledEpochAt`). Unavailable → show `—` with a faint "api offline" caption; never fake, never hide.
 
 ### 0. Nav (sticky, glass)
 Left: logo mark + `CLOUDANA`, `Testnet` pill (`--work` outline).
@@ -83,9 +83,9 @@ Visual: Magic UI `BentoGrid` with three equal `BentoCard`s; each card's backgrou
 ### 4. How it pays
 Purpose: the orchestrator + per-job minting, in one diagram and 40 words.
 Copy (kicker `How it pays` · H2 **No bidding. No idle emission.**):
-- Line: You pay a fee. The orchestrator assigns the job, the provider computes and proves it, and CLD is minted for that job alone — 97.5 % of your fee to the provider, the fee burned, plus a capped subsidy when the orchestrator's random draw chose them. Settlement posts to Base in batches.
+- Line: You pay a fee. The orchestrator assigns the job, the provider computes and proves it, and CLD is minted for that job alone — the fee is burned, the provider is minted 95 % of it and the treasury 3 %, plus a capped, declining subsidy when the orchestrator's random draw chose them. Settlement posts to Base in batches.
 - Micro-caption under diagram: `Minted per verified job. Settled on-chain in batches.`
-Visual: Magic UI `AnimatedBeam` across five nodes laid horizontally: `User` → `Orchestrator` → `Provider` → `Proof ✓` → `Base`. Beam colours: user→orchestrator `--muted`; orchestrator→provider `--work`; provider→proof `--work`→`--ok` gradient; proof→Base `--chain`. A sixth small node below Orchestrator labelled `fee burned` with a `--burn` beam that ends in nothing (the burn). Under the diagram, two mono `param` tiles: `97.5 %` fee → provider · `2 %` burn (0.5 % treasury implied in tooltip). Data: `priceUcldPerMmac` shown as `Current price · N µCLD per M multiply-adds` in the caption.
+Visual: Magic UI `AnimatedBeam` across five nodes laid horizontally: `User` → `Orchestrator` → `Provider` → `Proof ✓` → `Base`. Beam colours: user→orchestrator `--muted`; orchestrator→provider `--work`; provider→proof `--work`→`--ok` gradient; proof→Base `--chain`. A sixth small node below Orchestrator labelled `fee burned` with a `--burn` beam that ends in nothing (the burn). Under the diagram, two mono `param` tiles: `95 %` fee → provider · `2 %` net burn (3 % treasury in the label). Data: `priceNcldPerTmac` + `baseFeeUcld` shown as `Current price · N nCLD per TMAC + B µCLD per job` in the caption.
 
 ### 5. Services
 Purpose: the full surface with honest status. This is the section the v1 pages lacked.
@@ -198,7 +198,7 @@ Top bar: breadcrumb, network status dot (`--ok` API up / `--burn` down, tooltip 
 Empty state (fresh testnet): tiles show `0`, table shows `No proofs yet. Run a job or start verifying.` with the two buttons.
 
 ### Run
-First screen: left **New job** card — service select (only Live services enabled; others show chip + `Request early access`), size (`16 · 32 · 64 · 128`), price estimate live from `priceUcldPerMmac` (`≈ 0.26 CLD`), optional `Max price` (ceiling, placeholder = estimate ×1.2), `Submit`. Right **Balance** card: CLD balance, `Get test credits` (`POST /v1/dev/credits`), held amount. Below: **My jobs** table (`GET /v1/jobs`): status chip (`queued` muted · `assigned` amber · `done ✓` teal · `failed` red), ran on, proof z, `Download C`. Job row expands inline to the proof panel (σ, transcript, z, verify-in-browser button that runs Freivalds locally).
+First screen: left **New job** card — service select (only Live services enabled; others show chip + `Request early access`), size (`16 · 32 · 64 · 128`), price estimate live from `priceNcldPerTmac` + `baseFeeUcld` (`≈ 0.26 CLD`), optional `Max price` (ceiling, placeholder = estimate ×1.2), `Submit`. Right **Balance** card: CLD balance, `Get test credits` (`POST /v1/dev/credits`), held amount. Below: **My jobs** table (`GET /v1/jobs`): status chip (`queued` muted · `assigned` amber · `done ✓` teal · `failed` red), ran on, proof z, `Download C`. Job row expands inline to the proof panel (σ, transcript, z, verify-in-browser button that runs Freivalds locally).
 
 ### Provide
 Tabs: **Home node** · **Datacenter fleet**.

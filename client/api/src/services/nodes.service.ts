@@ -19,8 +19,18 @@ export interface NodeRow {
   bind_code?: string | null;
   fleet_id?: string | null;
   pubkey?: string | null;
+  /** Host the node announced for hosting endpoints (reported endpoints must use it). */
+  public_host?: string | null;
+  /** Agent version from announce; null for agents that predate it. */
+  agent_version?: string | null;
   bound_at: number | null;
   last_seen: number | null;
+}
+
+/** Extra announce fields (agents ≥ 1.1.0). */
+export interface AnnounceExtras {
+  publicHost?: string;
+  agentVersion?: string;
 }
 
 export interface NodeManifest {
@@ -51,16 +61,29 @@ export async function announceNode(
   benchmarkMmacPerSec: number,
   workTypes: string[],
   pubkey?: string,
+  extras: AnnounceExtras = {},
 ): Promise<NodeRow> {
   const now = Date.now();
   const key = normalizeAddress(address);
   await getD1()
     .prepare(
-      "INSERT INTO nodes (address, manifest_json, work_types, announced_at, last_seen, pubkey) VALUES (?, ?, ?, ?, ?, ?) " +
+      "INSERT INTO nodes (address, manifest_json, work_types, announced_at, last_seen, pubkey, public_host, agent_version) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
         "ON CONFLICT(address) DO UPDATE SET manifest_json = excluded.manifest_json, work_types = excluded.work_types, " +
-        "announced_at = excluded.announced_at, last_seen = excluded.last_seen, pubkey = COALESCE(excluded.pubkey, nodes.pubkey)",
+        "announced_at = excluded.announced_at, last_seen = excluded.last_seen, pubkey = COALESCE(excluded.pubkey, nodes.pubkey), " +
+        "public_host = excluded.public_host, agent_version = excluded.agent_version",
     )
-    .bind(key, JSON.stringify({ ...manifest, benchmarkMmacPerSec }), JSON.stringify(workTypes), now, now, pubkey ?? null)
+    .bind(
+      key,
+      JSON.stringify({ ...manifest, benchmarkMmacPerSec }),
+      JSON.stringify(workTypes),
+      now,
+      now,
+      pubkey ?? null,
+      // Lowercase, IPv6 without brackets — the form endpoint hosts are compared in (deployment-duties hostOf).
+      extras.publicHost?.toLowerCase().replace(/^\[|\]$/g, "") ?? null,
+      extras.agentVersion ?? null,
+    )
     .run();
   const row = (await getNode(key))!;
   if (!row.payout && !row.bind_code) {
@@ -95,6 +118,22 @@ export async function bindNodeToFleet(node: string, fleet: { id: string; owner: 
 }
 
 export type BindResult = { ok: true } | { ok: false; code: "bad_request" | "unauthorized" | "not_found" | "conflict"; message: string };
+
+/**
+ * Unbind nodes from a fleet (fleet revoked, or the owner evicted one): payout and fleet are cleared,
+ * so the node stops earning for that wallet and gets a fresh bind code on its next announce.
+ * `address` limits it to one node. Returns the addresses that were unbound.
+ */
+export async function unbindFleetNodes(fleetId: string, address?: string): Promise<string[]> {
+  const db = getD1();
+  const where = `fleet_id = ?${address ? " AND address = ?" : ""}`;
+  const binds = address ? [fleetId, normalizeAddress(address)] : [fleetId];
+  const rows = await db.prepare(`SELECT address FROM nodes WHERE ${where}`).bind(...binds).all<{ address: string }>();
+  const addresses = (rows.results ?? []).map((r) => r.address);
+  if (addresses.length === 0) return [];
+  await db.prepare(`UPDATE nodes SET payout = NULL, fleet_id = NULL, bound_at = NULL, bind_code = NULL WHERE ${where}`).bind(...binds).run();
+  return addresses;
+}
 
 /**
  * Bind a payout wallet to a node, proven by the payout wallet's signature over

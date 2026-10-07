@@ -8,10 +8,15 @@
  *   DELETE /v1/deployments/:id[?purge=1]  — stop now (purge: workstation volume too); the node confirms on its next heartbeat
  * Another owner's deployment answers 404, the same as a missing one.
  * The GETs first re-queue the caller's deployments whose node went offline (as heartbeats do for all).
+ *
+ * Hosting gateway (docs/IMPL_SPEC_2026-10.md):
+ *   GET    /v1/deployments/:id/route     — public, cached 30 s: { id, state, endpoint|null, kind } for the gateway
+ *   POST   /v1/admin/deployments/:id/stop — X-Internal-Key: status stopped, reason admin
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
 import {
+  adminStop,
   createDeployment,
   getOwnedRow,
   listDeployments,
@@ -19,11 +24,13 @@ import {
   extendWorkstation,
   nodePubkey,
   presentDeployments,
+  publicRoute,
   setSealedEnv,
   stopDeployment,
 } from "../../services/deployments.service.js";
 import { requeueDeadNodeDeployments } from "../../services/deployment-duties.service.js";
 import { log } from "../../lib/logger.js";
+import { requireInternalKey } from "./admin-epochs.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
 export const deploymentsRouter = createRouter();
@@ -38,7 +45,8 @@ const DeploymentSchema = z.object({
   status: Status,
   statusReason: z.string().nullable(),
   node: z.string().nullable(),
-  endpoint: z.string().nullable(),
+  endpoint: z.string().nullable().openapi({ description: "The node's origin (owner detail); the public address is `url`" }),
+  url: z.string().nullable().openapi({ description: "Public gateway URL https://{id}.{SITES_DOMAIN}; null for workstations" }),
   priceUcldPerHour: z.number().int(),
   createdAt: z.number(),
   assignedAt: z.number().nullable(),
@@ -237,5 +245,64 @@ const deleteRoute = createRoute({
 
 deploymentsRouter.openapi(deleteRoute, async (c) => {
   const r = await stopDeployment(c.get("jwtPayload").sub, c.req.valid("param").id, !!c.req.valid("query").purge);
+  return r.ok ? ok(c, { deploymentStatus: "stopped" as const }) : fail(c, r.code, r.message);
+});
+
+// ── Hosting gateway ─────────────────────────────────────────────────────────
+const ROUTE_CACHE_SECONDS = 30;
+
+const routeRoute = createRoute({
+  method: "get",
+  path: "/deployments/{id}/route",
+  tags: TAGS,
+  description:
+    "Public (no auth): what the *.sites gateway needs to proxy a site. endpoint is set only while running. " +
+    "Workstations answer 404. Cached 30 s (Cache-Control).",
+  request: { params: IdParam },
+  responses: responses(
+    {
+      200: json(
+        z.object({
+          status: z.literal("success"),
+          id: z.string(),
+          state: Status,
+          endpoint: z.string().nullable(),
+          kind: z.enum(["static", "container"]),
+        }),
+        "Route",
+      ),
+    },
+    400,
+    404,
+    429,
+  ),
+});
+
+deploymentsRouter.openapi(routeRoute, async (c) => {
+  c.header("Cache-Control", `public, max-age=${ROUTE_CACHE_SECONDS}`);
+  const r = await publicRoute(c.req.valid("param").id);
+  if (!r) return fail(c, "not_found", "deployment not found");
+  return ok(c, { id: r.id, state: r.state, endpoint: r.endpoint, kind: r.kind });
+});
+
+const adminStopRoute = createRoute({
+  method: "post",
+  path: "/admin/deployments/{id}/stop",
+  tags: ["Admin"],
+  description: "Stops any deployment (status stopped, reason admin); the node receives action \"stop\" on its heartbeats until it confirms.",
+  middleware: [requireInternalKey] as const,
+  request: { params: IdParam },
+  responses: responses(
+    { 200: json(z.object({ status: z.literal("success"), deploymentStatus: z.literal("stopped") }), "Stopped") },
+    400,
+    401,
+    404,
+    409,
+    503,
+  ),
+});
+
+deploymentsRouter.openapi(adminStopRoute, async (c) => {
+  const r = await adminStop(c.req.valid("param").id);
   return r.ok ? ok(c, { deploymentStatus: "stopped" as const }) : fail(c, r.code, r.message);
 });

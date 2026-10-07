@@ -3,12 +3,14 @@
  *   POST   /v1/fleets       — create; returns the token once (only its hash is kept)
  *   GET    /v1/fleets       — the caller's fleets with node counts (never the token)
  *   PATCH  /v1/fleets/:id   — rename / set the floor price
- *   DELETE /v1/fleets/:id   — revoke: new announces with the token fail; bound nodes stay bound
+ *   DELETE /v1/fleets/:id   — revoke: new announces with the token fail; its nodes are unbound
+ *   POST   /v1/fleets/:id/nodes/:address/evict — unbind one node of the fleet
  * Another owner's fleet answers 404, the same as a missing one.
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
-import { MAX_ACTIVE_FLEETS, createFleet, listFleets, revokeFleet, updateFleet } from "../../services/fleets.service.js";
+import { EthAddressSchema } from "../../schemas/common.schema.js";
+import { MAX_ACTIVE_FLEETS, createFleet, evictFleetNode, listFleets, revokeFleet, updateFleet } from "../../services/fleets.service.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
 export const fleetsRouter = createRouter();
@@ -98,7 +100,7 @@ const deleteFleetRoute = createRoute({
   method: "delete",
   path: "/fleets/{id}",
   tags: TAGS,
-  description: "Revoke (idempotent). Nodes already bound stay bound; new announces with this token get 401.",
+  description: "Revoke (idempotent). New announces with this token get 401; the fleet's nodes are unbound and their live deployments re-queued.",
   security: BEARER_AUTH,
   request: { params: IdParam },
   responses: responses(
@@ -113,4 +115,28 @@ fleetsRouter.openapi(deleteFleetRoute, async (c) => {
   const revokedAt = await revokeFleet(c.get("jwtPayload").sub, c.req.valid("param").id);
   if (revokedAt === null) return fail(c, "not_found", "Fleet not found");
   return ok(c, { revoked: true as const, revokedAt });
+});
+
+const evictRoute = createRoute({
+  method: "post",
+  path: "/fleets/{id}/nodes/{address}/evict",
+  tags: TAGS,
+  description:
+    "Evict a node from your fleet: it is unbound (no payout, no fleet; a fresh bind code on its next announce) " +
+    "and its live deployments are re-queued for other nodes. 404 when the fleet is not yours or the node is not in it.",
+  security: BEARER_AUTH,
+  request: { params: IdParam.extend({ address: EthAddressSchema }) },
+  responses: responses(
+    { 200: json(z.object({ status: z.literal("success"), evicted: z.string(), requeued: z.number().int() }), "Evicted") },
+    400,
+    401,
+    404,
+  ),
+});
+
+fleetsRouter.openapi(evictRoute, async (c) => {
+  const { id, address } = c.req.valid("param");
+  const r = await evictFleetNode(c.get("jwtPayload").sub, id, address);
+  if (!r) return fail(c, "not_found", "Fleet or node not found");
+  return ok(c, r);
 });

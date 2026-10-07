@@ -5,15 +5,26 @@ origin. Shipping the Worker alone breaks the published app.cloudana.io; shipping
 routes that don't exist yet. Nothing below is done until its box is ticked by a person.
 
 ## 0. Decisions (owner)
+Decided 2026-10 in [DECISIONS_CONSENSUS.md](DECISIONS_CONSENSUS.md) (owner: "do all"); build contract in [IMPL_SPEC_2026-10.md](IMPL_SPEC_2026-10.md).
 - [ ] **Origin**: one React build on `cloudana.io` (homepage `/`, console `/control`) and `app.cloudana.io/*` → 301
       `cloudana.io/control/*` (recommended), or keep two origins and rewrite links.
-- [ ] **Token economics before publishing the token page**: price unit (µCLD per TMAC ≈ 14, not 1000 per MMAC),
-      genesis supply (1M/2M minted vs 250M whitepaper), ρ and budget schedule, CLUSTER_N_MIN ≥ 3, lane-A timing.
-      Until decided, the Economics page stays labelled "simulation" and the litepaper says "supply depends on usage".
-- [ ] **Credits**: Stripe on or off at launch; faucet policy for testnet credits.
+- [x] **Token economics** — decided: price `PRICE_NCLD_PER_TMAC=14000` + `BASE_FEE_UCLD=1000`, utilization controller;
+      fee split 95 / 3 / 2; testnet genesis fresh 1M, mainnet 100M with vesting; ρ 0.25, budget 80 % of chain allowance
+      on testnet, min(chain, 4 % of genesis)/yr halving every 4 yr at mainnet; `CLUSTER_N_MIN=3` per operator; lane A
+      closes when the epoch ends; 1 h epochs. The Economics page stays labelled "simulation" until the sim is re-run on
+      these parameters (`scripts/sim/tokenomics-20y.ts` still uses 0.975 / 0.005 / 250M).
+- [x] **Credits** — decided: Stripe off (`STRIPE_ENABLED` default false); on-chain faucet deleted; `/v1/dev/credits`
+      10 CLD/day keyed to identity + wallet with IP/ASN caps; testnet credits have no monetary value; no points/airdrop.
+- [x] **Payments** — decided: CLD is the only settlement asset; other assets swap in the user's wallet; cards off.
+- [x] **Free tier** — decided: one static site (≤ 2 MB) per verified identity, treasury pays normal fees.
+- [x] **Contracts** — decided: fresh CLDToken v2 + CloudanaSettlement v2 under a Safe 2-of-3, fresh poster key;
+      abandon 0xF292… and every legacy contract. Deploy script `contract/scripts/v2/deploy.ts`; the owner runs it.
 - [ ] **Node image**: publish `ghcr.io/amrdab/cloudana-node-agent` (or pick a registry) and update the two YAML snippets.
 - [ ] **Public install path**: the homepage command clones `AmrDab/Cloudana10` — commit `node-agent/` first.
-- [ ] **Contact**: privacy contact address; social URLs (X, Discord) or keep them off the page.
+- [x] **Contact** — decided: `privacy@cloudana.io` and `abuse@cloudana.io` are now in terms/privacy.
+- [ ] **Mailboxes**: create `privacy@` and `abuse@` (e.g. Cloudflare Email Routing) before the pages go live.
+- [ ] **Social URLs** (X, Discord) or keep them off the page.
+- [ ] **Counsel**: engage on token classification, payment facilitation and the free tier before CLD carries value.
 
 ## 1. Repository
 - [ ] Commit this worktree in reviewable pieces (suggested order): orchestrator v1 API → node-agent + shared/sealed →
@@ -25,10 +36,15 @@ routes that don't exist yet. Nothing below is done until its box is ticked by a 
 - [ ] Decide which `/control/legacy/*` pages survive; remove the rest (their vocabulary is marketplace-era).
 
 ## 2. Secrets and environment
-- [ ] Worker secrets: `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_KEY`, `PINATA_JWT` (rotated), `STRIPE_*` if enabled,
-      `TREASURY_ADDRESS`, `CHAIN_RPC_URL`, price env (`PRICE_UCLD_PER_MMAC` after decision 0), `DEV_MODE` unset.
+- [ ] Worker secrets: `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_KEY`, `INSTRUCTION_SIGNING_KEY` (not a chain key),
+      `PINATA_JWT` (rotated), `TREASURY_ADDRESS`, `CHAIN_RPC_URL`, `SETTLEMENT_ADDRESS`, price env
+      (`PRICE_NCLD_PER_TMAC=14000`, `BASE_FEE_UCLD=1000`, `PRICE_CONTROLLER=on`), `EPOCH_SECONDS=3600`,
+      `VEST_B_SECONDS=3600`, `LANE_A_PER_MILLE=950`, `TREASURY_PER_MILLE=30`, `DEV_MODE` unset, `STRIPE_ENABLED` unset.
+      The API Worker holds **no chain key**.
+- [ ] Keeper Worker secrets: `POSTER_PRIVATE_KEY`, `INTERNAL_API_KEY`; vars `API_URL`, `RPC_URL`, `SETTLEMENT_ADDRESS`, `CHAIN_ID`.
 - [ ] Frontend env: `VITE_API_URL=https://api.cloudana.io`, `VITE_WALLETCONNECT_PROJECT_ID` (the 403s), no `VITE_DEV_BURNER`.
-- [ ] Revoke MINTER/ADMIN roles from the leaked wallet `0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A`; rotate the key.
+- [ ] The leaked wallet `0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A` is abandoned with the legacy contracts (decision 0);
+      confirm no live code or env references it.
 
 ## 3. Database (Cloudflare D1)
 - [ ] Export/back up the production D1 before anything else.
@@ -37,12 +53,13 @@ routes that don't exist yet. Nothing below is done until its box is ticked by a 
 - [ ] Seed templates: `POST /v1/admin/templates/refresh` against the Node orchestrator (hundreds of GitHub fetches).
 
 ## 4. Contracts (Base Sepolia)
-- [ ] Deploy CLDToken (or reuse) + `CloudanaSettlement` with `EPOCH_SECONDS` = the API's; record genesis epoch.
-- [ ] Settlement is the only minter; treasury/team allocations per decision 0.
-- [ ] Host the keeper (poster key, guardian key separate; ~1.7M gas/week); `KEEPER` env → public API + internal key.
-- [ ] Update `shared/addresses.*`, the console's contract links, and the published address list.
-- [ ] Known open contract items (not blockers for testnet, blockers for value): treasury share and lane split not
-      enforced on-chain, no on-chain vesting/clawback, escrow not per-user, no timelock on roles.
+- [ ] Owner runs `contract/scripts/v2/deploy.ts` (fresh CLDToken v2 + CloudanaSettlement v2, `EPOCH_SECONDS=3600`,
+      veto 3600, vest 3600, initial supply 1,000,000 to the treasury Safe); deployer holds no role afterwards.
+- [ ] Settlement is the only minter; `MAX_MINT_BPS_PER_YEAR=1000` on the token; treasury address immutable.
+- [ ] Deploy the keeper Worker (poster key separate from guardian Safe; cron every 5 min); check `/health`.
+- [ ] Update `shared/addresses.baseSepolia.json` (v2 section), the console's contract links, and the published address list.
+- [ ] Known open contract items (not blockers for testnet, blockers for value): per-user escrow withdrawal, on-chain
+      vesting for the 100M genesis, 48 h timelock on roles, audits, k-of-n posters (see `DECENTRALIZATION_ROADMAP.md`).
 
 ## 5. Orchestrator runtime
 - [ ] Confirm the whole job + hosting loop runs Worker-only (jobs, nodes, work, deployments mount on both runtimes), or
@@ -66,9 +83,10 @@ routes that don't exist yet. Nothing below is done until its box is ticked by a 
 ## 8. Cutover
 - [ ] Freeze: no edits during the window.
 - [ ] Deploy in order: D1 schema → Worker → Pages (one origin) → DNS 301 for app.cloudana.io → keeper start.
-- [ ] Smoke: `/health`, `/v1/network`, sign in, run a 32×32 job to done, deploy a static site to running, waitlist signup,
-      litepaper/privacy/terms load, old deep links redirect.
-- [ ] Watch for 24 h: API error rate, probe failures, keeper posts/finalizes.
+- [ ] Smoke: `/health`, `/v1/network` (shows `priceNcldPerTmac`, `baseFeeUcld`, `lastSettledEpochAt`), sign in, run a
+      32×32 job to done, deploy a static site to running through `*.sites.cloudana.io`, `/control/faucet` redirects to
+      earnings, Stripe routes return 503, waitlist signup, litepaper/privacy/terms load, old deep links redirect.
+- [ ] Watch for 24 h: API error rate, probe failures, keeper posts/finalizes (first hourly epoch finalized within 2 h).
 
 ## 9. After launch
 - [ ] Commit the restored trust signals (status gates, FAQ, difficulty bench) — they must stay accurate as gates close.

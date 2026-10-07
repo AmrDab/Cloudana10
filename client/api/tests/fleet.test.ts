@@ -1,5 +1,6 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
+import { randomBytes } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { buildApp } from "../src/app.js";
 import { getD1 } from "../src/lib/storage.js";
@@ -39,10 +40,11 @@ const MANIFEST = { cpuThreads: 64, ramGB: 256, gpus: [{ name: "H100", vramGB: 80
 async function announce(node: PrivateKeyAccount, extra: Record<string, unknown> = {}) {
   const body = JSON.stringify({ manifest: MANIFEST, benchmarkMmacPerSec: 5000, workTypes: ["matmul"], ...extra });
   const ts = String(Date.now());
-  const signature = await node.signMessage({ message: nodeSigningMessage("POST", "/v1/nodes/announce", ts, body) });
+  const nonce = randomBytes(16).toString("hex");
+  const signature = await node.signMessage({ message: nodeSigningMessage("POST", "/v1/nodes/announce", ts, body, nonce) });
   return call("/v1/nodes/announce", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Node": node.address, "X-Node-Timestamp": ts, "X-Node-Signature": signature },
+    headers: { "Content-Type": "application/json", "X-Node": node.address, "X-Node-Timestamp": ts, "X-Nonce": nonce, "X-Node-Signature": signature },
     body,
   });
 }
@@ -122,7 +124,7 @@ describe("fleet tokens", () => {
     expect(await getNode(node.address)).toBeNull();
   });
 
-  it("revoking stops new announces; bound nodes stay bound", async () => {
+  it("revoking stops new announces and unbinds the fleet's nodes", async () => {
     const f = await createFleet(aliceJwt);
     const early = privateKeyToAccount(generatePrivateKey());
     await announce(early, { fleetToken: f.token });
@@ -138,7 +140,25 @@ describe("fleet tokens", () => {
     const res = await announce(late, { fleetToken: f.token });
     expect(res.status).toBe(401);
     expect(await getNode(late.address)).toBeNull();
-    expect(await getNode(early.address)).toMatchObject({ payout: alice, fleet_id: f.id });
+    expect(await getNode(early.address)).toMatchObject({ payout: null, fleet_id: null, bound_at: null });
+  });
+
+  it("the owner can evict one node: unbound, fresh bind code on its next announce; strangers get 404", async () => {
+    const f = await createFleet(aliceJwt);
+    const keep = privateKeyToAccount(generatePrivateKey());
+    const out = privateKeyToAccount(generatePrivateKey());
+    await announce(keep, { fleetToken: f.token });
+    await announce(out, { fleetToken: f.token });
+
+    expect((await authed(bobJwt, "POST", `/v1/fleets/${f.id}/nodes/${out.address}/evict`)).status).toBe(404);
+    const res = await authed(aliceJwt, "POST", `/v1/fleets/${f.id}/nodes/${out.address}/evict`);
+    expect(await res.json()).toEqual({ status: "success", evicted: out.address.toLowerCase(), requeued: 0 });
+    expect(await getNode(out.address)).toMatchObject({ payout: null, fleet_id: null });
+    expect(await getNode(keep.address)).toMatchObject({ payout: alice, fleet_id: f.id });
+    // Already gone: 404. Re-announcing without the token gets a bind code again.
+    expect((await authed(aliceJwt, "POST", `/v1/fleets/${f.id}/nodes/${out.address}/evict`)).status).toBe(404);
+    const again = await (await announce(out)).json();
+    expect(again).toMatchObject({ bound: false, bindCode: expect.stringMatching(/^[0-9a-f]{16}$/) });
   });
 
   it("refuses a fleet token for a node already bound to another wallet (409)", async () => {

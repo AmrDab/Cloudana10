@@ -6,7 +6,7 @@ type Gate = { name: string; state: "done" | "testnet" | "open"; note: string };
 // Keep this list honest; it is the most-read thing on the page.
 const GATES: Gate[] = [
   { name: "End to end: job → proof → mint → result", state: "testnet", note: "Runs on the local stack. Public testnet next." },
-  { name: "Settlement contract on Base Sepolia", state: "open", note: "Built and stress-tested for 20 years of epochs. Not deployed yet." },
+  { name: "Settlement contract on Base Sepolia", state: "open", note: "Fresh token + settlement v2 under a Safe, hourly epochs, fee split checked on every post. Owner deploys." },
   { name: "zkSNARK transcript verification on-chain", state: "open", note: "Groth16 verifier in development." },
   { name: "Audit of settlement and token contracts", state: "open", note: "Not started." },
   { name: "Legal review of CLD", state: "open", note: "Not started." },

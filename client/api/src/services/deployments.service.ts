@@ -10,6 +10,7 @@
  */
 import { getD1 } from "../lib/storage.js";
 import { normalizeAddress } from "../lib/eth.js";
+import { log } from "../lib/logger.js";
 import { getEnv } from "../config/env.js";
 import { capture, hold, release } from "./balance.service.js";
 import { recordHostingRewards } from "./ledger.service.js";
@@ -20,6 +21,7 @@ import {
   type ApiKind,
   type ContainerSpec,
   type DeploymentKind,
+  type StaticSpec,
   type WorkstationSpec,
 } from "./deployment-spec.js";
 import { eligibleGpus, type Gpu } from "./workstation.js";
@@ -59,6 +61,29 @@ export interface DeploymentRow {
   web_token: string | null;
   /** 1 = the node owes a "purge" (container + volume) instead of a plain stop. */
   purge_pending: number;
+  /** Static sites: the file the probe fetches and the sha256 hex it must serve (db/migrations-hosting.ts). */
+  probe_path: string | null;
+  probe_hash: string | null;
+}
+
+/** Hostname under which the gateway serves sites: https://{id}.{SITES_DOMAIN}. */
+export function sitesDomain(): string {
+  // Integration: add `SITES_DOMAIN: z.string().default("sites.cloudana.io")` to envSchema; until then the
+  // parsed env strips the key, so fall back to the raw variable.
+  return (getEnv() as { SITES_DOMAIN?: string }).SITES_DOMAIN ?? process.env.SITES_DOMAIN ?? "sites.cloudana.io";
+}
+
+/** The deployment's public URL through the gateway (null for workstations, which connect by token URL/SSH). */
+export const publicUrl = (r: Pick<DeploymentRow, "id" | "workstation">) =>
+  r.workstation ? null : `https://${r.id}.${sitesDomain()}`;
+
+const toHex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+/** index.html if present, else the first file (sorted by path), with the sha256 hex of its bytes. */
+export async function staticProbe(spec: StaticSpec): Promise<{ path: string; hash: string }> {
+  const file = spec.files.find((f) => f.path === "index.html") ?? [...spec.files].sort((a, b) => (a.path < b.path ? -1 : 1))[0];
+  const bytes = Uint8Array.from(atob(file.contentBase64), (c) => c.charCodeAt(0));
+  return { path: file.path, hash: toHex(await crypto.subtle.digest("SHA-256", bytes)) };
 }
 
 /** Workstation-only fields of a Deployment (docs/WORKSTATIONS.md §4). */
@@ -84,6 +109,8 @@ export interface Deployment extends Partial<WorkstationView> {
   statusReason: string | null;
   node: string | null;
   endpoint: string | null;
+  /** Public gateway URL (https://{id}.{SITES_DOMAIN}); null for workstations. */
+  url: string | null;
   priceUcldPerHour: number;
   createdAt: number;
   assignedAt: number | null;
@@ -144,6 +171,7 @@ export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(
     statusReason: r.status_reason,
     node: r.node,
     endpoint: r.endpoint,
+    url: publicUrl(r),
     priceUcldPerHour: r.price_ucld_per_hour,
     createdAt: r.created_at,
     assignedAt: r.assigned_at,
@@ -260,6 +288,16 @@ export async function createDeployment(input: {
       JSON.stringify(checked.spec), price, price, now, input.kind === "workstation" ? 1 : 0,
     )
     .run();
+  if (input.kind === "static") {
+    // Separate statement so creation keeps working on a database that has not run HOSTING_MIGRATIONS yet
+    // (the probe then has no hash to check, as for rows uploaded before the migration).
+    const probe = await staticProbe(checked.spec as StaticSpec);
+    await getD1()
+      .prepare("UPDATE deployments SET probe_path = ?, probe_hash = ? WHERE id = ?")
+      .bind(probe.path, probe.hash, id)
+      .run()
+      .catch((err) => log.api.warn("[deployments] probe columns not written (run HOSTING_MIGRATIONS):", err));
+  }
   await addEvent(id, "info", `queued at ${price} µCLD/hour; first hour held`, now);
   if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) {
     await addEvent(id, "warn", "waiting for a capable node", now);
@@ -410,6 +448,36 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
       .bind(id)
       .run();
     if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", "volume purge requested");
+  }
+  return { ok: true };
+}
+
+/** What the gateway needs to proxy a site (public: no owner, no secrets). */
+export interface PublicRoute {
+  id: string;
+  state: DeploymentStatus;
+  /** The node endpoint while running; null otherwise. */
+  endpoint: string | null;
+  kind: DeploymentKind;
+}
+
+/** Route info for static/container deployments; null for a missing id or a workstation (its URL may carry a token). */
+export async function publicRoute(id: string): Promise<PublicRoute | null> {
+  const row = await getDeploymentRow(id);
+  if (!row || row.workstation) return null;
+  return { id: row.id, state: row.status, endpoint: row.status === "running" ? row.endpoint : null, kind: row.kind };
+}
+
+/**
+ * Admin stop (internal key): status 'stopped', reason 'admin'. Like an owner stop, the node then receives
+ * action "stop" on its heartbeats until it confirms (stop_acked_at stays NULL). Idempotent once ended.
+ */
+export async function adminStop(id: string): Promise<Update> {
+  const row = await getDeploymentRow(id);
+  if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
+  if (row.status === "stopped" || row.status === "failed") return { ok: true };
+  if (!(await endDeployment(row, "stopped", "admin", { acked: false, level: "warn" }))) {
+    return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };
   }
   return { ok: true };
 }

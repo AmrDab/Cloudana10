@@ -3,8 +3,8 @@
  *
  * The token ("cft_" + 32 hex) is returned once at creation; only its sha256 is
  * stored. A node announcing with a live token is bound to the fleet owner at
- * once (no bind code). Revoking a fleet stops new announces with its token;
- * nodes already bound stay bound.
+ * once (no bind code). Revoking a fleet stops new announces with its token and
+ * unbinds its nodes; the owner can also evict a single node.
  *
  * floor_ucld_per_mmac is stored for the owner only — placement does not read it yet.
  */
@@ -12,6 +12,8 @@ import { getD1 } from "../lib/storage.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { getEnv } from "../config/env.js";
 import { sha256 } from "./jobs.service.js";
+import { unbindFleetNodes } from "./nodes.service.js";
+import { requeueNodeDeployments } from "./deployment-duties.service.js";
 
 export const MAX_ACTIVE_FLEETS = 10;
 
@@ -105,14 +107,32 @@ export async function updateFleet(
   return true;
 }
 
-/** Revoke (idempotent). Returns the revocation time, or null if the caller owns no such fleet. */
+/**
+ * Revoke (idempotent): new announces with the token fail, and every node of the fleet is unbound (its live
+ * deployments are re-queued for other nodes). Returns the revocation time, or null if the caller owns no such fleet.
+ */
 export async function revokeFleet(owner: string, id: string): Promise<number | null> {
   const row = await ownedFleet(owner, id);
   if (!row) return null;
   if (row.revoked_at) return row.revoked_at;
   const now = Date.now();
   await getD1().prepare("UPDATE fleets SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").bind(now, id).run();
+  const nodes = await unbindFleetNodes(id);
+  await requeueNodeDeployments(nodes, "fleet revoked — node unbound", now);
   return now;
+}
+
+/**
+ * Evict one node from the caller's fleet: unbound (no payout, no fleet), its live deployments re-queued.
+ * null = no such fleet for this owner, or the node is not in it.
+ */
+export async function evictFleetNode(owner: string, id: string, node: string): Promise<{ evicted: string; requeued: number } | null> {
+  const row = await ownedFleet(owner, id);
+  if (!row) return null;
+  const [evicted] = await unbindFleetNodes(id, node);
+  if (!evicted) return null;
+  const requeued = await requeueNodeDeployments([evicted], "node evicted from its fleet");
+  return { evicted, requeued };
 }
 
 /** The live fleet a token belongs to, or null (unknown or revoked). */

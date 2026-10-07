@@ -1,7 +1,5 @@
 import { Link, useLocation } from "wouter";
 import {
-  LayoutDashboard,
-  Server,
   Terminal,
   Menu,
   X,
@@ -10,7 +8,6 @@ import {
   Home,
   Users,
   DollarSign,
-  Cpu,
   Calculator,
   TrendingUp,
   Rocket,
@@ -161,27 +158,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       ],
     },
     {
-      label: "Provider",
-      path: "/provider",
-      icon: Server,
-      show: true,
-      children: [
-        { label: "Dashboard", path: "/providers", icon: LayoutDashboard, show: true },
-        { label: "Register", path: "/provider", icon: Server, show: true },
-      ],
-    },
-    {
       label: "Pricing",
-      path: "/pricing/gpus",
+      path: "/pricing/usage",
       icon: DollarSign,
       show: true,
       children: [
-        { label: "GPU Pricing", path: "/pricing/gpus", icon: Cpu, show: true },
         { label: "Usage Calculator", path: "/pricing/usage", icon: Calculator, show: true },
         { label: "Provider Calculator", path: "/pricing/provider", icon: TrendingUp, show: true },
       ],
     },
-    { label: "Faucet", path: "/faucet", icon: Droplets, show: true },
     { label: "Status", path: "/status", icon: Activity, show: true },
     { label: "Debug", path: "/debug", icon: Terminal, show: import.meta.env.DEV },
   ];
@@ -390,7 +375,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               {isConnected ? (
                 <>
                   {/* CLD Balance Badge - always visible */}
-                  <Link href={cldBalance === 0 ? "/faucet" : "/user"}>
+                  <Link href="/user">
                     <div className={cn(
                       "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer",
                       cldBalance === 0
@@ -419,9 +404,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                             <div className="text-lg font-bold">{cldBalance.toFixed(2)} CLD</div>
                           </div>
                           {cldBalance === 0 && (
-                            <Link href="/faucet">
+                            <Link href="~/control/run">
                               <Button variant="outline" size="sm" className="w-full gap-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10">
-                                <Droplets className="h-3 w-3" /> Get Free Testnet CLD
+                                <Droplets className="h-3 w-3" /> Test credits
                               </Button>
                             </Link>
                           )}
@@ -613,9 +598,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 </a>
                 <a href="https://github.com/AmrDab/Cloudana10" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
                   GitHub
-                </a>
-                <a href="https://discord.gg/cloudana" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
-                  Discord
                 </a>
               </div>
             </div>

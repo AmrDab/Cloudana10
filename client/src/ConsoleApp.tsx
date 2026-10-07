@@ -13,10 +13,6 @@ import VerifyPage from "@/pages/console/verify";
 import ServicesPage from "@/pages/console/services";
 import EarningsPage from "@/pages/console/earnings";
 import EconomicsPage from "@/pages/console/economics";
-import ProviderRegister from "@/pages/provider-register";
-import ProviderRegisterPage from "@/pages/provider-register-page";
-import ProviderBuildCluster from "@/pages/provider-build-cluster";
-import ProviderListPage from "@/pages/provider-list";
 import ProviderDetailPageWrapper from "@/pages/provider-detail-wrapper";
 import ProviderRawPageWrapper from "@/pages/provider-raw-wrapper";
 import ProviderUpdatePageWrapper from "@/pages/provider-update-wrapper";
@@ -24,27 +20,15 @@ import UserDashboard from "@/pages/user-dashboard";
 import DebugPanel from "@/pages/debug-panel";
 import JobDetailPageWrapper from "@/pages/job-detail-wrapper";
 import DeploymentCom from "@/pages/deployment-com";
-import GpuPricingPage from "@/pages/pricing/gpus";
-import GpusOnDemandPage from "@/pages/pricing/gpus-on-demand";
 import UsageCalculatorPage from "@/pages/pricing/usage-calculator";
 import ProviderCalculatorPage from "@/pages/pricing/provider-calculator";
 import WorkloadRegister from "@/pages/workload-register";
 import DocsPage from "@/pages/console/docs";
 import LegacyDocsPage from "@/pages/docs";
 import LitepaperPage from "@/pages/litepaper";
-import FaucetPage from "@/pages/faucet";
 import DecentralizationPage from "@/pages/decentralization";
 
 const ProviderLogs = lazy(() => import("./pages/provider-logs"));
-
-function RedirectToProviderRegister() {
-  const [, setLocation] = useLocation();
-  useEffect(() => {
-    const q = typeof window !== "undefined" ? window.location.search : "";
-    setLocation(`/provider/register${q || ""}`);
-  }, [setLocation]);
-  return null;
-}
 
 /** Old console paths → the same page under /legacy (query string kept). */
 const LEGACY_PREFIXES = ["/user", "/mining", "/provider", "/providers", "/register", "/job", "/workload", "/deployment-completion", "/pricing", "/decentralization", "/debug"];
@@ -60,28 +44,29 @@ function ToStaticLitepaper() {
   return null;
 }
 
-/** The v0 pages, unchanged, inside the old layout with a "new console is at …" banner. */
+/**
+ * The v0 pages that are still useful, unchanged, inside the old layout with a "new console is at …"
+ * banner. Marketplace-era pages (on-chain provider registration and its build-cluster wizard, the
+ * provider list, GPU "market rate" pricing) are retired and redirect to their successor.
+ */
 function LegacyRoutes() {
   return (
     <LegacyShell>
       <Switch>
         <Route path="/user" component={UserDashboard} />
         <Route path="/mining">{() => <Redirect to="~/control/earnings" replace />}</Route>
-        <Route path="/provider" component={ProviderRegisterPage} />
-        <Route path="/provider/register" component={ProviderRegisterPage} />
-        <Route path="/register" component={RedirectToProviderRegister} />
-        <Route path="/provider/register/build-cluster">{() => <ProviderBuildCluster />}</Route>
-        <Route path="/provider/register/final" component={ProviderRegister} />
+        <Route path="/provider" nest>{() => <Redirect to="~/control/provide" replace />}</Route>
+        <Route path="/register">{() => <Redirect to="~/control/provide" replace />}</Route>
+        <Route path="/providers">{() => <Redirect to="~/control/provide" replace />}</Route>
         <Route path="/providers/:owner/edit" component={ProviderUpdatePageWrapper} />
         <Route path="/providers/:owner/logs" component={ProviderLogs} />
         <Route path="/providers/:owner/raw" component={ProviderRawPageWrapper} />
         <Route path="/providers/:owner" component={ProviderDetailPageWrapper} />
-        <Route path="/providers" component={ProviderListPage} />
         <Route path="/job/:id" component={JobDetailPageWrapper} />
         <Route path="/workload/register" component={WorkloadRegister} />
         <Route path="/deployment-completion" component={DeploymentCom} />
-        <Route path="/pricing/gpus" component={GpuPricingPage} />
-        <Route path="/pricing/gpus-on-demand" component={GpusOnDemandPage} />
+        <Route path="/pricing/gpus">{() => <Redirect to="~/control/run" replace />}</Route>
+        <Route path="/pricing/gpus-on-demand">{() => <Redirect to="~/control/run" replace />}</Route>
         <Route path="/pricing/usage" component={UsageCalculatorPage} />
         <Route path="/pricing/provider" component={ProviderCalculatorPage} />
         <Route path="/decentralization" component={DecentralizationPage} />
@@ -114,7 +99,8 @@ function AppRouter() {
             <Route path="/economics" component={EconomicsPage} />
             <Route path="/docs" component={DocsPage} />
             <Route path="/litepaper" component={ToStaticLitepaper} />
-            <Route path="/faucet" component={FaucetPage} />
+            {/* The on-chain faucet is gone; test credits live in the console. */}
+            <Route path="/faucet">{() => <Redirect to="/run" replace />}</Route>
             <Route component={NotFound} />
           </Switch>
         </ConsoleLayout>

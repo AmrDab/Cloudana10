@@ -144,8 +144,10 @@
   <ul>
     <li><b>Account data</b> — your wallet address. Sign-in is a signature over a one-time server nonce; the resulting short-lived session token stays in that browser tab.</li>
     <li><b>Provider data</b> — the node's hardware manifest (CPU, GPU, RAM, disk), its benchmark results, and the node's public key, used to assign work and to check that messages really come from that node.</li>
-    <li><b>Jobs and deployments</b> — the inputs and results of compute jobs; for hosted sites, the files you upload; for containers, the image, ports and the <i>names</i> of environment variables. Sealed secrets are being rolled out: once they are on, secret values are encrypted in your browser to the assigned node's key and we store only ciphertext. We also keep uptime-probe results and the hourly charges for each deployment.</li>
-    <li><b>Payment data</b> — if card payments are enabled, they are handled by Stripe; we never see or store card numbers.</li>
+    <li><b>Jobs and deployments</b> — the inputs and results of compute jobs; for hosted sites, the files you upload and a hash of them used to probe that the node is serving what you uploaded; for containers, the image, ports and the <i>names</i> of environment variables. Sealed secrets are being rolled out: once they are on, secret values are encrypted in your browser to the assigned node's key and we store only ciphertext. We also keep uptime-probe results and the hourly charges for each deployment.</li>
+    <li><b>Payment data</b> — jobs are paid in CLD from your wallet; we record the escrow deposit and the fee for each job. Card payments are off during testnet; if they are ever enabled they will be handled by a payment provider and we will never see or store card numbers. Any swap from another asset into CLD happens in your own wallet, and we never hold customer assets other than escrowed CLD.</li>
+    <li><b>Testnet credits</b> — to limit abuse, the daily testnet credit is keyed to your sign-in identity and wallet, and we keep a short-lived record of the requesting IP address and network. Testnet credits have no monetary value.</li>
+    <li><b>Abuse reports</b> — if you report a deployment, we keep your report and our decision; if your deployment is stopped, we keep the reason (see <a class="link" href="/terms.html">Terms §4</a>).</li>
     <li><b>Operational logs</b> — our infrastructure runs on Cloudflare, which processes IP addresses and request metadata to serve and protect the service.</li>
   </ul>
 
@@ -163,8 +165,7 @@
   <p>Anything written on-chain — wallet addresses, settlement batches, the CLD you claim — is public by design and cannot be deleted by us or anyone. Don't put anything in an on-chain transaction you wouldn't want to be permanent.</p>
 
   <h2>Your choices &amp; contact</h2>
-  <!-- TODO(owner): add private contact email -->
-  <p>To access or delete the off-chain data tied to your wallet or waitlist entry, or to ask anything about this policy, <a class="link" href="https://github.com/AmrDab/Cloudana10/issues" rel="noopener">open an issue on GitHub</a> — the project is built in the open and that's the fastest route to us.</p>
+  <p>To access or delete the off-chain data tied to your wallet or waitlist entry, or to ask anything about this policy, email <a class="link" href="mailto:privacy@cloudana.io">privacy@cloudana.io</a>. To report illegal, infringing or harmful content served by the network, email <a class="link" href="mailto:abuse@cloudana.io">abuse@cloudana.io</a> (the takedown process is in <a class="link" href="/terms.html">Terms §4</a>). For anything public, you can also <a class="link" href="https://github.com/AmrDab/Cloudana10/issues" rel="noopener">open an issue on GitHub</a> — the project is built in the open.</p>
 
   <div class="card"><p><b class="lbl">Honesty note</b>This is a plain-language policy for a testnet-stage project, written to be true rather than exhaustive. Before CLD carries value, it will be reviewed by counsel and versioned here.</p></div>
 </article>

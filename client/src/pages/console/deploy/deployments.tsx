@@ -17,7 +17,7 @@ import {
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { KindPill } from "./templates";
-import { autoSeal, clearPendingSecrets, getSealState, pendingSecrets, setSealState, useSealVersion } from "./model";
+import { autoSeal, clearPendingSecrets, getSealState, hostOf, pendingSecrets, publicUrl, setSealState, useSealVersion } from "./model";
 
 // ── Status chip ─────────────────────────────────────────────────────────────
 const TONE: Record<string, "muted" | "work" | "ok" | "burn"> = {
@@ -54,7 +54,7 @@ function Endpoint({ url }: { url: string | null }) {
       className="inline-flex max-w-[220px] items-center gap-1 truncate font-mono text-[13px] text-text hover:text-ok hover:underline"
       aria-label={`Open ${url} in a new tab`}
     >
-      <span className="truncate">{url.replace(/^https?:\/\//, "")}</span>
+      <span className="truncate">{hostOf(url)}</span>
       <ExternalLink className="size-3 shrink-0 text-faint" aria-hidden />
     </a>
   );
@@ -137,8 +137,11 @@ function SecretsControl({ d, detail }: { d: Deployment; detail?: DeploymentDetai
   );
 }
 
+/** The public address once a node serves it; before that the gateway would only answer "not running". */
+const liveUrl = (d: Deployment) => (d.status === "running" || d.status === "unreachable" ? publicUrl(d) ?? d.endpoint : null);
+
 // ── Table ───────────────────────────────────────────────────────────────────
-const COLS = ["Name", "Kind", "Status", "Node", "Endpoint", "Price / h", "Probe", "Created", ""];
+const COLS = ["Name", "Kind", "Status", "Node", "URL", "Price / h", "Probe", "Created", ""];
 
 export function Deployments({ focusId, onBlank }: { focusId: string | null; onBlank: () => void }) {
   const session = useSession();
@@ -160,7 +163,7 @@ export function Deployments({ focusId, onBlank }: { focusId: string | null; onBl
     for (const d of deps) {
       const was = prev.current.get(d.id);
       if (was && was !== d.status) {
-        if (d.status === "running") toast.success(`${d.name} is running`, { description: d.endpoint ?? undefined });
+        if (d.status === "running") toast.success(`${d.name} is running`, { description: liveUrl(d) ?? undefined });
         if (d.status === "failed") toast.error(`${d.name} failed`, { description: d.statusReason ?? undefined });
         if (d.status === "unreachable") toast.error(`${d.name} is unreachable`, { description: "3 probes failed · billing paused" });
       }
@@ -211,7 +214,7 @@ export function Deployments({ focusId, onBlank }: { focusId: string | null; onBl
                   <div className="min-w-0">
                     <div className="truncate text-[14px] text-text">{d.name}</div>
                     <div className="mt-0.5 truncate font-mono text-[12px] text-faint">
-                      {d.endpoint ? d.endpoint.replace(/^https?:\/\//, "") : d.statusReason ?? d.kind} · {cld(d.priceUcldPerHour)}/h
+                      {liveUrl(d) ? hostOf(liveUrl(d)!) : d.statusReason ?? d.kind} · {cld(d.priceUcldPerHour)}/h
                     </div>
                   </div>
                   <DeployChip status={d.status} />
@@ -245,7 +248,7 @@ function Row({ d, open, fresh, onToggle }: { d: Deployment; open: boolean; fresh
         <td className="px-4 py-2.5"><KindPill kind={d.kind} /></td>
         <td className="px-4 py-2.5"><DeployChip status={d.status} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><Hash value={d.node} /></td>
-        <td className="px-4 py-2.5"><Endpoint url={d.endpoint} /></td>
+        <td className="px-4 py-2.5"><Endpoint url={liveUrl(d)} /></td>
         <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground">{cld(d.priceUcldPerHour)}</td>
         <td className="px-4 py-2.5 whitespace-nowrap"><Probe d={d} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><RelTime ms={d.createdAt} /></td>
@@ -300,10 +303,12 @@ function Detail({ d }: { d: Deployment }) {
             <dt className="text-faint">Started</dt><dd><RelTime ms={d.startedAt} className="text-[12px]" /></dd>
             {d.stoppedAt && (<><dt className="text-faint">Stopped</dt><dd><RelTime ms={d.stoppedAt} className="text-[12px]" /></dd></>)}
             <dt className="text-faint">Probe</dt><dd><Probe d={d} /></dd>
+            {publicUrl(d) && (<><dt className="text-faint">URL</dt><dd className="min-w-0"><Endpoint url={publicUrl(d)} /></dd></>)}
+            {d.endpoint && (<><dt className="text-faint">Origin</dt><dd className="truncate text-muted-foreground" title="The node that serves it — only you see this">{hostOf(d.endpoint)}</dd></>)}
           </dl>
           <SecretsControl d={d} detail={q.data} />
-          {d.kind === "static" && d.endpoint && live && (
-            <a href={d.endpoint} target="_blank" rel="noopener noreferrer" className={btn.primary}>
+          {d.kind === "static" && live && liveUrl(d) && (
+            <a href={liveUrl(d)!} target="_blank" rel="noopener noreferrer" className={btn.primary}>
               <ExternalLink /> Open site
             </a>
           )}

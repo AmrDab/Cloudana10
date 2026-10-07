@@ -151,5 +151,10 @@ export function ago(ms: number | null | undefined, now = Date.now()): string {
   return `${Math.floor(s / 86400)} d ago`;
 }
 
-/** Price of an n×n matmul in µCLD at `pricePerMmac` µCLD per million multiply-adds (min 1). */
-export const jobPriceUcld = (n: number, pricePerMmac: number) => Math.max(1, Math.ceil((n ** 3 * pricePerMmac) / 1e6));
+/** Fee of an n×n matmul in µCLD: baseFeeUcld + ceil(n³ × priceNcldPerTmac / 1e15) — the API's formula. */
+export const jobPriceUcld = (n: number, priceNcldPerTmac: number, baseFeeUcld: number) =>
+  baseFeeUcld + Math.ceil((n ** 3 * priceNcldPerTmac) / 1e15);
+
+/** Earnings for `mmacPerSec` sustained at `priceNcldPerTmac` over `seconds`, µCLD (variable part of the fee only). */
+export const throughputEarningsUcld = (mmacPerSec: number, priceNcldPerTmac: number, seconds: number) =>
+  (mmacPerSec * 1e6 * seconds * priceNcldPerTmac) / 1e15;

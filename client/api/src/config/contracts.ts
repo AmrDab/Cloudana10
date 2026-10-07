@@ -35,10 +35,6 @@ export function getRpcUrl(): string {
   return getEnv().ORCHESTRATOR_CHAIN_RPC_URL ?? getEnv().RPC_URL ?? "https://sepolia.base.org";
 }
 
-export function getOrchestratorPrivateKey(): string {
-  return getEnv().ORCHESTRATOR_PRIVATE_KEY ?? "";
-}
-
 // RPC Transport Configuration
 export type RpcTransportMode = 'http' | 'websocket' | 'hybrid';
 export function getRpcTransportMode(): RpcTransportMode {

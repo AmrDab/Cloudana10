@@ -96,13 +96,32 @@ export async function creditBalance(
   if (amount <= 0) throw new Error("Credit amount must be positive");
 
   const key = normalizeAddress(address);
-  const db = getD1();
   const now = new Date();
+  const { tx, statements } = creditBalanceStatements(key, amount, source, now, metadata);
+  await getD1().batch(statements);
+  const newBalance = ucldToCld((await getBalanceUcld(key)).balanceUcld);
+
+  L.info(`[Balance] Credited ${amount} CLD to ${key} via ${source} (new balance: ${newBalance})`);
+
+  return { balance: { address: key, balance: newBalance, updatedAt: now }, transaction: tx };
+}
+
+/**
+ * The balance credit and its transaction row as unexecuted statements, so a caller can run them in one
+ * `db.batch([...])` together with its own rows (D1 batches are transactional: all or nothing).
+ */
+export function creditBalanceStatements(
+  address: string,
+  amount: number,
+  source: TransactionSource,
+  now = new Date(),
+  metadata?: Record<string, unknown>
+): { tx: Transaction; statements: D1PreparedStatement[] } {
+  if (amount <= 0) throw new Error("Credit amount must be positive");
+  const key = normalizeAddress(address);
+  const ucld = cldToUcld(amount);
+  assertUcld(ucld);
   const nowIso = now.toISOString();
-
-  const newBalance = ucldToCld(await creditUcld(key, cldToUcld(amount)));
-
-  // Record transaction
   const tx: Transaction = {
     id: generateTxId(),
     address: key,
@@ -113,17 +132,23 @@ export async function creditBalance(
     description: `${source} deposit: +${amount} CLD`,
     metadata,
   };
-
-  await db
-    .prepare(
-      "INSERT INTO transactions (id, address, type, amount, source, description, timestamp, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-    .bind(tx.id, key, "credit", amount, source, tx.description!, nowIso, metadata ? JSON.stringify(metadata) : null)
-    .run();
-
-  L.info(`[Balance] Credited ${amount} CLD to ${key} via ${source} (new balance: ${newBalance})`);
-
-  return { balance: { address: key, balance: newBalance, updatedAt: now }, transaction: tx };
+  const db = getD1();
+  return {
+    tx,
+    statements: [
+      db
+        .prepare(
+          "INSERT INTO balances (address, balance, updated_at, balance_ucld, held_ucld) VALUES (?, 0, ?, ?, 0) " +
+            "ON CONFLICT(address) DO UPDATE SET balance_ucld = balance_ucld + excluded.balance_ucld, updated_at = excluded.updated_at"
+        )
+        .bind(key, nowIso, ucld),
+      db
+        .prepare(
+          "INSERT INTO transactions (id, address, type, amount, source, description, timestamp, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(tx.id, key, "credit", amount, source, tx.description!, nowIso, metadata ? JSON.stringify(metadata) : null),
+    ],
+  };
 }
 
 /**

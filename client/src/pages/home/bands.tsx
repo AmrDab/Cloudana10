@@ -40,12 +40,12 @@ export function Roles() {
   );
 }
 
-const NUMBERS = [["100 %", "of the fee burned", "text-burn"], ["97.5 %", "minted to the provider", "text-ok"], ["0.5 %", "to the treasury", "text-chain"]];
+const NUMBERS = [["95 %", "of the fee minted to the provider", "text-ok"], ["3 %", "to the treasury", "text-chain"], ["2 %", "burned for good", "text-burn"]];
 
 export function Pays() {
   return (
     <Band id="pays" photo={2} kicker="How it pays" title="No bidding. No idle emission."
-      line="CLD is minted per verified job and settled on Base in batches. No work, no CLD.">
+      line="The fee is burned; CLD is minted for the verified job and settled on Base in batches. No work, no CLD.">
       <Reveal delay={0.05}>
         <dl className="grid gap-6 sm:grid-cols-3">
           {NUMBERS.map(([n, l, c]) => (

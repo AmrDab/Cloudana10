@@ -25,8 +25,9 @@ import { optionalCaller, requireAuth, type AuthVariables } from "../../middlewar
 import { verifyCertificate } from "../../services/pouw-verifier.service.js";
 import { getCertificates, getMiningLeaderboard, getNetworkStats } from "../../services/certificate-store.service.js";
 import { claimJob, completeJob, countQueuedJobs, enqueueJob, getJob, listJobsForOwner, type MatrixJob } from "../../services/matrix-job-queue.service.js";
-import { jobPriceCld, retryUnrecordedCertificates, settleCertificate } from "../../services/pouw-settlement.service.js";
-import { debitBalance, getUserBalance } from "../../services/balance.service.js";
+import { retryUnrecordedCertificates, settleCertificate } from "../../services/pouw-settlement.service.js";
+import { feeUcld, getPriceQuote } from "../../services/pricing.service.js";
+import { debitBalance, getUserBalance, ucldToCld } from "../../services/balance.service.js";
 import {
   CertificateRequestSchema,
   CertificatesQuerySchema,
@@ -117,8 +118,14 @@ const queueRoute = createRoute({
   responses: responses({ 200: json(QueueDepthResponseSchema, "Queue depth and current job price") }, 500),
 });
 
+/** The protocol job fee (pricing.service) in CLD, for this CLD-denominated legacy route. */
+async function jobPriceCld(n: number): Promise<number> {
+  const quote = await getPriceQuote();
+  return ucldToCld(feeUcld(n ** 3, quote.priceNcldPerTmac, getEnv().BASE_FEE_UCLD));
+}
+
 pouwRouter.openapi(queueRoute, async (c) => {
-  return ok(c, { queued: await countQueuedJobs(), priceCldAt64: jobPriceCld(64) });
+  return ok(c, { queued: await countQueuedJobs(), priceCldAt64: await jobPriceCld(64) });
 });
 
 /** GET /v1/pouw/job?provider=0x… — a miner claims the next job. */
@@ -163,8 +170,8 @@ const enqueueJobRoute = createRoute({
   path: "/pouw/job",
   tags: TAGS,
   description:
-    "Queue a real matrix multiplication for the network to compute. A signed-in wallet is charged " +
-    "POUW_JOB_PRICE_CLD × (n/64)^1.5 credits; the X-Internal-Key header seeds work without charge.",
+    "Queue a real matrix multiplication for the network to compute. A signed-in wallet is charged the protocol " +
+    "job fee (BASE_FEE_UCLD + n³ at the current nCLD/TMAC quote) in CLD credits; the X-Internal-Key header seeds work without charge.",
   security: BEARER_AUTH,
   middleware: [requireJobAuthority] as const,
   request: { body: { required: true, content: { "application/json": { schema: EnqueueJobRequestSchema } } } },
@@ -186,7 +193,7 @@ pouwRouter.openapi(enqueueJobRoute, async (c) => {
   }
 
   const owner = c.get("jwtPayload").sub;
-  const price = jobPriceCld(n);
+  const price = await jobPriceCld(n);
   const current = await getUserBalance(owner);
   if (current.balance < price) {
     return fail(c, "unprocessable", `Insufficient CLD credits: job costs ${price}, balance is ${current.balance}`);
