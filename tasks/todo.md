@@ -328,3 +328,10 @@ Owner-only after build: Safe 2-of-3, poster key + funding, run v2 deploy script,
 - [x] All suites green: client/api vitest + tsc, gateway vitest + tsc, node-agent tsc + selftest
 Review: client/api 251/251 + tsc clean; gateway 14/14 + tsc clean; node-agent tsc clean + 5 selftests (security 84 checks).
 Not done (needs a real host, not unit-testable here): zero-address signer refusal and serverNow() wiring are in index.ts top level/loop; covered by the instructions selftest for the verify side only.
+
+## 2026-10-08 — Homepage universe (owner: "lock in", cosmetic, accurate)
+Spec: docs/UNIVERSE_SPEC.md + client/src/pages/home/universe/types.ts (binding).
+- [ ] A graph.ts (content, accuracy) + ListView/outline
+- [ ] B engine/ (canvas, camera, layout, stars, input, LOD, live glow) + unit tests
+- [ ] C Universe.tsx shell (HUD, panel, deep links, live data, waitlist, globe reuse) + index.tsx swap
+- [ ] Integrate, QA in browser (desktop + mobile, perf, links, a11y), build, PR, deploy
