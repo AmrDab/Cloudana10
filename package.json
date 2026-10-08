@@ -8,7 +8,8 @@
     "build": "vite build",
     "start": "vite build && vite preview --port 7003",
     "preview": "vite preview",
-    "check": "tsc"
+    "check": "tsc",
+    "test:client": "node client/api/node_modules/vitest/vitest.mjs run --root client --config vitest.config.ts"
   },
   "dependencies": {
     "@cosmjs/math": "^0.38.1",
