@@ -2,8 +2,9 @@
 import { describe, expect, it } from "vitest";
 import type { NetworkStats } from "@/hooks/useNetwork";
 import type { UNode } from "./types";
-import { formatLive, liveValues, nodeLabel, panelPosition, panelVisible, parseHash } from "./shell-utils";
-import { arrivedHome } from "./shell-utils";
+import { GRAPH, NODE_INDEX } from "./graph";
+import { PLACES, placeOf } from "./world";
+import { arrivedHome, flyTarget, formatLive, liveValues, nodeLabel, parseHash, REGION_RING, ringStep, searchNodes } from "./shell-utils";
 
 const STATS: NetworkStats = {
   nodesOnline: 3, nodesBound: 10, jobsQueued: 0, jobsDone: 497602, certificates: 12, mintedUcld: 2_500_000,
@@ -22,7 +23,7 @@ const NODES: UNode[] = [
   { id: "run", label: "Run", kind: "region", parent: "proof" },
   { id: "run-secret", label: "Coming up", kind: "topic", parent: "run", hidden: true },
 ];
-const [core, region, leaf] = NODES;
+const [, region] = NODES;
 const hidden = NODES[NODES.length - 1];
 
 describe("formatLive", () => {
@@ -79,34 +80,6 @@ describe("parseHash", () => {
   });
 });
 
-describe("panelVisible", () => {
-  it("shows regions from system level, deeper nodes at planet level, never the core", () => {
-    expect(panelVisible(null, "planet")).toBe(false);
-    expect(panelVisible(core, "planet")).toBe(false);
-    expect(panelVisible(region, "galaxy")).toBe(false);
-    expect(panelVisible(region, "system")).toBe(true);
-    expect(panelVisible(region, "planet")).toBe(true);
-    expect(panelVisible(leaf, "system")).toBe(false);
-    expect(panelVisible(leaf, "planet")).toBe(true);
-  });
-});
-
-describe("panelPosition", () => {
-  const vp = { w: 1280, h: 800 }, panel = { w: 360, h: 240 };
-  it("sits right of the node, vertically centred", () => {
-    expect(panelPosition({ x: 640, y: 400, r: 20 }, panel, vp)).toEqual({ x: 674, y: 280 });
-  });
-  it("flips to the left near the right edge", () => {
-    expect(panelPosition({ x: 1200, y: 400, r: 20 }, panel, vp)).toEqual({ x: 806, y: 280 });
-  });
-  it("clamps inside a 16 px margin", () => {
-    expect(panelPosition({ x: 5, y: 5, r: 10 }, panel, vp)).toEqual({ x: 29, y: 16 });
-    expect(panelPosition({ x: 640, y: 790, r: 10 }, panel, vp)).toEqual({ x: 664, y: 544 });
-    // A panel larger than the viewport never goes negative.
-    expect(panelPosition({ x: 100, y: 100, r: 10 }, { w: 500, h: 500 }, { w: 400, h: 300 })).toEqual({ x: 16, y: 16 });
-  });
-});
-
 describe("nodeLabel", () => {
   it("hides unrevealed hidden nodes", () => {
     expect(nodeLabel(hidden, new Set())).toBe("?????");
@@ -122,5 +95,104 @@ describe("arrivedHome", () => {
     expect(arrivedHome("galaxy", "galaxy", null)).toBe(false); // a fly-to that starts at home
     expect(arrivedHome("galaxy", "system", "run")).toBe(false); // zoomed out but still over a region
     expect(arrivedHome("system", "galaxy", null)).toBe(false);
+  });
+});
+
+describe("ringStep / REGION_RING", () => {
+  it("is the six regions of the graph in the spec's ring order", () => {
+    expect(REGION_RING).toEqual(["run", "settle", "provide", "verify", "security", "network"]);
+    for (const id of REGION_RING) expect(NODE_INDEX[id]?.kind).toBe("region");
+    expect(GRAPH.nodes.filter((n) => n.kind === "region")).toHaveLength(REGION_RING.length);
+  });
+  it("steps and wraps both ways", () => {
+    expect(ringStep("run", 1)).toBe("settle");
+    expect(ringStep("settle", -1)).toBe("run");
+    expect(ringStep("network", 1)).toBe("run");
+    expect(ringStep("run", -1)).toBe("network");
+  });
+  it("starts at the ends from nowhere (or an unknown id)", () => {
+    expect(ringStep(null, 1)).toBe("run");
+    expect(ringStep(null, -1)).toBe("network");
+    expect(ringStep("nope", 1)).toBe("run");
+  });
+});
+
+describe("flyTarget", () => {
+  it("sends leaves to their topic, everything else to itself", () => {
+    expect(flyTarget(NODES[2])).toBe("network");
+    expect(flyTarget(region)).toBe("network");
+    expect(flyTarget(hidden)).toBe("run-secret");
+  });
+});
+
+describe("searchNodes", () => {
+  const S: UNode[] = [
+    { id: "proof", label: "Proof", kind: "core" },
+    { id: "settle", label: "Settle (CLD)", kind: "region", parent: "proof", summary: "The fee is burned; CLD is minted." },
+    { id: "settle-epochs", label: "Epochs", kind: "topic", parent: "settle", summary: "Hourly batches settle on Base." },
+    { id: "settle-epoch-now", label: "Current epoch", kind: "leaf", parent: "settle-epochs", body: ["Posted by the keeper every hour."] },
+    { id: "run", label: "Run", kind: "region", parent: "proof", summary: "Submit work." },
+    { id: "run-roadmap", label: "Roadmap", kind: "topic", parent: "run", hidden: true, summary: "Coming up." },
+    { id: "run-roadmap-gpu", label: "GPU clusters", kind: "leaf", parent: "run-roadmap" },
+    { id: "network", label: "Network", kind: "region", parent: "proof", summary: "Live numbers." },
+  ];
+  const CITY: Record<string, string> = { settle: "London", "settle-epochs": "Amsterdam", run: "New York", "run-roadmap": "Albany", network: "São Paulo" };
+  const cityOf = (id: string) => {
+    for (let cur: UNode | undefined = S.find((n) => n.id === id); cur; cur = S.find((n) => n.id === cur!.parent)) {
+      if (CITY[cur.id]) return CITY[cur.id];
+    }
+    return undefined;
+  };
+  const ids = (q: string, revealed: ReadonlySet<string> = new Set()) => searchNodes(q, S, { revealed, cityOf }).map((n) => n.id);
+
+  it("empty or blank query finds nothing", () => {
+    expect(ids("")).toEqual([]);
+    expect(ids("   ")).toEqual([]);
+  });
+  it("ranks a label match above a summary match", () => {
+    const r = ids("epoch");
+    expect(r[0]).toBe("settle-epochs"); // "Epochs": label prefix, starts the label
+    expect(r[1]).toBe("settle-epoch-now"); // a leaf: "Current epoch" is a whole word in the label
+    expect(r).toHaveLength(2);
+    // "settle" is in Settle's label and only in the Epochs topic's summary.
+    expect(ids("settle")).toEqual(["settle", "settle-epochs"]);
+  });
+  it("finds leaves by body text", () => {
+    expect(ids("keeper")).toEqual(["settle-epoch-now"]);
+  });
+  it("matches cities (accent-insensitive), and leaves inherit their topic's city", () => {
+    expect(ids("london")).toEqual(["settle", "settle-epochs", "settle-epoch-now"].filter((id) => cityOf(id) === "London"));
+    expect(ids("sao paulo")).toEqual(["network"]);
+    expect(ids("amsterdam")).toEqual(["settle-epochs", "settle-epoch-now"]);
+  });
+  it("requires every token to match", () => {
+    expect(ids("epoch london")).toEqual([]);
+    expect(ids("epoch amsterdam").sort()).toEqual(["settle-epoch-now", "settle-epochs"]);
+  });
+  it("falls back to a subsequence on labels", () => {
+    expect(ids("sttl")).toEqual(["settle"]);
+    expect(ids("zzz")).toEqual([]);
+  });
+  it("keeps hidden nodes (and their subtree) out until revealed", () => {
+    expect(ids("roadmap")).toEqual([]);
+    expect(ids("gpu")).toEqual([]);
+    expect(ids("albany")).toEqual([]);
+    const open = new Set(["run-roadmap"]);
+    expect(ids("roadmap", open)).toEqual(["run-roadmap"]);
+    expect(ids("gpu", open)).toEqual(["run-roadmap-gpu"]);
+  });
+  it("respects the limit", () => {
+    expect(searchNodes("e", S, { revealed: new Set(), cityOf, limit: 2 })).toHaveLength(2);
+  });
+  it("covers the real graph: every leaf is findable by its label once revealed", () => {
+    const all = new Set(GRAPH.nodes.map((n) => n.id));
+    const parentOf = (id: string) => NODE_INDEX[id]?.parent;
+    const realCity = (id: string) => placeOf(id, parentOf)?.city;
+    for (const n of GRAPH.nodes.filter((x) => x.kind === "leaf")) {
+      const r = searchNodes(n.label, GRAPH.nodes, { revealed: all, cityOf: realCity, limit: 100 });
+      expect(r.map((x) => x.id)).toContain(n.id);
+    }
+    expect(searchNodes("london", GRAPH.nodes, { revealed: all, cityOf: realCity })[0]?.id).toBe("settle");
+    expect(Object.keys(PLACES)).toContain("settle");
   });
 });

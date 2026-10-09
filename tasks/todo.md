@@ -335,3 +335,10 @@ Spec: docs/UNIVERSE_SPEC.md + client/src/pages/home/universe/types.ts (binding).
 - [ ] B engine/ (canvas, camera, layout, stars, input, LOD, live glow) + unit tests
 - [ ] C Universe.tsx shell (HUD, panel, deep links, live data, waitlist, globe reuse) + index.tsx swap
 - [ ] Integrate, QA in browser (desktop + mobile, perf, links, a11y), build, PR, deploy
+
+## 2026-10-09 — Universe v2: the globe (owner approved world mocks)
+Spec: docs/UNIVERSE_SPEC.md "v2". Data: universe/world (build-world.py).
+- [x] World data: 6 regions on 6 continents, 32 real roads (OSRM), 11 cables
+- [ ] Globe engine (three.js) implementing UniverseEngine
+- [ ] Shell: region dock, search palette, panel tree, landing copy, OSM attribution
+- [ ] Integrate, browser QA (desktop + phone + reduced motion), build, PR, deploy

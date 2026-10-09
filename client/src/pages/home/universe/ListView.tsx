@@ -11,8 +11,8 @@ import type { LiveValue, NodeId, Tone, UNode } from "./types";
 
 type Props = { live?: Partial<Record<NodeId, LiveValue>>; onFly?: (id: NodeId) => void };
 
-const TONE_TEXT: Record<Tone, string> = { ok: "text-ok", work: "text-work", chain: "text-chain", burn: "text-burn", neutral: "text-text" };
-const TONE_DOT: Record<Tone, string> = { ok: "bg-ok", work: "bg-work", chain: "bg-chain", burn: "bg-burn", neutral: "bg-faint/60" };
+export const TONE_TEXT: Record<Tone, string> = { ok: "text-ok", work: "text-work", chain: "text-chain", burn: "text-burn", neutral: "text-text" };
+export const TONE_DOT: Record<Tone, string> = { ok: "bg-ok", work: "bg-work", chain: "bg-chain", burn: "bg-burn", neutral: "bg-faint/60" };
 
 const isExternal = (href: string) => /^https?:\/\//.test(href);
 
