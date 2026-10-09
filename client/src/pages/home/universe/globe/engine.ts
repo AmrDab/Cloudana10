@@ -38,7 +38,7 @@ import {
   tiltForArc,
   unprojectToSphere,
 } from "./geo3";
-import { CABLE_OPACITY, GLOBE_COLOR, buildGlobeScene } from "./scene";
+import { CABLE_OPACITY, CABLE_STREAM, CABLE_STREAM_OPACITY, GLOBE_COLOR, ROAD_STREAM, buildGlobeScene } from "./scene";
 import { Overlay, TONE_COLOR, type Marker, type MarkerSet, type OverlayFrame } from "./overlay";
 
 export const FLY_MS = 900;
@@ -318,12 +318,15 @@ export function createGlobeEngine(opts: EngineOptions): UniverseEngine {
       const layer = gs.roads[j];
       layer.core.opacity += (core - layer.core.opacity) * k;
       layer.glow.opacity += (glow - layer.glow.opacity) * k;
+      layer.stream.opacity = reducedMotion ? 0 : Math.min(1, layer.core.opacity * 1.8);
       if (Math.abs(core - layer.core.opacity) > 0.005) emphasisSettled = false;
     }
     // Cables fade out as their midpoint turns away from the camera.
     for (let j = 0; j < gs.cables.length; j++) {
       v.set(cableMid[j * 3], cableMid[j * 3 + 1], cableMid[j * 3 + 2]).applyQuaternion(q);
-      gs.cables[j].opacity = CABLE_OPACITY * smoothstep(-0.35, 0.35, v.z);
+      const facing = smoothstep(-0.35, 0.35, v.z);
+      gs.cables[j].opacity = CABLE_OPACITY * facing;
+      gs.cableStreams[j].opacity = reducedMotion ? 0 : CABLE_STREAM_OPACITY * facing;
     }
   }
 
@@ -356,6 +359,11 @@ export function createGlobeEngine(opts: EngineOptions): UniverseEngine {
       gs.globe.quaternion.copy(q);
       gs.camera.position.z = dist;
       gs.uTime.value = clock;
+      // Data streams: light runs along every road (from → to) and both ways across the cables.
+      for (let j = 0; j < gs.roads.length; j++) gs.roads[j].stream.dashOffset = -clock * ROAD_STREAM.speed - j * 0.013;
+      for (let j = 0; j < gs.cableStreams.length; j++) {
+        gs.cableStreams[j].dashOffset = (j % 2 ? 1 : -1) * clock * CABLE_STREAM.speed + j * 0.37;
+      }
       // Glitch bursts ride on the auto-rotation (the only time the loop runs continuously at rest).
       if (autoRotating(t)) {
         if (clock >= nextBurst) {
@@ -375,7 +383,9 @@ export function createGlobeEngine(opts: EngineOptions): UniverseEngine {
       callbacks.onCamera(getCamera(), level());
     }
 
-    const animating = fly.t >= 0 || vyaw !== 0 || vpitch !== 0 || autoRotating(t) || anyPulse() || !emphasisSettled;
+    // The data streams keep the loop running (rAF pauses with the tab); with reduced motion it still goes idle.
+    const animating =
+      !reducedMotion || fly.t >= 0 || vyaw !== 0 || vpitch !== 0 || autoRotating(t) || anyPulse() || !emphasisSettled;
     if (animating) raf = requestAnimationFrame(tick);
     else {
       running = false;
