@@ -342,3 +342,11 @@ Spec: docs/UNIVERSE_SPEC.md "v2". Data: universe/world (build-world.py).
 - [ ] Globe engine (three.js) implementing UniverseEngine
 - [ ] Shell: region dock, search palette, panel tree, landing copy, OSM attribution
 - [ ] Integrate, browser QA (desktop + phone + reduced motion), build, PR, deploy
+
+## Homepage "Paper" (2026-10-09)
+Owner rejected the globe homepage ("cheap"); picked concept A of four rendered concepts, approved the full-page mock.
+- [x] Paper page (`pages/home/paper/`): hero + live numbers, job loop, three ways in, CLD split, security, waitlist
+- [x] Dotted world map from repo land data (`scripts/home/build-map.py`), animated arcs, reduced-motion safe
+- [x] Lenis on the homepage only; old anchors `#services #pays #status` resolve; universe/globe code removed
+- [x] Verified: tsc (4 legacy), tests, build; desktop + phone screenshots; deep link, nav, waitlist, menu probed
+- [ ] Owner sign-off on the built page, then merge + deploy
