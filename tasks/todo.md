@@ -349,4 +349,4 @@ Owner rejected the globe homepage ("cheap"); picked concept A of four rendered c
 - [x] Dotted world map from repo land data (`scripts/home/build-map.py`), animated arcs, reduced-motion safe
 - [x] Lenis on the homepage only; old anchors `#services #pays #status` resolve; universe/globe code removed
 - [x] Verified: tsc (4 legacy), tests, build; desktop + phone screenshots; deep link, nav, waitlist, menu probed
-- [ ] Owner sign-off on the built page, then merge + deploy
+- [x] Owner sign-off on the built page ("ship it"), merged + deployed
