@@ -1,4 +1,4 @@
-// Pure helpers for the React shell (Universe.tsx / NodePanel.tsx). No DOM, no engine: unit-tested in shell-utils.test.ts.
+// Pure helpers for the React shell (Universe.tsx, RegionDock, SearchPalette, RegionPanel). No DOM, no engine: unit-tested in shell-utils.test.ts.
 import type { NetworkStats } from "@/hooks/useNetwork";
 import { cld, int } from "@/lib/cld";
 import { LEGACY_ANCHORS, type LiveBinding, type LiveStat, type LiveValue, type NodeId, type UNode, type ZoomLevel } from "./types";
@@ -55,30 +55,6 @@ export function parseHash(hash: string, has: (id: NodeId) => boolean): NodeId | 
   return has(raw) ? raw : null;
 }
 
-/** The level at which a node's panel makes sense: regions at system level, everything deeper at planet level. */
-export function panelVisible(node: UNode | null, level: ZoomLevel): boolean {
-  if (!node || node.kind === "core") return false;
-  if (node.kind === "region") return level !== "galaxy";
-  return level === "planet";
-}
-
-export type Box = { w: number; h: number };
-export type Anchor = { x: number; y: number; r: number };
-
-/**
- * Panel top-left in CSS px: to the right of the node, vertically centred on it; flips to the left when it would
- * leave the viewport, then clamps inside `margin`.
- */
-export function panelPosition(anchor: Anchor, panel: Box, viewport: Box, margin = 16, gap = 14): { x: number; y: number } {
-  const maxX = Math.max(margin, viewport.w - margin - panel.w);
-  const maxY = Math.max(margin, viewport.h - margin - panel.h);
-  let x = anchor.x + anchor.r + gap;
-  if (x > maxX) x = anchor.x - anchor.r - gap - panel.w;
-  x = Math.min(maxX, Math.max(margin, x));
-  const y = Math.min(maxY, Math.max(margin, anchor.y - panel.h / 2));
-  return { x, y };
-}
-
 /** Breadcrumb text: hidden nodes read "?????" until revealed. */
 export const nodeLabel = (n: UNode, revealed: ReadonlySet<NodeId>) => (n.hidden && !revealed.has(n.id) ? "?????" : n.label);
 
@@ -88,4 +64,81 @@ export const nodeLabel = (n: UNode, revealed: ReadonlySet<NodeId>) => (n.hidden 
  */
 export function arrivedHome(level: ZoomLevel, lastLevel: ZoomLevel, region: NodeId | null): boolean {
   return level === "galaxy" && lastLevel !== "galaxy" && region === null;
+}
+
+/** The dock's ring order (docs/UNIVERSE_SPEC.md v2 "Smart navigation"). Keys 1–6 follow it. */
+export const REGION_RING: readonly NodeId[] = ["run", "settle", "provide", "verify", "security", "network"];
+
+/** The region before/after `current` in ring order, wrapping; from nowhere, next is the first and prev the last. */
+export function ringStep(current: NodeId | null, dir: 1 | -1): NodeId {
+  const n = REGION_RING.length;
+  const i = current ? REGION_RING.indexOf(current) : -1;
+  if (i < 0) return dir > 0 ? REGION_RING[0] : REGION_RING[n - 1];
+  return REGION_RING[(i + dir + n) % n];
+}
+
+/** Where the globe flies for a node: leaves are not drawn, so they go to their topic's city. */
+export const flyTarget = (n: UNode): NodeId => (n.kind === "leaf" && n.parent ? n.parent : n.id);
+
+const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const words = (s: string) => s.split(/[^a-z0-9]+/).filter(Boolean);
+
+function isSubsequence(needle: string, hay: string): boolean {
+  let j = 0;
+  for (let i = 0; i < hay.length && j < needle.length; i++) if (hay[i] === needle[j]) j++;
+  return j === needle.length;
+}
+
+type Field = { text: string; words: string[]; weight: number; fuzzy: boolean };
+
+/** 4 whole word · 3 word prefix · 2 substring · 1 subsequence (label/city only, ≥ 2 chars) · 0 no match. */
+function tokenScore(token: string, f: Field): number {
+  if (f.words.includes(token)) return 4;
+  if (f.words.some((w) => w.startsWith(token))) return 3;
+  if (f.text.includes(token)) return 2;
+  if (f.fuzzy && token.length >= 2 && isSubsequence(token, f.text)) return 1;
+  return 0;
+}
+
+const KIND_BONUS: Record<UNode["kind"], number> = { core: 0, region: 0.3, topic: 0.2, leaf: 0.1 };
+
+/**
+ * Search palette ranking over every node incl. leaves: label (×3), city (×2), summary (×1), body (×0.5).
+ * Every query token must match some field. Hidden nodes, and anything under one, stay out until revealed.
+ */
+export function searchNodes(
+  query: string,
+  nodes: readonly UNode[],
+  opts: { revealed: ReadonlySet<NodeId>; cityOf?: (id: NodeId) => string | undefined; limit?: number },
+): UNode[] {
+  const q = fold(query.trim());
+  const tokens = words(q);
+  if (tokens.length === 0) return [];
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const concealed = (n: UNode): boolean => {
+    for (let cur: UNode | undefined = n; cur; cur = cur.parent ? byId.get(cur.parent) : undefined) {
+      if (cur.hidden && !opts.revealed.has(cur.id)) return true;
+    }
+    return false;
+  };
+  const field = (s: string | undefined, weight: number, fuzzy: boolean): Field => {
+    const text = fold(s ?? "");
+    return { text, words: words(text), weight, fuzzy };
+  };
+  const scored: { n: UNode; score: number; i: number }[] = [];
+  nodes.forEach((n, i) => {
+    if (concealed(n)) return;
+    const label = field(n.label, 3, true);
+    const fields = [label, field(opts.cityOf?.(n.id), 2, true), field(n.summary, 1, false), field(n.body?.join(" "), 0.5, false)];
+    let score = 0;
+    for (const t of tokens) {
+      const best = Math.max(...fields.map((f) => tokenScore(t, f) * f.weight));
+      if (best === 0) return;
+      score += best;
+    }
+    if (label.text.startsWith(q)) score += 4; // "epoch" → "Epochs" before "Current epoch"
+    scored.push({ n, score: score + KIND_BONUS[n.kind], i });
+  });
+  scored.sort((a, b) => b.score - a.score || a.i - b.i);
+  return scored.slice(0, opts.limit ?? 30).map((s) => s.n);
 }

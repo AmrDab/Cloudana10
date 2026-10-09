@@ -35,3 +35,6 @@ shared/addresses.local.json
 client/.env.production.local
 
 .backups/
+
+# raw OSRM routes for scripts/universe/build-world.py
+scripts/universe/.osrm-cache.json
