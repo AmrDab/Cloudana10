@@ -1,17 +1,18 @@
-// The homepage: a zoomable universe map centred on Proof (docs/UNIVERSE_SPEC.md). The old section files in this
-// folder stay: the lab reuses several of them.
+// The homepage: "Paper", a light editorial page (docs/HOMEPAGE.md). The old section files in this folder stay:
+// the lab reuses several of them.
 import { useEffect } from "react";
 import { MotionConfig } from "motion/react";
 import { captureReferral, WaitlistHost } from "@/components/waitlist";
-import { Universe } from "./universe/Universe";
+import { Paper } from "./paper/Paper";
 
 export default function HomePage() {
   useEffect(() => {
     captureReferral();
+    document.title = "Cloudana — The proof is the work";
   }, []);
   return (
     <MotionConfig reducedMotion="user">
-      <Universe />
+      <Paper />
       <WaitlistHost />
     </MotionConfig>
   );

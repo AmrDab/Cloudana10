@@ -15,7 +15,7 @@ const LINKS = [
 ];
 
 /** True while the page is scrolling down past the nav; false on any scroll up or near the top. */
-function useHideOnScroll() {
+export function useHideOnScroll() {
   const [hidden, setHidden] = useState(false);
   useEffect(() => {
     let last = window.scrollY;
