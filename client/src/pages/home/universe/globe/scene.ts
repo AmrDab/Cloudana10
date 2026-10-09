@@ -1,5 +1,6 @@
 // The WebGL half of the globe: sphere body + rim, graticule, glitch-sketch coastlines (same look as
-// components/cld/globe/scene.ts), glowing roads per region (fat lines, two passes) and dashed cable arcs.
+// components/cld/globe/scene.ts), glowing roads per region (fat lines, two passes) and dashed cable arcs, each with a
+// bright "stream" pass: short streaks the engine slides along the route (dashOffset) so light travels node to node.
 // Everything is built once; the engine only touches uniforms, opacities and the group's quaternion per frame.
 
 import * as THREE from "three";
@@ -65,6 +66,7 @@ const rimFrag = /* glsl */ `
 export interface RoadLayer {
   core: LineMaterial;
   glow: LineMaterial;
+  stream: LineMaterial;
 }
 
 export interface GlobeScene {
@@ -77,6 +79,8 @@ export interface GlobeScene {
   roads: RoadLayer[];
   /** One per cable, in the order given; the engine sets opacity (far-side fade). */
   cables: LineMaterial[];
+  /** Light streaks riding each cable, same order; the engine moves them and fades them with their cable. */
+  cableStreams: LineMaterial[];
   /** Fat-line materials need the viewport size in px. */
   setResolution(w: number, h: number): void;
   dispose(): void;
@@ -90,6 +94,27 @@ export interface RoadInput {
 
 /** Peak cable opacity (when the arc faces the camera). */
 export const CABLE_OPACITY = 0.3;
+/** Peak opacity of the light streaks on a cable. */
+export const CABLE_STREAM_OPACITY = 0.9;
+
+/** Streak + gap lengths (globe radii) and speed (radii/s) of the data streams. */
+export const ROAD_STREAM = { dash: 0.006, gap: 0.045, speed: 0.02 } as const;
+export const CABLE_STREAM = { dash: 0.06, gap: 0.55, speed: 0.3 } as const;
+
+/** A dashed, additive, near-white pass in the given tone: the moving light. */
+function streamMaterial(color: string, linewidth: number, s: { dash: number; gap: number }, opacity: number): LineMaterial {
+  return new LineMaterial({
+    color: new THREE.Color(color).lerp(new THREE.Color("#FFFFFF"), 0.45).getHex(),
+    linewidth,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    dashed: true,
+    dashSize: s.dash,
+    gapSize: s.gap,
+  });
+}
 
 export function buildGlobeScene(roads: RoadInput[], cables: Float32Array[]): GlobeScene {
   const scene = new THREE.Scene();
@@ -163,9 +188,11 @@ export function buildGlobeScene(roads: RoadInput[], cables: Float32Array[]): Glo
     const color = new THREE.Color(r.color);
     const glow = new LineMaterial({ color: color.getHex(), linewidth: 3.5, transparent: true, opacity: 0.06, depthWrite: false });
     const core = new LineMaterial({ color: color.getHex(), linewidth: 1, transparent: true, opacity: 0.45, depthWrite: false });
+    const stream = streamMaterial(r.color, 2.2, ROAD_STREAM, 0.8);
     fat(r.segments, glow);
     fat(r.segments, core);
-    return { core, glow };
+    fat(r.segments, stream, true);
+    return { core, glow, stream };
   });
 
   // Cables: thin dashed arcs lifted off the surface; one material each so the engine can fade far-side ones.
@@ -184,6 +211,11 @@ export function buildGlobeScene(roads: RoadInput[], cables: Float32Array[]): Glo
     fat(segments, mat, true);
     return mat;
   });
+  const cableStreams = cables.map((segments) => {
+    const mat = streamMaterial(GLOBE_COLOR.rim, 2, CABLE_STREAM, CABLE_STREAM_OPACITY);
+    fat(segments, mat, true);
+    return mat;
+  });
 
   return {
     scene,
@@ -193,6 +225,7 @@ export function buildGlobeScene(roads: RoadInput[], cables: Float32Array[]): Glo
     uGlitch,
     roads: layers,
     cables: cableMats,
+    cableStreams,
     setResolution(w, h) {
       for (const m of lineMats) m.resolution.set(w, h);
     },

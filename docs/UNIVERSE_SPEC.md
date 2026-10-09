@@ -139,3 +139,6 @@ coastlines, glowing road networks around six cities, dashed cable arcs between c
   place inside a region to every other place in it (hub↔topic and topic↔topic; 104 real routes). A road's `from`/`to`
   can be any two places in the same region. Draw all of them; when a region is focused, its roads brighten and the
   rest dim.
+- **Data streams:** bright streaks of light travel along every road (from → to) and both ways across every cable,
+  so the links visibly carry traffic from node to node. Decorative motion, not a live traffic count (the live numbers
+  stay on the Network region). Off with reduced motion.
