@@ -22,7 +22,7 @@ export function CopyButton({ text, label = "Copy", className }: { text: string; 
       type="button"
       onClick={copy}
       className={cn(
-        "inline-flex h-8 min-w-[84px] shrink-0 items-center justify-center gap-1.5 rounded-md border border-line-2 px-2 font-mono text-xs transition-colors duration-150 hover:bg-white/[.05]",
+        "inline-flex h-8 min-w-[84px] shrink-0 items-center justify-center gap-1.5 rounded-md border border-line-2 px-2 font-mono text-xs transition-colors duration-150 hover:bg-text/[.05]",
         copied ? "text-ok" : "text-muted-foreground hover:text-text",
         className,
       )}

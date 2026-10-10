@@ -225,7 +225,7 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
         </aside>
 
         <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent side="left" className="w-64 border-line bg-[rgba(12,16,23,.92)] p-0 backdrop-blur-[14px] [&>button]:text-faint">
+          <SheetContent side="left" className="w-64 border-line bg-bg-2/90 p-0 backdrop-blur-[14px] [&>button]:text-faint">
             <SheetTitle className="sr-only">Console navigation</SheetTitle>
             <SheetDescription className="sr-only">Sections of the Cloudana console</SheetDescription>
             <SidebarBody onNavigate={() => setOpen(false)} />
@@ -233,7 +233,7 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
         </Sheet>
 
         <div className="lg:pl-56">
-          <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-[rgba(7,9,13,.72)] px-4 backdrop-blur-[14px] sm:px-6">
+          <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-bg/70 px-4 backdrop-blur-[14px] sm:px-6">
             <button type="button" className={cn(btn.quiet, "-ml-1 px-2 lg:hidden")} onClick={() => setOpen(true)} aria-label="Open navigation">
               <Menu className="!size-5" />
             </button>
@@ -266,7 +266,7 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
         </div>
       </div>
       <WaitlistHost />
-      <Toaster theme="dark" position="bottom-right" duration={4000} visibleToasts={2} toastOptions={{ className: "!bg-panel-2 !border-line-2 !text-text !font-sans" }} />
+      <Toaster theme="light" position="bottom-right" duration={4000} visibleToasts={2} toastOptions={{ className: "!bg-panel-2 !border-line-2 !text-text !font-sans" }} />
     </TooltipProvider>
   );
 }

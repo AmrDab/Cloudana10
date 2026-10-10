@@ -8,12 +8,12 @@ const base =
 
 export const btn = {
   primary: (size: "md" | "sm" = "md", className?: string) =>
-    cn(base, size === "md" ? "h-11 px-4" : "h-9 px-3", "bg-ok text-[#04201C] hover:brightness-[1.08]", className),
+    cn(base, size === "md" ? "h-11 px-4" : "h-9 px-3", "bg-ok text-bg hover:brightness-[1.08]", className),
   ghost: (size: "md" | "sm" = "md", className?: string) =>
     cn(
       base,
       size === "md" ? "h-11 px-4" : "h-9 px-3",
-      "border border-line-2 bg-white/[.02] text-text hover:border-faint hover:bg-white/[.05]",
+      "border border-line-2 bg-text/[.02] text-text hover:border-faint hover:bg-text/[.05]",
       className,
     ),
   /** Text-only action: underline on hover only. */
