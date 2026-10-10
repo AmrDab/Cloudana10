@@ -46,6 +46,7 @@
 
   --font-sans: "Inter", system-ui, sans-serif;
   --font-head: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-display: "Instrument Serif", Georgia, serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   /* Brand tokens (docs/V2_BRIEF.md §1) — colour always means something:
@@ -125,6 +126,64 @@
   --sidebar-border: 219 14% 17%;
   --sidebar-ring: 172 65% 54%;
   color-scheme: dark;
+}
+
+/* The console's "Paper" theme (matches the homepage): same tokens, light values. App.tsx sets the class on
+   /control paths; everything else keeps the dark theme above. */
+html.theme-paper {
+  --c-bg: #F3F1EC;
+  --c-bg-2: #EEEBE4;
+  --c-panel: #F9F8F4;
+  --c-panel-2: #EFECE5;
+  --c-line: rgba(20, 20, 20, .10);
+  --c-line-2: rgba(20, 20, 20, .18);
+  --c-text: #141414;
+  --c-faint: #6B675F;
+  --c-work: #A8620C;
+  --c-ok: #0E7C6E;
+  --c-chain: #2F5FC4;
+  --c-burn: #C2362F;
+
+  --background: 43 22% 94%;
+  --foreground: 0 0% 8%;
+  --card: 45 30% 97%;
+  --card-foreground: 0 0% 8%;
+  --popover: 45 33% 98%;
+  --popover-foreground: 0 0% 8%;
+  --primary: 172 80% 27%;
+  --primary-foreground: 43 22% 95%;
+  --secondary: 40 18% 90%;
+  --secondary-foreground: 0 0% 8%;
+  --muted: 40 18% 90%;
+  --muted-foreground: 36 6% 36%;
+  --accent: 34 87% 35%;
+  --accent-foreground: 43 22% 95%;
+  --destructive: 3 61% 47%;
+  --destructive-foreground: 43 22% 95%;
+  --border: 36 12% 82%;
+  --input: 36 12% 80%;
+  --ring: 172 80% 27%;
+
+  --chart-1: 172 80% 27%;
+  --chart-2: 221 61% 48%;
+  --chart-3: 34 87% 35%;
+  --chart-4: 3 61% 47%;
+  --chart-5: 36 6% 50%;
+
+  --sidebar: 42 20% 91%;
+  --sidebar-foreground: 0 0% 8%;
+  --sidebar-primary: 172 80% 27%;
+  --sidebar-primary-foreground: 43 22% 95%;
+  --sidebar-accent: 40 18% 86%;
+  --sidebar-accent-foreground: 0 0% 8%;
+  --sidebar-border: 36 12% 82%;
+  --sidebar-ring: 172 80% 27%;
+  color-scheme: light;
+}
+/* The mark in one ink colour on paper (its gradient is drawn for dark backgrounds). */
+html.theme-paper .cld-mark g,
+html.theme-paper .cld-mark circle {
+  stroke: var(--c-text);
 }
 
 /* Ensure body uses these variables */

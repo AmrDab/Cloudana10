@@ -83,7 +83,7 @@ export function Segmented<T extends string>({
               size === "md" ? "h-10 px-3" : "h-8 px-3",
               seg ? "flex-1 focus-visible:-outline-offset-2" : "rounded-md border",
               seg && !on && "bg-panel text-muted-foreground hover:text-text",
-              !seg && !on && "border-line-2 text-muted-foreground hover:bg-white/[.03] hover:text-text",
+              !seg && !on && "border-line-2 text-muted-foreground hover:bg-text/[.03] hover:text-text",
               !seg && on && "border-work/60",
               !seg && invalid && !on && "border-burn",
               on && ON_BG,
@@ -121,7 +121,7 @@ export function ToggleChips<T extends string>({
             onClick={() => onChange(on ? value.filter((v) => v !== o.value) : [...value, o.value])}
             className={cn(
               "h-8 rounded-md border px-3 font-mono text-xs whitespace-nowrap transition-colors duration-150",
-              on ? cn("border-work/60", ON_BG) : "border-line-2 text-muted-foreground hover:bg-white/[.03] hover:text-text",
+              on ? cn("border-work/60", ON_BG) : "border-line-2 text-muted-foreground hover:bg-text/[.03] hover:text-text",
             )}
           >
             {o.label}

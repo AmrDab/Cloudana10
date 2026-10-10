@@ -28,7 +28,7 @@ export const appKit = createAppKit({
     onramp: true, // Buy crypto with USD (Coinbase Pay)
     swaps: true, // Swap tokens in-app
   },
-  themeMode: 'dark',
+  themeMode: 'light',
 });
 
 interface WalletContextType {

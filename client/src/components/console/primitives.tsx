@@ -12,7 +12,7 @@ import { NumberTicker } from "@/components/magicui/number-ticker";
 const BTN_BASE =
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-[filter,background-color,border-color,color] duration-150 ease-settle hover:brightness-[1.08] disabled:pointer-events-none disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0";
 export const btn = {
-  primary: cn(BTN_BASE, "h-9 px-4 bg-ok text-[#04201C]"),
+  primary: cn(BTN_BASE, "h-9 px-4 bg-ok text-bg"),
   ghost: cn(BTN_BASE, "h-9 px-4 border border-line-2 text-text hover:bg-panel-2"),
   quiet: cn(BTN_BASE, "h-8 px-3 text-muted-foreground hover:text-text hover:bg-panel-2"),
   sm: "h-8 px-3 text-xs",
@@ -48,7 +48,7 @@ export function PageHeader({ kicker, title, lede, right }: { kicker: string; tit
     <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
       <div className="max-w-2xl">
         <MonoLabel className="text-work">{kicker}</MonoLabel>
-        <h1 className="mt-2 font-head text-[28px] font-medium leading-[1.15] tracking-[-.02em] text-text">{title}</h1>
+        <h1 className="mt-2 font-display text-[44px] font-normal leading-none tracking-[-.02em] text-text">{title}</h1>
         {lede && <p className="mt-2 text-sm leading-[1.55] text-muted-foreground">{lede}</p>}
       </div>
       {right}

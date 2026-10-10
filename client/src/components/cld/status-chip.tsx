@@ -7,13 +7,13 @@ export function StatusChip({ status, className }: { status: ServiceStatus; class
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[11px] leading-5 tracking-wide whitespace-nowrap",
-        status === "live" && "bg-ok text-[#04201C]",
+        status === "live" && "bg-ok text-bg",
         status === "early" && "border border-work/60 text-work",
         status === "planned" && "border border-line-2 text-muted-foreground",
         className,
       )}
     >
-      {status === "live" && <span className="size-1.5 rounded-full bg-[#04201C]" aria-hidden />}
+      {status === "live" && <span className="size-1.5 rounded-full bg-bg" aria-hidden />}
       {STATUS_LABEL[status]}
     </span>
   );

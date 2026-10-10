@@ -35,6 +35,8 @@ function App() {
   const isHome = rawPath === "/" || rawPath === "";
   const isLab = rawPath === "/lab" || rawPath === "/lab/";
   const isConsole = rawPath === "/control" || rawPath.startsWith("/control/");
+  // The console wears the homepage's light "Paper" theme (index.css); set before first paint, no dark flash.
+  if (typeof document !== "undefined") document.documentElement.classList.toggle("theme-paper", isConsole);
   return (
     <ErrorBoundary>
       <Suspense fallback={<Blank />}>{isHome ? <HomePage /> : isLab ? <LabPage /> : isConsole ? <ConsoleApp /> : <PublicNotFound />}</Suspense>
