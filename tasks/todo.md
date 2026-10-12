@@ -359,7 +359,8 @@ Spec: docs/V4_VERIFIED_SERVICES.md §2 · contract: docs/V4_RELAY_CONTRACT.md ·
 - [x] gateway: relayed proxy with next-node retry, containers full-method only on a separate user-content domain
 - [x] agent (builder): relay client, 127.0.0.1 listeners/publishes, B1 conntrack fix, Docker ≥ 28, relay e2e selftest
 - [x] workstations stay direct (relay has no WebSocket tunnelling yet); placed on public-host nodes only
-- [ ] independent code review of the step-2 diff
-- [ ] deploy relay (custom domain relay.cloudana.io) + API; owner sets RELAY_TICKET_SECRET / INTERNAL_API_KEY
+- [x] independent code review of the step-2 diff (11 findings; all fixed except deploy-order note, now in the runbook)
+- [x] deployed relay (relay.cloudana.io) + API (2026-10-12) — inactive until the owner sets RELAY_TICKET_SECRET
+- [ ] owner: RELAY_TICKET_SECRET on api + relay; INTERNAL_API_KEY on api + keeper + gateway (runbook step 8)
 - [ ] owner: user-content domain; then gateway on it
 - [ ] later: WebSocket tunnelling over the relay (workstations, ComfyUI, Open WebUI)
