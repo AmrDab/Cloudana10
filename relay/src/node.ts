@@ -15,6 +15,8 @@ const NONCE_KEY = "nonces";
 
 export class RelayNode extends DurableObject<Env> {
   private hub: StreamHub | null = null;
+  /** The socket `hub` sends on. */
+  private hubSocket: WebSocket | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -22,14 +24,44 @@ export class RelayNode extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
   }
 
+  /**
+   * The newest open socket. After a quick reconnect the replaced one can linger in getWebSockets() (closing) for
+   * minutes, and must never carry new requests.
+   */
   private socket(): WebSocket | null {
-    return this.ctx.getWebSockets()[0] ?? null;
+    let best: WebSocket | null = null;
+    let bestSince = -1;
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const since = (ws.deserializeAttachment() as { since?: number } | null)?.since ?? 0;
+      if (since > bestSince) {
+        best = ws;
+        bestSince = since;
+      }
+    }
+    return best;
   }
 
-  /** The hub for the current socket, created on demand (memory is cleared by hibernation). */
+  /** The hub of this socket, created on demand (memory is cleared by hibernation). A new socket gets a new hub. */
   private hubFor(ws: WebSocket): StreamHub {
-    if (!this.hub) this.hub = new StreamHub((m) => ws.send(m));
+    if (this.hub && this.hubSocket !== ws) {
+      this.hub.onClose(); // streams of a replaced socket can't finish
+      this.hub = null;
+    }
+    if (!this.hub) {
+      this.hub = new StreamHub((m) => ws.send(m));
+      this.hubSocket = ws;
+    }
     return this.hub;
+  }
+
+  /** A socket went away: only its own hub's streams fail (a stale socket's late close must not hit the new one). */
+  private dropHub(ws: WebSocket) {
+    if (this.hub && this.hubSocket === ws) {
+      this.hub.onClose();
+      this.hub = null;
+      this.hubSocket = null;
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -102,16 +134,18 @@ export class RelayNode extends DurableObject<Env> {
     }
     this.hub?.onClose();
     this.hub = null;
+    this.hubSocket = null;
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    // Only the newest open socket speaks for the node; a replaced one's late frames are dropped.
+    if (ws !== this.socket()) return;
     // After hibernation there is no hub, so no open streams: stray frames are dropped by a fresh hub.
     this.hubFor(ws).onMessage(message);
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
-    this.hub?.onClose();
-    this.hub = null;
+    this.dropHub(ws);
     try {
       ws.close(code === 1005 ? 1000 : code, "closed");
     } catch {
@@ -119,8 +153,7 @@ export class RelayNode extends DurableObject<Env> {
     }
   }
 
-  async webSocketError(): Promise<void> {
-    this.hub?.onClose();
-    this.hub = null;
+  async webSocketError(ws: WebSocket): Promise<void> {
+    this.dropHub(ws);
   }
 }

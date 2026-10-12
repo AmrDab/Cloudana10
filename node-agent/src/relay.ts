@@ -22,6 +22,7 @@ import {
   MAX_FRAME_BYTES,
   MAX_STREAMS,
   parseHubMessage,
+  rejectedRequestStream,
   PING,
   PING_INTERVAL_MS,
   PONG,
@@ -263,7 +264,10 @@ export class RelayClient {
         return;
       }
       const m = parseHubMessage(data);
-      if (m) this.onHub(m);
+      if (m) return this.onHub(m);
+      // A request we can't take (method, path, headers): say so, or the hub holds its slot until the head timeout.
+      const s = rejectedRequestStream(data);
+      if (s !== null && !this.streams.has(s)) this.fail(s, "bad_request", "request the node cannot parse");
     } else if (data instanceof ArrayBuffer) {
       const frame = decodeData(data);
       if (frame) this.onBody(frame.s, frame.data);
@@ -299,7 +303,11 @@ export class RelayClient {
     let up: http.ClientRequest;
     try {
       // agent: false — one fresh loopback connection per stream, never a stale keep-alive socket.
-      up = http.request({ host: "127.0.0.1", port: target.port, method: m.m, path: m.path, headers: headerObject(forwardableHeaders(m.h)), agent: false });
+      // A framed body for the app: the visitor's Content-Length when there is one (Node then refuses a mismatch),
+      // else explicit chunking for methods that may carry a body (servers without chunked uploads get the length).
+      const h = forwardableHeaders(m.h, { keepLength: true });
+      if (!h.some(([k]) => k === "content-length") && m.m !== "GET" && m.m !== "HEAD") h.push(["transfer-encoding", "chunked"]);
+      up = http.request({ host: "127.0.0.1", port: target.port, method: m.m, path: m.path, headers: headerObject(h), agent: false });
     } catch (err) {
       return this.fail(m.s, "bad_request", (err as Error).message); // a path or header Node refuses
     }

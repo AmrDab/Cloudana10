@@ -8,6 +8,7 @@
 import http from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { gzipSync, gunzipSync } from "node:zlib";
 import type { AddressInfo } from "node:net";
 import { getPlatformProxy } from "wrangler";
 import { issueTicket } from "../../shared/relay-ticket.ts";
@@ -49,6 +50,10 @@ function upgradeStatus(path: string): Promise<number> {
 
 const app = http.createServer((req, res) => {
   if (req.url === "/hello") return void res.writeHead(200, { "content-type": "text/plain" }).end(`hello ${req.headers["x-forwarded-host"] ?? ""}`);
+  if (req.url === "/gz") {
+    // An app that compresses no matter what it was asked for.
+    return void res.writeHead(200, { "content-type": "text/plain", "content-encoding": "gzip" }).end(gzipSync(Buffer.from("compressed once")));
+  }
   if (req.url === "/echo") {
     const parts: Buffer[] = [];
     req.on("data", (c: Buffer) => parts.push(c));
@@ -120,6 +125,19 @@ check(status.connected && status.since, "the node's object holds its socket");
   const res = await relayCall("/proxy", { headers: { "x-relay-dep": "other", "x-relay-path": "/hello" } });
   check(res.headers.get("x-relay-error") === "not_serving", "not_serving for a deployment the node doesn't run");
   await res.arrayBuffer();
+}
+
+// An app's own gzip passes through the Durable Object exactly once (never compressed again by the runtime).
+{
+  const res = await relayCall("/proxy", { headers: { "x-relay-dep": "dep-1", "x-relay-class": "endpoint", "x-relay-path": "/gz" } });
+  const raw = Buffer.from(await res.arrayBuffer());
+  let text = "";
+  try {
+    text = raw.toString("utf8") === "compressed once" ? "compressed once" : gunzipSync(raw).toString("utf8");
+  } catch {
+    text = `<undecodable: ${raw.subarray(0, 8).toString("hex")}>`;
+  }
+  check(text === "compressed once", `gzip body decodes to the original once (${text})`);
 }
 
 // A ticket is single use: replaying the agent's last one is refused.

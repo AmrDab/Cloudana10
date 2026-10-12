@@ -2,6 +2,8 @@
 name = "cloudana-relay"
 main = "src/index.ts"
 compatibility_date = "2025-04-01"
+# Request.signal fires when the caller (gateway / API) goes away, so a stream is freed before its head arrives.
+compatibility_flags = ["enable_request_signal"]
 workers_dev = false
 routes = [
   { pattern = "relay.cloudana.io", custom_domain = true }

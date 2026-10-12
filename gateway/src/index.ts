@@ -237,7 +237,17 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
 
 /** Errors after which the next node may be tried: the request never reached an app. */
 const RETRYABLE = new Set(["offline", "not_serving", "busy"]);
-const LOCAL_ORIGIN = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/i;
+const LOCAL_ORIGIN = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(?=[/?#]|$)/i;
+/** Sandboxed containers (no separate content domain yet) still get what an API call needs, never cookies. */
+const FORWARD_REQUEST_API = [...FORWARD_REQUEST, "content-type", "content-length", "authorization"];
+
+/** A Set-Cookie value without any Domain attribute (however it is spaced or cased): host-only, never a parent domain. */
+export function hostOnlyCookie(value: string): string {
+  return value
+    .split(";")
+    .filter((part, i) => i === 0 || part.split("=")[0].trim().toLowerCase() !== "domain")
+    .join(";");
+}
 
 /** Relayed: through the serving node's relay socket. Idempotent, body-less requests try the next node. */
 async function viaRelay(request: Request, url: URL, id: string, site: boolean, nodes: string[], deps: Deps, isolated: boolean): Promise<Response> {
@@ -245,13 +255,15 @@ async function viaRelay(request: Request, url: URL, id: string, site: boolean, n
   const app = !site && isolated;
   const headers = new Headers();
   if (!app) {
-    for (const h of FORWARD_REQUEST) {
+    for (const h of site ? FORWARD_REQUEST : FORWARD_REQUEST_API) {
       const v = request.headers.get(h);
       if (v) headers.set(h, v);
     }
   } else {
-    for (const [k, v] of forwardableHeaders(request.headers)) headers.append(k, v);
+    for (const [k, v] of forwardableHeaders(request.headers, { keepLength: true })) headers.append(k, v);
   }
+  // Ask the app for plain bytes: Cloudflare compresses for the visitor, and nothing gets encoded twice on the way.
+  headers.set("accept-encoding", "identity");
   headers.set("x-forwarded-host", url.host);
   headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
   headers.set("x-relay-dep", id);
@@ -295,7 +307,7 @@ async function viaRelay(request: Request, url: URL, id: string, site: boolean, n
     for (const [k, v] of res.headers) {
       if (k === "x-relay-error") continue;
       // Own origin, so the app's cookies are fine — but never for a parent domain.
-      if (k === "set-cookie") out.append(k, v.replace(/;\s*domain=[^;]*/gi, ""));
+      if (k === "set-cookie") out.append(k, hostOnlyCookie(v));
       else out.append(k, v);
     }
   }
@@ -306,7 +318,10 @@ async function viaRelay(request: Request, url: URL, id: string, site: boolean, n
   out.set("x-content-type-options", "nosniff");
   out.set("referrer-policy", "strict-origin-when-cross-origin");
   const nullBody = request.method === "HEAD" || NULL_BODY_STATUS.has(res.status);
-  return new Response(nullBody ? null : res.body, { status: res.status, headers: out });
+  // An app that compresses anyway: its bytes pass as-is under its Content-Encoding (encodeBody is Workers-only).
+  const init: ResponseInit & { encodeBody?: "manual" | "automatic" } = { status: res.status, headers: out };
+  if (out.has("content-encoding")) init.encodeBody = "manual";
+  return new Response(nullBody ? null : res.body, init);
 }
 
 export default {

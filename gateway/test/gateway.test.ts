@@ -305,16 +305,40 @@ describe("relay", () => {
 
   it("keeps a container sandboxed and cookie-less while user content shares the first-party domain", async () => {
     const m = mockFetch(relayed("container"), () => new Response("x"));
+    let seen: Headers | null = null;
     const r = relays(async (_n, init) => {
-      const h = new Headers(init.headers);
-      expect(h.get("cookie")).toBeNull();
-      expect(h.get("authorization")).toBeNull();
+      seen = new Headers(init.headers);
       return new Response("{}", { headers: { "content-type": "application/json", "set-cookie": "sid=1" } });
     });
     const env = { ...ENV, SITES_DOMAIN: "sites.cloudana.io" };
-    const res = await handle(req("/", { headers: { cookie: "s=1", authorization: "Bearer t" } }, `${ID}.sites.cloudana.io`), env, { ...deps(m.fetch), relay: r.relay });
+    const res = await handle(
+      req("/v1/chat", { method: "POST", body: "{}", headers: { cookie: "s=1", authorization: "Bearer t", "content-type": "application/json" } }, `${ID}.sites.cloudana.io`),
+      env,
+      { ...deps(m.fetch), relay: r.relay },
+    );
+    expect(res.status).toBe(200);
+    // An API call still works (type + the caller's own token), but cookies never cross, either way.
+    expect(seen!.get("cookie")).toBeNull();
+    expect(seen!.get("authorization")).toBe("Bearer t");
+    expect(seen!.get("content-type")).toBe("application/json");
+    expect(seen!.get("accept-encoding")).toBe("identity");
     expect(res.headers.get("content-security-policy")).toContain("sandbox");
     expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("strips Domain from cookies however it is spaced or cased", async () => {
+    const { hostOnlyCookie } = await import("../src/index.js");
+    expect(hostOnlyCookie("sid=1; Domain=.example.run; Path=/")).toBe("sid=1; Path=/");
+    expect(hostOnlyCookie("sid=1; Domain =example.run; Secure")).toBe("sid=1; Secure");
+    expect(hostOnlyCookie("sid=1;DOMAIN= x.run ;HttpOnly")).toBe("sid=1;HttpOnly");
+    expect(hostOnlyCookie("domain=keep-the-name; Path=/")).toBe("domain=keep-the-name; Path=/"); // the cookie's own name stays
+  });
+
+  it("never rewrites a look-alike host in redirects", async () => {
+    const m = mockFetch(relayed("container"), () => new Response("x"));
+    const r = relays(() => new Response(null, { status: 302, headers: { location: "http://localhost.evil.test/x" } }));
+    const res = await handle(req("/", {}, `${ID}.example.run`), { ...ENV, SITES_DOMAIN: "example.run" }, { ...deps(m.fetch), relay: r.relay });
+    expect(res.headers.get("location")).toBe("http://localhost.evil.test/x");
   });
 
   it("tells a separate user-content domain from the first-party one", async () => {

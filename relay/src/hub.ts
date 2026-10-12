@@ -5,7 +5,12 @@ import {
   BODY_CAP_BYTES,
   HEAD_TIMEOUT_MS,
   IDLE_TIMEOUT_MS,
+  MAX_CONTROL_CHARS,
+  MAX_PATH_CHARS,
+  MAX_REQUEST_HEADERS,
   MAX_STREAMS,
+  MAX_STREAMS_PER_DEP,
+  METHOD,
   WINDOW_BYTES,
   chunks,
   decodeData,
@@ -52,6 +57,7 @@ export interface ProxyRequest {
 }
 
 interface Stream {
+  dep: string;
   head: (r: Response) => void;
   headDone: boolean;
   writer: WritableStreamDefaultWriter<Uint8Array>;
@@ -91,6 +97,15 @@ export class StreamHub {
   /** Send a request to the node and resolve with its response (streaming) or a relay error. */
   async proxy(req: ProxyRequest): Promise<Response> {
     if (this.streams.size >= MAX_STREAMS) return relayError("busy");
+    let ofDep = 0;
+    for (const st of this.streams.values()) if (st.dep === req.dep) ofDep++;
+    if (ofDep >= MAX_STREAMS_PER_DEP) return relayError("busy");
+    // Refuse here what the agent would refuse: a request it can't parse must never sit in a slot until it times out.
+    const h = forwardableHeaders(req.headers, { keepLength: true });
+    if (!METHOD.test(req.method) || req.path.length > MAX_PATH_CHARS || h.length > MAX_REQUEST_HEADERS) {
+      req.body?.cancel().catch(() => {});
+      return relayError("bad_request");
+    }
     // A declared length over the cap is refused before anything reaches the node.
     for (const [k, v] of req.headers) {
       if (k.toLowerCase() === "content-length" && Number(v) > BODY_CAP_BYTES[req.cls]) {
@@ -103,6 +118,7 @@ export class StreamHub {
     let head!: (r: Response) => void;
     const headP = new Promise<Response>((r) => (head = r));
     const st: Stream = {
+      dep: req.dep,
       head: (r) => {
         if (st.headDone) return;
         st.headDone = true;
@@ -123,8 +139,14 @@ export class StreamHub {
     st.writer.closed.catch(() => this.cancel(s));
     req.signal?.addEventListener("abort", () => this.cancel(s), { once: true });
 
+    const reqMsg = JSON.stringify({ t: "req", s, dep: req.dep, m: req.method, path: req.path, h } satisfies HubMessage);
+    if (reqMsg.length > MAX_CONTROL_CHARS) {
+      this.forget(s);
+      req.body?.cancel().catch(() => {});
+      return relayError("bad_request");
+    }
     try {
-      this.sendCtl({ t: "req", s, dep: req.dep, m: req.method, path: req.path, h: forwardableHeaders(req.headers) });
+      this.send(reqMsg);
     } catch {
       this.forget(s);
       return relayError("offline");
@@ -136,7 +158,11 @@ export class StreamHub {
     const res = await headP;
     // Relay errors and body-less statuses come back as they are; everything else streams the node's body.
     if (res.headers.has("x-relay-error") || NULL_BODY.has(res.status) || req.method === "HEAD") return res;
-    return new Response(readable, { status: res.status, headers: res.headers });
+    // An app's already-compressed body passes as-is: the Workers runtime would otherwise encode it again on the way
+    // out because of its Content-Encoding header (encodeBody is Workers-only; Node ignores it).
+    const init: ResponseInit & { encodeBody?: "manual" | "automatic" } = { status: res.status, headers: res.headers };
+    if (res.headers.has("content-encoding")) init.encodeBody = "manual";
+    return new Response(readable, init);
   }
 
   /** Stream the client's request body to the node within the window, then `end`. */

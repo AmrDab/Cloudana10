@@ -260,6 +260,7 @@ const ticketRoute = createRoute({
   responses: responses(
     { 200: json(z.object({ status: z.literal("success"), ticket: z.string(), url: z.string(), expiresAt: z.number() }), "Ticket") },
     401,
+    403,
     429,
     503,
   ),
@@ -268,6 +269,10 @@ const ticketRoute = createRoute({
 nodesRouter.openapi(ticketRoute, async (c) => {
   const env = getEnv();
   if (!env.RELAY_TICKET_SECRET) return fail(c, "not_configured", "this API runs no relay");
+  // Only an announced, bound node gets a socket (an evicted or unknown key reconnects to nothing). 403, never 404:
+  // the agent reads 404 as "this API has no relay" and would fall back to legacy mode.
+  const row = await getNode(c.get("node"));
+  if (!row?.payout) return fail(c, "forbidden", "announce and bind this node before opening the relay");
   const { ticket, expiresAt } = await issueTicket(env.RELAY_TICKET_SECRET, c.get("node"));
   return ok(c, { ticket, url: env.RELAY_URL, expiresAt });
 });

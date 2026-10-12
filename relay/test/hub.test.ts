@@ -143,3 +143,38 @@ describe("StreamHub", () => {
     }).not.toThrow();
   });
 });
+
+describe("StreamHub request limits (review fixes)", () => {
+  it("refuses at once what the agent can't parse — never a slot held until the head timeout", async () => {
+    const { hub, ctl } = setup();
+    const long = await hub.proxy({ dep: "d", cls: "site", method: "GET", path: "/" + "a".repeat(9000), headers: [], body: null });
+    expect([long.status, long.headers.get("x-relay-error")]).toEqual([400, "bad_request"]);
+    const verb = await hub.proxy({ dep: "d", cls: "endpoint", method: "PROPFIND", path: "/", headers: [], body: null });
+    expect(verb.status).toBe(400);
+    const many = await hub.proxy({ dep: "d", cls: "site", method: "GET", path: "/", headers: Array.from({ length: 200 }, (_, i) => [`x-h${i}`, "v"] as [string, string]), body: null });
+    expect(many.status).toBe(400);
+    const huge = await hub.proxy({ dep: "d", cls: "site", method: "GET", path: "/", headers: [["x-big", "v".repeat(70_000)]], body: null });
+    expect(huge.status).toBe(400);
+    expect(ctl()).toEqual([]);
+    expect(hub.open).toBe(0);
+  });
+
+  it("caps streams per deployment so one app can't take every slot on the node", async () => {
+    const { hub } = setup();
+    for (let i = 0; i < 16; i++) void hub.proxy({ dep: "hog", cls: "endpoint", method: "GET", path: "/sse", headers: [], body: null });
+    await tick();
+    const hog = await hub.proxy({ dep: "hog", cls: "endpoint", method: "GET", path: "/sse", headers: [], body: null });
+    expect(hog.headers.get("x-relay-error")).toBe("busy");
+    void hub.proxy({ dep: "other", cls: "site", method: "GET", path: "/", headers: [], body: null });
+    await tick();
+    expect(hub.open).toBe(17); // another tenant still gets through
+  });
+
+  it("keeps the request Content-Length for the app", async () => {
+    const { hub, ctl } = setup();
+    void hub.proxy({ dep: "d", cls: "endpoint", method: "POST", path: "/", headers: [["content-length", "3"]], body: body(new Uint8Array(3)) });
+    await tick();
+    const req = ctl()[0] as { h: [string, string][] };
+    expect(req.h).toContainEqual(["content-length", "3"]);
+  });
+});

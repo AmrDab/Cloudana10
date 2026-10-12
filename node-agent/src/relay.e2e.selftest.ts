@@ -43,6 +43,13 @@ const app = http.createServer((req, res) => {
     });
     return;
   }
+  if (req.url === "/delete" && req.method === "DELETE") {
+    const parts: Buffer[] = [];
+    req.on("data", (c: Buffer) => parts.push(c));
+    req.on("end", () => res.writeHead(200, { "x-len": String(req.headers["content-length"] ?? ""), "x-te": String(req.headers["transfer-encoding"] ?? "") }).end(Buffer.concat(parts)));
+    return;
+  }
+  if (req.url === "/hang") return; // never answers: holds a stream
   if (req.url === "/sse") {
     res.writeHead(200, { "content-type": "text/event-stream" });
     let n = 0;
@@ -168,6 +175,24 @@ const proxy = (path: string, init: { method?: string; body?: Uint8Array; headers
 {
   const res = await proxy("/hello", { dep: "someone-else" });
   check(res.status === 502 && res.headers.get("x-relay-error") === "not_serving", `not_serving (${res.status} ${res.headers.get("x-relay-error")})`);
+}
+
+// 5b. Review fixes: a request the agent couldn't parse is refused at once (no slot held), a DELETE body arrives framed
+// with its length, and one deployment can't take every slot.
+{
+  const t0 = Date.now();
+  const long = await proxy("/" + "x".repeat(9000));
+  check(long.status === 400 && Date.now() - t0 < 1000, `over-long path refused at once (${long.status}, ${Date.now() - t0} ms)`);
+  const del = await proxy("/delete", { method: "DELETE", body: new TextEncoder().encode("bye"), headers: [["content-length", "3"]] });
+  check(del.headers.get("x-len") === "3" && (await del.text()) === "bye", "DELETE body arrived framed by its Content-Length");
+  const hogs = Array.from({ length: 16 }, () => proxy("/hang", { dep: "dep-1" }));
+  await sleep(100);
+  const extra = await proxy("/hang", { dep: "dep-1" });
+  check(extra.headers.get("x-relay-error") === "busy", "the 17th stream of one deployment is refused");
+  check(hub!.open === 16, `other deployments still have room (${hub!.open} open)`);
+  void hogs;
+  hub!.onClose(); // release the hung streams for the next case
+  await Promise.allSettled(hogs);
 }
 
 // 6. The socket drops: open streams fail as offline, and the agent comes back with a fresh connection.

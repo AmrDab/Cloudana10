@@ -270,15 +270,18 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .all<Queued>();
   if (!queued.results?.length) return 0;
   const nodes = await db
-    .prepare("SELECT address, work_types, manifest_json FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
+    .prepare("SELECT address, work_types, manifest_json, public_host FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
-    .all<{ address: string; work_types: string | null; manifest_json: string | null }>();
-  const states = new Map<string, NodeState & { victims: DeploymentRow[] }>();
+    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null }>();
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean };
+  const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
     if (!caps.includes("container")) continue;
-    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [] });
+    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [], publicHost: !!n.public_host });
   }
+  // Same rule as assign(): workstations only go to nodes with a verified public host.
+  const canTake = (q: Queued, s: Candidate) => !q.workstation || s.publicHost;
   const live = await db.prepare(`SELECT * FROM deployments WHERE kind = 'container' AND status IN ${LIVE}`).all<DeploymentRow>();
   for (const r of live.results ?? []) {
     const s = r.node ? states.get(r.node) : undefined;
@@ -288,13 +291,14 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
   }
   let preempted = 0;
   for (const q of queued.results) {
-    const fitting = [...states.values()].find((s) => fits(q, s));
+    const fitting = [...states.values()].find((s) => canTake(q, s) && fits(q, s));
     if (fitting) {
       addUsage(fitting, q, 1); // it will be assigned there; do not count that room twice
       continue;
     }
-    let best: { s: NodeState & { victims: DeploymentRow[] }; v: DeploymentRow } | null = null;
+    let best: { s: Candidate; v: DeploymentRow } | null = null;
     for (const s of states.values()) {
+      if (!canTake(q, s)) continue;
       for (const v of s.victims) {
         const trial = { ...s };
         addUsage(trial, v, -1);

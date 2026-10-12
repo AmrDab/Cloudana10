@@ -83,6 +83,9 @@ describe("POST /v1/nodes/relay/ticket", () => {
   it("gives a signed node a single-node ticket and the relay URL", async () => {
     const node = privateKeyToAccount(generatePrivateKey());
     await announce(node, ["matmul"]);
+    // Unbound: refused with 403 (never 404, which agents read as "no relay here").
+    expect((await signed(node, "/v1/nodes/relay/ticket")).status).toBe(403);
+    await getD1().prepare("UPDATE nodes SET payout = ? WHERE address = ?").bind("0x" + "e".repeat(40), node.address.toLowerCase()).run();
     const res = await signed(node, "/v1/nodes/relay/ticket");
     expect(res.status).toBe(200);
     const body = await res.json();

@@ -10,6 +10,13 @@ export const MAX_FRAME_BYTES = 64 * 1024;
 export const WINDOW_BYTES = 512 * 1024;
 /** Open streams per node; the next request gets 503. */
 export const MAX_STREAMS = 64;
+/** Open streams per deployment, so one app (SSE fans, slow uploads) can't take a node's every slot. */
+export const MAX_STREAMS_PER_DEP = 16;
+/** Request limits both sides enforce (the hub refuses up front; the agent answers `bad_request`, never silence). */
+export const MAX_PATH_CHARS = 8192;
+export const MAX_REQUEST_HEADERS = 128;
+export const MAX_CONTROL_CHARS = 64 * 1024;
+export const METHOD = /^[A-Z]{3,7}$/;
 
 /** Agent keepalive: send the text "ping" this often; reconnect if no "pong" within PONG_TIMEOUT_MS. */
 export const PING_INTERVAL_MS = 30_000;
@@ -50,7 +57,7 @@ const DEP = /^[A-Za-z0-9_-]{1,64}$/;
 const isStream = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0 && (v as number) <= 0xffffffff;
 const isCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xffffffff;
 const isHeaders = (v: unknown): v is Header[] =>
-  Array.isArray(v) && v.length <= 128 && v.every((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "string" && typeof p[1] === "string");
+  Array.isArray(v) && v.length <= MAX_REQUEST_HEADERS && v.every((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "string" && typeof p[1] === "string");
 
 /** Parse a hub→node text frame; null if it is not a valid message (callers ignore it). */
 export function parseHubMessage(text: string): HubMessage | null {
@@ -58,8 +65,8 @@ export function parseHubMessage(text: string): HubMessage | null {
   if (!m || !isStream(m.s)) return null;
   switch (m.t) {
     case "req":
-      return typeof m.dep === "string" && DEP.test(m.dep) && typeof m.m === "string" && /^[A-Z]{3,7}$/.test(m.m) &&
-        typeof m.path === "string" && m.path.startsWith("/") && m.path.length <= 8192 && isHeaders(m.h)
+      return typeof m.dep === "string" && DEP.test(m.dep) && typeof m.m === "string" && METHOD.test(m.m) &&
+        typeof m.path === "string" && m.path.startsWith("/") && m.path.length <= MAX_PATH_CHARS && isHeaders(m.h)
         ? { t: "req", s: m.s, dep: m.dep, m: m.m, path: m.path, h: m.h }
         : null;
     case "end":
@@ -96,8 +103,18 @@ export function parseNodeMessage(text: string): NodeMessage | null {
   }
 }
 
+/**
+ * The stream id of a `req` frame that failed validation (bad method, long path, too many headers…), so the agent can
+ * answer `err bad_request` instead of dropping it — a dropped request would hold a hub slot until its head timeout.
+ */
+export function rejectedRequestStream(text: string): number | null {
+  const m = /^\{"t":"req","s":(\d{1,10}),/.exec(text);
+  const s = m ? Number(m[1]) : NaN;
+  return isStream(s) ? s : null;
+}
+
 function parseJson(text: string): Record<string, unknown> | null {
-  if (text.length > 64 * 1024) return null;
+  if (text.length > MAX_CONTROL_CHARS) return null;
   try {
     const v = JSON.parse(text);
     return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -137,10 +154,16 @@ const DROP = new Set([
   "connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te", "trailer",
   "proxy-authorization", "proxy-authenticate", "host", "content-length",
 ]);
-export function forwardableHeaders(h: Iterable<[string, string]>): Header[] {
+export function forwardableHeaders(h: Iterable<[string, string]>, opts: { keepLength?: boolean } = {}): Header[] {
   const out: Header[] = [];
   for (const [k, v] of h) {
     const key = k.toLowerCase();
+    // Requests keep their Content-Length so the app gets a framed body (servers without chunked uploads exist);
+    // responses drop it (the body is re-streamed).
+    if (key === "content-length" && opts.keepLength) {
+      out.push([key, v]);
+      continue;
+    }
     if (DROP.has(key) || key.startsWith("x-relay-") || key.startsWith("cf-")) continue;
     out.push([key, v]);
   }
