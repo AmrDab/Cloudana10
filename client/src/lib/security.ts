@@ -23,7 +23,7 @@ export const SECURITY: { live: SecurityItem[]; building: SecurityItem[]; planned
     { label: "Signed node instructions", tag: "pinned signer", icon: PenLine, detail: "Work and deployment instructions are signed by a key that holds no funds; nodes ignore anything unsigned or stale." },
     { label: "Hash-checked hosting probes", tag: "SHA-256", icon: Hash, detail: "Sites are served through a Cloudana gateway and probed against the hash of the files you uploaded." },
     { label: "Isolated settlement keeper", tag: "separate Worker", icon: Landmark, detail: "The epoch poster runs apart from the API; the API holds no chain key." },
-    { label: "Sealed secrets", tag: "browser → node", icon: KeyRound, detail: "Container env encrypted in your browser to the assigned node's key; the orchestrator never sees plaintext." },
+    { label: "Sealed secrets", tag: "browser → node", icon: KeyRound, detail: "Container env encrypted in your browser to the assigned node's key; the orchestrator never sees plaintext. The node that runs your container can read them." },
   ],
   planned: [
     { label: "Encrypted jobs at rest", tag: "your keys", icon: ShieldCheck, detail: "Job inputs and results encrypted at rest with your keys." },

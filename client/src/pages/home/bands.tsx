@@ -94,7 +94,7 @@ export function ServicesBand() {
 export function SecurityBand() {
   return (
     <Band id="security" photo={4} kicker="Security" title={<>Signed, sealed, re&#8209;checked.</>}
-      line="Every message signed. Every proof re-checked. Secrets sealed to the node that runs them.">
+      line="Every message signed. Every proof re-checked. Secrets encrypted so only the node that runs them can read them.">
       <Reveal delay={0.05}>
         <ul className="flex flex-wrap gap-2">
           {SECURITY.live.map((s) => (

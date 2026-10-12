@@ -9,7 +9,7 @@ import { getD1 } from "../lib/storage.js";
 import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
-import { capture, hold } from "./balance.service.js";
+import { capture, hold, release } from "./balance.service.js";
 import { getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
 import { recordJobRewards } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
@@ -40,6 +40,8 @@ export interface WorkJobRow {
   cert_z: string | null;
   created_at: number;
   completed_at: number | null;
+  /** Failed verifications so far (schema.ts migration; null on rows from before it). */
+  attempts: number | null;
 }
 
 export function sha256(text: string): string {
@@ -204,6 +206,9 @@ export async function listWorkJobs(owner: string, limit = 50): Promise<JobSummar
 
 // ─── Assignment ───────────────────────────────────────────────────────────────
 
+/** Verification failures after which a job is failed and its hold released (docs/V4_VERIFIED_SERVICES.md F2). */
+export const MAX_JOB_ATTEMPTS = 3;
+
 const CLEAR_ASSIGNMENT =
   "status = 'queued', node = NULL, sigma = NULL, seed_source = NULL, draw_seed = NULL, " +
   "eligible_hash = NULL, cluster_ok = NULL, assigned_at = NULL, expires_at = NULL";
@@ -314,11 +319,19 @@ export async function submitWork(
   const verdict = wt.verify({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result });
 
   if (!verdict.ok) {
-    await db.batch([
+    // A job that keeps failing verification stops after MAX_JOB_ATTEMPTS: it is marked failed and the owner's hold
+    // goes back to spendable, instead of re-queuing forever with the fee held.
+    const giveUp = (job.attempts ?? 0) + 1 >= MAX_JOB_ATTEMPTS;
+    const next = giveUp ? "status = 'failed', node = NULL, expires_at = NULL, completed_at = ?" : CLEAR_ASSIGNMENT;
+    const update = db
+      .prepare(`UPDATE work_jobs SET ${next}, attempts = attempts + 1 WHERE id = ? AND status = 'assigned' AND node = ?`)
+      .bind(...(giveUp ? [now, job.id, node] : [job.id, node]));
+    const [, res] = await db.batch([
       db.prepare("UPDATE nodes SET jobs_failed = jobs_failed + 1 WHERE address = ?").bind(node),
-      db.prepare(`UPDATE work_jobs SET ${CLEAR_ASSIGNMENT} WHERE id = ? AND status = 'assigned' AND node = ?`).bind(job.id, node),
+      update,
     ]);
-    L.warn(`[work] rejected ${job.id} from ${node.slice(0, 10)}…: ${verdict.reason}`);
+    if (giveUp && (res?.meta?.changes ?? 0) > 0) await release(job.owner, job.price_ucld);
+    L.warn(`[work] rejected ${job.id} from ${node.slice(0, 10)}…: ${verdict.reason}${giveUp ? " — job failed, hold released" : ""}`);
     return { ok: false, code: "unprocessable", message: verdict.reason };
   }
 

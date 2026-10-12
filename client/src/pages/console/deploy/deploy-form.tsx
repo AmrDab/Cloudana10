@@ -237,7 +237,7 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
             {env.some((r) => r.secret) && (
               <p className="mt-2 flex items-start gap-1.5 text-[12px] leading-4 text-faint">
                 <KeyRound className="mt-px size-3.5 shrink-0 text-ok" aria-hidden />
-                Secret values never leave this browser in plain text: once a node is assigned they are sealed to its key, and the orchestrator stores only ciphertext.
+                Secret values never leave this browser in plain text: once a node is assigned they are sealed to its key, and the orchestrator stores only ciphertext. The node that runs your container can read them.
               </p>
             )}
           </Field>
