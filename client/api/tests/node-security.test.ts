@@ -60,7 +60,7 @@ const announceBody = (node: PrivateKeyAccount, workTypes: string[], extra: Recor
   workTypes,
   pubkey: node.publicKey.slice(2),
   publicHost: "127.0.0.1",
-  agentVersion: "1.1.0",
+  agentVersion: "1.2.0",
   ...extra,
 });
 
@@ -154,7 +154,7 @@ describe("instruction signing: API sign → agent verify", () => {
     expect(await verifyInstruction(hb, stranger.address, payload, SIGNER, new NonceLru())).toEqual({ ok: false, reason: "wrong signer" });
 
     const key = await (await call("/v1/nodes/instruction-key")).json();
-    expect(key).toEqual({ status: "success", signer: SIGNER, minAgentVersion: "1.1.0" });
+    expect(key).toEqual({ status: "success", signer: SIGNER, minAgentVersion: "1.2.0" });
   });
 
   it("without INSTRUCTION_SIGNING_KEY the heartbeat is unsigned (agents ignore it) and the key route is 503", async () => {
@@ -196,10 +196,10 @@ describe("node→API replay protection", () => {
 
 describe("minAgentVersion", () => {
   it("compares semver and defaults to the current agent version", () => {
-    expect(compareVersions("1.1.0", "1.0.9")).toBeGreaterThan(0);
-    expect(compareVersions("1.1.0", "1.1.0")).toBe(0);
-    expect(compareVersions("0.9.0", "1.1.0")).toBeLessThan(0);
-    expect(agentVersionAllowed("1.1.0")).toBe(true);
+    expect(compareVersions("1.2.0", "1.0.9")).toBeGreaterThan(0);
+    expect(compareVersions("1.2.0", "1.2.0")).toBe(0);
+    expect(compareVersions("0.9.0", "1.2.0")).toBeLessThan(0);
+    expect(agentVersionAllowed("1.2.0")).toBe(true);
     expect(agentVersionAllowed("1.0.0")).toBe(false);
     expect(agentVersionAllowed(null)).toBe(false);
   });
@@ -209,10 +209,10 @@ describe("minAgentVersion", () => {
     const { node: n } = await boundNode(["matmul", "hosting"], { announce: { agentVersion: "1.0.0" } });
     const id = await create(u.jwt, { kind: "static", spec: SITE });
     const hb = await heartbeat(n);
-    expect(hb).toMatchObject({ upgradeRequired: true, minAgentVersion: "1.1.0", assignment: null, deployments: [] });
+    expect(hb).toMatchObject({ upgradeRequired: true, minAgentVersion: "1.2.0", assignment: null, deployments: [] });
     // It was still assigned (per-node duty) — the start is withheld, not lost; an upgraded heartbeat delivers it.
     expect((await row(id))!.status).toBe("assigned");
-    const upgraded = await heartbeat(n, { agentVersion: "1.1.0" });
+    const upgraded = await heartbeat(n, { agentVersion: "1.2.0" });
     expect(upgraded.upgradeRequired).toBe(false);
     expect(upgraded.deployments.map((d) => d.id)).toEqual([id]);
     // A node that never reported a version is treated as too old.

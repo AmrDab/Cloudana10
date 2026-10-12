@@ -373,5 +373,6 @@ Spec: docs/V4_VERIFIED_SERVICES.md §3 · contract: docs/V4_ENDPOINTS_CONTRACT.m
 - [x] gateway: key auth, per-key rate limit binding, random replica + retry with buffered body, JSON errors
 - [x] agent: GPUs for containers, health wait + logs on failure, CLOUDANA_ANY_IMAGE, selftests
 - [x] tests green: API 285 (+11 endpoints), gateway 28, agent selftests (workstation 82, security 94, relay 69 + e2e 24), relay 12; docs + runbook + README
-- [ ] independent review of the diff; PR; deploy API (versions upload → smoke → deploy)
+- [x] independent review: 7 findings fixed (unbounded health wait + stop during wait, admin stop cascade, busy/relay-error probes inconclusive, pro-rata billing + node refusal on probe re-queue, agent ≥ 1.2.0 gate, VRAM-aware GPU pick, logs under the endpoint); API 287, agent 86
+- [ ] PR #22 merge; deploy API (versions upload → smoke → deploy)
 - [ ] step 7 (console Endpoints tab) next; gateway deploy still waits for the user-content domain + INTERNAL_API_KEY

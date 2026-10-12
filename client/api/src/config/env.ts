@@ -114,7 +114,7 @@ export const envSchema = z.object({
   RELAY_TICKET_SECRET: z.string().min(32).optional(),
   RELAY_URL: z.string().default("wss://relay.cloudana.io/connect"),
   RELAY_FRESH_SECONDS: int(45),
-  MIN_AGENT_VERSION: z.string().default("1.1.0"),
+  MIN_AGENT_VERSION: z.string().default("1.2.0"),
   IMAGE_ALLOWLIST: z.string().optional(),
 
   // ── V3 hosting (docs/V3_CONTRACT.md §3–§4) ──────────────────────────────

@@ -124,6 +124,8 @@ export interface ReplicaView {
   node: string | null;
   startedAt: number | null;
   probeOk: boolean | null;
+  /** Detail only: the node's log tail from this replica's last failure. */
+  logs?: string;
 }
 
 export interface Deployment extends Partial<WorkstationView> {
@@ -200,13 +202,14 @@ export function endpointStatus(parent: Pick<DeploymentRow, "status">, replicas: 
   return "stopped";
 }
 
-const replicaView = (r: DeploymentRow): ReplicaView => ({
+const replicaView = (r: DeploymentRow, detail: boolean): ReplicaView => ({
   id: r.id,
   status: r.status,
   statusReason: r.status_reason,
   node: r.node,
   startedAt: r.started_at,
   probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
+  ...(detail && r.last_logs && { logs: r.last_logs }),
 });
 
 /**
@@ -237,7 +240,7 @@ export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(
     probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
     spec: redactSpec(r.kind, spec),
     ...(r.parent_id && { parentId: r.parent_id }),
-    ...(endpoint && { replicas: replicas.map(replicaView), auth: (spec as EndpointSpec).auth }),
+    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail)), auth: (spec as EndpointSpec).auth }),
     ...(detail && r.last_logs && { logs: r.last_logs }),
     ...(r.workstation ? workstationView(r, spec as WorkstationSpec, nodeGpus, now, detail) : {}),
   };
@@ -535,7 +538,7 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
   const row = await getOwnedRow(owner, id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (purge && !row.workstation) return { ok: false, code: "validation_failed", message: "purge applies to workstations only" };
-  if (isEndpoint(row)) for (const r of (await replicasOf([id])).get(id) ?? []) await endDeployment(r, "stopped", "endpoint stopped by owner");
+  if (isEndpoint(row)) await endReplicas(id, "endpoint stopped by owner");
   const ended = row.status === "stopped" || row.status === "failed";
   if (!ended && !(await endDeployment(row, "stopped", "stopped by owner"))) {
     return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };
@@ -548,6 +551,16 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
     if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", "volume purge requested");
   }
   return { ok: true };
+}
+
+/** Stop every live replica of an endpoint; one that changed state meanwhile is re-read and stopped again. */
+async function endReplicas(id: string, reason: string, now = Date.now()): Promise<void> {
+  const ended = (r: DeploymentRow) => r.status === "stopped" || r.status === "failed";
+  for (const r of (await replicasOf([id])).get(id) ?? []) {
+    if (ended(r) || (await endDeployment(r, "stopped", reason, { acked: false, now }))) continue;
+    const fresh = await getDeploymentRow(r.id);
+    if (fresh && !ended(fresh)) await endDeployment(fresh, "stopped", reason, { acked: false, now });
+  }
 }
 
 /** What the gateway needs to proxy a deployment (internal: the gateway sends X-Internal-Key). */
@@ -674,6 +687,7 @@ async function liveKeyHashes(id: string): Promise<string[]> {
 export async function adminStop(id: string): Promise<Update> {
   const row = await getDeploymentRow(id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
+  if (isEndpoint(row)) await endReplicas(id, "admin");
   if (row.status === "stopped" || row.status === "failed") return { ok: true };
   if (!(await endDeployment(row, "stopped", "admin", { acked: false, level: "warn" }))) {
     return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };

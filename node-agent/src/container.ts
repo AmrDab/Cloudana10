@@ -140,8 +140,8 @@ export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<strin
   return args;
 }
 
-/** Image pulls can be slow; allow 10 minutes. */
-export const dockerRun = (args: string[]) => docker(args, 10 * 60_000);
+/** `docker run -d` returns once the container started, pull included: inference images run to 10+ GB, allow 30 minutes. */
+export const dockerRun = (args: string[]) => docker(args, 30 * 60_000);
 
 export async function dockerRemove(id: string): Promise<void> {
   try {

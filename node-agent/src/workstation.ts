@@ -78,12 +78,18 @@ export const gpuCountOf = (spec: unknown) => {
   return Number.isInteger(n) && (n as number) > 0 ? (n as number) : 0;
 };
 
-/** Lowest `count` free device indices in 0..nodeGpus-1. Throws when the node cannot satisfy it. */
-export function pickGpus(count: number, nodeGpus: number, used: Set<number>): number[] {
+/**
+ * Lowest `count` free device indices. `nodeGpus` is the GPU count, or the node's GPU list in device order: then only
+ * GPUs with at least `minVramGb` qualify (a 12 GB card is never handed a 40 GB request on a mixed node). Throws when
+ * the node cannot satisfy it.
+ */
+export function pickGpus(count: number, nodeGpus: number | GpuInfo[], used: Set<number>, minVramGb = 0): number[] {
   if (count <= 0) return [];
-  if (nodeGpus < 1) throw new Error("this node has no usable GPU");
+  const total = typeof nodeGpus === "number" ? nodeGpus : nodeGpus.length;
+  if (total < 1) throw new Error("this node has no usable GPU");
+  const fits = (i: number) => typeof nodeGpus === "number" || nodeGpus[i].vramGB >= minVramGb;
   const free: number[] = [];
-  for (let i = 0; i < nodeGpus && free.length < count; i++) if (!used.has(i)) free.push(i);
+  for (let i = 0; i < total && free.length < count; i++) if (!used.has(i) && fits(i)) free.push(i);
   if (free.length < count) throw new Error("not enough free GPUs");
   return free;
 }

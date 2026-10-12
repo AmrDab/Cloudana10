@@ -5,7 +5,9 @@ import path from "node:path";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { parseNvidiaSmi } from "./hardware.ts";
 import { parseDeviceRequests, type DockerOps } from "./container.ts";
-import { DeploymentManager, type StatusBody } from "./deployments.ts";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { DeploymentManager, httpOk, type StatusBody } from "./deployments.ts";
 import {
   dueVolumes,
   keepDaysOf,
@@ -254,6 +256,24 @@ async function main() {
   const e3 = new DeploymentManager(eopts);
   await e3.resume();
   check(e3.allocatedGpus().ep1?.join() === "0", "resume keeps the GPU container's device");
+  // A stop that arrives while the replica is still waiting for health cancels the wait: stopped, container and GPU gone.
+  healthy = false;
+  const e4 = new DeploymentManager({ ...eopts, dataDir: mkdtempSync(path.join(os.tmpdir(), "cld-ep4-")) });
+  const starting = e4.handle({ id: "ep5", action: "start", kind: "container", spec: { ...replica, health: { path: "/health", startupGraceSec: 60 } }, imageAllowed: false, relayed: true });
+  await new Promise((r) => setTimeout(r, 20));
+  await e4.handle({ id: "ep5", action: "stop", kind: "container", spec: null }); // ignored as busy, but cancels the wait
+  await starting;
+  check(reports.at(-1)?.status === "stopped" && !live.has("ep5") && e4.allocatedGpus().ep5 === undefined, "stop during the health wait: stopped, released");
+  // The real probe has a hard deadline: a port that never answers cannot stall the wait.
+  const hang = http.createServer(() => {}); // accepts, never answers
+  await new Promise<void>((r) => hang.listen(0, "127.0.0.1", r));
+  const t0 = Date.now();
+  check((await httpOk(`http://127.0.0.1:${(hang.address() as AddressInfo).port}/health`, 150)) === false && Date.now() - t0 < 1000, "httpOk gives up at its deadline");
+  hang.close();
+  // VRAM-aware picking: a 40 GB request skips the 12 GB card.
+  const mixed = [{ name: "RTX 3060", vramGB: 12 }, { name: "A100", vramGB: 80 }];
+  check(pickGpus(1, mixed, new Set(), 40).join() === "1" && pickGpus(1, mixed, new Set()).join() === "0", "minVramGb picks the card that has it");
+  throws(() => pickGpus(1, mixed, new Set([1]), 40), /not enough free GPUs/, "no eligible free GPU");
   // A GPU replica refused by a node whose GPU is taken: "not enough free GPUs" (the API re-queues it).
   await e3.handle({ id: "ep4", action: "start", kind: "container", spec: { ...replica, gpu: { count: 2 } }, imageAllowed: false, relayed: true });
   check(reports.at(-1)?.status === "failed" && reports.at(-1)?.message === "not enough free GPUs", "GPU shortage is reported as such");

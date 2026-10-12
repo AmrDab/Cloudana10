@@ -29,9 +29,13 @@ already running a sibling replica. `any-image` is announced by agents started wi
 The agent reserves GPUs (`--gpus "device=…"`, `--shm-size=1g`), starts the container and polls the health path on
 127.0.0.1 until it answers (then reports `running`; billing starts there — model loading is not billed) or the grace
 expires / the container exits (then `failed`, with the last lines of `docker logs` as `logs`; shown on
-`GET /v1/deployments/{id}` as `logs`). The orchestrator probes the health path through the relay every
-`DEPLOY_PROBE_SECONDS`; after `DEPLOY_PROBE_FAILS` misses a replica is **re-queued** at once (the old node is owed a
-stop) instead of sitting *unreachable*.
+`GET /v1/deployments/{id}` of the endpoint under each replica, and of the replica itself). A stop that arrives while
+a replica is still waiting for its health path cancels the wait. The orchestrator probes the health path through
+the relay every `DEPLOY_PROBE_SECONDS`; a probe the hub refused as `busy` (every stream of the replica in use) or that
+never reached the node counts for nothing. After `DEPLOY_PROBE_FAILS` real misses a replica is **re-queued** at once
+(replaced) instead of sitting *unreachable*: the failing node is owed a stop and skipped for that replica, and the
+part of the hour it served is billed (so a health path that fails at minute 57 buys no free GPU time).
+Nodes below agent 1.2.0 get no work: older agents ignore `gpu` and `health`.
 
 ## Billing
 Per replica-hour at the container price plus `gpu.count × PRICE_GPU_{CONSUMER|DATACENTER}_UCLD_PER_HOUR`.

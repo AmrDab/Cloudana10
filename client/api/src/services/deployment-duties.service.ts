@@ -76,7 +76,7 @@ export const DEAD_NODE_FACTOR = 3;
  * owed a "stop" (deployment_stale_nodes) in case it comes back still serving. Secrets were sealed to
  * the old node's key, so they are cleared and the next start waits for the owner to re-seal.
  */
-async function requeueRows(rows: DeploymentRow[], reason: string, now: number): Promise<number> {
+async function requeueRows(rows: DeploymentRow[], reason: string, now: number, opts: { settleHour?: boolean } = {}): Promise<number> {
   const db = getD1();
   let requeued = 0;
   for (const row of rows) {
@@ -98,8 +98,28 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number): 
       .run();
     await addEvent(row.id, "warn", `${reason} — re-queued`, now);
     if (reseal) await addEvent(row.id, "warn", "secrets were sealed to the old node — re-seal them for the next node", now);
+    if (opts.settleHour) await settleElapsed(row, now);
   }
   return requeued;
+}
+
+/**
+ * A row that was serving until its re-queue (the node is still up; its app failed its probes) pays the elapsed part
+ * of the hour it was in, so a tenant whose health path fails at minute 57 does not get 57 free GPU minutes each hour.
+ * The hold is then topped back up to a full hour for the next node; an owner who cannot cover that has nothing to
+ * re-place, so the (already re-queued) row ends as out of credits and the rest of its hold goes back.
+ */
+async function settleElapsed(row: DeploymentRow, now: number): Promise<void> {
+  if (row.status !== "running" || row.last_billed_at === null || row.held_ucld <= 0 || !row.node) return;
+  const elapsed = Math.max(0, Math.min(HOUR_MS, now - row.last_billed_at));
+  const charged = Math.min(row.held_ucld, Math.floor((row.price_ucld_per_hour * elapsed) / HOUR_MS));
+  if (charged <= 0) return;
+  await chargeHour(row, charged, now);
+  await addEvent(row.id, "info", `billed ${charged} µCLD for the ${Math.round(elapsed / 60_000)} min served before the re-queue`, now);
+  if (await hold(row.owner, charged)) return;
+  const remaining = row.held_ucld - charged;
+  await getD1().prepare("UPDATE deployments SET held_ucld = ? WHERE id = ?").bind(remaining, row.id).run();
+  await endDeployment({ ...row, status: "queued", node: null, last_billed_at: null, held_ucld: remaining }, "stopped", "out of credits", { acked: true, level: "warn", now });
 }
 
 /** G1: re-queue live deployments whose node went offline (all of them, or one owner's). */
@@ -382,12 +402,18 @@ async function probePassed(res: Response, probe?: { path: string; hash: string }
   return body.byteLength <= PROBE_MAX_BYTES && sha256Hex(body) === probe.hash.toLowerCase();
 }
 
+/** "inconclusive": nobody reached the app, so the probe neither passes nor counts as a failure. */
+export type ProbeResult = boolean | "inconclusive";
+
 /**
  * The same probe through the node's relay socket (docs/V4_RELAY_CONTRACT.md): the node can only answer for a
  * deployment it serves, so a content hash still proves the right site is up. No relay binding → fails (billing
- * pauses rather than charging for something nobody checked).
+ * pauses rather than charging for something nobody checked). A hub that refuses the probe because the deployment
+ * already has every stream in use (`busy`), or a relay call that fails before reaching the node, says nothing about
+ * the app: inconclusive. An app that does not answer within the timeout, or a node that is offline / not serving it,
+ * fails.
  */
-export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" | "kind" | "probe_path" | "probe_hash">): Promise<boolean> {
+export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" | "kind" | "probe_path" | "probe_hash">): Promise<ProbeResult> {
   const relay = getRelay();
   if (!relay) return false;
   const probe = row.probe_path && row.probe_hash ? { path: row.probe_path, hash: row.probe_hash } : null;
@@ -399,9 +425,13 @@ export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" |
       headers: { "x-relay-dep": row.id, "x-relay-class": row.kind === "static" ? "site" : "endpoint", "x-relay-path": path },
       signal: AbortSignal.timeout(RELAY_PROBE_TIMEOUT_MS),
     });
+    if (res.headers.get("x-relay-error") === "busy") {
+      await res.body?.cancel().catch(() => undefined);
+      return "inconclusive";
+    }
     return await probePassed(res, probe);
-  } catch {
-    return false;
+  } catch (err) {
+    return (err as Error)?.name === "TimeoutError" ? false : "inconclusive";
   }
 }
 
@@ -419,13 +449,18 @@ async function probe(node: string, now: number): Promise<void> {
     .bind(node, now - env.DEPLOY_PROBE_SECONDS * 1000)
     .all<DeploymentRow>();
   const rows = due.results ?? [];
-  const results = await Promise.all(
+  const results: ProbeResult[] = await Promise.all(
     rows.map((r) =>
       r.relayed ? probeRelayed(node, r) : endpointAllowed(r.endpoint!, env.DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : false,
     ),
   );
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
+    if (results[i] === "inconclusive") {
+      // Nobody reached the app: try again next time, counting nothing either way.
+      await db.prepare("UPDATE deployments SET last_probe_at = ? WHERE id = ?").bind(now, row.id).run();
+      continue;
+    }
     if (results[i]) {
       if (row.status === "unreachable") {
         // Billing resumes with a fresh hour: the outage and the partial hour before it are not charged.
@@ -445,8 +480,10 @@ async function probe(node: string, now: number): Promise<void> {
     const fails = row.probe_fail + 1;
     const toUnreachable = row.status === "running" && fails >= env.DEPLOY_PROBE_FAILS;
     if (toUnreachable && row.parent_id) {
-      // An endpoint replica is replaced, not waited for: back to the queue for another node (this one is owed a stop).
-      await requeueRows([row], `replica unreachable after ${fails} failed probes`, now);
+      // An endpoint replica is replaced, not waited for: back to the queue for another node. This node is owed a stop
+      // and is skipped for this replica (nodeRefusalPrefix) so it cannot reclaim it while that stop is still running;
+      // the part of the hour it served is billed (the app, not the node, failed).
+      await requeueRows([row], `${nodeRefusalPrefix(node)} replica failed ${fails} health probes`, now, { settleHour: true });
       continue;
     }
     await db

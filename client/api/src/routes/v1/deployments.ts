@@ -50,6 +50,7 @@ const ReplicaSchema = z.object({
   node: z.string().nullable(),
   startedAt: z.number().nullable(),
   probeOk: z.boolean().nullable(),
+  logs: z.string().optional().openapi({ description: "GET /deployments/{id} only: this replica's log tail from its last failure" }),
 });
 const DeploymentSchema = z.object({
   id: z.string(),

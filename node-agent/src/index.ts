@@ -183,6 +183,7 @@ async function main() {
     privateKey,
     containersReady,
     gpuCount: workTypes.includes("gpu") ? manifest.gpus.length : 0,
+    gpus: workTypes.includes("gpu") ? manifest.gpus : [],
     // Only starts read it, and they come from heartbeats, after `relay` below exists.
     relay: () => relay.mode() === "relay",
     log,

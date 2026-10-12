@@ -58,7 +58,8 @@ Node → hub: `res {s, status, h}`, then binary body frames, then `end` (or `err
 - Heartbeat stores `nodes.relay_at` when `relay: true`. Deployments assigned to a relay node are `relayed = 1`;
   their `running` report is accepted without an endpoint; probes go through `RELAY`; placement prefers relay nodes.
 - `GET /v1/deployments/{id}/route` requires `X-Internal-Key` and returns
-  `{ kind, state, relayed, nodes: [address], endpoint }` (`endpoint` only for legacy direct nodes).
+  `{ kind, state, relayed, targets: [{ node, dep }], endpoint }` (`endpoint` only for legacy direct nodes; one target per
+  running replica for a GPU endpoint, docs/V4_ENDPOINTS_CONTRACT.md).
 
 ## Hub HTTP surface (relay Worker / Durable Object)
 - `GET /connect?ticket=…` (WebSocket upgrade, public): ticket checked, nonce single-use, old socket closed.

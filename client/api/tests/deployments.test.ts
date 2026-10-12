@@ -53,7 +53,7 @@ async function boundNode(workTypes: string[]) {
     workTypes,
     pubkey: node.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.1.0",
+    agentVersion: "1.2.0",
   });
   expect(res.status).toBe(200);
   const payout = "0x" + (++userSeq).toString(16).padStart(40, "e");

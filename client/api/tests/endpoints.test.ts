@@ -57,7 +57,7 @@ async function node(workTypes: string[], opts: { fleet?: boolean; gpus?: typeof 
     workTypes,
     pubkey: n.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.1.0",
+    agentVersion: "1.2.0",
   });
   expect(res.status).toBe(200);
   await getD1()
@@ -77,7 +77,7 @@ async function user(credits = 100_000) {
 
 /** Heartbeat with the relay socket up; returns the instructions. */
 async function beat(n: PrivateKeyAccount, relay = true) {
-  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.1.0" });
+  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.2.0" });
   expect(res.status).toBe(200);
   return (await res.json()).deployments as { id: string; action: string; kind: string; spec: any; relayed?: boolean; imageAllowed?: boolean }[];
 }
@@ -295,23 +295,62 @@ describe("health probes and replacement", () => {
     expect(seen).toEqual([{ node: addr(a), path: "/health", dep: r1.id }]);
     expect(await row(r1.id)).toMatchObject({ probe_fail: 0, status: "running" });
 
-    healthy = false;
+    // The hub refusing the probe (every stream in use) or the relay call failing says nothing about the app.
+    const reprobe = () => getD1().prepare("UPDATE deployments SET last_probe_at = 0 WHERE id = ?").bind(r1.id).run();
+    setRelay(async () => new Response("", { status: 503, headers: { "x-relay-error": "busy" } }));
+    await reprobe();
+    await beat(a);
+    setRelay(async () => {
+      throw new Error("binding exploded");
+    });
+    await reprobe();
+    await beat(a);
+    expect(await row(r1.id)).toMatchObject({ probe_fail: 0, status: "running" });
+    expect((await row(r1.id))!.last_probe_at).toBeGreaterThan(0);
+
+    setRelay(async () => new Response("", { status: 503 }));
+    // 30 minutes into the hour: the part served is billed at the re-queue, so failing health buys no free time.
+    await getD1().prepare("UPDATE deployments SET last_billed_at = last_billed_at - ? WHERE id = ?").bind(30 * 60_000, r1.id).run();
+    const balanceBefore = await getBalanceUcld(u.addr);
     for (let i = 1; i <= 2; i++) {
-      await getD1().prepare("UPDATE deployments SET last_probe_at = 0 WHERE id = ?").bind(r1.id).run();
+      await reprobe();
       await beat(a);
       expect(await row(r1.id)).toMatchObject({ probe_fail: i, status: "running" });
     }
-    await getD1().prepare("UPDATE deployments SET last_probe_at = 0 WHERE id = ?").bind(r1.id).run();
+    await reprobe();
     const instructions = await beat(a);
     // Replaced, not "unreachable": back in the queue, this node owes a stop, the other replica keeps serving.
-    expect(await row(r1.id)).toMatchObject({ status: "queued", node: null, status_reason: "replica unreachable after 3 failed probes" });
+    expect(await row(r1.id)).toMatchObject({ status: "queued", node: null, status_reason: `refused by node ${addr(a)}: replica failed 3 health probes`, held_ucld: 5400 });
     expect(instructions).toEqual([expect.objectContaining({ id: r1.id, action: "stop" })]);
+    const after = await getBalanceUcld(u.addr);
+    expect(after.heldUcld).toBe(balanceBefore.heldUcld);
+    expect(balanceBefore.balanceUcld - after.balanceUcld).toBeGreaterThanOrEqual(2699); // ≈ 30/60 × 5400
+    expect(balanceBefore.balanceUcld - after.balanceUcld).toBeLessThanOrEqual(2701);
     const got = (await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json());
     expect(got.deployment.status).toBe("running");
-    expect(got.events.map((e: any) => e.message)).toContain("llm #1: replica unreachable after 3 failed probes — re-queued");
-    // A third node picks it up.
+    expect(got.events.map((e: any) => e.message)).toContain(`llm #1: refused by node ${addr(a)}: replica failed 3 health probes — re-queued`);
+    expect(got.events.map((e: any) => e.message)).toContain("llm #1: billed 2700 µCLD for the 30 min served before the re-queue");
+    // The failing node cannot reclaim it while its stop is still in flight; a third node picks it up.
+    expect(await beat(a)).toEqual([expect.objectContaining({ id: r1.id, action: "stop" })]);
+    expect((await row(r1.id))!.status).toBe("queued");
     const c = await relayGpuNode();
     expect(await beat(c)).toEqual([expect.objectContaining({ id: r1.id, action: "start" })]);
+  });
+
+  it("stops a replica with no credits for the part it served", async () => {
+    const u = await user(2 * 5400);
+    const id = (await (await create(u.jwt)).json()).id as string;
+    const a = await relayGpuNode();
+    const b = await relayGpuNode();
+    await beat(a);
+    await beat(b);
+    const [r1] = await replicas(id);
+    expect((await running(a, r1.id)).status).toBe(200);
+    setRelay(async () => new Response("", { status: 503 }));
+    await getD1().prepare("UPDATE deployments SET last_billed_at = last_billed_at - ?, probe_fail = 2, last_probe_at = 0 WHERE id = ?").bind(30 * 60_000, r1.id).run();
+    await beat(a);
+    expect(await row(r1.id)).toMatchObject({ status: "stopped", status_reason: "out of credits", held_ucld: 0 });
+    expect((await getBalanceUcld(u.addr)).heldUcld).toBe(5400); // only the other replica's hour stays held
   });
 
   it("keeps the node's log tail from a failed start, and re-queues on a GPU refusal", async () => {
@@ -329,7 +368,7 @@ describe("health probes and replacement", () => {
     expect(await row(r1.id)).toMatchObject({ status: "failed", last_logs: logs });
     const parent = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
     expect(parent.deployment.status).toBe("failed");
-    expect(parent.deployment.replicas[0]).toMatchObject({ status: "failed", statusReason: "not healthy after 900 s" });
+    expect(parent.deployment.replicas[0]).toMatchObject({ status: "failed", statusReason: "not healthy after 900 s", logs });
     const replica = await (await authed(u.jwt, "GET", `/v1/deployments/${r1.id}`)).json();
     expect(replica.deployment).toMatchObject({ kind: "container", parentId: id, logs, url: null });
     // The list never carries logs.
@@ -351,6 +390,18 @@ describe("stop and secrets", () => {
     expect(await beat(b)).toEqual([{ id: r2.id, action: "stop", kind: "container", spec: null }]);
     expect((await (await route(id)).json()).state).toBe("stopped");
     expect((await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json()).deployment.status).toBe("stopped");
+  });
+
+  it("an admin stop reaches every replica", async () => {
+    const { id, a, b, r1, r2 } = await liveEndpoint();
+    const res = await call(`/v1/admin/deployments/${id}/stop`, { method: "POST", headers: { "x-internal-key": INTERNAL_KEY } });
+    expect(res.status).toBe(200);
+    for (const r of [r1, r2]) expect(await row(r.id)).toMatchObject({ status: "stopped", status_reason: "admin", held_ucld: 0 });
+    expect((await row(id))!.status).toBe("stopped");
+    expect(await beat(a)).toEqual([{ id: r1.id, action: "stop", kind: "container", spec: null }]);
+    expect(await beat(b)).toEqual([{ id: r2.id, action: "stop", kind: "container", spec: null }]);
+    // Idempotent.
+    expect((await call(`/v1/admin/deployments/${id}/stop`, { method: "POST", headers: { "x-internal-key": INTERNAL_KEY } })).status).toBe(200);
   });
 
   it("seals secrets per replica, never on the endpoint itself", async () => {
