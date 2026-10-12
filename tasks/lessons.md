@@ -91,3 +91,9 @@
   for content that itself contains quotes.
 - A default parameter (`nonce = random()`) is NOT bypassed by passing `undefined` explicitly — a "legacy nonce-less"
   test had been sending a nonce all along. Use `null` for "absent" when a default exists.
+
+## 2026-10-11 — Cloudana is infrastructure, not an AI model provider
+- I planned a Cloudana-run inference API with a "launch model" (OpenAI-style). Owner: "Cloudana shouldn't run AI
+  models; we should only provide the infrastructure to power AI."
+- Rule: Cloudana supplies GPUs, scheduling, routing, endpoints, verification and billing. Users bring their own model,
+  engine and image. Never pick, host-as-a-product or brand a model; never sell "Cloudana's model".
