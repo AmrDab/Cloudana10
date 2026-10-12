@@ -28,6 +28,8 @@ const StatusBody = z.object({
     .regex(/^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9.-]+):([1-9]\d{0,4})$/, "sshEndpoint must be host:port")
     .refine((s) => Number(s.slice(s.lastIndexOf(":") + 1)) <= 65535, "port must be ≤ 65535")
     .optional(),
+  /** Relayed workstations: path + query of the web app (may carry its token), served at https://{id}.{SITES_DOMAIN}{webPath}. */
+  webPath: z.string().min(1).max(2048).regex(/^\/[\x21-\x7e]*$/, "webPath must start with / and be printable ASCII").optional(),
   /** Workstations: a web token that cannot ride in the URL (code-server password). Shown to the owner only. */
   webToken: z.string().min(1).max(256).regex(/^[\x21-\x7e]+$/, "webToken must be printable ASCII").optional(),
   message: z.string().max(500).optional(),

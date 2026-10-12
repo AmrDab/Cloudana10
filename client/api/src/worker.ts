@@ -13,10 +13,13 @@ import type { MiddlewareHandler } from "hono";
 import { buildApp, type AppEnv } from "./app.js";
 import { initStorage, getD1 } from "./lib/storage.js";
 import { resetEnv } from "./config/env.js";
+import { relayFromBinding, setRelay } from "./lib/relay.js";
 
 type Bindings = {
   DB: D1Database;
   CLOUDANA_KV: KVNamespace;
+  /** Node relay Durable Objects (script_name = cloudana-relay); absent → relayed deployments are not probed. */
+  RELAY?: DurableObjectNamespace;
   [key: string]: unknown;
 };
 
@@ -31,6 +34,7 @@ const bindBindings: MiddlewareHandler<AppEnv<Bindings>> = async (c, next) => {
   }
   if (changed) resetEnv();
   initStorage(c.env.DB, c.env.CLOUDANA_KV);
+  setRelay(c.env.RELAY ? relayFromBinding(c.env.RELAY) : null);
   await next();
 };
 
@@ -55,6 +59,7 @@ const app = buildApp<Bindings>({
  */
 async function scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext): Promise<void> {
   initStorage(env.DB, env.CLOUDANA_KV);
+  setRelay(env.RELAY ? relayFromBinding(env.RELAY) : null);
   const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }] = await Promise.all([
     import("./services/deployment-duties.service.js"),
     import("./services/pricing.service.js"),

@@ -91,12 +91,16 @@ async function main() {
 
   // ── Hardening self-check with a fake docker/iptables ──────────────────────────────────────────────────
   const calls: string[] = [];
-  const fake = (opts: { network: boolean; rulesPresent: boolean; iptablesOk: boolean; icc?: string; info?: string; mount?: string }): Exec => {
+  const OLD_INPUT = "INPUT -s 172.31.0.0/16 -j DROP";
+  const NEW_INPUT = "INPUT -s 172.31.0.0/16 -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP";
+  const fake = (opts: { network: boolean; rulesPresent: boolean; iptablesOk: boolean; icc?: string; info?: string; mount?: string; version?: string; oldRule?: boolean }): Exec => {
     let created = opts.network;
+    let oldPresent = opts.oldRule ?? false;
     return async (cmd, args) => {
       calls.push([cmd, ...args].join(" "));
       if (cmd === "docker" && args[0] === "info" && args[1] === "--format") return opts.info ?? "overlay2|/var/lib/docker|Backing Filesystem=xfs;Supports d_type=true;";
       if (cmd === "docker" && args[0] === "info") return "ok";
+      if (cmd === "docker" && args[0] === "version") return opts.version ?? "28.0.1";
       if (cmd === "findmnt") return opts.mount ?? "rw,relatime,attr2,inode64,prjquota";
       if (cmd === "docker" && args[1] === "inspect") {
         if (!created) throw new Error("No such network");
@@ -108,6 +112,11 @@ async function main() {
       }
       if (cmd === "iptables") {
         if (!opts.iptablesOk) throw new Error("Permission denied (you must be root)");
+        if (args.slice(1).join(" ") === OLD_INPUT) {
+          if (args[0] === "-C" && !oldPresent) throw new Error("Bad rule");
+          if (args[0] === "-D") oldPresent = false;
+          return "";
+        }
         if (args[0] === "-C" && !opts.rulesPresent) throw new Error("Bad rule");
         return "";
       }
@@ -118,8 +127,24 @@ async function main() {
   check(res.ok, `creates the network and installs rules (${res.reason})`);
   check(calls.some((c) => c.startsWith(`docker network create --driver bridge --opt com.docker.network.bridge.enable_icc=false ${TENANT_NETWORK}`)), "network created with icc off");
   for (const dst of BLOCKED_RANGES) check(calls.includes(`iptables -I DOCKER-USER -s 172.31.0.0/16 -d ${dst} -j DROP`), `DROP to ${dst} installed`);
-  check(calls.includes("iptables -I INPUT -s 172.31.0.0/16 -j DROP"), "DROP to the host itself installed");
+  check(calls.includes(`iptables -I ${NEW_INPUT}`), "DROP of new connections to the host itself installed (replies pass: B1)");
+  check(!calls.some((c) => c.startsWith("iptables -D")), "no old INPUT rule → nothing deleted");
   check(egressRules("10.9.0.0/16").length === BLOCKED_RANGES.length + 1, "one rule per range + host");
+  // B1 upgrade: the old INPUT rule (it dropped container replies to the host) goes, after the new one is in place.
+  calls.length = 0;
+  res = await hardeningSelfCheck(fake({ network: true, rulesPresent: false, iptablesOk: true, oldRule: true }));
+  const del = calls.indexOf(`iptables -D ${OLD_INPUT}`);
+  check(res.ok && del > calls.indexOf(`iptables -I ${NEW_INPUT}`) && calls.indexOf(`iptables -I ${NEW_INPUT}`) >= 0, "old INPUT rule deleted after the conntrack rule is installed");
+  check(calls.filter((c) => c.startsWith("iptables -D")).length === 1 && res.notes.some((n) => /1 old INPUT rule\(s\) removed/.test(n)), "deleted once, noted");
+  // Docker ≥ 28 (older engines expose 127.0.0.1-published ports to the LAN).
+  for (const v of ["27.5.1", "20.10.24+dfsg1", "", "garbage"]) {
+    res = await hardeningSelfCheck(fake({ network: true, rulesPresent: true, iptablesOk: true, version: v }));
+    check(!res.ok && /too old: containers need Docker ≥ 28/.test(res.reason ?? ""), `Docker "${v}" → containers refused (${res.reason})`);
+  }
+  for (const v of ["28.0.0", "28.0.0-rc.1", "29.1.3"]) {
+    res = await hardeningSelfCheck(fake({ network: true, rulesPresent: true, iptablesOk: true, version: v }));
+    check(res.ok && res.notes.includes(`docker ${v}`), `Docker ${v} accepted`);
+  }
   calls.length = 0;
   res = await hardeningSelfCheck(fake({ network: true, rulesPresent: true, iptablesOk: true }));
   check(res.ok && !calls.some((c) => c.includes(" -I ")), "present rules are only checked, not re-added");

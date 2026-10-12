@@ -1,0 +1,18 @@
+# cloudana-relay — node WebSockets (docs/V4_RELAY_CONTRACT.md). Deployed rarely: a deploy drops every node socket.
+name = "cloudana-relay"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+workers_dev = false
+routes = [
+  { pattern = "relay.cloudana.io", custom_domain = true }
+]
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayNode"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayNode"]
+
+# Secret (same value on cloudana-api): wrangler secret put RELAY_TICKET_SECRET

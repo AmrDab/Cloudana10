@@ -84,8 +84,11 @@ function sendFile(res: http.ServerResponse, file: string, status: number, head: 
   createReadStream(file).pipe(res);
 }
 
-/** Serve `root` on 0.0.0.0:`port`. Resolves once listening. */
-export function serveSite(root: string, port: number): Promise<http.Server> {
+/**
+ * Serve `root` on `host`:`port`. Resolves once listening. 0.0.0.0 for direct (legacy) sites; 127.0.0.1 for sites
+ * served through the relay, which nothing outside this machine reaches.
+ */
+export function serveSite(root: string, port: number, host = "0.0.0.0"): Promise<http.Server> {
   const absRoot = path.resolve(root);
   const server = http.createServer((req, res) => {
     const head = req.method === "HEAD";
@@ -117,7 +120,7 @@ export function serveSite(root: string, port: number): Promise<http.Server> {
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "0.0.0.0", () => {
+    server.listen(port, host, () => {
       server.off("error", reject);
       resolve(server);
     });

@@ -34,5 +34,12 @@ binding = "CLOUDANA_KV"
 id = "9b7d684cf36a4d7680b5c374d1228246"
 
 # Node duties, price controller, deposit watcher (src/worker.ts scheduled()).
+# Relay (docs/V4_RELAY_CONTRACT.md): probes reach relayed deployments through each node's RelayNode.
+# Secret (same value on cloudana-relay): wrangler secret put RELAY_TICKET_SECRET
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayNode"
+script_name = "cloudana-relay"
+
 [triggers]
 crons = ["* * * * *"]

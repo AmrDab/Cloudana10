@@ -1,0 +1,8 @@
+# Test-only: binds the locally running cloudana-relay (wrangler dev) the way the gateway and API do (script_name).
+name = "relay-e2e-client"
+compatibility_date = "2025-04-01"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayNode"
+script_name = "cloudana-relay"

@@ -1,6 +1,7 @@
 // Cloud workstations (docs/WORKSTATIONS.md §1, §5): pure helpers — argv, env, status report, volume schedule.
 // Everything here is side-effect free so it can be tested on a machine without Docker or a GPU.
 import { randomBytes } from "node:crypto";
+import { isIPv4, isIPv6 } from "node:net";
 import { containerName, ENV_KEY, hardeningArgs, sanitizeTenantEnv, userArgs, volumeName, type ContainerSpec } from "./container.ts";
 import type { GpuInfo } from "./hardware.ts";
 
@@ -29,9 +30,14 @@ export interface WorkstationPorts {
 export interface WorkstationReport {
   status: "running";
   endpoint?: string;
+  webPath?: string; // relay mode, instead of endpoint: its path + query ("/lab?token=…", "/")
   sshEndpoint?: string;
   webToken?: string;
+  message?: string;
 }
+
+/** Message of a relayed workstation's report when its SSH port cannot be reported (the node has no public IP). */
+export const SSH_NEEDS_PUBLIC_IP = "SSH needs a node with a public IP";
 
 export const DEFAULT_WORKDIR = "/workspace";
 /** Used when a stop arrives for a workstation the agent has no record of and the spec carries no keepDays. */
@@ -139,6 +145,7 @@ export function workstationRunArgs(
   env: Record<string, string>,
   ports: WorkstationPorts,
   devices: number[],
+  relayed = false, // web port published on 127.0.0.1 only (served through the relay); SSH stays public
 ): string[] {
   validateWorkstation(spec);
   if (typeof spec.image !== "string" || !spec.image || spec.image.startsWith("-")) throw new Error("invalid image");
@@ -160,7 +167,7 @@ export function workstationRunArgs(
   args.push("-v", `${volumeName(id)}:${workdirOf(spec)}`);
   if (spec.access.web) {
     if (ports.web === undefined) throw new Error("no host port for web access");
-    args.push("-p", `${port(ports.web, "host port")}:${spec.access.web.port}`);
+    args.push("-p", `${relayed ? "127.0.0.1:" : ""}${port(ports.web, "host port")}:${spec.access.web.port}`);
   }
   if (spec.access.ssh) {
     if (ports.ssh === undefined) throw new Error("no host port for ssh access");
@@ -178,18 +185,46 @@ export function workstationRunArgs(
 /**
  * The `running` report. The token goes in the endpoint URL only when the app accepts it there (tokenQuery, or a
  * known template such as Jupyter); otherwise the endpoint is plain and the token travels as `webToken`.
+ * `relayed`: the web port is served through the relay, so instead of an endpoint the report carries `webPath` (the
+ * endpoint's path + query; the API puts it after https://<id>.<user-content domain>). SSH is never relayed: it is
+ * reported only when the node's public host is a public IP, otherwise the message says why it is missing.
  */
-export function workstationReport(publicHost: string, spec: WorkstationSpec, ports: WorkstationPorts, token?: string): WorkstationReport {
+export function workstationReport(
+  publicHost: string,
+  spec: WorkstationSpec,
+  ports: WorkstationPorts,
+  token?: string,
+  relayed = false,
+): WorkstationReport {
   const body: WorkstationReport = { status: "running" };
   if (spec.access.web && ports.web !== undefined) {
     const query = spec.tokenQuery ?? (spec.tokenEnv ? KNOWN_TOKEN_QUERY[spec.tokenEnv] : undefined);
-    const path = spec.access.web.path ?? (token && query ? "/" : "");
-    body.endpoint = `http://${publicHost}:${ports.web}${path}`;
-    if (token && query) body.endpoint += `?${query}=${encodeURIComponent(token)}`;
-    else if (token) body.webToken = token;
+    const inUrl = !!token && !!query;
+    let path = spec.access.web.path ?? (inUrl ? "/" : "");
+    if (inUrl) path += `?${query}=${encodeURIComponent(token!)}`;
+    if (relayed) body.webPath = path || "/";
+    else body.endpoint = `http://${publicHost}:${ports.web}${path}`;
+    if (token && !inUrl) body.webToken = token;
   }
-  if (spec.access.ssh && ports.ssh !== undefined) body.sshEndpoint = `${publicHost}:${ports.ssh}`;
+  if (spec.access.ssh && ports.ssh !== undefined) {
+    if (!relayed || isPublicIp(publicHost)) body.sshEndpoint = `${publicHost}:${ports.ssh}`;
+    else body.message = SSH_NEEDS_PUBLIC_IP;
+  }
   return body;
+}
+
+/** A literal IPv4/IPv6 address reachable from the internet (not loopback, RFC 1918, link-local, CGNAT, ULA…). */
+export function isPublicIp(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (isIPv4(h)) {
+    const [a, b] = h.split(".").map(Number);
+    return !(
+      a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224
+    );
+  }
+  if (isIPv6(h)) return !(h === "::" || h === "::1" || /^f[cd]/.test(h) || /^fe[89ab]/.test(h) || h.startsWith("::ffff:"));
+  return false;
 }
 
 /** One entry of .data/volumes.json: a stopped workstation's volume, removed after keepUntil (ms epoch). */

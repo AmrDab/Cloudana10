@@ -103,8 +103,12 @@ export function userArgs(user: string | undefined, fallback: string | undefined)
   return ["--user", u];
 }
 
-/** Build the `docker run` argv for a plain container. `hostPorts[i]` maps to `spec.ports[i].container`. */
-export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<string, string>, hostPorts: number[]): string[] {
+/**
+ * Build the `docker run` argv for a plain container. `hostPorts[i]` maps to `spec.ports[i].container`. `relayed`:
+ * served through the relay, so the ports are published on the host's 127.0.0.1 only (needs Docker ≥ 28 to stay off
+ * the LAN — hardening.ts checks).
+ */
+export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<string, string>, hostPorts: number[], relayed = false): string[] {
   if (typeof spec.image !== "string" || !spec.image || spec.image.startsWith("-")) throw new Error("invalid image");
   if (!(spec.cpu > 0) || !(spec.memMb > 0)) throw new Error("cpu and memMb must be positive");
   // Plain containers never run as root (the API refuses it too); only workstations keep the image's user.
@@ -114,7 +118,7 @@ export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<strin
   args.push(...userArgs(spec.user, DEFAULT_USER));
   spec.ports.forEach((p, i) => {
     if (!Number.isInteger(p.container) || p.container < 1 || p.container > 65535) throw new Error("invalid container port");
-    args.push("-p", `${hostPorts[i]}:${p.container}`);
+    args.push("-p", `${relayed ? "127.0.0.1:" : ""}${hostPorts[i]}:${p.container}`);
   });
   for (const [k, v] of Object.entries(sanitizeTenantEnv(env))) {
     if (!ENV_KEY.test(k)) throw new Error(`invalid env key ${JSON.stringify(k)}`);

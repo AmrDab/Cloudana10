@@ -115,22 +115,34 @@ describe("url", () => {
   });
 });
 
-describe("GET /v1/deployments/{id}/route (public)", () => {
-  it("answers endpoint + state for a running site, cached 30 s", async () => {
+const route = (id: string, key: string | null = INTERNAL_KEY) =>
+  bare.request(`/v1/deployments/${id}/route`, key ? { headers: { "x-internal-key": key } } : {});
+
+describe("GET /v1/deployments/{id}/route (internal: the gateway)", () => {
+  it("needs the internal key — the node address and endpoint are not public", async () => {
     const { id } = await runningSite();
-    const res = await bare.request(`/v1/deployments/${id}/route`);
+    expect((await route(id, null)).status).toBe(401);
+    expect((await route(id, "wrong")).status).toBe(401);
+  });
+
+  it("answers endpoint + node + state for a running legacy (direct) site, not cached on the way", async () => {
+    const { id, node } = await runningSite();
+    const res = await route(id);
     expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toBe("public, max-age=30");
-    expect(await res.json()).toEqual({ status: "success", id, state: "running", endpoint: "http://203.0.113.10:42001", kind: "static" });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({
+      status: "success", id, state: "running", kind: "static", workstation: false, relayed: false,
+      nodes: [node.address.toLowerCase()], endpoint: "http://203.0.113.10:42001",
+    });
   });
 
   it("hides the endpoint while not running and 404s unknown ids", async () => {
     const u = await user();
     const id = await createSite(u.jwt);
-    const queued = await (await bare.request(`/v1/deployments/${id}/route`)).json();
-    expect(queued).toEqual({ status: "success", id, state: "queued", endpoint: null, kind: "static" });
-    expect((await bare.request(`/v1/deployments/${crypto.randomUUID()}/route`)).status).toBe(404);
-    expect((await bare.request(`/v1/deployments/not-a-uuid/route`)).status).toBe(400);
+    const queued = await (await route(id)).json();
+    expect(queued).toEqual({ status: "success", id, state: "queued", kind: "static", workstation: false, relayed: false, nodes: [], endpoint: null });
+    expect((await route(crypto.randomUUID())).status).toBe(404);
+    expect((await route("not-a-uuid")).status).toBe(400);
   });
 });
 
@@ -151,7 +163,7 @@ describe("POST /v1/admin/deployments/{id}/stop", () => {
 
     const hb = await (await signed(node, "/v1/nodes/heartbeat")).json();
     expect(hb.deployments).toContainEqual(expect.objectContaining({ id, action: "stop" }));
-    expect((await bare.request(`/v1/deployments/${id}/route`).then((r) => r.json())).state).toBe("stopped");
+    expect((await route(id).then((r) => r.json())).state).toBe("stopped");
     // idempotent
     expect((await adminStop(id)).status).toBe(200);
     expect((await adminStop(crypto.randomUUID())).status).toBe(404);

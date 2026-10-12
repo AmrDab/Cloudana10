@@ -13,7 +13,7 @@ COPY node-agent/package.json node-agent/package-lock.json node-agent/tsconfig.js
 RUN cd node-agent && npm ci --include=dev
 COPY pouw/package.json pouw/
 COPY pouw/src pouw/src
-COPY shared/sealed.ts shared/
+COPY shared/sealed.ts shared/relay-protocol.ts shared/
 COPY node-agent/src node-agent/src
 RUN cd node-agent && npm run build && npm prune --omit=dev && npm cache clean --force
 
@@ -45,7 +45,9 @@ WORKDIR /app/dist/node-agent
 
 # CLOUDANA_API — API base URL (https); CLOUDANA_INSTRUCTION_SIGNER — address from GET /v1/nodes/instruction-key
 # (required until a default is baked into src/instructions.ts); CLOUDANA_FLEET_TOKEN — joins your fleet, no bind link.
-# Hosting: set CLOUDANA_PUBLIC_HOST (or "auto") and publish the port range, e.g. -p 42000-42100:42000-42100.
+# Run with --network host (required: the agent reaches tenant containers on the host's 127.0.0.1). Behind the relay a
+# node needs no open ports; in legacy mode (an API without a relay) the port range must be reachable and
+# CLOUDANA_PUBLIC_HOST (or "auto") is the host visitors use. Containers need Docker >= 28 on the host.
 # GPU workstations: the host needs the NVIDIA driver + nvidia-container-toolkit; the agent only runs nvidia-smi to detect
 # GPUs, so start it with `--gpus all` (or mount nvidia-smi and /dev/nvidia*) or it announces no `gpu` capability.
 ENV CLOUDANA_API=https://api.cloudana.io

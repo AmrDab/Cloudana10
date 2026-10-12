@@ -13,3 +13,13 @@ routes = [
 [vars]
 API_URL = "https://api.cloudana.io"
 SITES_DOMAIN = "sites.cloudana.io"
+
+# Relayed deployments (docs/V4_RELAY_CONTRACT.md): each node's RelayNode in cloudana-relay (deploy that first).
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayNode"
+script_name = "cloudana-relay"
+
+# Secret (same value as the API's): wrangler secret put INTERNAL_API_KEY
+# SITES_DOMAIN moves to the user-content domain (e.g. cloudana.run, one-level wildcard) once it exists
+# (docs/V4_REVIEW_RELAY.md §2); *.sites.cloudana.io would need a paid certificate.
