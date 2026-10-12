@@ -6,6 +6,7 @@
  *   PATCH  /v1/deployments/:id           — workstations: extend maxHours while assigned|running
  *   PATCH  /v1/deployments/:id/secrets   — set sealedEnv while queued|assigned (containers)
  *   DELETE /v1/deployments/:id[?purge=1]  — stop now (purge: workstation volume too); the node confirms on its next heartbeat
+ *   POST/GET /v1/deployments/:id/keys, DELETE …/keys/:keyId — endpoint visitor keys (docs/V4_ENDPOINTS_CONTRACT.md)
  * Another owner's deployment answers 404, the same as a missing one.
  * The GETs first re-queue the caller's deployments whose node went offline (as heartbeats do for all).
  *
@@ -18,13 +19,18 @@ import { ok, fail } from "../../lib/http.js";
 import {
   adminStop,
   createDeployment,
+  createKey,
   getOwnedRow,
+  isEndpoint,
   listDeployments,
   listEvents,
+  listKeys,
   extendWorkstation,
   nodePubkey,
   presentDeployments,
   publicRoute,
+  replicasOf,
+  revokeKey,
   setSealedEnv,
   stopDeployment,
 } from "../../services/deployments.service.js";
@@ -37,11 +43,19 @@ export const deploymentsRouter = createRouter();
 const TAGS = ["Deployments"];
 
 const Status = z.enum(["queued", "assigned", "running", "unreachable", "stopped", "failed"]);
+const ReplicaSchema = z.object({
+  id: z.string(),
+  status: Status,
+  statusReason: z.string().nullable(),
+  node: z.string().nullable(),
+  startedAt: z.number().nullable(),
+  probeOk: z.boolean().nullable(),
+});
 const DeploymentSchema = z.object({
   id: z.string(),
   templateId: z.string().nullable(),
   name: z.string(),
-  kind: z.enum(["static", "container", "workstation"]),
+  kind: z.enum(["static", "container", "workstation", "endpoint"]),
   status: Status,
   statusReason: z.string().nullable(),
   node: z.string().nullable(),
@@ -71,6 +85,11 @@ const DeploymentSchema = z.object({
         "webToken = password for UIs whose token cannot go in the URL (GET /deployments/{id} only, never in the list)",
     }),
   gpu: z.object({ count: z.number().int(), names: z.array(z.string()) }).nullable().optional(),
+  // Endpoints (docs/V4_ENDPOINTS_CONTRACT.md):
+  parentId: z.string().optional().openapi({ description: "A replica: the endpoint it belongs to" }),
+  replicas: z.array(ReplicaSchema).optional().openapi({ description: "Endpoints: one entry per replica; status is derived from them" }),
+  auth: z.enum(["public", "key"]).optional(),
+  logs: z.string().optional().openapi({ description: "GET /deployments/{id} only: the node's log tail from the last failure" }),
 });
 const EventSchema = z.object({ at: z.number(), level: z.enum(["info", "warn", "error"]), message: z.string() });
 const IdParam = z.object({ id: z.string().uuid("Invalid deployment id") });
@@ -78,8 +97,10 @@ const IdParam = z.object({ id: z.string().uuid("Invalid deployment id") });
 const CreateSchema = z.object({
   templateId: z.string().min(1).max(200).optional(),
   name: z.string().trim().min(1).max(80),
-  kind: z.enum(["static", "container", "workstation"]),
-  spec: z.record(z.unknown()).openapi({ description: "StaticSpec, ContainerSpec (V3 §3) or WorkstationSpec (WORKSTATIONS §1), validated per kind" }),
+  kind: z.enum(["static", "container", "workstation", "endpoint"]),
+  spec: z.record(z.unknown()).openapi({
+    description: "StaticSpec, ContainerSpec (V3 §3), WorkstationSpec (WORKSTATIONS §1) or EndpointSpec (V4_ENDPOINTS_CONTRACT), validated per kind",
+  }),
 });
 
 const createRouteDef = createRoute({
@@ -88,8 +109,10 @@ const createRouteDef = createRoute({
   tags: TAGS,
   description:
     "Static price = PRICE_HOSTING_UCLD_PER_HOUR; container = ceil(cpu/1000×CPU + memMb/1024×MEM + storageMb/1024×STORAGE), " +
-    "min the hosting price. The first hour is held from your credits. Static sites need index.html; ≤ 2 MB decoded " +
-    "(and ≤ 1.9 MB encoded — D1 row limit). Container specs ≤ 32 KB.",
+    "min the hosting price; GPUs add PRICE_GPU_{CONSUMER|DATACENTER} each. The first hour is held from your credits " +
+    "(× replicas for an endpoint). Static sites need index.html; ≤ 2 MB decoded (and ≤ 1.9 MB encoded — D1 row limit). " +
+    "Container specs ≤ 32 KB. An endpoint (your image, one port, 1–8 replicas, auth key|public) is served at " +
+    "https://{id}.{SITES_DOMAIN} through the relay; priceUcldPerHour in the answer is for all replicas.",
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: CreateSchema } } } },
   responses: responses(
@@ -170,14 +193,75 @@ deploymentsRouter.openapi(getRoute, async (c) => {
   if (!row) return fail(c, "not_found", "deployment not found");
   const pubkey = await nodePubkey(row.node);
   const [deployment] = await presentDeployments([row], true);
-  return ok(c, { deployment, events: await listEvents(row.id), ...(pubkey && { nodePubkey: pubkey }) });
+  const replicas = isEndpoint(row) ? (await replicasOf([row.id])).get(row.id) ?? [] : [];
+  return ok(c, { deployment, events: await listEvents(row.id, 50, replicas), ...(pubkey && { nodePubkey: pubkey }) });
+});
+
+// ── Endpoint keys (docs/V4_ENDPOINTS_CONTRACT.md) ───────────────────────────
+const KeySchema = z.object({ id: z.string(), name: z.string(), prefix: z.string(), createdAt: z.number(), revokedAt: z.number().nullable() });
+const KeyIdParam = IdParam.extend({ keyId: z.string().uuid("Invalid key id") });
+
+const createKeyRoute = createRoute({
+  method: "post",
+  path: "/deployments/{id}/keys",
+  tags: TAGS,
+  description:
+    "A new visitor key for an endpoint (auth \"key\"): callers send `Authorization: Bearer <key>`. The key is returned once; " +
+    "only its SHA-256 is stored. At most 20 live keys. A revoked key may work for up to 30 s more (the gateway's route cache).",
+  security: BEARER_AUTH,
+  request: {
+    params: IdParam,
+    body: { required: true, content: { "application/json": { schema: z.object({ name: z.string().trim().min(1).max(80) }) } } },
+  },
+  responses: responses(
+    { 201: json(z.object({ status: z.literal("success"), key: KeySchema.extend({ key: z.string() }) }), "Created (key shown once)") },
+    400,
+    401,
+    404,
+    409,
+    429,
+  ),
+});
+
+deploymentsRouter.openapi(createKeyRoute, async (c) => {
+  const r = await createKey(c.get("jwtPayload").sub, c.req.valid("param").id, c.req.valid("json").name);
+  return r.ok ? ok(c, { key: r.key }, 201) : fail(c, r.code, r.message);
+});
+
+const listKeysRoute = createRoute({
+  method: "get",
+  path: "/deployments/{id}/keys",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: IdParam },
+  responses: responses({ 200: json(z.object({ status: z.literal("success"), keys: z.array(KeySchema) }), "Keys (never the key itself)") }, 400, 401, 404, 429),
+});
+
+deploymentsRouter.openapi(listKeysRoute, async (c) => {
+  const keys = await listKeys(c.get("jwtPayload").sub, c.req.valid("param").id);
+  return keys ? ok(c, { keys }) : fail(c, "not_found", "deployment not found");
+});
+
+const revokeKeyRoute = createRoute({
+  method: "delete",
+  path: "/deployments/{id}/keys/{keyId}",
+  tags: TAGS,
+  security: BEARER_AUTH,
+  request: { params: KeyIdParam },
+  responses: responses({ 200: json(z.object({ status: z.literal("success") }), "Revoked") }, 400, 401, 404, 429),
+});
+
+deploymentsRouter.openapi(revokeKeyRoute, async (c) => {
+  const { id, keyId } = c.req.valid("param");
+  const r = await revokeKey(c.get("jwtPayload").sub, id, keyId);
+  return r.ok ? ok(c, {}) : fail(c, r.code, r.message);
 });
 
 const secretsRoute = createRoute({
   method: "patch",
   path: "/deployments/{id}/secrets",
   tags: TAGS,
-  description: "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers only.",
+  description: "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers and endpoint replicas (per replica id) only.",
   security: BEARER_AUTH,
   request: {
     params: IdParam,
@@ -254,9 +338,9 @@ const routeRoute = createRoute({
   path: "/deployments/{id}/route",
   tags: TAGS,
   description:
-    "Internal (X-Internal-Key; the gateway): what it needs to proxy a deployment. Relayed deployments name their node(s) " +
-    "and no address; legacy direct ones carry the node endpoint while running. Direct workstations answer 404. " +
-    "Cached 30 s by the gateway.",
+    "Internal (X-Internal-Key; the gateway): what it needs to proxy a deployment. Relayed deployments name the node and " +
+    "deployment id to ask for (one target per running replica); legacy direct ones carry the node endpoint while running. " +
+    "Endpoints add auth and, for auth key, the sha256 of each live key. Direct workstations answer 404. Cached 30 s by the gateway.",
   middleware: [requireInternalKey] as const,
   request: { params: IdParam },
   responses: responses(
@@ -266,11 +350,13 @@ const routeRoute = createRoute({
           status: z.literal("success"),
           id: z.string(),
           state: Status,
-          kind: z.enum(["static", "container"]),
+          kind: z.enum(["static", "container", "endpoint"]),
           workstation: z.boolean(),
           relayed: z.boolean(),
-          nodes: z.array(z.string()),
+          targets: z.array(z.object({ node: z.string(), dep: z.string() })),
           endpoint: z.string().nullable(),
+          auth: z.enum(["public", "key"]).optional(),
+          keys: z.array(z.string()).optional(),
         }),
         "Route",
       ),

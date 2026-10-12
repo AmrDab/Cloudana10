@@ -92,6 +92,11 @@ export const V1_TABLES = [
   // Node request nonces (middleware/node-auth.ts): INSERT … ON CONFLICT DO NOTHING makes the replay check atomic.
   `CREATE TABLE IF NOT EXISTS node_nonces (key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_node_nonces_expires ON node_nonces(expires_at)`,
+  // GPU endpoint keys (docs/V4_ENDPOINTS_CONTRACT.md): the key itself is shown once; only its sha256 is kept.
+  `CREATE TABLE IF NOT EXISTS endpoint_keys (
+    id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL, revoked_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_endpoint_keys_dep ON endpoint_keys(deployment_id, created_at)`,
 ];
 
 const BALANCE_COLUMNS = [
@@ -120,6 +125,11 @@ const BALANCE_COLUMNS = [
   // Relay (docs/V4_RELAY_CONTRACT.md): last heartbeat with an open relay socket; deployments served through it.
   "ALTER TABLE nodes ADD COLUMN relay_at INTEGER",
   "ALTER TABLE deployments ADD COLUMN relayed INTEGER NOT NULL DEFAULT 0",
+  // GPU endpoints (docs/V4_ENDPOINTS_CONTRACT.md): a parent row (replicas > 0, never on a node) and its replica
+  // rows (parent_id), each an ordinary relayed container. last_logs = the node's `docker logs` tail on failure.
+  "ALTER TABLE deployments ADD COLUMN parent_id TEXT",
+  "ALTER TABLE deployments ADD COLUMN replicas INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE deployments ADD COLUMN last_logs TEXT",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

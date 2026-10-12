@@ -408,7 +408,9 @@ Tell Claude **"workstation ready"**, with its operating system (Windows/Linux) a
 
 **No router changes:** the node connects out to the relay, so there are no ports to forward. For containers and GPU
 work Claude will walk you through Docker 28 or newer (on Windows: inside WSL2 Ubuntu, not Docker Desktop) and a
-dedicated disk area so a customer's container can never fill your C: drive.
+dedicated disk area so a customer's container can never fill your C: drive. A GPU node that should take **GPU
+endpoints** (customers' own inference images) also runs with `CLOUDANA_ANY_IMAGE=1` — Claude puts it in the install
+command when you say the node is for endpoints.
 
 Home machines run **compute jobs and static websites only**. Container and GPU rentals stay off until a properly hardened datacenter node exists. That's a security decision, not a bug.
 

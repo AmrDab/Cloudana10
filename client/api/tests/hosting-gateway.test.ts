@@ -132,7 +132,7 @@ describe("GET /v1/deployments/{id}/route (internal: the gateway)", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual({
       status: "success", id, state: "running", kind: "static", workstation: false, relayed: false,
-      nodes: [node.address.toLowerCase()], endpoint: "http://203.0.113.10:42001",
+      targets: [{ node: node.address.toLowerCase(), dep: id }], endpoint: "http://203.0.113.10:42001",
     });
   });
 
@@ -140,7 +140,7 @@ describe("GET /v1/deployments/{id}/route (internal: the gateway)", () => {
     const u = await user();
     const id = await createSite(u.jwt);
     const queued = await (await route(id)).json();
-    expect(queued).toEqual({ status: "success", id, state: "queued", kind: "static", workstation: false, relayed: false, nodes: [], endpoint: null });
+    expect(queued).toEqual({ status: "success", id, state: "queued", kind: "static", workstation: false, relayed: false, targets: [], endpoint: null });
     expect((await route(crypto.randomUUID())).status).toBe(404);
     expect((await route("not-a-uuid")).status).toBe(400);
   });

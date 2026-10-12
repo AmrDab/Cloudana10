@@ -42,6 +42,8 @@ exits.
   (fleet nodes only; needs Docker and the hardening self-check, see below)
 - `CLOUDANA_IMAGE_ALLOWLIST` — comma-separated regexes of extra images this node
   may run besides the network's curated list
+- `CLOUDANA_ANY_IMAGE=1` — run any image the network sends (announced as
+  `any-image`; GPU endpoints bring their own image, so a GPU node needs this)
 - `CLOUDANA_SITE` — as `--site`
 
 ## Signed instructions
@@ -109,6 +111,13 @@ hosting. Deployments arrive on the heartbeat:
   (a `user` of uid 0 is refused — plain containers never run as root),
   one free host port per container port (every port is tracked, so two
   containers never collide). Stop is `docker rm -f cld-<id>`.
+  A spec with `gpu.count` gets `--gpus "device=<i>,…" --shm-size=1g` (explicit
+  indices reserved like a workstation's); a spec with `health` is reported
+  `running` only once `GET http://127.0.0.1:<port><health.path>` answers 2xx/3xx
+  (polled every 3 s for `health.startupGraceSec`, default 600 s). If it exits or
+  the grace runs out, the report is `failed` with the last 100 lines of
+  `docker logs` as `logs`. That is how **GPU endpoint replicas** arrive
+  (docs/V4_ENDPOINTS_CONTRACT.md): relayed containers with `gpu` + `health`.
 
 **Container hardening** (`CLOUDANA_ALLOW_CONTAINERS=1`). At boot the agent
 first requires **Docker ≥ 28** (`docker version`): older engines let LAN hosts

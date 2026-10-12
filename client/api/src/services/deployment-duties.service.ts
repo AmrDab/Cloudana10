@@ -31,10 +31,13 @@ import {
   getDeploymentRow,
   type DeploymentRow,
 } from "./deployments.service.js";
-import { endpointAllowed, type ApiKind, type ContainerSpec, type DeploymentKind, type WorkstationSpec } from "./deployment-spec.js";
+
+/** Capability of a node that runs images outside the curated list (agent: CLOUDANA_ANY_IMAGE=1). */
+export const ANY_IMAGE_CAPABILITY = "any-image";
+import { endpointAllowed, imageAllowed, type ApiKind, type ContainerSpec, type DeploymentKind, type WorkstationSpec } from "./deployment-spec.js";
+export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { runAssignment } from "./jobs.service.js";
-import { WORKSTATION_TEMPLATES } from "./template-workstations.js";
 import { getRelay } from "../lib/relay.js";
 import type { NodeManifest } from "./nodes.service.js";
 
@@ -122,7 +125,8 @@ export async function requeueNodeDeployments(nodes: string[], reason: string, no
   return requeueRows(rows.results ?? [], reason, now);
 }
 
-type Queued = Pick<DeploymentRow, "id" | "kind" | "spec_json" | "sealed_env" | "workstation">;
+type Queued = Pick<DeploymentRow, "id" | "kind" | "spec_json" | "sealed_env" | "workstation" | "parent_id">;
+const QUEUED_COLS = "id, kind, spec_json, sealed_env, workstation, parent_id, status_reason";
 
 /** What a node has in use for containers + workstations (they share NODE_CAPACITY.container). */
 interface NodeState {
@@ -153,7 +157,7 @@ function nodeState(caps: string[], hw: Partial<NodeHardware> | null | undefined)
 }
 
 const specOf = (r: Pick<DeploymentRow, "spec_json">) => JSON.parse(r.spec_json) as ContainerSpec & Partial<WorkstationSpec>;
-const gpuRequest = (r: Pick<DeploymentRow, "workstation" | "spec_json">): GpuRequest | undefined => (r.workstation ? specOf(r).gpu : undefined);
+const gpuRequest = (r: Pick<DeploymentRow, "workstation" | "spec_json">): GpuRequest | undefined => specOf(r).gpu;
 const gpusHeld = (r: Pick<DeploymentRow, "workstation" | "spec_json">) => gpuRequest(r)?.count ?? 0;
 
 /**
@@ -215,10 +219,7 @@ async function assign(
     const room = NODE_CAPACITY.static - (live?.n ?? 0);
     if (room > 0) {
       const queued = await db
-        .prepare(
-          "SELECT id, kind, spec_json, sealed_env, workstation, status_reason FROM deployments WHERE status = 'queued' AND kind = 'static' " +
-            "ORDER BY created_at LIMIT ?",
-        )
+        .prepare(`SELECT ${QUEUED_COLS} FROM deployments WHERE status = 'queued' AND kind = 'static' ORDER BY created_at LIMIT ?`)
         .bind(room + 5)
         .all<Queued & Pick<DeploymentRow, "status_reason">>();
       let taken = 0;
@@ -237,19 +238,32 @@ async function assign(
   const state = nodeState(capabilities, hw);
   for (const r of live.results ?? []) addUsage(state, r, 1);
   if (state.containers >= NODE_CAPACITY.container) return;
-  // Containers and workstations in arrival order; one that does not fit here does not block the rest.
+  // Containers, workstations and endpoint replicas in arrival order; one that does not fit here does not block the
+  // rest. Endpoint parents (replicas > 0) are never placed: their replicas are.
   const queued = await db
-    .prepare(
-      "SELECT id, kind, spec_json, sealed_env, workstation, status_reason FROM deployments WHERE status = 'queued' AND kind = 'container' " +
-        "ORDER BY created_at LIMIT 50",
-    )
+    .prepare(`SELECT ${QUEUED_COLS} FROM deployments WHERE status = 'queued' AND kind = 'container' AND replicas = 0 ORDER BY created_at LIMIT 50`)
     .all<Queued & Pick<DeploymentRow, "status_reason">>();
   for (const q of queued.results ?? []) {
     if (state.containers >= NODE_CAPACITY.container) break;
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
     if (q.workstation && !publicHost) continue; // workstations stay direct (WebSockets, SSH): a verified public host only
+    if (q.parent_id && !(await replicaFits(node, q, relayed, capabilities))) continue;
     if (fits(q, state) && (await claim(node, q, now, relayed))) addUsage(state, q, 1);
   }
+}
+
+/**
+ * docs/V4_ENDPOINTS_CONTRACT.md: a replica needs a relay node (its traffic is POSTs through the hub), a node that
+ * runs its image (curated, or `any-image`), and no sibling replica already on this node.
+ */
+async function replicaFits(node: string, q: Queued, relayed: boolean, capabilities: string[]): Promise<boolean> {
+  if (!relayed) return false;
+  if (!imageAllowed(specOf(q).image) && !capabilities.includes(ANY_IMAGE_CAPABILITY)) return false;
+  const sibling = await getD1()
+    .prepare(`SELECT 1 FROM deployments WHERE parent_id = ? AND node = ? AND status IN ${LIVE} LIMIT 1`)
+    .bind(q.parent_id, node)
+    .first();
+  return !sibling;
 }
 
 /** When a deployment started on its node (youngest = largest). */
@@ -264,8 +278,8 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
   const db = getD1();
   const queued = await db
     .prepare(
-      "SELECT id, kind, spec_json, sealed_env, workstation FROM deployments WHERE status = 'queued' AND kind = 'container' " +
-        "AND (workstation = 0 OR json_extract(spec_json, '$.tier') = 'on-demand') ORDER BY created_at LIMIT 20",
+      "SELECT id, kind, spec_json, sealed_env, workstation, parent_id FROM deployments WHERE status = 'queued' AND kind = 'container' " +
+        "AND replicas = 0 AND parent_id IS NULL AND (workstation = 0 OR json_extract(spec_json, '$.tier') = 'on-demand') ORDER BY created_at LIMIT 20",
     )
     .all<Queued>();
   if (!queued.results?.length) return 0;
@@ -377,7 +391,8 @@ export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" |
   const relay = getRelay();
   if (!relay) return false;
   const probe = row.probe_path && row.probe_hash ? { path: row.probe_path, hash: row.probe_hash } : null;
-  const path = probe ? `/${probe.path.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/")}` : "/";
+  // A content probe fetches its file; an endpoint replica its health path (stored verbatim, no hash); else "/".
+  const path = probe ? `/${probe.path.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/")}` : row.probe_path || "/";
   try {
     const res = await relay(node, "/proxy", {
       method: "GET",
@@ -429,6 +444,11 @@ async function probe(node: string, now: number): Promise<void> {
     }
     const fails = row.probe_fail + 1;
     const toUnreachable = row.status === "running" && fails >= env.DEPLOY_PROBE_FAILS;
+    if (toUnreachable && row.parent_id) {
+      // An endpoint replica is replaced, not waited for: back to the queue for another node (this one is owed a stop).
+      await requeueRows([row], `replica unreachable after ${fails} failed probes`, now);
+      continue;
+    }
     await db
       .prepare(
         `UPDATE deployments SET probe_fail = ?, last_probe_at = ?${toUnreachable ? ", status = 'unreachable', status_reason = ?" : ""} ` +
@@ -471,21 +491,6 @@ async function bill(node: string, now: number): Promise<void> {
       }
     }
   }
-}
-
-let curatedImages: Set<string> | null = null;
-/** Curated images (workstation templates) plus IMAGE_ALLOWLIST (comma-separated regexes, optional env). */
-export function imageAllowed(image: string): boolean {
-  curatedImages ??= new Set(WORKSTATION_TEMPLATES.map((t) => t.image).filter((i): i is string => !!i));
-  if (curatedImages.has(image)) return true;
-  const extra = process.env.IMAGE_ALLOWLIST?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-  return extra.some((re) => {
-    try {
-      return new RegExp(`^(?:${re})$`).test(image);
-    } catch {
-      return false;
-    }
-  });
 }
 
 /** N5. */
@@ -610,7 +615,7 @@ export async function runDutiesCron(env?: CronBindings, now = Date.now()): Promi
 
 /** The agent's message when `docker run --gpus` finds fewer free GPUs than assigned. */
 const GPU_REFUSAL = /not enough free GPUs/i;
-/** status_reason of a workstation re-queued after a GPU refusal; assign() skips that node for it. */
+/** status_reason of a container re-queued after a GPU refusal; assign() skips that node for it. */
 export const gpuRefusalReason = (node: string) => `not enough free GPUs on node ${node}`;
 /** The agent reports `failed` with this prefix when it cannot serve a deployment at all (e.g. its endpoint was refused). */
 export const NODE_CANNOT_SERVE = "node cannot serve:";
@@ -624,6 +629,8 @@ export type StatusReport = {
   /** Relayed workstations: path + query of the web app (stored in `endpoint`, which holds a path for relayed rows). */
   webPath?: string;
   message?: string;
+  /** failed: the container's log tail (shown to the owner on GET /deployments/{id}). */
+  logs?: string;
 };
 export type ReportResult = { ok: true; status: string } | { ok: false; code: "not_found" | "conflict" | "validation_failed"; message: string };
 
@@ -716,7 +723,8 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
     return { ok: true, status: row.status };
   }
   const message = report.message ?? "";
-  const gpuRefusal = report.status === "failed" && row.workstation && GPU_REFUSAL.test(message);
+  if (report.logs) await db.prepare("UPDATE deployments SET last_logs = ? WHERE id = ?").bind(report.logs, id).run();
+  const gpuRefusal = report.status === "failed" && row.kind === "container" && GPU_REFUSAL.test(message);
   const cannotServe = report.status === "failed" && row.status === "assigned" && message.startsWith(NODE_CANNOT_SERVE);
   if (gpuRefusal || cannotServe) {
     // Our placement was wrong for this node (GPUs held elsewhere, or the node cannot serve at all):

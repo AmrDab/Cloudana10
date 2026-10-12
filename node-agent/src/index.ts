@@ -7,7 +7,7 @@ import { detectHardware, benchmarkMmacPerSec, type Manifest } from "./hardware.t
 import { signRequest, sha256hex, learnClockOffset, clockOffset, serverNow } from "./signing.ts";
 import { solveAssignedJob } from "../../pouw/src/index.ts";
 import { publicKeyOf } from "../../shared/sealed.ts";
-import { dockerAvailable } from "./container.ts";
+import { dockerAvailable, anyImageOptIn } from "./container.ts";
 import { hardeningSelfCheck } from "./hardening.ts";
 import { detectPublicIp } from "./public-ip.ts";
 import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from "./deployments.ts";
@@ -86,6 +86,8 @@ const { api, name, site, publicHost: publicHostArg, ports } = parseArgs();
 /** Datacenter fleet token: binds this node to the fleet owner's wallet on announce, no bind link. */
 const fleetToken = process.env.CLOUDANA_FLEET_TOKEN?.trim() || undefined;
 const allowContainers = /^(1|true|yes)$/i.test(process.env.CLOUDANA_ALLOW_CONTAINERS ?? "");
+/** Run images outside the curated list (announced as `any-image`; GPU endpoints need it). */
+const anyImage = anyImageOptIn();
 const instructionSigner = (process.env.CLOUDANA_INSTRUCTION_SIGNER?.trim() || DEFAULT_INSTRUCTION_SIGNER) ?? null;
 const VERSION = agentVersion();
 
@@ -170,7 +172,8 @@ async function main() {
     log("containers: Docker found but CLOUDANA_ALLOW_CONTAINERS is not set — this node does compute + static hosting only");
   }
   const manifest: Manifest = detectHardware(); // gpus come from nvidia-smi (3 s timeout; [] without it)
-  const workTypes = capabilities(containersReady, manifest.gpus);
+  const workTypes = capabilities(containersReady, manifest.gpus, anyImage);
+  if (anyImage && !containersReady) log("CLOUDANA_ANY_IMAGE is set but containers are off — ignored");
   log(`capabilities: ${workTypes.join(", ")} · serving on ${publicHost}:${ports[0]}-${ports[1]}`);
 
   const deployments: DeploymentManager = new DeploymentManager({

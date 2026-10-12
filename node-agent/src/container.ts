@@ -10,6 +10,10 @@ export type ContainerSpec = {
   storageMb: number;
   /** "uid[:gid]" (numeric). Plain containers default to DEFAULT_USER; workstations to the image's user. */
   user?: string;
+  /** GPUs to hand the container (explicit device indices, like workstations). */
+  gpu?: { count: number; minVramGb?: number; class?: string };
+  /** GPU endpoints (docs/V4_ENDPOINTS_CONTRACT.md): report `running` only once GET path on the first port answers 2xx/3xx. */
+  health?: { path?: string; startupGraceSec?: number };
 };
 
 export function docker(args: string[], timeoutMs: number): Promise<string> {
@@ -91,9 +95,12 @@ export function imageAllowedLocally(image: string, allowlist: string | undefined
   });
 }
 
-/** Whether to run `image`: the API's flag, or a local allowlist match. */
-export function imageAllowed(image: string, apiFlag: unknown, allowlist = process.env.CLOUDANA_IMAGE_ALLOWLIST): boolean {
-  return apiFlag === true || imageAllowedLocally(image, allowlist) === true;
+/** CLOUDANA_ANY_IMAGE=1: this node runs any image the network sends it (announced as `any-image`; GPU endpoints need it). */
+export const anyImageOptIn = (value = process.env.CLOUDANA_ANY_IMAGE) => /^(1|true|yes)$/i.test(value ?? "");
+
+/** Whether to run `image`: the API's flag, a local allowlist match, or the any-image opt-in. */
+export function imageAllowed(image: string, apiFlag: unknown, allowlist = process.env.CLOUDANA_IMAGE_ALLOWLIST, anyImage = anyImageOptIn()): boolean {
+  return apiFlag === true || anyImage || imageAllowedLocally(image, allowlist) === true;
 }
 
 export function userArgs(user: string | undefined, fallback: string | undefined): string[] {
@@ -106,21 +113,26 @@ export function userArgs(user: string | undefined, fallback: string | undefined)
 /**
  * Build the `docker run` argv for a plain container. `hostPorts[i]` maps to `spec.ports[i].container`. `relayed`:
  * served through the relay, so the ports are published on the host's 127.0.0.1 only (needs Docker ≥ 28 to stay off
- * the LAN — hardening.ts checks).
+ * the LAN — hardening.ts checks). `devices`: the GPU indices allocated to it (pickGpus), one per spec.gpu.count;
+ * GPU containers also get 1 GB of /dev/shm (inference engines need it).
  */
-export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<string, string>, hostPorts: number[], relayed = false): string[] {
+export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<string, string>, hostPorts: number[], relayed = false, devices: number[] = []): string[] {
   if (typeof spec.image !== "string" || !spec.image || spec.image.startsWith("-")) throw new Error("invalid image");
   if (!(spec.cpu > 0) || !(spec.memMb > 0)) throw new Error("cpu and memMb must be positive");
   // Plain containers never run as root (the API refuses it too); only workstations keep the image's user.
   if (spec.user !== undefined && /^0(:\d{1,7})?$/.test(spec.user)) throw new Error("containers cannot run as root (uid 0)");
+  const wanted = Number.isInteger(spec.gpu?.count) && spec.gpu!.count > 0 ? spec.gpu!.count : 0;
+  if (devices.length !== wanted || devices.some((d) => !Number.isInteger(d) || d < 0)) throw new Error("GPU devices do not match gpu.count");
   const args = ["run", "-d", "--name", containerName(id), "--restart", "unless-stopped"];
   args.push(...hardeningArgs(spec.memMb, spec.storageMb), "--cpus", String(spec.cpu / 1000));
   args.push(...userArgs(spec.user, DEFAULT_USER));
+  // Explicit indices, never count=N (Docker would hand every container GPU 0); the inner quotes keep one --gpus field.
+  if (devices.length) args.push("--gpus", `"device=${devices.join(",")}"`, "--shm-size=1g");
   spec.ports.forEach((p, i) => {
     if (!Number.isInteger(p.container) || p.container < 1 || p.container > 65535) throw new Error("invalid container port");
     args.push("-p", `${relayed ? "127.0.0.1:" : ""}${hostPorts[i]}:${p.container}`);
   });
-  for (const [k, v] of Object.entries(sanitizeTenantEnv(env))) {
+  for (const [k, v] of Object.entries(sanitizeTenantEnv(env, devices))) {
     if (!ENV_KEY.test(k)) throw new Error(`invalid env key ${JSON.stringify(k)}`);
     args.push("-e", `${k}=${String(v)}`);
   }
@@ -199,6 +211,20 @@ export async function dockerGpuDevices(id: string): Promise<number[] | null> {
   }
 }
 
+/** Most the owner sees of a failed container's output (the API caps `logs` at 16 KB). */
+export const LOGS_MAX_CHARS = 8192;
+
+/** The last lines of `docker logs` (stdout + stderr), at most LOGS_MAX_CHARS; "" when Docker cannot say. */
+export function dockerLogs(id: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile("docker", ["logs", "--tail", "100", containerName(id)], { timeout: 10_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && !stdout && !stderr) return resolve("");
+      const text = `${stdout ?? ""}${stderr ?? ""}`;
+      resolve(text.length > LOGS_MAX_CHARS ? text.slice(-LOGS_MAX_CHARS) : text);
+    });
+  });
+}
+
 /** The Docker operations DeploymentManager uses — injectable so selftests run without Docker. */
 export const realDocker = {
   run: dockerRun,
@@ -207,5 +233,6 @@ export const realDocker = {
   volumeEnsure: dockerVolumeEnsure,
   volumeRemove: dockerVolumeRemove,
   gpuDevices: dockerGpuDevices,
+  logs: dockerLogs,
 };
 export type DockerOps = typeof realDocker;

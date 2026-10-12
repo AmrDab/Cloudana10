@@ -367,9 +367,11 @@ Spec: docs/V4_VERIFIED_SERVICES.md §2 · contract: docs/V4_RELAY_CONTRACT.md ·
 
 ## V4 step 3 — GPU endpoints (2026-10-12)
 Spec: docs/V4_VERIFIED_SERVICES.md §3 · contract: docs/V4_ENDPOINTS_CONTRACT.md
-- [ ] API: kind `endpoint` = parent + replica child rows; EndpointSpec (port, health, gpu, replicas, auth); per-replica price + hold
-- [ ] API: placement (relay node, gpu, any-image, anti-affinity), health-path probes, replica re-queue on failed probes, GPU refusal for containers, failure logs
-- [ ] API: endpoint keys (create/list/revoke, sha256), route with targets + auth + key hashes; `any-image` capability
-- [ ] gateway: key auth, per-key rate limit binding, random replica + retry with buffered body, JSON errors
-- [ ] agent: GPUs for containers, health wait + logs on failure, CLOUDANA_ANY_IMAGE, selftests
-- [ ] tests green everywhere (API, gateway, agent); docs + runbook + README; PR; deploy API
+- [x] API: kind `endpoint` = parent + replica child rows; EndpointSpec (port, health, gpu, replicas, auth); per-replica price + hold
+- [x] API: placement (relay node, gpu, any-image, anti-affinity), health-path probes, replica re-queue on failed probes, GPU refusal for containers, failure logs
+- [x] API: endpoint keys (create/list/revoke, sha256), route with targets + auth + key hashes; `any-image` capability
+- [x] gateway: key auth, per-key rate limit binding, random replica + retry with buffered body, JSON errors
+- [x] agent: GPUs for containers, health wait + logs on failure, CLOUDANA_ANY_IMAGE, selftests
+- [x] tests green: API 285 (+11 endpoints), gateway 28, agent selftests (workstation 82, security 94, relay 69 + e2e 24), relay 12; docs + runbook + README
+- [ ] independent review of the diff; PR; deploy API (versions upload → smoke → deploy)
+- [ ] step 7 (console Endpoints tab) next; gateway deploy still waits for the user-content domain + INTERNAL_API_KEY

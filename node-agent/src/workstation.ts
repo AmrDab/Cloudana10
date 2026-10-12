@@ -59,10 +59,17 @@ function port(p: unknown, what: string): number {
 /**
  * Capabilities to announce. Every node does `matmul` + `hosting` (static sites). `container` only when the operator
  * opted in (CLOUDANA_ALLOW_CONTAINERS=1), Docker answers and the hardening self-check passed (`containersReady`);
- * `gpu` additionally needs a working nvidia-smi.
+ * `gpu` additionally needs a working nvidia-smi; `any-image` (CLOUDANA_ANY_IMAGE=1) lets the network send images
+ * outside its curated list — what GPU endpoints need (docs/V4_ENDPOINTS_CONTRACT.md).
  */
-export function workTypes(containersReady: boolean, gpus: GpuInfo[]): string[] {
-  return ["matmul", "hosting", ...(containersReady ? ["container"] : []), ...(containersReady && gpus.length > 0 ? ["gpu"] : [])];
+export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = false): string[] {
+  return [
+    "matmul",
+    "hosting",
+    ...(containersReady ? ["container"] : []),
+    ...(containersReady && gpus.length > 0 ? ["gpu"] : []),
+    ...(containersReady && anyImage ? ["any-image"] : []),
+  ];
 }
 
 /** GPUs a workstation asks for (0 = CPU workstation). */
