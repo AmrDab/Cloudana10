@@ -364,3 +364,12 @@ Spec: docs/V4_VERIFIED_SERVICES.md §2 · contract: docs/V4_RELAY_CONTRACT.md ·
 - [ ] owner: RELAY_TICKET_SECRET on api + relay; INTERNAL_API_KEY on api + keeper + gateway (runbook step 8)
 - [ ] owner: user-content domain; then gateway on it
 - [ ] later: WebSocket tunnelling over the relay (workstations, ComfyUI, Open WebUI)
+
+## V4 step 3 — GPU endpoints (2026-10-12)
+Spec: docs/V4_VERIFIED_SERVICES.md §3 · contract: docs/V4_ENDPOINTS_CONTRACT.md
+- [ ] API: kind `endpoint` = parent + replica child rows; EndpointSpec (port, health, gpu, replicas, auth); per-replica price + hold
+- [ ] API: placement (relay node, gpu, any-image, anti-affinity), health-path probes, replica re-queue on failed probes, GPU refusal for containers, failure logs
+- [ ] API: endpoint keys (create/list/revoke, sha256), route with targets + auth + key hashes; `any-image` capability
+- [ ] gateway: key auth, per-key rate limit binding, random replica + retry with buffered body, JSON errors
+- [ ] agent: GPUs for containers, health wait + logs on failure, CLOUDANA_ANY_IMAGE, selftests
+- [ ] tests green everywhere (API, gateway, agent); docs + runbook + README; PR; deploy API
