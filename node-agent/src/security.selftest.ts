@@ -225,6 +225,7 @@ async function main() {
     volumeEnsure: async () => "created",
     volumeRemove: async () => true,
     gpuDevices: async () => null,
+    logs: async () => "",
   };
   const reports: { id: string; body: StatusBody }[] = [];
   let reject: string | null = null;

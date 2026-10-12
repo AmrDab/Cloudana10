@@ -5,7 +5,9 @@ import path from "node:path";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { parseNvidiaSmi } from "./hardware.ts";
 import { parseDeviceRequests, type DockerOps } from "./container.ts";
-import { DeploymentManager, type StatusBody } from "./deployments.ts";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { DeploymentManager, httpOk, type StatusBody } from "./deployments.ts";
 import {
   dueVolumes,
   keepDaysOf,
@@ -62,6 +64,8 @@ async function main() {
   check(workTypes(true, []).join() === "matmul,hosting,container", "docker, no gpu");
   check(workTypes(false, gpus).join() === "matmul,hosting", "gpu without docker is not advertised");
   check(workTypes(true, gpus).join() === "matmul,hosting,container,gpu", "docker + gpu");
+  check(workTypes(true, gpus, true).join() === "matmul,hosting,container,gpu,any-image", "any-image opt-in");
+  check(workTypes(false, gpus, true).join() === "matmul,hosting", "any-image needs containers");
 
   // Token
   const token = newWebToken();
@@ -185,6 +189,7 @@ async function main() {
     volumeEnsure: async () => "created",
     volumeRemove: async () => true,
     gpuDevices: async (id) => live.get(id) ?? null,
+    logs: async (id) => `logs of ${id}`,
   };
   const hardening = async () => ({ ok: true, notes: [] });
   const gopts = { dataDir: gpuDir, publicHost: "h", ports: [42200, 42300] as [number, number], privateKey: "0x" + "11".repeat(32), gpuCount: 2, docker: fake, containersReady: true, hardening, log: () => {} };
@@ -212,6 +217,68 @@ async function main() {
   await g2.handle({ id: "g4", action: "start", kind: "workstation", spec: one, imageAllowed: true });
   check(after(runs.get("g4")!, "--gpus") === '"device=1"', "after reconcile the stale index is free again");
   rmSync(gpuDir, { recursive: true, force: true });
+
+  // GPU endpoint replicas are plain containers with gpu + health (docs/V4_ENDPOINTS_CONTRACT.md).
+  const epDir = mkdtempSync(path.join(os.tmpdir(), "cld-ep-"));
+  runs.clear();
+  live.clear();
+  let healthy = false;
+  let probes = 0;
+  const eopts = { ...gopts, dataDir: epDir, probe: async () => (probes++, healthy), healthPollMs: 5, report: async (_i: string, b: StatusBody) => (reports.push(b), true) };
+  const e1 = new DeploymentManager(eopts);
+  const replica = { image: "vllm/vllm-openai:v0.6.3", ports: [{ container: 8000 }], cpu: 4000, memMb: 16384, storageMb: 51200, gpu: { count: 1 }, health: { path: "/health", startupGraceSec: 900 } };
+  // Without the any-image opt-in an uncurated image is refused before Docker is called.
+  await e1.handle({ id: "ep0", action: "start", kind: "container", spec: replica, imageAllowed: false, relayed: true });
+  check(reports.at(-1)?.status === "failed" && /curated list/.test(reports.at(-1)?.message ?? "") && !runs.has("ep0"), "uncurated image refused without CLOUDANA_ANY_IMAGE");
+  process.env.CLOUDANA_ANY_IMAGE = "1";
+  // Healthy after a few polls: running is reported only then, on the loopback port, with the GPU and shm.
+  setTimeout(() => (healthy = true), 30);
+  await e1.handle({ id: "ep1", action: "start", kind: "container", spec: replica, imageAllowed: false, relayed: true });
+  check(reports.at(-1)?.status === "running" && reports.at(-1)?.endpoint === undefined, "replica reports running without an endpoint");
+  check(probes >= 2, `running waited for the health path (${probes} polls)`);
+  check(after(runs.get("ep1")!, "--gpus") === '"device=0"' && runs.get("ep1")!.includes("--shm-size=1g"), "GPU container: device + shm");
+  check(runs.get("ep1")!.some((a) => /^127\.0\.0\.1:\d+:8000$/.test(a)), "published on 127.0.0.1 only");
+  check(e1.allocatedGpus().ep1?.join() === "0" && e1.localTarget("ep1")?.kind === "container", "GPU reserved; served through the relay");
+  // Never healthy: failed with the log tail; the GPU and the container are released.
+  healthy = false;
+  await e1.handle({ id: "ep2", action: "start", kind: "container", spec: { ...replica, health: { path: "/health", startupGraceSec: 0.02 } }, imageAllowed: false, relayed: true });
+  check(reports.at(-1)?.status === "failed" && /not healthy after/.test(reports.at(-1)?.message ?? "") && reports.at(-1)?.logs === "logs of ep2", "unhealthy start fails with logs");
+  check(e1.allocatedGpus().ep2 === undefined && !live.has("ep2"), "failed replica frees its GPU and container");
+  // Exits while loading: failed at once, with logs.
+  const e2 = new DeploymentManager({ ...eopts, docker: { ...fake, running: async () => false } });
+  await e2.handle({ id: "ep3", action: "start", kind: "container", spec: replica, imageAllowed: false, relayed: true });
+  check(reports.at(-1)?.status === "failed" && /exited/.test(reports.at(-1)?.message ?? "") && reports.at(-1)?.logs === "logs of ep3", "exited container fails with logs");
+  // No GPU asked for: no --gpus, no health wait for plain containers.
+  probes = 0;
+  await e1.handle({ id: "c0", action: "start", kind: "container", spec: { ...replica, gpu: undefined, health: undefined }, imageAllowed: false, relayed: true });
+  check(reports.at(-1)?.status === "running" && !runs.get("c0")!.includes("--gpus") && probes === 0, "plain container: no gpus, no health wait");
+  // Boot: a GPU container's devices are reconciled like a workstation's.
+  const e3 = new DeploymentManager(eopts);
+  await e3.resume();
+  check(e3.allocatedGpus().ep1?.join() === "0", "resume keeps the GPU container's device");
+  // A stop that arrives while the replica is still waiting for health cancels the wait: stopped, container and GPU gone.
+  healthy = false;
+  const e4 = new DeploymentManager({ ...eopts, dataDir: mkdtempSync(path.join(os.tmpdir(), "cld-ep4-")) });
+  const starting = e4.handle({ id: "ep5", action: "start", kind: "container", spec: { ...replica, health: { path: "/health", startupGraceSec: 60 } }, imageAllowed: false, relayed: true });
+  await new Promise((r) => setTimeout(r, 20));
+  await e4.handle({ id: "ep5", action: "stop", kind: "container", spec: null }); // ignored as busy, but cancels the wait
+  await starting;
+  check(reports.at(-1)?.status === "stopped" && !live.has("ep5") && e4.allocatedGpus().ep5 === undefined, "stop during the health wait: stopped, released");
+  // The real probe has a hard deadline: a port that never answers cannot stall the wait.
+  const hang = http.createServer(() => {}); // accepts, never answers
+  await new Promise<void>((r) => hang.listen(0, "127.0.0.1", r));
+  const t0 = Date.now();
+  check((await httpOk(`http://127.0.0.1:${(hang.address() as AddressInfo).port}/health`, 150)) === false && Date.now() - t0 < 1000, "httpOk gives up at its deadline");
+  hang.close();
+  // VRAM-aware picking: a 40 GB request skips the 12 GB card.
+  const mixed = [{ name: "RTX 3060", vramGB: 12 }, { name: "A100", vramGB: 80 }];
+  check(pickGpus(1, mixed, new Set(), 40).join() === "1" && pickGpus(1, mixed, new Set()).join() === "0", "minVramGb picks the card that has it");
+  throws(() => pickGpus(1, mixed, new Set([1]), 40), /not enough free GPUs/, "no eligible free GPU");
+  // A GPU replica refused by a node whose GPU is taken: "not enough free GPUs" (the API re-queues it).
+  await e3.handle({ id: "ep4", action: "start", kind: "container", spec: { ...replica, gpu: { count: 2 } }, imageAllowed: false, relayed: true });
+  check(reports.at(-1)?.status === "failed" && reports.at(-1)?.message === "not enough free GPUs", "GPU shortage is reported as such");
+  delete process.env.CLOUDANA_ANY_IMAGE;
+  rmSync(epDir, { recursive: true, force: true });
 
   console.log(`✓ workstation selftest passed — ${passed} checks`);
 }

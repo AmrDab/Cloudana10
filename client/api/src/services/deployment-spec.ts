@@ -12,6 +12,7 @@
  */
 import { z } from "@hono/zod-openapi";
 import { getEnv } from "../config/env.js";
+import { WORKSTATION_TEMPLATES } from "./template-workstations.js";
 
 export const STATIC_MAX_BYTES = 2 * 1024 * 1024;
 export const CONTAINER_SPEC_MAX_BYTES = 32 * 1024;
@@ -40,6 +41,12 @@ export const StaticSpecSchema = z.object({
 
 const EnvKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/, "env keys must match [A-Za-z_][A-Za-z0-9_]*");
 
+const GpuSpec = z.object({
+  count: z.number().int().min(0).max(8),
+  minVramGb: z.number().min(0).max(1024).optional(),
+  class: z.enum(["any", "consumer", "datacenter"]).optional(),
+});
+
 export const ContainerSpecSchema = z.object({
   image: z
     .string()
@@ -59,19 +66,28 @@ export const ContainerSpecSchema = z.object({
   expectsSecrets: z.boolean().optional(),
   /** Container user as "uid[:gid]" (numeric). Plain containers default to 1000:1000 on the node; workstations to the image's user. */
   user: z.string().regex(/^\d{1,7}(:\d{1,7})?$/, "user must be numeric uid[:gid]").optional(),
+  /** GPUs handed to the container (explicit device indices on the node); priced per GPU-hour by class. */
+  gpu: GpuSpec.optional(),
+  /** The node reports `running` only once GET path answers 2xx/3xx (within startupGraceSec); probes GET it too. */
+  health: z
+    .object({
+      path: z.string().max(200).regex(/^\/[A-Za-z0-9._~/?=&%-]*$/, "health.path must start with / and be a plain path").optional(),
+      startupGraceSec: z.number().int().min(10).max(1800).optional(),
+    })
+    .optional(),
+});
+
+/** GPU endpoint (docs/V4_ENDPOINTS_CONTRACT.md): a container spec with one port, replicas and visitor auth. */
+export const EndpointSpecSchema = ContainerSpecSchema.omit({ ports: true }).extend({
+  port: z.number().int().min(1).max(65535),
+  replicas: z.number().int().min(1).max(8).default(1),
+  auth: z.enum(["public", "key"]).default("key"),
 });
 
 /** ssh-ed25519 / ssh-rsa / ecdsa-sha2-nistp* <base64> [comment] — printable ASCII only (it becomes an env value). */
 export const SSH_PUBLIC_KEY = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,3}( [ -~]{1,256})?$/;
 
 const WorkstationFields = z.object({
-  gpu: z
-    .object({
-      count: z.number().int().min(0).max(8),
-      minVramGb: z.number().min(0).max(1024).optional(),
-      class: z.enum(["any", "consumer", "datacenter"]).optional(),
-    })
-    .optional(),
   tier: z.enum(["on-demand", "interruptible"]),
   maxHours: z.number().int().min(1).max(720),
   access: z.object({
@@ -114,10 +130,19 @@ export const WorkstationSpecSchema = ContainerSpecSchema.merge(WorkstationFields
 export type StaticSpec = z.infer<typeof StaticSpecSchema>;
 export type ContainerSpec = z.infer<typeof ContainerSpecSchema>;
 export type WorkstationSpec = z.infer<typeof WorkstationSpecSchema>;
-/** Stored kind (deployments.kind). A workstation is stored as "container" with deployments.workstation = 1. */
+export type EndpointSpec = z.infer<typeof EndpointSpecSchema>;
+/** Stored kind (deployments.kind). Workstations and endpoints are stored as "container" (workstation = 1 / replicas > 0). */
 export type DeploymentKind = "static" | "container";
 /** Kind as the API speaks it. */
-export type ApiKind = DeploymentKind | "workstation";
+export type ApiKind = DeploymentKind | "workstation" | "endpoint";
+
+/** The container spec each replica of an endpoint runs (what the node receives). */
+export function replicaSpec(e: EndpointSpec): ContainerSpec {
+  const { port, replicas, auth, ...container } = e;
+  void replicas;
+  void auth;
+  return { ...container, ports: [{ container: port }], health: { path: "/", startupGraceSec: 600, ...e.health } };
+}
 
 /** Decoded byte length of a base64 string without decoding it. */
 export function base64Bytes(b64: string): number {
@@ -126,7 +151,7 @@ export function base64Bytes(b64: string): number {
 }
 
 export type SpecCheck =
-  | { ok: true; spec: StaticSpec | ContainerSpec | WorkstationSpec }
+  | { ok: true; spec: StaticSpec | ContainerSpec | WorkstationSpec | EndpointSpec }
   | { ok: false; code: "validation_failed" | "payload_too_large"; message: string; details?: unknown };
 
 /** Validate a spec for its kind (shape, index.html, size limits). */
@@ -150,10 +175,10 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
     }
     return { ok: true, spec: parsed.data };
   }
-  const parsed = (kind === "workstation" ? WorkstationSpecSchema : ContainerSpecSchema).safeParse(raw);
+  const parsed = (kind === "workstation" ? WorkstationSpecSchema : kind === "endpoint" ? EndpointSpecSchema : ContainerSpecSchema).safeParse(raw);
   if (!parsed.success) return invalid(parsed.error);
   // Plain containers never run as root (the node refuses it too); workstations keep the image's user model.
-  if (kind === "container" && parsed.data.user && /^0(:|$)/.test(parsed.data.user)) {
+  if (kind !== "workstation" && parsed.data.user && /^0(:|$)/.test(parsed.data.user)) {
     return { ok: false, code: "validation_failed", message: "spec.user: containers cannot run as root (uid 0)" };
   }
   if (JSON.stringify(parsed.data).length > CONTAINER_SPEC_MAX_BYTES) {
@@ -168,20 +193,21 @@ function invalid(err: z.ZodError): SpecCheck {
   return { ok: false, code: "validation_failed", message: `${where}${first?.message ?? "invalid"}`, details: err.issues };
 }
 
-/** Protocol price in µCLD per hour. */
-export function priceUcldPerHour(kind: ApiKind, spec: StaticSpec | ContainerSpec | WorkstationSpec): number {
+/** Protocol price in µCLD per hour (per replica for an endpoint). */
+export function priceUcldPerHour(kind: ApiKind, spec: StaticSpec | ContainerSpec | WorkstationSpec | EndpointSpec): number {
   const env = getEnv();
   const min = env.PRICE_HOSTING_UCLD_PER_HOUR;
   if (kind === "static") return min;
   const c = spec as ContainerSpec;
+  const perGpu = c.gpu?.class === "datacenter" ? env.PRICE_GPU_DATACENTER_UCLD_PER_HOUR : env.PRICE_GPU_CONSUMER_UCLD_PER_HOUR;
   let raw =
     (c.cpu / 1000) * env.PRICE_CPU_UCLD_PER_HOUR +
     (c.memMb / 1024) * env.PRICE_MEM_UCLD_PER_GB_HOUR +
-    (c.storageMb / 1024) * env.PRICE_STORAGE_UCLD_PER_GB_HOUR;
+    (c.storageMb / 1024) * env.PRICE_STORAGE_UCLD_PER_GB_HOUR +
+    (c.gpu?.count ?? 0) * perGpu;
   if (kind === "workstation") {
     const w = spec as WorkstationSpec;
-    const perGpu = w.gpu?.class === "datacenter" ? env.PRICE_GPU_DATACENTER_UCLD_PER_HOUR : env.PRICE_GPU_CONSUMER_UCLD_PER_HOUR;
-    raw += (w.gpu?.count ?? 0) * perGpu + (w.volume?.sizeGb ?? 0) * env.PRICE_VOLUME_UCLD_PER_GB_HOUR;
+    raw += (w.volume?.sizeGb ?? 0) * env.PRICE_VOLUME_UCLD_PER_GB_HOUR;
     if (w.tier === "interruptible") raw *= 1 - env.INTERRUPTIBLE_DISCOUNT;
   }
   return Math.max(min, Math.ceil(raw - 1e-9));
@@ -191,11 +217,11 @@ export function priceUcldPerHour(kind: ApiKind, spec: StaticSpec | ContainerSpec
  * Spec as shown to its owner: container env values are replaced by the key list;
  * static file contents are replaced by their sizes (keeps list responses small).
  */
-export function redactSpec(kind: DeploymentKind, spec: StaticSpec | ContainerSpec): Record<string, unknown> {
+export function redactSpec(kind: DeploymentKind, spec: StaticSpec | ContainerSpec | EndpointSpec): Record<string, unknown> {
   if (kind === "static") {
     return { files: (spec as StaticSpec).files.map((f) => ({ path: f.path, bytes: base64Bytes(f.contentBase64) })) };
   }
-  const { env, ...rest } = spec as ContainerSpec;
+  const { env, ...rest } = spec as ContainerSpec | EndpointSpec;
   return { ...rest, ...(env && { envKeys: Object.keys(env) }) };
 }
 
@@ -228,4 +254,19 @@ export function endpointAllowed(url: string, devMode: boolean): boolean {
     return !(host === "::" || host === "::1" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:"));
   }
   return true;
+}
+
+let curatedImages: Set<string> | null = null;
+/** Curated images (workstation templates) plus IMAGE_ALLOWLIST (comma-separated regexes, optional env). */
+export function imageAllowed(image: string): boolean {
+  curatedImages ??= new Set(WORKSTATION_TEMPLATES.map((t) => t.image).filter((i): i is string => !!i));
+  if (curatedImages.has(image)) return true;
+  const extra = process.env.IMAGE_ALLOWLIST?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+  return extra.some((re) => {
+    try {
+      return new RegExp(`^(?:${re})$`).test(image);
+    } catch {
+      return false;
+    }
+  });
 }

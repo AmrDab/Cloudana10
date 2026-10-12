@@ -202,8 +202,11 @@ CREATE TABLE IF NOT EXISTS deployments (
   ssh_endpoint TEXT,                      -- workstation sshd "host:port" reported by the node
   web_token TEXT,                         -- workstation web token not carried in the URL (owner-only)
   purge_pending INTEGER NOT NULL DEFAULT 0, -- 1 = node owes a "purge" (container + volume removed)
-  probe_path TEXT, probe_hash TEXT,        -- static: file + sha256 the 60 s probe must match
-  relayed INTEGER NOT NULL DEFAULT 0       -- 1 = served through the node's relay socket (no public endpoint)
+  probe_path TEXT, probe_hash TEXT,        -- static: file + sha256 the 60 s probe must match; endpoints: the health path
+  relayed INTEGER NOT NULL DEFAULT 0,      -- 1 = served through the node's relay socket (no public endpoint)
+  parent_id TEXT,                          -- GPU endpoint replica: the endpoint (parent) row it belongs to
+  replicas INTEGER NOT NULL DEFAULT 0,     -- > 0 = a GPU endpoint (parent row; never on a node; docs/V4_ENDPOINTS_CONTRACT.md)
+  last_logs TEXT                           -- the node's `docker logs` tail from its last failed report
 );
 CREATE INDEX IF NOT EXISTS idx_deployments_owner ON deployments(owner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deployments_node ON deployments(node, status);
@@ -236,3 +239,9 @@ CREATE TABLE IF NOT EXISTS testnet_claims (key TEXT PRIMARY KEY, at INTEGER NOT 
 -- Node request nonces (middleware/node-auth.ts): INSERT … ON CONFLICT DO NOTHING makes the replay check atomic.
 CREATE TABLE IF NOT EXISTS node_nonces (key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_node_nonces_expires ON node_nonces(expires_at);
+-- GPU endpoint keys (docs/V4_ENDPOINTS_CONTRACT.md): the key is shown once at create; only its sha256 is stored.
+CREATE TABLE IF NOT EXISTS endpoint_keys (
+  id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL, revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_endpoint_keys_dep ON endpoint_keys(deployment_id, created_at);

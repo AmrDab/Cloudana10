@@ -1,5 +1,7 @@
 /**
  * Hosted deployments (docs/V3_CONTRACT.md §2–§4): static sites and containers run by node agents.
+ * GPU endpoints (docs/V4_ENDPOINTS_CONTRACT.md): a parent row (replicas > 0, never on a node) plus one relayed
+ * container row per replica (parent_id). The parent's visible status is derived from its replicas.
  *
  * status: queued → assigned → running ⇄ unreachable → stopped | failed
  * Money: the first hour is held at create; billing (deployment-duties.service) captures each
@@ -9,6 +11,7 @@
  * POST /nodes/deployments/{id}/status {status:"stopped"} (heartbeats carry action "stop" until then).
  */
 import { getD1 } from "../lib/storage.js";
+import { createHash, randomBytes } from "node:crypto";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { getEnv } from "../config/env.js";
@@ -16,11 +19,14 @@ import { capture, hold, release } from "./balance.service.js";
 import { recordHostingRewards } from "./ledger.service.js";
 import {
   checkSpec,
+  imageAllowed,
   priceUcldPerHour,
   redactSpec,
+  replicaSpec,
   type ApiKind,
   type ContainerSpec,
   type DeploymentKind,
+  type EndpointSpec,
   type StaticSpec,
   type WorkstationSpec,
 } from "./deployment-spec.js";
@@ -63,10 +69,18 @@ export interface DeploymentRow {
   web_token: string | null;
   /** 1 = the node owes a "purge" (container + volume) instead of a plain stop. */
   purge_pending: number;
-  /** Static sites: the file the probe fetches and the sha256 hex it must serve (db/migrations-hosting.ts). */
+  /** Static sites: the file the probe fetches and the sha256 hex it must serve (db/migrations-hosting.ts). Endpoint replicas: the health path (no hash). */
   probe_path: string | null;
   probe_hash: string | null;
+  /** Endpoint replica: the parent (endpoint) row. */
+  parent_id: string | null;
+  /** > 0 = an endpoint parent row (docs/V4_ENDPOINTS_CONTRACT.md). */
+  replicas: number;
+  /** The node's `docker logs` tail from its last failed report. */
+  last_logs: string | null;
 }
+
+export const isEndpoint = (r: Pick<DeploymentRow, "replicas">) => r.replicas > 0;
 
 /** Hostname under which the gateway serves sites: https://{id}.{SITES_DOMAIN}. */
 export function sitesDomain(): string {
@@ -76,8 +90,8 @@ export function sitesDomain(): string {
 }
 
 /** The deployment's public URL through the gateway (null for direct workstations, which connect by token URL/SSH). */
-export const publicUrl = (r: Pick<DeploymentRow, "id" | "workstation" | "relayed">) =>
-  r.workstation && !r.relayed ? null : `https://${r.id}.${sitesDomain()}`;
+export const publicUrl = (r: Pick<DeploymentRow, "id" | "workstation" | "relayed" | "parent_id">) =>
+  (r.workstation && !r.relayed) || r.parent_id ? null : `https://${r.id}.${sitesDomain()}`;
 
 const toHex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -102,11 +116,30 @@ export interface WorkstationView {
   gpu: { count: number; names: string[] } | null;
 }
 
+/** One replica of an endpoint, as shown under its parent. */
+export interface ReplicaView {
+  id: string;
+  status: DeploymentStatus;
+  statusReason: string | null;
+  node: string | null;
+  startedAt: number | null;
+  probeOk: boolean | null;
+  /** Detail only: the node's log tail from this replica's last failure. */
+  logs?: string;
+}
+
 export interface Deployment extends Partial<WorkstationView> {
   id: string;
   templateId: string | null;
   name: string;
   kind: ApiKind;
+  /** Endpoint replicas: the endpoint they belong to. */
+  parentId?: string;
+  /** Endpoints: replicas in creation order, and who may call it. */
+  replicas?: ReplicaView[];
+  auth?: EndpointSpec["auth"];
+  /** Detail only: the node's log tail from the last failure. */
+  logs?: string;
   status: DeploymentStatus;
   statusReason: string | null;
   node: string | null;
@@ -160,22 +193,45 @@ function workstationView(r: DeploymentRow, spec: WorkstationSpec, nodeGpus: Gpu[
 }
 
 /**
- * `nodeGpus` = the assigned node's manifest GPUs (workstations only; see presentDeployments).
- * `detail` adds secrets meant for the single-deployment view only (connect.webToken).
+ * An endpoint's status is its replicas': running while any replica serves; otherwise the most advanced replica
+ * state; failed/stopped only once every replica (or the parent itself) has ended.
  */
-export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(), detail = false): Deployment {
+export function endpointStatus(parent: Pick<DeploymentRow, "status">, replicas: Pick<DeploymentRow, "status">[]): DeploymentStatus {
+  if (parent.status === "stopped" || parent.status === "failed") return parent.status;
+  for (const s of ["running", "unreachable", "assigned", "queued", "failed"] as const) if (replicas.some((r) => r.status === s)) return s;
+  return "stopped";
+}
+
+const replicaView = (r: DeploymentRow, detail: boolean): ReplicaView => ({
+  id: r.id,
+  status: r.status,
+  statusReason: r.status_reason,
+  node: r.node,
+  startedAt: r.started_at,
+  probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
+  ...(detail && r.last_logs && { logs: r.last_logs }),
+});
+
+/**
+ * `nodeGpus` = the assigned node's manifest GPUs (workstations only; see presentDeployments).
+ * `replicas` = an endpoint's replica rows (presentDeployments loads them).
+ * `detail` adds what the single-deployment view alone shows (connect.webToken, logs).
+ */
+export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(), detail = false, replicas: DeploymentRow[] = []): Deployment {
   const spec = JSON.parse(r.spec_json);
+  const endpoint = isEndpoint(r);
   return {
     id: r.id,
     templateId: r.template_id,
     name: r.name,
-    kind: r.workstation ? "workstation" : r.kind,
-    status: r.status,
+    kind: r.workstation ? "workstation" : endpoint ? "endpoint" : r.kind,
+    status: endpoint ? endpointStatus(r, replicas) : r.status,
     statusReason: r.status_reason,
     node: r.node,
     endpoint: r.endpoint,
     url: publicUrl(r),
-    priceUcldPerHour: r.price_ucld_per_hour,
+    // An endpoint's price is what all its replicas cost per hour.
+    priceUcldPerHour: r.price_ucld_per_hour * (endpoint ? r.replicas : 1),
     createdAt: r.created_at,
     assignedAt: r.assigned_at,
     startedAt: r.started_at,
@@ -183,11 +239,26 @@ export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(
     lastProbeAt: r.last_probe_at,
     probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
     spec: redactSpec(r.kind, spec),
+    ...(r.parent_id && { parentId: r.parent_id }),
+    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail)), auth: (spec as EndpointSpec).auth }),
+    ...(detail && r.last_logs && { logs: r.last_logs }),
     ...(r.workstation ? workstationView(r, spec as WorkstationSpec, nodeGpus, now, detail) : {}),
   };
 }
 
-/** toDeployment for many rows, loading the manifests of nodes that run workstations. */
+/** The replica rows of `parents` (creation order), keyed by parent id. */
+export async function replicasOf(parents: string[]): Promise<Map<string, DeploymentRow[]>> {
+  const out = new Map<string, DeploymentRow[]>();
+  if (parents.length === 0) return out;
+  const res = await getD1()
+    .prepare(`SELECT * FROM deployments WHERE parent_id IN (${parents.map(() => "?").join(",")}) ORDER BY created_at, rowid`)
+    .bind(...parents)
+    .all<DeploymentRow>();
+  for (const r of res.results ?? []) out.set(r.parent_id!, [...(out.get(r.parent_id!) ?? []), r]);
+  return out;
+}
+
+/** toDeployment for many rows, loading the manifests of nodes that run workstations and the replicas of endpoints. */
 export async function presentDeployments(rows: DeploymentRow[], detail = false): Promise<Deployment[]> {
   const nodes = [...new Set(rows.filter((r) => r.workstation && r.node).map((r) => r.node!))];
   const gpus = new Map<string, Gpu[]>();
@@ -198,8 +269,9 @@ export async function presentDeployments(rows: DeploymentRow[], detail = false):
       .all<{ address: string; manifest_json: string | null }>();
     for (const n of res.results ?? []) gpus.set(n.address, (JSON.parse(n.manifest_json ?? "{}").gpus ?? []) as Gpu[]);
   }
+  const replicas = await replicasOf(rows.filter(isEndpoint).map((r) => r.id));
   const now = Date.now();
-  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail));
+  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail, replicas.get(r.id) ?? []));
 }
 
 export async function addEvent(id: string, level: DeploymentEvent["level"], message: string, now = Date.now()): Promise<void> {
@@ -238,10 +310,13 @@ export function awaitingSecrets(r: Pick<DeploymentRow, "kind" | "spec_json" | "s
 
 export const capabilityFor = (kind: DeploymentKind) => (kind === "static" ? "hosting" : "container");
 
-/** The capability a new deployment waits for: "gpu" for a GPU workstation. */
+/** The capability a new deployment waits for: "any-image" / "gpu" when its image or GPUs need it. */
 function neededCapability(kind: ApiKind, spec: unknown): string {
-  if (kind === "workstation" && ((spec as WorkstationSpec).gpu?.count ?? 0) > 0) return "gpu";
-  return capabilityFor(kind === "static" ? "static" : "container");
+  if (kind === "static") return "hosting";
+  const c = spec as ContainerSpec;
+  if (kind === "endpoint" && !imageAllowed(c.image)) return "any-image";
+  if ((c.gpu?.count ?? 0) > 0) return "gpu";
+  return "container";
 }
 
 export type CreateResult =
@@ -276,19 +351,34 @@ export async function createDeployment(input: {
     }
   }
   const owner = normalizeAddress(input.owner);
-  if (!(await hold(owner, price))) {
-    return { ok: false, code: "unprocessable", message: `Insufficient credits: the first hour costs ${price} µCLD` };
+  const replicas = input.kind === "endpoint" ? (checked.spec as EndpointSpec).replicas : 1;
+  if (!(await hold(owner, price * replicas))) {
+    const what = replicas > 1 ? `${replicas} replicas cost ${price * replicas} µCLD for the first hour` : `the first hour costs ${price} µCLD`;
+    return { ok: false, code: "unprocessable", message: `Insufficient credits: ${what}` };
   }
   const id = crypto.randomUUID();
   const now = Date.now();
-  await getD1()
-    .prepare(
-      "INSERT INTO deployments (id, owner, template_id, name, kind, spec_json, price_ucld_per_hour, status, held_ucld, created_at, workstation) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
-    )
+  const stmt = getD1().prepare(
+    "INSERT INTO deployments (id, owner, template_id, name, kind, spec_json, price_ucld_per_hour, status, held_ucld, created_at, workstation, parent_id, replicas, probe_path) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)",
+  );
+  if (input.kind === "endpoint") {
+    // The parent holds nothing itself: each replica is its own relayed container with its own hour held.
+    const e = checked.spec as EndpointSpec;
+    const child = replicaSpec(e);
+    const rows = [stmt.bind(id, owner, input.templateId ?? null, input.name, "container", JSON.stringify(e), price, 0, now, 0, null, replicas, null)];
+    for (let i = 1; i <= replicas; i++) {
+      rows.push(stmt.bind(crypto.randomUUID(), owner, null, `${input.name} #${i}`, "container", JSON.stringify(child), price, price, now + i, 0, id, 0, child.health!.path!));
+    }
+    await getD1().batch(rows);
+    await addEvent(id, "info", `queued ${replicas} replica${replicas > 1 ? "s" : ""} at ${price} µCLD/replica-hour; first hour held`, now);
+    if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) await addEvent(id, "warn", "waiting for a capable node", now);
+    return { ok: true, id, priceUcldPerHour: price * replicas };
+  }
+  await stmt
     .bind(
       id, owner, input.templateId ?? null, input.name, input.kind === "static" ? "static" : "container",
-      JSON.stringify(checked.spec), price, price, now, input.kind === "workstation" ? 1 : 0,
+      JSON.stringify(checked.spec), price, price, now, input.kind === "workstation" ? 1 : 0, null, 0, null,
     )
     .run();
   if (input.kind === "static") {
@@ -310,18 +400,24 @@ export async function createDeployment(input: {
 
 export async function listDeployments(owner: string, limit = 100): Promise<Deployment[]> {
   const rows = await getD1()
-    .prepare("SELECT * FROM deployments WHERE owner = ? ORDER BY created_at DESC LIMIT ?")
+    .prepare("SELECT * FROM deployments WHERE owner = ? AND parent_id IS NULL ORDER BY created_at DESC LIMIT ?")
     .bind(normalizeAddress(owner), limit)
     .all<DeploymentRow>();
   return presentDeployments(rows.results ?? []);
 }
 
-export async function listEvents(id: string, limit = 50): Promise<DeploymentEvent[]> {
+/** An endpoint's events include its replicas', each prefixed with the replica's name. */
+export async function listEvents(id: string, limit = 50, replicas: Pick<DeploymentRow, "id" | "name">[] = []): Promise<DeploymentEvent[]> {
+  const ids = [id, ...replicas.map((r) => r.id)];
   const rows = await getD1()
-    .prepare("SELECT at, level, message FROM deployment_events WHERE deployment_id = ? ORDER BY at DESC, rowid DESC LIMIT ?")
-    .bind(id, limit)
-    .all<DeploymentEvent>();
-  return rows.results ?? [];
+    .prepare(
+      `SELECT deployment_id, at, level, message FROM deployment_events WHERE deployment_id IN (${ids.map(() => "?").join(",")}) ` +
+        "ORDER BY at DESC, rowid DESC LIMIT ?",
+    )
+    .bind(...ids, limit)
+    .all<DeploymentEvent & { deployment_id: string }>();
+  const names = new Map(replicas.map((r) => [r.id, r.name]));
+  return (rows.results ?? []).map(({ deployment_id, ...e }) => (deployment_id === id ? e : { ...e, message: `${names.get(deployment_id)}: ${e.message}` }));
 }
 
 export async function nodePubkey(node: string | null): Promise<string | null> {
@@ -336,6 +432,7 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string)
   const row = await getOwnedRow(owner, id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "sealed secrets are for containers only" };
+  if (isEndpoint(row)) return { ok: false, code: "validation_failed", message: "seal secrets per replica (each is sealed to its node): PATCH /deployments/{replicaId}/secrets" };
   const r = await getD1()
     .prepare("UPDATE deployments SET sealed_env = ? WHERE id = ? AND status IN ('queued','assigned')")
     .bind(sealedEnv, id)
@@ -441,6 +538,7 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
   const row = await getOwnedRow(owner, id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (purge && !row.workstation) return { ok: false, code: "validation_failed", message: "purge applies to workstations only" };
+  if (isEndpoint(row)) await endReplicas(id, "endpoint stopped by owner");
   const ended = row.status === "stopped" || row.status === "failed";
   if (!ended && !(await endDeployment(row, "stopped", "stopped by owner"))) {
     return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };
@@ -455,24 +553,57 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
   return { ok: true };
 }
 
+/** Stop every live replica of an endpoint; one that changed state meanwhile is re-read and stopped again. */
+async function endReplicas(id: string, reason: string, now = Date.now()): Promise<void> {
+  const ended = (r: DeploymentRow) => r.status === "stopped" || r.status === "failed";
+  for (const r of (await replicasOf([id])).get(id) ?? []) {
+    if (ended(r) || (await endDeployment(r, "stopped", reason, { acked: false, now }))) continue;
+    const fresh = await getDeploymentRow(r.id);
+    if (fresh && !ended(fresh)) await endDeployment(fresh, "stopped", reason, { acked: false, now });
+  }
+}
+
 /** What the gateway needs to proxy a deployment (internal: the gateway sends X-Internal-Key). */
 export interface PublicRoute {
   id: string;
   state: DeploymentStatus;
-  kind: DeploymentKind;
+  kind: DeploymentKind | "endpoint";
   workstation: boolean;
-  /** Served through the node's relay socket: the gateway asks `nodes[0]`'s RelayNode. */
+  /** Served through a node's relay socket: the gateway asks the RelayNode of `targets[i].node` for `targets[i].dep`. */
   relayed: boolean;
-  /** Nodes serving it while running (one per deployment today; replicas later). */
-  nodes: string[];
+  /** What serves it while running: one entry per running replica (an endpoint), else at most one. */
+  targets: { node: string; dep: string }[];
   /** Legacy direct nodes only: the node's http endpoint while running; null otherwise. */
   endpoint: string | null;
+  /** Endpoints: who may call it, and (auth "key") the sha256 of every live key. */
+  auth?: EndpointSpec["auth"];
+  keys?: string[];
 }
 
-/** Route info; null for a missing id or a direct workstation (reached by its own token URL / SSH, not the gateway). */
+/**
+ * Route info; null for a missing id, a direct workstation (reached by its own token URL / SSH, not the gateway) and
+ * an endpoint replica (reachable only through its endpoint's route, which carries the key check; by its own id it
+ * would be an open door around the key).
+ */
 export async function publicRoute(id: string): Promise<PublicRoute | null> {
   const row = await getDeploymentRow(id);
-  if (!row || (row.workstation && !row.relayed)) return null;
+  if (!row || (row.workstation && !row.relayed) || row.parent_id) return null;
+  if (isEndpoint(row)) {
+    const replicas = (await replicasOf([id])).get(id) ?? [];
+    const auth = (JSON.parse(row.spec_json) as EndpointSpec).auth;
+    const keys = auth === "key" ? await liveKeyHashes(id) : undefined;
+    return {
+      id: row.id,
+      state: endpointStatus(row, replicas),
+      kind: "endpoint",
+      workstation: false,
+      relayed: true,
+      targets: replicas.filter((r) => r.status === "running" && r.node).map((r) => ({ node: r.node!, dep: r.id })),
+      endpoint: null,
+      auth,
+      ...(keys && { keys }),
+    };
+  }
   const running = row.status === "running";
   return {
     id: row.id,
@@ -480,9 +611,73 @@ export async function publicRoute(id: string): Promise<PublicRoute | null> {
     kind: row.kind,
     workstation: !!row.workstation,
     relayed: !!row.relayed,
-    nodes: running && row.node ? [row.node] : [],
+    targets: running && row.node ? [{ node: row.node, dep: row.id }] : [],
     endpoint: running && !row.relayed ? row.endpoint : null,
   };
+}
+
+// ── Endpoint keys (docs/V4_ENDPOINTS_CONTRACT.md) ───────────────────────────
+export const KEY_PREFIX = "cld_ek_";
+export const MAX_KEYS_PER_ENDPOINT = 20;
+
+export interface EndpointKey {
+  id: string;
+  name: string;
+  /** The first 8 characters after cld_ek_, to tell keys apart in a list. */
+  prefix: string;
+  createdAt: number;
+  revokedAt: number | null;
+}
+
+export const hashKey = (key: string) => createHash("sha256").update(key).digest("hex");
+
+export type KeyResult =
+  | { ok: true; key: EndpointKey & { key: string } }
+  | { ok: false; code: "not_found" | "validation_failed" | "conflict"; message: string };
+
+/** A new key for an endpoint the owner has. The key itself is returned once; only its hash is stored. */
+export async function createKey(owner: string, id: string, name: string, now = Date.now()): Promise<KeyResult> {
+  const row = await getOwnedRow(owner, id);
+  if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
+  if (!isEndpoint(row)) return { ok: false, code: "validation_failed", message: "keys are for endpoints only" };
+  const db = getD1();
+  const n = await db.prepare("SELECT COUNT(*) AS n FROM endpoint_keys WHERE deployment_id = ? AND revoked_at IS NULL").bind(id).first<{ n: number }>();
+  if ((n?.n ?? 0) >= MAX_KEYS_PER_ENDPOINT) return { ok: false, code: "conflict", message: `an endpoint has at most ${MAX_KEYS_PER_ENDPOINT} live keys` };
+  const key = KEY_PREFIX + randomBytes(24).toString("hex");
+  const k = { id: crypto.randomUUID(), name, prefix: key.slice(KEY_PREFIX.length, KEY_PREFIX.length + 8), createdAt: now, revokedAt: null };
+  await db
+    .prepare("INSERT INTO endpoint_keys (id, deployment_id, name, prefix, hash, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(k.id, id, name, k.prefix, hashKey(key), now)
+    .run();
+  await addEvent(id, "info", `key "${name}" (${k.prefix}…) created`, now);
+  return { ok: true, key: { ...k, key } };
+}
+
+export async function listKeys(owner: string, id: string): Promise<EndpointKey[] | null> {
+  const row = await getOwnedRow(owner, id);
+  if (!row || !isEndpoint(row)) return null;
+  const res = await getD1()
+    .prepare("SELECT id, name, prefix, created_at, revoked_at FROM endpoint_keys WHERE deployment_id = ? ORDER BY created_at")
+    .bind(id)
+    .all<{ id: string; name: string; prefix: string; created_at: number; revoked_at: number | null }>();
+  return (res.results ?? []).map((k) => ({ id: k.id, name: k.name, prefix: k.prefix, createdAt: k.created_at, revokedAt: k.revoked_at }));
+}
+
+export async function revokeKey(owner: string, id: string, keyId: string, now = Date.now()): Promise<Update> {
+  const row = await getOwnedRow(owner, id);
+  if (!row || !isEndpoint(row)) return { ok: false, code: "not_found", message: "deployment not found" };
+  const r = await getD1()
+    .prepare("UPDATE endpoint_keys SET revoked_at = ? WHERE id = ? AND deployment_id = ? AND revoked_at IS NULL")
+    .bind(now, keyId, id)
+    .run();
+  if ((r.meta?.changes ?? 0) === 0) return { ok: false, code: "not_found", message: "key not found or already revoked" };
+  await addEvent(id, "warn", `key ${keyId.slice(0, 8)}… revoked`, now);
+  return { ok: true };
+}
+
+async function liveKeyHashes(id: string): Promise<string[]> {
+  const res = await getD1().prepare("SELECT hash FROM endpoint_keys WHERE deployment_id = ? AND revoked_at IS NULL").bind(id).all<{ hash: string }>();
+  return (res.results ?? []).map((k) => k.hash);
 }
 
 /**
@@ -492,6 +687,7 @@ export async function publicRoute(id: string): Promise<PublicRoute | null> {
 export async function adminStop(id: string): Promise<Update> {
   const row = await getDeploymentRow(id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
+  if (isEndpoint(row)) await endReplicas(id, "admin");
   if (row.status === "stopped" || row.status === "failed") return { ok: true };
   if (!(await endDeployment(row, "stopped", "admin", { acked: false, level: "warn" }))) {
     return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };

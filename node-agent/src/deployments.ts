@@ -1,4 +1,4 @@
-import type http from "node:http";
+import http from "node:http";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -6,6 +6,7 @@ import { open } from "../../shared/sealed.ts";
 import { findFreePort, serveSite, writeSite, type StaticSpec } from "./hosting.ts";
 import { dockerRunArgs, imageAllowed, realDocker, type ContainerSpec, type DockerOps } from "./container.ts";
 import { preStartCheck, type HardeningResult } from "./hardening.ts";
+import type { GpuInfo } from "./hardware.ts";
 import {
   dueVolumes,
   gpuCountOf,
@@ -47,6 +48,7 @@ export interface StatusBody {
   sshEndpoint?: string; // workstation with ssh access: "host:port"
   webToken?: string; // workstation whose app cannot take its token in the URL (e.g. code-server's PASSWORD)
   message?: string;
+  logs?: string; // failed: the container's log tail (docs/V4_ENDPOINTS_CONTRACT.md)
 }
 
 /** One entry of .data/deployments.json. */
@@ -60,7 +62,7 @@ export interface DeploymentRecord {
   specHash: string; // sha256 hex of JSON.stringify(spec)
   startedAt: number; // ms epoch
   keepDays?: number; // workstation: days to keep the volume after stop
-  gpus?: number[]; // workstation: GPU device indices handed to it
+  gpus?: number[]; // workstation / GPU container: GPU device indices handed to it
   report?: StatusBody; // workstation: the running report (endpoint with token, sshEndpoint), re-sent on resume
 }
 
@@ -77,6 +79,8 @@ export interface ManagerOptions {
   ports: [number, number];
   privateKey: string;
   gpuCount?: number; // GPUs nvidia-smi reported (0 or absent: no gpu capability)
+  /** The node's GPUs in device order (nvidia-smi); when given, a request's minVramGb picks only GPUs that have it. */
+  gpus?: GpuInfo[];
   /** Operator opted in AND the boot hardening self-check passed. Absent/false: container and workstation starts are refused. */
   containersReady?: boolean;
   docker?: DockerOps; // default: the real docker CLI (selftests inject a fake)
@@ -88,9 +92,39 @@ export interface ManagerOptions {
    * Read once per start; a running deployment keeps the mode it started with, across agent restarts too.
    */
   relay?: () => boolean;
+  /** GET `url` answers 2xx/3xx (health waits; default: a real request to 127.0.0.1). */
+  probe?: (url: string) => Promise<boolean>;
+  /** Between health polls (default 3 s; selftests shorten it). */
+  healthPollMs?: number;
   report: Reporter;
   log: (msg: string) => void;
 }
+
+/** A start failure that carries the container's log tail. */
+class StartError extends Error {
+  constructor(message: string, readonly logs: string) {
+    super(message);
+  }
+}
+
+/** GET url → 2xx/3xx with the whole head within `deadlineMs` (a hard limit, not an idle one: a dribbling port cannot stall it). */
+export function httpOk(url: string, deadlineMs = 5000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(url, (res) => {
+      clearTimeout(timer);
+      res.resume();
+      resolve((res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 400);
+    });
+    const timer = setTimeout(() => req.destroy(new Error("deadline")), deadlineMs);
+    req.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+/** A stop/purge arrived while the deployment was still starting. */
+class StopRequested extends Error {}
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -98,12 +132,14 @@ export class DeploymentManager {
   private records = new Map<string, DeploymentRecord>();
   private servers = new Map<string, http.Server>();
   private busy = new Set<string>();
+  /** Ids whose stop/purge arrived while a start was still waiting for health: the wait gives up and reports stopped. */
+  private cancel = new Set<string>();
   private pending = new Map<string, StatusBody>();
   private flushing = false;
   private readonly file: string;
   private readonly volumesFile: string;
   private kept = new Map<string, KeptVolume>();
-  /** GPU indices per workstation id: reserved synchronously at start, released on stop/purge/failure. */
+  /** GPU indices per deployment id (workstations, GPU containers): reserved synchronously at start, released on stop/purge/failure. */
   private gpuAlloc = new Map<string, number[]>();
   private readonly dk: DockerOps;
 
@@ -235,7 +271,7 @@ export class DeploymentManager {
           await this.send(r.id, { status: "running", endpoint: this.endpoint(port, r.relayed) });
         } else if (await this.dk.running(r.id)) {
           this.o.log(`deployment ${r.id}: container still running`);
-          if (r.kind === "workstation") {
+          if (r.kind === "workstation" || r.gpus?.length) {
             // Docker is the truth for which GPUs the container holds; the saved record may be stale.
             const actual = (await this.dk.gpuDevices(r.id)) ?? r.gpus ?? [];
             this.gpuAlloc.set(r.id, actual);
@@ -262,7 +298,11 @@ export class DeploymentManager {
       this.o.log(`ignoring deployment command with invalid id ${JSON.stringify(cmd?.id)}`);
       return;
     }
-    if (this.busy.has(id)) return; // still working on the previous command for this id
+    if (this.busy.has(id)) {
+      // Still working on the previous command for this id. A stop/purge while a start waits for health cancels it.
+      if (cmd.action !== "start") this.cancel.add(id);
+      return;
+    }
     this.busy.add(id);
     try {
       if (cmd.action === "stop") await this.stop(id, cmd.kind, cmd.spec);
@@ -270,11 +310,17 @@ export class DeploymentManager {
       else if (cmd.action === "start") await this.start(cmd);
       else this.o.log(`deployment ${id}: unknown action ${JSON.stringify(cmd.action)}`);
     } catch (err) {
+      if (err instanceof StopRequested) {
+        this.o.log(`deployment ${id}: stopped while starting`);
+        await this.send(id, { status: "stopped" });
+        return;
+      }
       const message = (err as Error).message;
       this.o.log(`deployment ${id}: ${cmd.action} failed: ${message}`);
-      await this.send(id, { status: "failed", message });
+      await this.send(id, { status: "failed", message, ...(err instanceof StartError && err.logs && { logs: err.logs }) });
     } finally {
       this.busy.delete(id);
+      this.cancel.delete(id);
     }
   }
 
@@ -304,7 +350,7 @@ export class DeploymentManager {
         if (!h.ok) throw new Error(`${NODE_CANNOT_SERVE} hardening check failed: ${h.reason}`);
       }
       if (kind === "static") ports = [await this.startStatic(id, cmd.spec as StaticSpec, relayed)];
-      else if (kind === "container") ports = await this.startContainer(id, cmd.spec as ContainerSpec, cmd.sealedEnv, relayed);
+      else if (kind === "container") ({ ports, ...extra } = await this.startContainer(id, cmd.spec as ContainerSpec, cmd.sealedEnv, relayed));
       else if (kind === "workstation") ({ ports, ...extra } = await this.startWorkstation(id, cmd.spec as WorkstationSpec, cmd.sealedEnv, relayed));
       else throw new Error(`unknown kind ${JSON.stringify(kind)}`);
     } catch (err) {
@@ -326,8 +372,12 @@ export class DeploymentManager {
     return port;
   }
 
-  private async startContainer(id: string, spec: ContainerSpec, sealedEnv: string | undefined, relayed: boolean): Promise<number[]> {
+  private async startContainer(id: string, spec: ContainerSpec, sealedEnv: string | undefined, relayed: boolean): Promise<{ ports: number[]; gpus?: number[] }> {
     if (!spec || !Array.isArray(spec.ports)) throw new Error("container spec has no ports array");
+    // Reserve GPUs before the first await so concurrent starts cannot pick the same device (as workstations do).
+    const used = new Set([...this.gpuAlloc.values()].flat());
+    const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb);
+    if (gpus.length) this.gpuAlloc.set(id, gpus);
     const env: Record<string, string> = { ...(spec.env ?? {}), ...this.openSealed(sealedEnv) };
     const taken = this.takenPorts();
     const hostPorts: number[] = [];
@@ -336,9 +386,31 @@ export class DeploymentManager {
       taken.add(p);
       hostPorts.push(p);
     }
+    const args = dockerRunArgs(id, spec, env, hostPorts, relayed, gpus); // validates before touching Docker
     await this.dk.remove(id); // a stale container with this name would make `docker run` fail
-    await this.dk.run(dockerRunArgs(id, spec, env, hostPorts, relayed));
-    return hostPorts;
+    await this.dk.run(args);
+    if (gpus.length) this.o.log(`deployment ${id}: GPU device(s) ${gpus.join(",")}`);
+    if (spec.health) await this.waitHealthy(id, hostPorts[0], spec.health);
+    return { ports: hostPorts, ...(gpus.length && { gpus }) };
+  }
+
+  /**
+   * GPU endpoints: `running` (and billing) starts only once the app answers on its health path. Until then the
+   * container may still be pulling weights; if it exits, or the grace runs out, the start fails with its log tail.
+   */
+  private async waitHealthy(id: string, port: number, health: NonNullable<ContainerSpec["health"]>): Promise<void> {
+    const path = typeof health.path === "string" && health.path.startsWith("/") ? health.path : "/";
+    const grace = Number.isFinite(health.startupGraceSec) && health.startupGraceSec! > 0 ? health.startupGraceSec! : 600;
+    const probe = this.o.probe ?? httpOk;
+    const deadline = Date.now() + grace * 1000;
+    const url = `http://127.0.0.1:${port}${path}`;
+    for (;;) {
+      if (this.cancel.has(id)) throw new StopRequested();
+      if (await probe(url)) return;
+      if (!(await this.dk.running(id))) throw new StartError("container exited before it became healthy", await this.dk.logs(id));
+      if (Date.now() >= deadline) throw new StartError(`not healthy after ${grace} s (GET ${path} never answered 2xx)`, await this.dk.logs(id));
+      await new Promise((r) => setTimeout(r, this.o.healthPollMs ?? 3000));
+    }
   }
 
   private openSealed(sealedEnv?: string): Record<string, string> {
@@ -363,7 +435,7 @@ export class DeploymentManager {
     validateWorkstation(spec);
     // Reserve GPUs before the first await so concurrent starts cannot pick the same device.
     const used = new Set([...this.gpuAlloc.values()].flat());
-    const gpus = pickGpus(gpuCountOf(spec), this.o.gpuCount ?? 0, used);
+    const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb);
     this.gpuAlloc.set(id, gpus);
     const token = spec.tokenEnv && spec.access.web ? newWebToken() : undefined;
     const env = workstationEnv(spec, this.openSealed(sealedEnv), token);
@@ -454,7 +526,10 @@ export class DeploymentManager {
         server.closeAllConnections();
       });
     }
-    if (kind === "container") await this.dk.remove(id);
+    if (kind === "container") {
+      await this.dk.remove(id);
+      this.gpuAlloc.delete(id);
+    }
     if (kind === "workstation") {
       await this.dk.remove(id);
       this.gpuAlloc.delete(id);

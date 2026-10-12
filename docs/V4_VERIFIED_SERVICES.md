@@ -49,7 +49,7 @@ Build contract: [V4_RELAY_CONTRACT.md](V4_RELAY_CONTRACT.md); reviewed in [V4_RE
 A deployment of kind **`endpoint`**: the user's image (vLLM, Ollama, TGI, ComfyUI, their own server…), env and sealed
 secrets (their model source, tokens), a GPU spec (count, min VRAM, class — as workstations), `port`, `health` path,
 `replicas` (1–N, fixed in v1), and `auth: "public" | "key"`.
-They get `https://<id>.run.cloudana.io`. Requests are load-balanced across replicas by the hub.
+They get `https://<id>.<user-content domain>`. Requests are spread over the running replicas by the gateway.
 
 ### 3.2 Keys for the user's endpoint
 `auth: "key"` → the gateway requires `Authorization: Bearer cld_ek_…` (keys the owner creates per endpoint; stored as
@@ -118,8 +118,9 @@ Later: `POST /v1/challenges`; autoscaling and scale-to-zero; per-request billing
 1. ~~Fixes F1, F2, F4~~ — merged.
 2. **Relay hub + agent relay client + gateway through the hub** — first proven with static sites and containers
    (works on home nodes with no public IP).
-3. **GPU endpoints:** kind `endpoint`, replicas, endpoint keys, health probes, per-replica-hour billing,
-   `*.run.cloudana.io`.
+3. ~~**GPU endpoints:** kind `endpoint`, replicas, endpoint keys, health probes, per-replica-hour billing~~ — built
+   ([V4_ENDPOINTS_CONTRACT.md](V4_ENDPOINTS_CONTRACT.md)); served at `https://<id>.<user-content domain>` like
+   everything else (§8.2), not `*.run.cloudana.io`.
 4. **Verified mode:** pinned open models, sampling, reference pool, teacher-forced checker, receipts, flag-only.
 5. **Calibration** on two GPUs (~1,000 honest requests + substitution tests; false positives < 0.1 %) → enable
    claw + ban.

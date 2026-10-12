@@ -59,10 +59,17 @@ function port(p: unknown, what: string): number {
 /**
  * Capabilities to announce. Every node does `matmul` + `hosting` (static sites). `container` only when the operator
  * opted in (CLOUDANA_ALLOW_CONTAINERS=1), Docker answers and the hardening self-check passed (`containersReady`);
- * `gpu` additionally needs a working nvidia-smi.
+ * `gpu` additionally needs a working nvidia-smi; `any-image` (CLOUDANA_ANY_IMAGE=1) lets the network send images
+ * outside its curated list — what GPU endpoints need (docs/V4_ENDPOINTS_CONTRACT.md).
  */
-export function workTypes(containersReady: boolean, gpus: GpuInfo[]): string[] {
-  return ["matmul", "hosting", ...(containersReady ? ["container"] : []), ...(containersReady && gpus.length > 0 ? ["gpu"] : [])];
+export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = false): string[] {
+  return [
+    "matmul",
+    "hosting",
+    ...(containersReady ? ["container"] : []),
+    ...(containersReady && gpus.length > 0 ? ["gpu"] : []),
+    ...(containersReady && anyImage ? ["any-image"] : []),
+  ];
 }
 
 /** GPUs a workstation asks for (0 = CPU workstation). */
@@ -71,12 +78,18 @@ export const gpuCountOf = (spec: unknown) => {
   return Number.isInteger(n) && (n as number) > 0 ? (n as number) : 0;
 };
 
-/** Lowest `count` free device indices in 0..nodeGpus-1. Throws when the node cannot satisfy it. */
-export function pickGpus(count: number, nodeGpus: number, used: Set<number>): number[] {
+/**
+ * Lowest `count` free device indices. `nodeGpus` is the GPU count, or the node's GPU list in device order: then only
+ * GPUs with at least `minVramGb` qualify (a 12 GB card is never handed a 40 GB request on a mixed node). Throws when
+ * the node cannot satisfy it.
+ */
+export function pickGpus(count: number, nodeGpus: number | GpuInfo[], used: Set<number>, minVramGb = 0): number[] {
   if (count <= 0) return [];
-  if (nodeGpus < 1) throw new Error("this node has no usable GPU");
+  const total = typeof nodeGpus === "number" ? nodeGpus : nodeGpus.length;
+  if (total < 1) throw new Error("this node has no usable GPU");
+  const fits = (i: number) => typeof nodeGpus === "number" || nodeGpus[i].vramGB >= minVramGb;
   const free: number[] = [];
-  for (let i = 0; i < nodeGpus && free.length < count; i++) if (!used.has(i)) free.push(i);
+  for (let i = 0; i < total && free.length < count; i++) if (!used.has(i) && fits(i)) free.push(i);
   if (free.length < count) throw new Error("not enough free GPUs");
   return free;
 }

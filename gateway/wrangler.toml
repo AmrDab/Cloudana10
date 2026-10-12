@@ -23,3 +23,11 @@ script_name = "cloudana-relay"
 # Secret (same value as the API's): wrangler secret put INTERNAL_API_KEY
 # SITES_DOMAIN moves to the user-content domain (e.g. cloudana.run, one-level wildcard) once it exists
 # (docs/V4_REVIEW_RELAY.md §2); *.sites.cloudana.io would need a paid certificate.
+
+# GPU endpoints (docs/V4_ENDPOINTS_CONTRACT.md): requests per endpoint key. The Workers rate-limiting binding
+# (period 10 or 60 s); namespace_id is any integer unique within this Worker.
+[[unsafe.bindings]]
+name = "KEY_LIMIT"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 600, period = 60 }

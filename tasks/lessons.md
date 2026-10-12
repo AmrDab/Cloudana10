@@ -97,3 +97,13 @@
   models; we should only provide the infrastructure to power AI."
 - Rule: Cloudana supplies GPUs, scheduling, routing, endpoints, verification and billing. Users bring their own model,
   engine and image. Never pick, host-as-a-product or brand a model; never sell "Cloudana's model".
+
+## 2026-10-12 — parent/child rows and probe semantics (found by the independent review of V4 step 3)
+- When a resource gets children (endpoint → replicas), grep every path that ENDS or ACTS on the parent (owner stop,
+  admin stop, purge, preempt, route lookup) and decide what happens to the children in each; I did the owner stop and
+  missed the admin stop, and a replica id was routable on its own (around the key). Rule: list the parent's verbs
+  first, then write the child behaviour for each, then the tests.
+- A probe that fails because the INFRASTRUCTURE refused it (relay `busy`, a binding error) must not count as the app
+  being down: counting it turned a load spike into a restart cascade. Rule: probes return pass / fail / inconclusive.
+- Any wait the agent does on tenant-controlled I/O needs a hard deadline (not a socket-idle timeout) and must be
+  cancellable by a stop; otherwise a tenant can pin a GPU the platform cannot release.

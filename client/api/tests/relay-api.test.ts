@@ -156,7 +156,7 @@ describe("relayed deployments", () => {
     const { node, id } = await runningRelayed();
     expect(await depRow(id)).toMatchObject({ status: "running", endpoint: null, relayed: 1 });
     const route = await (await call(`/v1/deployments/${id}/route`, { headers: { "x-internal-key": INTERNAL_KEY } })).json();
-    expect(route).toMatchObject({ state: "running", relayed: true, nodes: [node.address.toLowerCase()], endpoint: null });
+    expect(route).toMatchObject({ state: "running", relayed: true, targets: [{ node: node.address.toLowerCase(), dep: id }], endpoint: null });
   });
 
   it("probes through the relay with the content hash", async () => {

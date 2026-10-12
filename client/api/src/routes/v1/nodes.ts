@@ -31,7 +31,8 @@ import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 export const nodesRouter = createRouter<AuthVariables & NodeVariables>();
 const TAGS = ["Nodes"];
 /** Capabilities a node may advertise besides registered work types (V3 §2). */
-const HOSTING_CAPABILITIES = ["hosting", "container", "gpu"];
+/** "any-image": runs images outside the curated list (CLOUDANA_ANY_IMAGE=1; endpoint replicas need it). */
+const HOSTING_CAPABILITIES = ["hosting", "container", "gpu", "any-image"];
 const NODE_SIGNED =
   "Node-signed: X-Node, X-Node-Timestamp (ms, ±60 s), X-Nonce (16 bytes hex, single use within 120 s), " +
   "X-Node-Signature = personal_sign(\"<METHOD> <path> <timestamp> <sha256(body) hex> <nonce>\").";
@@ -54,7 +55,7 @@ const AnnounceSchema = z.object({
     os: z.string().max(128),
   }),
   benchmarkMmacPerSec: z.number().min(0).max(1e9),
-  /** Work types and capabilities: "matmul", plus "hosting" (static sites) / "container" (Docker present) / "gpu" (Docker + nvidia-smi) / "relay" (serves through the relay socket). */
+  /** Work types and capabilities: "matmul", plus "hosting" (static sites) / "container" (Docker present) / "gpu" (Docker + nvidia-smi) / "any-image" (uncurated images) / "relay" (serves through the relay socket). */
   workTypes: z.array(z.string().max(64)).min(1).max(16),
   /** Uncompressed secp256k1 public key of the node key ("04" + 128 hex, no 0x); sealed secrets are encrypted to it. */
   pubkey: z

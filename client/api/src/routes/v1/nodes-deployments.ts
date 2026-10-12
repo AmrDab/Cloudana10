@@ -33,6 +33,8 @@ const StatusBody = z.object({
   /** Workstations: a web token that cannot ride in the URL (code-server password). Shown to the owner only. */
   webToken: z.string().min(1).max(256).regex(/^[\x21-\x7e]+$/, "webToken must be printable ASCII").optional(),
   message: z.string().max(500).optional(),
+  /** failed: the container's log tail, shown to the owner (docs/V4_ENDPOINTS_CONTRACT.md). */
+  logs: z.string().max(16_384).optional(),
 });
 
 const statusRoute = createRoute({

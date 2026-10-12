@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { handle, deploymentIdFromHost, isPublicHttpEndpoint, ORIGIN_TIMEOUT_MS, type Deps, type Env } from "../src/index.js";
+import { describe, it, expect, vi, beforeAll } from "vitest";
+import { handle, deploymentIdFromHost, isPublicHttpEndpoint, ORIGIN_TIMEOUT_MS, RETRY_BODY_MAX, sha256Hex, type Deps, type Env } from "../src/index.js";
 
 const ID = "6f1c2a3e-1111-4222-8333-444455556666";
 const ENV: Env = { API_URL: "https://api.example.test", SITES_DOMAIN: "sites.example.test" };
@@ -227,9 +227,9 @@ describe("error pages", () => {
 describe("relay", () => {
   const NODE_A = "0x" + "a".repeat(40);
   const NODE_B = "0x" + "b".repeat(40);
-  const relayed = (kind: "static" | "container", nodes = [NODE_A]) => ({
+  const relayed = (kind: "static" | "container" | "endpoint", nodes = [NODE_A], extra: Record<string, unknown> = {}) => ({
     status: 200,
-    body: { status: "success", id: ID, state: "running", kind, workstation: false, relayed: true, nodes, endpoint: null },
+    body: { status: "success", id: ID, state: "running", kind, workstation: false, relayed: true, targets: nodes.map((node) => ({ node, dep: ID })), endpoint: null, ...extra },
   });
   /** Relay stubs per node; each records what it was asked. */
   function relays(answer: (node: string, init: RequestInit) => Response | Promise<Response>) {
@@ -281,18 +281,36 @@ describe("relay", () => {
     expect(res.headers.get("content-security-policy")).toBeNull();
   });
 
-  it("tries the next node when one is offline or not serving, for GET only", async () => {
+  it("tries the next node when one is offline or not serving: GET always, a small body once buffered, a large one never", async () => {
     const m = mockFetch(relayed("static", [NODE_A, NODE_B]), () => new Response("x"));
     const r = relays((node) => (node === NODE_A ? relayErr("offline", 503) : html("from b")));
     const res = await handle(req("/"), ENV, { ...deps(m.fetch), relay: r.relay });
     expect(await res.text()).toBe("from b");
     expect(r.asked.map((a) => a.node)).toEqual([NODE_A, NODE_B]);
 
+    // A 1 KB POST is buffered: the second replica gets the same bytes after not_serving.
     const m2 = mockFetch(relayed("container", [NODE_A, NODE_B]), () => new Response("x"));
-    const r2 = relays(() => relayErr("not_serving"));
-    const post = await handle(req("/", { method: "POST", body: "x" }), ENV, { ...deps(m2.fetch), relay: r2.relay });
-    expect(post.status).toBe(503);
-    expect(r2.asked).toHaveLength(1); // a body may have reached the app: never replayed
+    const bodies: string[] = [];
+    const r2 = relays(async (node, init) => {
+      bodies.push(await new Response(init.body).text());
+      return node === NODE_A ? relayErr("not_serving") : new Response("ok");
+    });
+    const post = await handle(req("/", { method: "POST", body: "x".repeat(1024), headers: { "content-length": "1024" } }), ENV, { ...deps(m2.fetch), relay: r2.relay });
+    expect(post.status).toBe(200);
+    expect(bodies).toEqual(["x".repeat(1024), "x".repeat(1024)]);
+
+    // Over RETRY_BODY_MAX the body streams to one replica only.
+    const m3 = mockFetch(relayed("container", [NODE_A, NODE_B]), () => new Response("x"));
+    const r3 = relays(() => relayErr("not_serving"));
+    const big = new Uint8Array(RETRY_BODY_MAX + 1);
+    const large = await handle(req("/", { method: "POST", body: big, headers: { "content-length": String(big.length) } }), ENV, { ...deps(m3.fetch), relay: r3.relay });
+    expect(large.status).toBe(503);
+    expect(r3.asked).toHaveLength(1);
+    // A timeout is never retried: the app may have done the work.
+    const m4 = mockFetch(relayed("container", [NODE_A, NODE_B]), () => new Response("x"));
+    const r4 = relays(() => relayErr("timeout", 504));
+    expect((await handle(req("/"), ENV, { ...deps(m4.fetch), relay: r4.relay })).status).toBe(504);
+    expect(r4.asked).toHaveLength(1);
   });
 
   it("maps relay errors to clear pages", async () => {
@@ -339,6 +357,95 @@ describe("relay", () => {
     const r = relays(() => new Response(null, { status: 302, headers: { location: "http://localhost.evil.test/x" } }));
     const res = await handle(req("/", {}, `${ID}.example.run`), { ...ENV, SITES_DOMAIN: "example.run" }, { ...deps(m.fetch), relay: r.relay });
     expect(res.headers.get("location")).toBe("http://localhost.evil.test/x");
+  });
+
+  describe("endpoints", () => {
+    const KEY = "cld_ek_" + "ab".repeat(24);
+    let hashOf: Record<string, string> = {};
+    const hash = (k: string) => hashOf[k]!;
+    beforeAll(async () => {
+      hashOf = { [KEY]: await sha256Hex(KEY) };
+    });
+    const endpoint = (extra: Record<string, unknown> = {}, nodes = [NODE_A, NODE_B]) => relayed("endpoint", nodes, { auth: "key", keys: [hash(KEY)], ...extra });
+    type Json = Record<string, any>;
+    const RUN_ENV: Env = { ...ENV, SITES_DOMAIN: "example.run" };
+    const ask = (init: RequestInit = {}, fixture = endpoint(), limiter?: Env["KEY_LIMIT"]) => {
+      const m = mockFetch(fixture, () => new Response("x"));
+      const r = relays(async (node, i) => {
+        const h = new Headers(i.headers);
+        return new Response(JSON.stringify({ node, dep: h.get("x-relay-dep"), auth: h.get("authorization") }), { headers: { "content-type": "application/json" } });
+      });
+      return { m, r, run: () => handle(req("/v1/chat/completions", init, `${ID}.example.run`), { ...RUN_ENV, KEY_LIMIT: limiter }, { ...deps(m.fetch), relay: r.relay }) };
+    };
+    const post = (headers: Record<string, string> = {}) => ({ method: "POST", body: "{}", headers: { "content-type": "application/json", ...headers } });
+
+    it("needs a live key, answers JSON, and never forwards the Cloudana key", async () => {
+      for (const headers of [{}, { authorization: "Bearer nope" }, { authorization: `Bearer ${KEY.replace("ab", "cd")}` }] as Record<string, string>[]) {
+        const t = ask(post(headers));
+        const res = await t.run();
+        expect(res.status).toBe(401);
+        expect(res.headers.get("www-authenticate")).toContain("Bearer");
+        expect(((await res.json()) as Json).error.code).toBe("unauthorized");
+        expect(t.r.asked).toHaveLength(0);
+      }
+      const t = ask(post({ authorization: `Bearer ${KEY}` }));
+      const res = await t.run();
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as Json).auth).toBeNull();
+      // A revoked key (gone from the route) is refused.
+      expect((await ask(post({ authorization: `Bearer ${KEY}` }), endpoint({ keys: [] })).run()).status).toBe(401);
+    });
+
+    it("passes the caller's own Authorization to a public endpoint", async () => {
+      const t = ask(post({ authorization: "Bearer the-apps-own-token" }), endpoint({ auth: "public", keys: undefined }));
+      expect(((await (await t.run()).json()) as Json).auth).toBe("Bearer the-apps-own-token");
+    });
+
+    it("rate-limits per key through the binding", async () => {
+      const seen: string[] = [];
+      const limiter = { limit: async ({ key }: { key: string }) => (seen.push(key), { success: seen.length < 3 }) };
+      for (const expected of [200, 200, 429]) {
+        const res = await ask(post({ authorization: `Bearer ${KEY}` }), endpoint(), limiter).run();
+        expect(res.status).toBe(expected);
+        if (expected === 429) {
+          expect(res.headers.get("retry-after")).toBe("10");
+          expect(((await res.json()) as Json).error.code).toBe("rate_limited");
+        }
+      }
+      expect(new Set(seen)).toEqual(new Set([hash(KEY)]));
+    });
+
+    it("starts at a random replica, sends that replica's deployment id, and falls over to the other", async () => {
+      const first = new Set<string>();
+      for (let i = 0; i < 40 && first.size < 2; i++) {
+        const t = ask(post({ authorization: `Bearer ${KEY}` }));
+        const body = (await (await t.run()).json()) as Json;
+        first.add(body.node);
+        expect(body.dep).toBe(ID);
+        expect(t.r.asked).toHaveLength(1);
+      }
+      expect(first).toEqual(new Set([NODE_A, NODE_B]));
+      const m = mockFetch(endpoint({}, [NODE_A, NODE_B]), () => new Response("x"));
+      const r = relays((node) => (node === NODE_A ? relayErr("offline", 503) : new Response("from b")));
+      const res = await handle(req("/v1/chat/completions", post({ authorization: `Bearer ${KEY}` }), `${ID}.example.run`), RUN_ENV, { ...deps(m.fetch), relay: r.relay });
+      expect(await res.text()).toBe("from b");
+    });
+
+    it("answers JSON when no replica runs or none can take the request", async () => {
+      for (const [state, status, code] of [["assigned", 503, "unavailable"], ["stopped", 404, "not_found"]] as const) {
+        const m = mockFetch({ status: 200, body: { ...endpoint().body, state, targets: [] } }, () => new Response("x"));
+        const res = await handle(req("/", post({ authorization: `Bearer ${KEY}` }), `${ID}.example.run`), RUN_ENV, { ...deps(m.fetch), relay: () => null });
+        expect(res.status).toBe(status);
+        expect(res.headers.get("content-type")).toBe("application/json");
+        expect(((await res.json()) as Json).error).toMatchObject({ code, state });
+      }
+      const m = mockFetch(endpoint(), () => new Response("x"));
+      const r = relays(() => relayErr("busy"));
+      const res = await handle(req("/", post({ authorization: `Bearer ${KEY}` }), `${ID}.example.run`), RUN_ENV, { ...deps(m.fetch), relay: r.relay });
+      expect(res.status).toBe(503);
+      expect(((await res.json()) as Json).error).toEqual({ code: "unavailable", message: expect.any(String), relay: "busy" });
+      expect(r.asked).toHaveLength(2);
+    });
   });
 
   it("tells a separate user-content domain from the first-party one", async () => {
