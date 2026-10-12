@@ -32,6 +32,8 @@ export interface DeploymentCommand {
   sealedEnv?: string;
   /** API: the image is on the curated list. Containers/workstations without it (or a CLOUDANA_IMAGE_ALLOWLIST match) are refused. */
   imageAllowed?: boolean;
+  /** API: serve this deployment through the relay (decided at placement). Absent (older API): this node's relay mode. */
+  relayed?: boolean;
 }
 
 /** Prefix of the `failed` message when this node cannot serve a deployment at all (the API re-queues it elsewhere). */
@@ -40,7 +42,8 @@ export const NODE_CANNOT_SERVE = "node cannot serve:";
 /** Body of POST /v1/nodes/deployments/{id}/status. */
 export interface StatusBody {
   status: "running" | "failed" | "stopped";
-  endpoint?: string;
+  endpoint?: string; // direct (legacy) deployments only: http://<public host>:<port>
+  webPath?: string; // relayed workstation: path + query of its web URL ("/lab?token=…", "/"); starts with "/"
   sshEndpoint?: string; // workstation with ssh access: "host:port"
   webToken?: string; // workstation whose app cannot take its token in the URL (e.g. code-server's PASSWORD)
   message?: string;
@@ -50,8 +53,10 @@ export interface StatusBody {
 export interface DeploymentRecord {
   id: string;
   kind: Kind;
-  port: number | null; // host port of the first exposed port (null: container with no ports)
+  port: number | null; // host port HTTP is served on: the site, the first container port, a workstation's web port (null: none)
   ports?: number[]; // every host port it holds (absent on records written by agents < 1.1.0: then [port])
+  /** Served through the relay: listens / is published on 127.0.0.1 and reports no endpoint. Fixed at start. */
+  relayed?: boolean;
   specHash: string; // sha256 hex of JSON.stringify(spec)
   startedAt: number; // ms epoch
   keepDays?: number; // workstation: days to keep the volume after stop
@@ -77,6 +82,12 @@ export interface ManagerOptions {
   docker?: DockerOps; // default: the real docker CLI (selftests inject a fake)
   /** Re-checks the egress rules and tenant network before each container start (default: the real iptables/docker). */
   hardening?: () => Promise<HardeningResult>;
+  /**
+   * Whether new deployments are served through the relay (the API kept this node's "relay" capability): listeners
+   * bind 127.0.0.1 and `running` reports carry no endpoint. Absent/false: legacy direct serving on the public host.
+   * Read once per start; a running deployment keeps the mode it started with, across agent restarts too.
+   */
+  relay?: () => boolean;
   report: Reporter;
   log: (msg: string) => void;
 }
@@ -114,8 +125,14 @@ export class DeploymentManager {
     return path.join(this.o.dataDir, "sites", id);
   }
 
-  private endpoint(port: number | null) {
-    return port === null ? undefined : `http://${this.o.publicHost}:${port}`;
+  private endpoint(port: number | null, relayed?: boolean) {
+    return port === null || relayed ? undefined : `http://${this.o.publicHost}:${port}`;
+  }
+
+  /** Where the relay forwards a request for deployment `id`: its local HTTP port and kind; null when not served here. */
+  localTarget(id: string): { port: number; kind: Kind } | null {
+    const r = this.records.get(id);
+    return r && r.port !== null ? { port: r.port, kind: r.kind } : null;
   }
 
   private save() {
@@ -204,17 +221,18 @@ export class DeploymentManager {
         if (r.kind === "static") {
           let port = r.port ?? 0;
           let server: http.Server;
+          const host = r.relayed ? "127.0.0.1" : undefined;
           try {
-            server = await serveSite(this.siteDir(r.id), port);
+            server = await serveSite(this.siteDir(r.id), port, host);
           } catch {
             const taken = this.takenPorts();
             port = await findFreePort(this.o.ports, taken);
-            server = await serveSite(this.siteDir(r.id), port);
+            server = await serveSite(this.siteDir(r.id), port, host);
           }
           this.servers.set(r.id, server);
           this.records.set(r.id, { ...r, port, ports: [port] });
           this.o.log(`deployment ${r.id}: resumed static site on :${port}`);
-          await this.send(r.id, { status: "running", endpoint: this.endpoint(port) });
+          await this.send(r.id, { status: "running", endpoint: this.endpoint(port, r.relayed) });
         } else if (await this.dk.running(r.id)) {
           this.o.log(`deployment ${r.id}: container still running`);
           if (r.kind === "workstation") {
@@ -223,7 +241,7 @@ export class DeploymentManager {
             this.gpuAlloc.set(r.id, actual);
             this.records.set(r.id, { ...r, gpus: actual });
           }
-          await this.send(r.id, r.report ?? { status: "running", endpoint: this.endpoint(r.port) });
+          await this.send(r.id, r.report ?? { status: "running", endpoint: this.endpoint(r.port, r.relayed) });
         } else {
           throw new Error("container not running after agent restart");
         }
@@ -265,9 +283,11 @@ export class DeploymentManager {
     const existing = this.records.get(id);
     if (existing) {
       // Idempotent: already running — just re-report.
-      await this.send(id, existing.report ?? { status: "running", endpoint: this.endpoint(existing.port) });
+      await this.send(id, existing.report ?? { status: "running", endpoint: this.endpoint(existing.port, existing.relayed) });
       return;
     }
+    // The API decided at placement (workstations stay direct until the relay carries WebSockets); older APIs don't say.
+    const relayed = typeof cmd.relayed === "boolean" ? cmd.relayed : this.o.relay?.() === true;
     const specHash = createHash("sha256").update(JSON.stringify(cmd.spec)).digest("hex");
     let ports: number[];
     let extra: Pick<DeploymentRecord, "keepDays" | "report" | "gpus"> = {};
@@ -283,29 +303,30 @@ export class DeploymentManager {
         const h = await (this.o.hardening ?? preStartCheck)();
         if (!h.ok) throw new Error(`${NODE_CANNOT_SERVE} hardening check failed: ${h.reason}`);
       }
-      if (kind === "static") ports = [await this.startStatic(id, cmd.spec as StaticSpec)];
-      else if (kind === "container") ports = await this.startContainer(id, cmd.spec as ContainerSpec, cmd.sealedEnv);
-      else if (kind === "workstation") ({ ports, ...extra } = await this.startWorkstation(id, cmd.spec as WorkstationSpec, cmd.sealedEnv));
+      if (kind === "static") ports = [await this.startStatic(id, cmd.spec as StaticSpec, relayed)];
+      else if (kind === "container") ports = await this.startContainer(id, cmd.spec as ContainerSpec, cmd.sealedEnv, relayed);
+      else if (kind === "workstation") ({ ports, ...extra } = await this.startWorkstation(id, cmd.spec as WorkstationSpec, cmd.sealedEnv, relayed));
       else throw new Error(`unknown kind ${JSON.stringify(kind)}`);
     } catch (err) {
       await this.cleanup(id, kind, keepDaysOf(cmd.spec));
       throw err;
     }
-    const port = ports[0] ?? null;
-    this.records.set(id, { id, kind, port, ports, specHash, startedAt: Date.now(), ...extra });
+    // The port HTTP is served on (what the relay forwards to): a workstation's web port (none when SSH-only), else the first.
+    const port = (kind === "workstation" && !(cmd.spec as WorkstationSpec).access.web ? undefined : ports[0]) ?? null;
+    this.records.set(id, { id, kind, port, ports, specHash, startedAt: Date.now(), ...extra, ...(relayed && { relayed }) });
     this.save();
-    this.o.log(`deployment ${id}: ${kind} running${port === null ? "" : ` on :${ports.join(",")}`}`);
-    await this.send(id, extra.report ?? { status: "running", endpoint: this.endpoint(port) });
+    this.o.log(`deployment ${id}: ${kind} running${ports.length === 0 ? "" : ` on :${ports.join(",")}`}${relayed ? " (relayed)" : ""}`);
+    await this.send(id, extra.report ?? { status: "running", endpoint: this.endpoint(port, relayed) });
   }
 
-  private async startStatic(id: string, spec: StaticSpec): Promise<number> {
+  private async startStatic(id: string, spec: StaticSpec, relayed: boolean): Promise<number> {
     writeSite(this.siteDir(id), spec);
     const port = await findFreePort(this.o.ports, this.takenPorts());
-    this.servers.set(id, await serveSite(this.siteDir(id), port));
+    this.servers.set(id, await serveSite(this.siteDir(id), port, relayed ? "127.0.0.1" : undefined));
     return port;
   }
 
-  private async startContainer(id: string, spec: ContainerSpec, sealedEnv?: string): Promise<number[]> {
+  private async startContainer(id: string, spec: ContainerSpec, sealedEnv: string | undefined, relayed: boolean): Promise<number[]> {
     if (!spec || !Array.isArray(spec.ports)) throw new Error("container spec has no ports array");
     const env: Record<string, string> = { ...(spec.env ?? {}), ...this.openSealed(sealedEnv) };
     const taken = this.takenPorts();
@@ -316,7 +337,7 @@ export class DeploymentManager {
       hostPorts.push(p);
     }
     await this.dk.remove(id); // a stale container with this name would make `docker run` fail
-    await this.dk.run(dockerRunArgs(id, spec, env, hostPorts));
+    await this.dk.run(dockerRunArgs(id, spec, env, hostPorts, relayed));
     return hostPorts;
   }
 
@@ -336,7 +357,8 @@ export class DeploymentManager {
   private async startWorkstation(
     id: string,
     spec: WorkstationSpec,
-    sealedEnv?: string,
+    sealedEnv: string | undefined,
+    relayed: boolean,
   ): Promise<{ ports: number[]; keepDays: number; report: StatusBody; gpus: number[] }> {
     validateWorkstation(spec);
     // Reserve GPUs before the first await so concurrent starts cannot pick the same device.
@@ -353,7 +375,7 @@ export class DeploymentManager {
       taken.add(p);
       ports[k] = p;
     }
-    const args = workstationRunArgs(id, spec, env, ports, gpus); // validates before touching Docker
+    const args = workstationRunArgs(id, spec, env, ports, gpus, relayed); // validates before touching Docker
     const vol = await this.dk.volumeEnsure(id);
     if (this.kept.delete(id)) this.saveVolumes(); // restarted: no longer scheduled for removal
     this.o.log(`deployment ${id}: volume cld-${id} ${vol}`);
@@ -364,7 +386,7 @@ export class DeploymentManager {
       gpus,
       ports: [ports.web, ports.ssh].filter((p): p is number => p !== undefined),
       keepDays: keepDaysOf(spec),
-      report: workstationReport(this.o.publicHost, spec, ports, token),
+      report: workstationReport(this.o.publicHost, spec, ports, token, relayed),
     };
   }
 

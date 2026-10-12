@@ -57,6 +57,8 @@ export interface DeploymentRow {
   workstation: number;
   /** Workstation sshd as "host:port", reported by the node. */
   ssh_endpoint: string | null;
+  /** 1 = served through the node's relay socket (docs/V4_RELAY_CONTRACT.md); endpoint stays null. */
+  relayed: number;
   /** Workstation web token the node could not put in the URL (owner-only, detail view only). */
   web_token: string | null;
   /** 1 = the node owes a "purge" (container + volume) instead of a plain stop. */
@@ -73,9 +75,9 @@ export function sitesDomain(): string {
   return (getEnv() as { SITES_DOMAIN?: string }).SITES_DOMAIN ?? process.env.SITES_DOMAIN ?? "sites.cloudana.io";
 }
 
-/** The deployment's public URL through the gateway (null for workstations, which connect by token URL/SSH). */
-export const publicUrl = (r: Pick<DeploymentRow, "id" | "workstation">) =>
-  r.workstation ? null : `https://${r.id}.${sitesDomain()}`;
+/** The deployment's public URL through the gateway (null for direct workstations, which connect by token URL/SSH). */
+export const publicUrl = (r: Pick<DeploymentRow, "id" | "workstation" | "relayed">) =>
+  r.workstation && !r.relayed ? null : `https://${r.id}.${sitesDomain()}`;
 
 const toHex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -147,7 +149,8 @@ function workstationView(r: DeploymentRow, spec: WorkstationSpec, nodeGpus: Gpu[
     hoursLeft: ended ? 0 : round2(Math.max(0, spec.maxHours - used)),
     connect: live
       ? {
-          ...(spec.access.web && r.endpoint && { web: r.endpoint }),
+          // Relayed: the gateway URL plus the app's path (token included); direct: the endpoint as reported.
+          ...(spec.access.web && r.endpoint && { web: r.relayed ? `https://${r.id}.${sitesDomain()}${r.endpoint}` : r.endpoint }),
           ...(spec.access.ssh && r.ssh_endpoint && { ssh: sshCommand(r.ssh_endpoint, spec.access.ssh.user) }),
           ...(detail && r.web_token && { webToken: r.web_token }),
         }
@@ -452,20 +455,34 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
   return { ok: true };
 }
 
-/** What the gateway needs to proxy a site (public: no owner, no secrets). */
+/** What the gateway needs to proxy a deployment (internal: the gateway sends X-Internal-Key). */
 export interface PublicRoute {
   id: string;
   state: DeploymentStatus;
-  /** The node endpoint while running; null otherwise. */
-  endpoint: string | null;
   kind: DeploymentKind;
+  workstation: boolean;
+  /** Served through the node's relay socket: the gateway asks `nodes[0]`'s RelayNode. */
+  relayed: boolean;
+  /** Nodes serving it while running (one per deployment today; replicas later). */
+  nodes: string[];
+  /** Legacy direct nodes only: the node's http endpoint while running; null otherwise. */
+  endpoint: string | null;
 }
 
-/** Route info for static/container deployments; null for a missing id or a workstation (its URL may carry a token). */
+/** Route info; null for a missing id or a direct workstation (reached by its own token URL / SSH, not the gateway). */
 export async function publicRoute(id: string): Promise<PublicRoute | null> {
   const row = await getDeploymentRow(id);
-  if (!row || row.workstation) return null;
-  return { id: row.id, state: row.status, endpoint: row.status === "running" ? row.endpoint : null, kind: row.kind };
+  if (!row || (row.workstation && !row.relayed)) return null;
+  const running = row.status === "running";
+  return {
+    id: row.id,
+    state: row.status,
+    kind: row.kind,
+    workstation: !!row.workstation,
+    relayed: !!row.relayed,
+    nodes: running && row.node ? [row.node] : [],
+    endpoint: running && !row.relayed ? row.endpoint : null,
+  };
 }
 
 /**

@@ -168,7 +168,7 @@ describe("node side", () => {
     const { node } = await boundNode(["matmul", "hosting"]);
     const id = (await (await create(u.jwt)).json()).id;
     const hb = await heartbeat(node);
-    expect(hb.deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE }]);
+    expect(hb.deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE, relayed: false }]);
     expect(await row(id)).toMatchObject({ status: "assigned", node: node.address.toLowerCase() });
 
     const other = privateKeyToAccount(generatePrivateKey());
@@ -285,7 +285,7 @@ describe("owner actions", () => {
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${viaFlag}/secrets`, { sealedEnv: b64("sealed") })).status).toBe(200);
     const hb = await heartbeat(node);
     expect(hb.deployments).toEqual([
-      { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: b64("sealed"), imageAllowed: false },
+      { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: b64("sealed"), imageAllowed: false, relayed: false },
     ]);
   });
 
@@ -359,7 +359,7 @@ describe("dead-node requeue", () => {
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 950, heldUcld: 50 });
 
     const { node: next } = await boundNode(["matmul", "hosting"]);
-    expect((await heartbeat(next)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE }]);
+    expect((await heartbeat(next)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE, relayed: false }]);
     expect(await row(id)).toMatchObject({ status: "assigned", node: next.address.toLowerCase() });
 
     // the old node comes back still serving: it is owed a stop, and its "running" is refused
@@ -384,8 +384,8 @@ describe("dead-node requeue", () => {
     expect(await row(id)).toMatchObject({ status: "running" });
     expect(await runDutiesCron()).toMatchObject({ requeued: 1 });
     expect(await row(id)).toMatchObject({ status: "queued", node: null });
-    expect((await heartbeat(old)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE }]);
-    expect((await heartbeat(old)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE }]);
+    expect((await heartbeat(old)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE, relayed: false }]);
+    expect((await heartbeat(old)).deployments).toEqual([{ id, action: "start", kind: "static", spec: SITE, relayed: false }]);
   });
 
   it("leaves deployments of live nodes alone and clears secrets sealed to the dead node", async () => {

@@ -13,6 +13,7 @@ import { detectPublicIp } from "./public-ip.ts";
 import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from "./deployments.ts";
 import { workTypes as capabilities } from "./workstation.ts";
 import { DEFAULT_INSTRUCTION_SIGNER, NonceLru, verifyInstruction } from "./instructions.ts";
+import { RELAY_CAPABILITY, RelayClient } from "./relay.ts";
 
 interface Args {
   api: string;
@@ -135,7 +136,8 @@ async function request(account: PrivateKeyAccount, method: "POST", path: string,
     throw new Fatal(message);
   }
   if (!res.ok || !json || json.status !== "success") {
-    throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+    // status + code let the relay client tell "this API runs no relay" (404 / 503 not_configured) from a failure.
+    throw Object.assign(new Error(json?.error?.message ?? `HTTP ${res.status}`), { status: res.status, code: json?.error?.code });
   }
   return json;
 }
@@ -171,13 +173,15 @@ async function main() {
   const workTypes = capabilities(containersReady, manifest.gpus);
   log(`capabilities: ${workTypes.join(", ")} · serving on ${publicHost}:${ports[0]}-${ports[1]}`);
 
-  const deployments = new DeploymentManager({
+  const deployments: DeploymentManager = new DeploymentManager({
     dataDir: fileURLToPath(new URL("../.data/", import.meta.url)),
     publicHost,
     ports,
     privateKey,
     containersReady,
     gpuCount: workTypes.includes("gpu") ? manifest.gpus.length : 0,
+    // Only starts read it, and they come from heartbeats, after `relay` below exists.
+    relay: () => relay.mode() === "relay",
     log,
     // true = delivered; false = API unreachable, retry next heartbeat; { rejected } = refused for good.
     report: async (id, body): Promise<ReportOutcome> => {
@@ -233,11 +237,12 @@ async function main() {
     });
   }
 
-  async function announce(): Promise<void> {
+  /** withRelay: announce the "relay" capability (the API keeps it only when it runs a relay). */
+  async function announce(withRelay: boolean): Promise<void> {
     const res = await request(account, "POST", "/v1/nodes/announce", {
       manifest,
       benchmarkMmacPerSec: mmacPerSec,
-      workTypes,
+      workTypes: withRelay ? [...workTypes, RELAY_CAPABILITY] : workTypes,
       pubkey: publicKeyOf(privateKey),
       publicHost,
       agentVersion: VERSION,
@@ -261,6 +266,14 @@ async function main() {
     }
   }
 
+  // Serves this node's deployments through the relay socket; re-announces on a mode change (relay.ts).
+  const relay: RelayClient = new RelayClient({
+    request: (path, body) => request(account, "POST", path, body),
+    announce,
+    target: (id) => deployments.localTarget(id),
+    log,
+  });
+
   async function handleAssignment(a: any): Promise<void> {
     log(`job ${a.jobId} n=${a.n}`);
     const start = performance.now();
@@ -283,7 +296,7 @@ async function main() {
   // Register once, retrying through outages.
   while (true) {
     try {
-      await announce();
+      await announce(relay.mode() === "relay");
       break;
     } catch (err) {
       if (err instanceof Fatal) {
@@ -295,13 +308,15 @@ async function main() {
       await sleep(HEARTBEAT_MS);
     }
   }
+  // The first ticket request settles relay vs legacy mode (re-announcing if needed) before any deployment starts.
+  await relay.start();
 
   // Heartbeat loop. Re-announce occasionally while unbound to pick up the bind.
   let ticksSinceAnnounce = 0;
   while (true) {
     await sleep(HEARTBEAT_MS);
     try {
-      const res = await request(account, "POST", "/v1/nodes/heartbeat", { agentVersion: VERSION });
+      const res = await request(account, "POST", "/v1/nodes/heartbeat", { agentVersion: VERSION, relay: relay.connected() });
       if (res.upgradeRequired && !upgradeWarned) {
         upgradeWarned = true;
         log(`⚠ this agent (${VERSION}) is below the network minimum ${res.minAgentVersion}: no work until it is upgraded`);
@@ -328,7 +343,7 @@ async function main() {
       ticksSinceAnnounce++;
       if (!bound && ticksSinceAnnounce >= 5) {
         ticksSinceAnnounce = 0;
-        await announce();
+        await announce(relay.mode() === "relay");
       }
     } catch (err) {
       if (err instanceof Fatal) {

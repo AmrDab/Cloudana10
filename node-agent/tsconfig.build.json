@@ -11,6 +11,6 @@
     "sourceMap": false,
     "declaration": false
   },
-  "include": ["src/**/*", "../pouw/src/**/*", "../shared/sealed.ts"],
+  "include": ["src/**/*", "../pouw/src/**/*", "../shared/sealed.ts", "../shared/relay-protocol.ts"],
   "exclude": ["node_modules", "src/**/*.selftest.ts", "src/selftest.ts", "../pouw/src/test*.ts"]
 }

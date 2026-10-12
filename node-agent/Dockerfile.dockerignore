@@ -8,3 +8,4 @@
 !pouw/package.json
 !pouw/src
 !shared/sealed.ts
+!shared/relay-protocol.ts

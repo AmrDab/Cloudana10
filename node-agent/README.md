@@ -60,6 +60,34 @@ the offset from the API's `Date` header and keeps going — only a bad signature
 fatal. The agent reports its version; the API refuses work below
 `minAgentVersion` and the log says so.
 
+## Relay (no open ports)
+
+When the API runs a relay, the agent keeps one outbound WebSocket to it
+(`wss://relay.cloudana.io/connect`, opened with a single-use ticket from
+`POST /v1/nodes/relay/ticket`) and visitors' requests for this node's
+deployments arrive over that socket. The agent forwards each one to the
+deployment on `127.0.0.1`, so a relay node needs **no open ports and no public
+IP**: static sites listen on `127.0.0.1`, container and workstation web ports
+are published as `-p 127.0.0.1:<port>:<container port>`, and `running` reports
+carry no endpoint (a workstation reports the path of its web URL as `webPath`).
+The agent announces the `relay` capability, pings every 30 s (reconnecting
+with a jittered 1–30 s backoff and a fresh ticket when a pong is missing) and
+sends `relay: true` on heartbeats while the socket is healthy.
+
+If the API has no relay (the ticket request answers 404 or 503
+`not_configured`), the agent re-announces without `relay` and runs in
+**legacy mode**: everything below about public ports applies. It asks for a
+ticket again every 5 min and switches over when the API gains a relay. A
+deployment keeps the mode it started in until it stops, across agent restarts.
+
+Workstation SSH is not relayed: its port stays public and, for relayed
+workstations, is reported only when `--public-host` is a public IP; otherwise
+the report says "SSH needs a node with a public IP".
+
+**Host network.** Run in a container, the agent must share the host's network
+(`docker run --network host`; the Kubernetes DaemonSet sets `hostNetwork`): it
+reaches tenant containers on the host's `127.0.0.1`.
+
 ## Hosting and containers
 
 Every node announces `matmul` and `hosting` (static sites). `container` (and
@@ -83,7 +111,9 @@ hosting. Deployments arrive on the heartbeat:
   containers never collide). Stop is `docker rm -f cld-<id>`.
 
 **Container hardening** (`CLOUDANA_ALLOW_CONTAINERS=1`). At boot the agent
-first checks that Docker's storage driver can enforce the per-container disk
+first requires **Docker ≥ 28** (`docker version`): older engines let LAN hosts
+reach ports published on `127.0.0.1`, which is how relayed containers are
+published. It then checks that Docker's storage driver can enforce the per-container disk
 cap (`--storage-opt size=`): **overlay2 on xfs mounted with project quotas**
 (`pquota`/`prjquota` in the Docker root's mount options), or **btrfs** / **zfs**.
 overlay2 on ext4 (the Ubuntu default) and Docker Desktop cannot cap a tenant's
@@ -93,7 +123,11 @@ creates the user-defined bridge `cld-tenant` (inter-container communication
 off — an existing network with icc on is refused) and installs iptables `DROP`
 rules from its subnet to `10.0.0.0/8`,
 `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` (cloud metadata) and
-`100.64.0.0/10`, in `DOCKER-USER` (forwarded traffic) and `INPUT` (this host).
+`100.64.0.0/10`, in `DOCKER-USER` (forwarded traffic), plus a `DROP` of new
+connections from its subnet to this host (`INPUT -s <subnet> -m conntrack !
+--ctstate ESTABLISHED,RELATED -j DROP`: replies to connections the host opened,
+such as the relay forwarding to a container, still pass; the older rule without
+the conntrack match is deleted).
 Rules already present are only checked, so an operator may pre-install them;
 if they are missing and cannot be installed (no root / `NET_ADMIN`, Docker
 Desktop without iptables) the node refuses containers and logs why. The same
@@ -111,14 +145,14 @@ on the host the node announced), the agent tears the deployment down and
 reports `failed` with the prefix `node cannot serve:`, so the network re-queues
 it on another node instead of leaving it stuck.
 
-The endpoint reported is `http://<public-host>:<first port>`. Running
+In legacy mode the endpoint reported is `http://<public-host>:<first port>`. Running
 deployments are recorded in `.data/deployments.json`; on restart the agent
 re-serves static sites (same port when free), checks containers with
 `docker ps`, and re-reports their status.
 
-**Firewall.** Mining and heartbeats are outbound-only, so a home node needs no
-open ports for them. Hosting is different: visitors connect *to* your node, so
-the port range must be reachable — allow it in your firewall and forward it on
+**Firewall.** Mining, heartbeats and the relay are outbound-only, so a relay
+node needs no open ports at all. In legacy mode hosting is different: visitors
+connect *to* your node, so the port range must be reachable — allow it in your firewall and forward it on
 your router (or set `--public-host` to a host that routes to the node). Until
 then the network's probes fail and the deployment shows as unreachable.
 
@@ -172,13 +206,15 @@ docker run -d --name cld-<id> --restart unless-stopped --cap-drop=ALL --security
   [comment]`, single line) is passed as both `PUBLIC_KEY` and `SSH_PUBLIC_KEY`
   (the linuxserver/openssh-server and vast/runpod convention); the image's
   sshd port (template `sshPort`, default 22) is mapped to a free host port and
-  reported as `sshEndpoint: "<public-host>:<port>"`. Images without sshd only
-  offer web access.
+  reported as `sshEndpoint: "<public-host>:<port>"` (relayed workstations: only
+  when the public host is a public IP). Images without sshd only offer web access.
 - **Web token** — if the template names a `tokenEnv` (`JUPYTER_TOKEN`,
   `PASSWORD`…), the agent generates a 24-byte base64url token and sets it. If
   the app accepts the token in the URL (template `tokenQuery`; Jupyter's
   `token` by default) the endpoint carries it (`http://host:port/?token=…`);
   otherwise the endpoint is plain and the token is reported as `webToken`.
+  Relayed workstations report the same path and query as `webPath`
+  (`/?token=…`, `/lab`, `/`) instead of an endpoint.
 
 **Security.** The agent never logs tokens, SSH keys or env values. Tokens
 travel only inside the signed status report, and are also stored in
@@ -202,10 +238,14 @@ Docker (build from the repo root, or pull the signed image
 ```
 docker build -f node-agent/Dockerfile -t cloudana-node-agent .
 docker run -d --restart unless-stopped -e CLOUDANA_FLEET_TOKEN=cft_... -e CLOUDANA_INSTRUCTION_SIGNER=0x... \
-  -e CLOUDANA_PUBLIC_HOST=auto -p 42000-42100:42000-42100 -v cloudana-key:/app/dist/node-agent/.data cloudana-node-agent
+  -e CLOUDANA_PUBLIC_HOST=auto --network host -v cloudana-key:/app/dist/node-agent/.data cloudana-node-agent
 ```
 
-Containers on a fleet node additionally need `-e CLOUDANA_ALLOW_CONTAINERS=1`,
+`--network host` is required (see "Relay"); with it, legacy-mode sites listen on
+the host's port range directly, so no `-p` is needed.
+
+Containers on a fleet node additionally need Docker ≥ 28 on the host,
+`-e CLOUDANA_ALLOW_CONTAINERS=1`,
 `-v /var/run/docker.sock:/var/run/docker.sock`, `--user root --cap-add NET_ADMIN`
 (for the iptables rules) and, for GPUs, `--gpus all` so nvidia-smi can see them.
 
@@ -224,5 +264,8 @@ opens a secret (and checks tampering / a wrong key fail); serves a sample static
 site on a free port, checks MIME, headers and path-traversal blocking, restarts
 and resumes it, then stops it; builds workstation `docker run` argv (GPU/no-GPU,
 SSH mapping, token env, env-key validation, hostile image/command/env kept as
-single argv elements) and checks volume keep/purge bookkeeping — no Docker or
-GPU needed.
+single argv elements) and checks volume keep/purge bookkeeping; drives the relay
+client against a local hub (the `ws` package viem installs) and a local upstream:
+ticket/legacy handling, forwarding, flow control, batching, cancel, every error
+code and reconnect, plus relay-mode listeners and reports — no Docker or GPU
+needed.

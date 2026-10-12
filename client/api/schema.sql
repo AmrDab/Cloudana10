@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   fleet_id TEXT,   -- set when the node joined through a fleet token
   pubkey TEXT,     -- uncompressed secp256k1 hex of the node key (sealed secrets)
   public_host TEXT, -- host the node announced; hosting endpoints must use exactly this host
-  agent_version TEXT -- work is refused below MIN_AGENT_VERSION
+  agent_version TEXT, -- work is refused below MIN_AGENT_VERSION
+  relay_at INTEGER    -- last heartbeat with an open relay socket (docs/V4_RELAY_CONTRACT.md)
 );
 
 CREATE TABLE IF NOT EXISTS work_jobs (
@@ -201,7 +202,8 @@ CREATE TABLE IF NOT EXISTS deployments (
   ssh_endpoint TEXT,                      -- workstation sshd "host:port" reported by the node
   web_token TEXT,                         -- workstation web token not carried in the URL (owner-only)
   purge_pending INTEGER NOT NULL DEFAULT 0, -- 1 = node owes a "purge" (container + volume removed)
-  probe_path TEXT, probe_hash TEXT         -- static: file + sha256 the 60 s probe must match
+  probe_path TEXT, probe_hash TEXT,        -- static: file + sha256 the 60 s probe must match
+  relayed INTEGER NOT NULL DEFAULT 0       -- 1 = served through the node's relay socket (no public endpoint)
 );
 CREATE INDEX IF NOT EXISTS idx_deployments_owner ON deployments(owner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deployments_node ON deployments(node, status);

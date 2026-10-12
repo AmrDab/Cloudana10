@@ -29,9 +29,9 @@ Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10
 | ☐ | 5. Turn on the keeper | 10 min | Poster key | "keeper deployed" |
 | ☐ | 6. Fund the escrow | 10 min | Safe owners 1 + 2 | "escrow funded" |
 | ☐ | 7. Email aliases | 5 min | Microsoft 365 admin | "aliases done" |
-| ☐ | 8. Hosting DNS + certificate (~$10/mo, optional for now) | 10 min | Cloudflare login | "sites done" |
+| ☐ | 8. Relay secrets + a user-content domain (~$10/yr) | 20 min | PowerShell, Cloudflare login | "relay secrets done" + the domain |
 | ☐ | 9. Make the node image public | 2 min | GitHub login | "image public" |
-| ☐ | 10. Your workstation as node #1 | later | Your router | "workstation ready" |
+| ☐ | 10. Your workstation as node #1 | later | The workstation (no router changes) | "workstation ready" |
 
 ---
 
@@ -343,26 +343,45 @@ Claude gives you both addresses (token and settlement) after step 4.
 
 ---
 
-## Step 8: Hosting addresses `*.sites.cloudana.io` (10 min, ~$10/month; can wait)
+## Step 8: The relay and a home for user content (20 min, ~$10/year; after Claude says the relay is deployed)
 
-**Why:** when someone hosts a website on Cloudana, it gets an address like `https://<id>.sites.cloudana.io`. The gateway that serves those is already deployed; it needs one DNS record, plus a certificate so browsers show the padlock. The free certificate only covers one level (`*.cloudana.io`), so `*.sites.cloudana.io` needs Cloudflare's paid **Advanced Certificate Manager** (about $10/month). Only needed once the first hosting node is online.
+**Why:** nodes no longer need open ports. Each one keeps a single connection out to `relay.cloudana.io`, and visitors
+reach its sites and containers through it. Two things only you can do:
+- **Secrets.** The API and the relay share one secret to issue and check node tickets, and the hosting gateway needs
+  the API's internal key. You set them; Claude never sees them.
+- **A separate domain for user content** (for example `cloudana.run`). Every deployment gets
+  `https://<id>.cloudana.run`, covered by Cloudflare's free certificate. Keeping customers' content off `cloudana.io`
+  means it can't touch your console's cookies or reputation. (This replaces the old `*.sites.cloudana.io` plan, which
+  needed a $10/month certificate add-on.)
 
-**Do:**
-1. Go to **https://dash.cloudflare.com**, then click **cloudana.io**.
-2. **DNS → Records → + Add record**:
-   - **Type:** `AAAA`
-   - **Name:** `*.sites`
-   - **IPv6 address:** `100::`
-   - **Proxy status:** orange cloud **ON (Proxied)**
-   - Click **Save**. (`100::` is a placeholder; Cloudflare intercepts every request before it goes anywhere.)
-3. **SSL/TLS → Edge Certificates → Order an advanced certificate** (subscribe to Advanced Certificate Manager if asked):
-   - **Hostnames:** `sites.cloudana.io` and `*.sites.cloudana.io`.
-   - Leave the other defaults and click **Save / Order**.
-4. Wait until the certificate status says **Active** (minutes to an hour).
+**Do — secrets** (PowerShell, from the repo folder, after Step 0):
+1. Make one random value and copy it:
+   ```powershell
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+2. Paste that same value into both prompts:
+   ```powershell
+   npx wrangler secret put RELAY_TICKET_SECRET --name cloudana-api
+   npx wrangler secret put RELAY_TICKET_SECRET --name cloudana-relay
+   ```
+3. The gateway needs the same internal key as the API and the keeper. If you don't have the current value, make a new
+   one with the command in 1. and set it on all three:
+   ```powershell
+   npx wrangler secret put INTERNAL_API_KEY --name cloudana-api
+   npx wrangler secret put INTERNAL_API_KEY --name cloudana-keeper
+   npx wrangler secret put INTERNAL_API_KEY --name cloudana-gateway
+   ```
 
-**You should see:** https://test.sites.cloudana.io shows a small dark *"This site is not here"* page with a valid padlock.
+**Do — the domain:**
+1. **https://dash.cloudflare.com → Domain Registration → Register Domains**, search for a name such as `cloudana.run`,
+   and buy it (about $10/year).
+2. It appears as a new site in your Cloudflare account automatically. Nothing else to configure: Claude points the
+   gateway at it.
 
-✅ Tell Claude: **"sites done"**. Claude tests a real site end to end.
+**You should see:** `npx wrangler secret list --name cloudana-relay` lists `RELAY_TICKET_SECRET`.
+
+✅ Tell Claude: **"relay secrets done"** and the domain you bought. Claude switches the gateway to it and tests a site
+end to end through a real node.
 
 ---
 
@@ -385,8 +404,11 @@ Claude gives you both addresses (token and settlement) after step 4.
 
 Tell Claude **"workstation ready"**, with its operating system (Windows/Linux) and whether it has an NVIDIA GPU. You'll get:
 1. one install command (Docker or Node), pre-filled with the right settings;
-2. router instructions to forward ports **42000–42100** to the workstation, so the sites it hosts can be reached;
-3. a link the agent prints. Open it, connect MetaMask (any account; your earnings go there) and sign to bind the node to you.
+2. a link the agent prints. Open it, connect MetaMask (any account; your earnings go there) and sign to bind the node to you.
+
+**No router changes:** the node connects out to the relay, so there are no ports to forward. For containers and GPU
+work Claude will walk you through Docker 28 or newer (on Windows: inside WSL2 Ubuntu, not Docker Desktop) and a
+dedicated disk area so a customer's container can never fill your C: drive.
 
 Home machines run **compute jobs and static websites only**. Container and GPU rentals stay off until a properly hardened datacenter node exists. That's a security decision, not a bug.
 

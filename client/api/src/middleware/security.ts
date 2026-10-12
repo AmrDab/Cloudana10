@@ -40,12 +40,12 @@ export function applySecurity(app: AnyHono): void {
   app.use("/v1/deploy", requireAuth);
   app.use("/v1/deploy/*", requireAuth);
   app.use("/v1/deployments", requireAuth);
-  // GET /v1/deployments/:id/route is public (the hosting gateway resolves sites with it).
+  // GET /v1/deployments/:id/route skips JWT: the hosting gateway authenticates with X-Internal-Key (route-level).
   const isPublicRoute = (c: Context) => c.req.method === "GET" && /^\/v1\/deployments\/[^/]+\/route$/.test(c.req.path);
   app.use("/v1/deployments/*", (c, next) => (isPublicRoute(c) ? next() : requireAuth(c, next)));
   // V3 hosted deployments (routes/v1/deployments.ts): create holds credits and stores up to ~2 MB.
   // Reads are polled by the console (list every 5 s + open rows); writes hold credits, so they stay tight.
-  // The public route lookup gets its own bucket: the gateway's requests all arrive from a few Cloudflare egress IPs,
+  // The route lookup gets its own bucket: the gateway's requests all arrive from a few Cloudflare egress IPs,
   // which would exhaust the per-IP read bucket for every site at once.
   const routeRead = rateLimit({ bucket: "deployments-route", limit: 3000, windowSec: 60 });
   const deployRead = rateLimit({ bucket: "deployments-read", limit: 300, windowSec: 60 });

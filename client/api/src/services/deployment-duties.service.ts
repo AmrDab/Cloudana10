@@ -35,11 +35,14 @@ import { endpointAllowed, type ApiKind, type ContainerSpec, type DeploymentKind,
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { runAssignment } from "./jobs.service.js";
 import { WORKSTATION_TEMPLATES } from "./template-workstations.js";
+import { getRelay } from "../lib/relay.js";
 import type { NodeManifest } from "./nodes.service.js";
 
 /** Live deployments per node, per kind. */
 export const NODE_CAPACITY: Record<DeploymentKind, number> = { static: 20, container: 5 };
 const PROBE_TIMEOUT_MS = 3000;
+/** Probes through the relay cross one more hop (Worker → Durable Object → node socket). */
+const RELAY_PROBE_TIMEOUT_MS = 5000;
 const PROBE_MAX_BYTES = 4 * 1024 * 1024;
 /** Hours billed per heartbeat at most (a long-silent orchestrator catches up over a few beats). */
 const MAX_HOURS_PER_BEAT = 24;
@@ -56,6 +59,8 @@ export interface NodeInstruction {
   sealedEnv?: string;
   /** Containers/workstations: the image is on the curated list (or IMAGE_ALLOWLIST). The agent refuses others. */
   imageAllowed?: boolean;
+  /** "start": serve it through the node's relay socket (fixed at placement; docs/V4_RELAY_CONTRACT.md). */
+  relayed?: boolean;
 }
 
 const LIVE = "('assigned','running','unreachable')";
@@ -172,11 +177,13 @@ function addUsage(n: NodeState, r: Pick<DeploymentRow, "workstation" | "spec_jso
   n.memUsedMb += sign * (spec.memMb ?? 0);
 }
 
-async function claim(node: string, q: Queued, now: number): Promise<boolean> {
+async function claim(node: string, q: Queued, now: number, relayed: boolean): Promise<boolean> {
+  // Workstations need WebSockets (Jupyter kernels, terminals), which the relay does not carry yet: they stay direct.
+  relayed = relayed && !q.workstation;
   const db = getD1();
   const r = await db
-    .prepare("UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ? WHERE id = ? AND status = 'queued'")
-    .bind(node, now, q.id)
+    .prepare("UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ?, relayed = ? WHERE id = ? AND status = 'queued'")
+    .bind(node, now, relayed ? 1 : 0, q.id)
     .run();
   if ((r.meta?.changes ?? 0) === 0) return false;
   // Back on the node that lost it: its "start" replaces the owed stop.
@@ -190,7 +197,15 @@ async function claim(node: string, q: Queued, now: number): Promise<boolean> {
  * N2. Static sites go to any bound hosting node. Containers and workstations go only to nodes that announced
  * `container` AND belong to a fleet (testnet: home nodes do compute + static hosting only).
  */
-async function assign(node: string, capabilities: string[], hw: NodeHardware | null, fleetId: string | null, now: number): Promise<void> {
+async function assign(
+  node: string,
+  capabilities: string[],
+  hw: NodeHardware | null,
+  fleetId: string | null,
+  now: number,
+  relayed: boolean,
+  publicHost: boolean,
+): Promise<void> {
   const db = getD1();
   if (capabilities.includes("hosting")) {
     const live = await db
@@ -210,7 +225,7 @@ async function assign(node: string, capabilities: string[], hw: NodeHardware | n
       for (const q of queued.results ?? []) {
         if (taken >= room) break;
         if (q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
-        if (await claim(node, q, now)) taken++;
+        if (await claim(node, q, now, relayed)) taken++;
       }
     }
   }
@@ -232,7 +247,8 @@ async function assign(node: string, capabilities: string[], hw: NodeHardware | n
   for (const q of queued.results ?? []) {
     if (state.containers >= NODE_CAPACITY.container) break;
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
-    if (fits(q, state) && (await claim(node, q, now))) addUsage(state, q, 1);
+    if (q.workstation && !publicHost) continue; // workstations stay direct (WebSockets, SSH): a verified public host only
+    if (fits(q, state) && (await claim(node, q, now, relayed))) addUsage(state, q, 1);
   }
 }
 
@@ -254,15 +270,18 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .all<Queued>();
   if (!queued.results?.length) return 0;
   const nodes = await db
-    .prepare("SELECT address, work_types, manifest_json FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
+    .prepare("SELECT address, work_types, manifest_json, public_host FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
-    .all<{ address: string; work_types: string | null; manifest_json: string | null }>();
-  const states = new Map<string, NodeState & { victims: DeploymentRow[] }>();
+    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null }>();
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean };
+  const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
     if (!caps.includes("container")) continue;
-    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [] });
+    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [], publicHost: !!n.public_host });
   }
+  // Same rule as assign(): workstations only go to nodes with a verified public host.
+  const canTake = (q: Queued, s: Candidate) => !q.workstation || s.publicHost;
   const live = await db.prepare(`SELECT * FROM deployments WHERE kind = 'container' AND status IN ${LIVE}`).all<DeploymentRow>();
   for (const r of live.results ?? []) {
     const s = r.node ? states.get(r.node) : undefined;
@@ -272,13 +291,14 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
   }
   let preempted = 0;
   for (const q of queued.results) {
-    const fitting = [...states.values()].find((s) => fits(q, s));
+    const fitting = [...states.values()].find((s) => canTake(q, s) && fits(q, s));
     if (fitting) {
       addUsage(fitting, q, 1); // it will be assigned there; do not count that room twice
       continue;
     }
-    let best: { s: NodeState & { victims: DeploymentRow[] }; v: DeploymentRow } | null = null;
+    let best: { s: Candidate; v: DeploymentRow } | null = null;
     for (const s of states.values()) {
+      if (!canTake(q, s)) continue;
       for (const v of s.victims) {
         const trial = { ...s };
         addUsage(trial, v, -1);
@@ -326,23 +346,45 @@ export const sha256Hex = (data: ArrayBuffer | Uint8Array) => createHash("sha256"
  */
 export async function probeOne(endpoint: string, probe?: { path: string; hash: string } | null): Promise<boolean> {
   try {
-    if (probe) {
-      const res = await fetch(probeUrl(endpoint, probe.path), { method: "GET", redirect: "manual", signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-      if (res.status !== 200) {
-        await res.body?.cancel().catch(() => undefined);
-        return false;
-      }
-      const len = Number(res.headers.get("content-length") ?? 0);
-      if (len > PROBE_MAX_BYTES) {
-        await res.body?.cancel().catch(() => undefined);
-        return false;
-      }
-      const body = await res.arrayBuffer();
-      return body.byteLength <= PROBE_MAX_BYTES && sha256Hex(body) === probe.hash.toLowerCase();
-    }
-    const res = await fetch(probeTarget(endpoint), { method: "GET", redirect: "manual", signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    const url = probe ? probeUrl(endpoint, probe.path) : probeTarget(endpoint);
+    const res = await fetch(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    return await probePassed(res, probe);
+  } catch {
+    return false;
+  }
+}
+
+/** With a content hash: 200 and sha256(body) == hash (≤ PROBE_MAX_BYTES). Without: reachability (2xx/3xx). */
+async function probePassed(res: Response, probe?: { path: string; hash: string } | null): Promise<boolean> {
+  if (!probe) {
     await res.body?.cancel().catch(() => undefined);
     return res.status >= 200 && res.status < 400;
+  }
+  if (res.status !== 200 || Number(res.headers.get("content-length") ?? 0) > PROBE_MAX_BYTES) {
+    await res.body?.cancel().catch(() => undefined);
+    return false;
+  }
+  const body = await res.arrayBuffer();
+  return body.byteLength <= PROBE_MAX_BYTES && sha256Hex(body) === probe.hash.toLowerCase();
+}
+
+/**
+ * The same probe through the node's relay socket (docs/V4_RELAY_CONTRACT.md): the node can only answer for a
+ * deployment it serves, so a content hash still proves the right site is up. No relay binding → fails (billing
+ * pauses rather than charging for something nobody checked).
+ */
+export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" | "kind" | "probe_path" | "probe_hash">): Promise<boolean> {
+  const relay = getRelay();
+  if (!relay) return false;
+  const probe = row.probe_path && row.probe_hash ? { path: row.probe_path, hash: row.probe_hash } : null;
+  const path = probe ? `/${probe.path.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/")}` : "/";
+  try {
+    const res = await relay(node, "/proxy", {
+      method: "GET",
+      headers: { "x-relay-dep": row.id, "x-relay-class": row.kind === "static" ? "site" : "endpoint", "x-relay-path": path },
+      signal: AbortSignal.timeout(RELAY_PROBE_TIMEOUT_MS),
+    });
+    return await probePassed(res, probe);
   } catch {
     return false;
   }
@@ -356,13 +398,17 @@ async function probe(node: string, now: number): Promise<void> {
   const db = getD1();
   const due = await db
     .prepare(
-      "SELECT * FROM deployments WHERE node = ? AND status IN ('running','unreachable') AND endpoint IS NOT NULL " +
+      "SELECT * FROM deployments WHERE node = ? AND status IN ('running','unreachable') AND (endpoint IS NOT NULL OR relayed = 1) " +
         "AND (last_probe_at IS NULL OR last_probe_at <= ?)",
     )
     .bind(node, now - env.DEPLOY_PROBE_SECONDS * 1000)
     .all<DeploymentRow>();
   const rows = due.results ?? [];
-  const results = await Promise.all(rows.map((r) => (endpointAllowed(r.endpoint!, env.DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : false)));
+  const results = await Promise.all(
+    rows.map((r) =>
+      r.relayed ? probeRelayed(node, r) : endpointAllowed(r.endpoint!, env.DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : false,
+    ),
+  );
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (results[i]) {
@@ -470,6 +516,7 @@ async function instructions(node: string): Promise<NodeInstruction[]> {
       spec,
       ...(r.sealed_env && { sealedEnv: r.sealed_env }),
       ...(r.kind === "container" && { imageAllowed: imageAllowed(String(spec.image ?? "")) }),
+      relayed: !!r.relayed,
     };
   });
   const all = [...own, ...(stale.results ?? []).map((r): NodeInstruction => ({ id: r.id, action: "stop", kind: kindOf(r), spec: null }))];
@@ -480,14 +527,26 @@ async function instructions(node: string): Promise<NodeInstruction[]> {
 /** Everything a heartbeat does for hosting (per-node duties only). Unbound nodes get no new work but still receive stops. */
 export async function runDeploymentDuties(node: string, now = Date.now()): Promise<NodeInstruction[]> {
   const row = await getD1()
-    .prepare("SELECT payout, work_types, manifest_json, fleet_id FROM nodes WHERE address = ?")
+    .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host FROM nodes WHERE address = ?")
     .bind(node)
-    .first<{ payout: string | null; work_types: string | null; manifest_json: string | null; fleet_id: string | null }>();
+    .first<{
+      payout: string | null;
+      work_types: string | null;
+      manifest_json: string | null;
+      fleet_id: string | null;
+      relay_at: number | null;
+      public_host: string | null;
+    }>();
   if (!row) return [];
   const hw = JSON.parse(row.manifest_json ?? "{}") as NodeHardware;
+  const caps = JSON.parse(row.work_types ?? "[]") as string[];
+  // A relay node takes new hosting work only while its socket is up (fresh `relay: true` heartbeat); a legacy node
+  // kept its hosting capabilities only with a verified public host (routes/v1/nodes.ts announce).
+  const relayed = caps.includes("relay");
+  const reachable = !relayed || (row.relay_at ?? 0) >= now - getEnv().RELAY_FRESH_SECONDS * 1000;
   const steps: [string, () => Promise<unknown>][] = [
     ["auto-stop", () => autoStop(node, now)],
-    ["assign", () => (row.payout ? assign(node, JSON.parse(row.work_types ?? "[]") as string[], hw, row.fleet_id, now) : Promise.resolve())],
+    ["assign", () => (row.payout && reachable ? assign(node, caps, hw, row.fleet_id, now, relayed, !!row.public_host) : Promise.resolve())],
     ["probe", () => probe(node, now)],
     ["bill", () => bill(node, now)],
   ];
@@ -557,7 +616,15 @@ export const gpuRefusalReason = (node: string) => `not enough free GPUs on node 
 export const NODE_CANNOT_SERVE = "node cannot serve:";
 const nodeRefusalPrefix = (node: string) => `refused by node ${node}:`;
 
-export type StatusReport = { status: "running" | "failed" | "stopped"; endpoint?: string; sshEndpoint?: string; webToken?: string; message?: string };
+export type StatusReport = {
+  status: "running" | "failed" | "stopped";
+  endpoint?: string;
+  sshEndpoint?: string;
+  webToken?: string;
+  /** Relayed workstations: path + query of the web app (stored in `endpoint`, which holds a path for relayed rows). */
+  webPath?: string;
+  message?: string;
+};
 export type ReportResult = { ok: true; status: string } | { ok: false; code: "not_found" | "conflict" | "validation_failed"; message: string };
 
 const hostOf = (url: string) => new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -585,8 +652,11 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
       }
       return { ok: true, status: row.status };
     }
+    // Relayed deployments have no public endpoint: traffic reaches them through the node's relay socket.
+    if (row.relayed) report = { ...report, endpoint: row.workstation && report.webPath?.startsWith("/") ? report.webPath : undefined };
+    else if (report.webPath) return { ok: false, code: "validation_failed", message: "webPath is for relayed deployments only" };
     const dev = getEnv().DEV_MODE;
-    if (report.endpoint && !endpointAllowed(report.endpoint, dev)) {
+    if (report.endpoint && !row.relayed && !endpointAllowed(report.endpoint, dev)) {
       return { ok: false, code: "validation_failed", message: "endpoint must be a public http(s) address" };
     }
     if (report.webToken && !row.workstation) {
@@ -596,16 +666,17 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
       return { ok: false, code: "validation_failed", message: "sshEndpoint must be a public host:port of a workstation" };
     }
     // Billing fraud guard: endpoints must live on the host the node announced, never on some other live site.
-    if (report.endpoint || report.sshEndpoint) {
+    // (A relayed row's endpoint is a path on the gateway, so only its SSH endpoint is checked.)
+    if ((report.endpoint && !row.relayed) || report.sshEndpoint) {
       const n = await db.prepare("SELECT public_host FROM nodes WHERE address = ?").bind(node).first<{ public_host: string | null }>();
       const announced = n?.public_host?.toLowerCase() ?? null;
-      const hosts = [report.endpoint && hostOf(report.endpoint), report.sshEndpoint && hostOf(`http://${report.sshEndpoint}`)].filter(Boolean);
+      const hosts = [!row.relayed && report.endpoint && hostOf(report.endpoint), report.sshEndpoint && hostOf(`http://${report.sshEndpoint}`)].filter(Boolean);
       if (!announced || hosts.some((h) => h !== announced)) {
         return { ok: false, code: "validation_failed", message: "endpoint host must be the node's announced public host" };
       }
     }
     // A workstation with SSH access only has no web endpoint.
-    if (row.status === "assigned" && !report.endpoint && !(row.workstation && report.sshEndpoint)) {
+    if (row.status === "assigned" && !row.relayed && !report.endpoint && !(row.workstation && report.sshEndpoint)) {
       return { ok: false, code: "validation_failed", message: "endpoint is required when a deployment starts running" };
     }
     if (row.status === "assigned") {
@@ -616,7 +687,7 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
         )
         .bind(report.endpoint ?? null, report.sshEndpoint ?? null, report.webToken ?? null, now, now, id)
         .run();
-      const at = [report.endpoint, report.sshEndpoint && `ssh ${report.sshEndpoint}`].filter(Boolean).join(" · ");
+      const at = [report.endpoint ?? (row.relayed ? "the relay" : null), report.sshEndpoint && `ssh ${report.sshEndpoint}`].filter(Boolean).join(" · ");
       if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", `running at ${at}${report.message ? ` — ${report.message}` : ""}`, now);
       return { ok: true, status: "running" };
     }

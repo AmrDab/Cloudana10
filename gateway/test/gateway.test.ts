@@ -156,12 +156,12 @@ describe("proxy", () => {
     expect((m.calls[1].init as RequestInit).method).toBe("HEAD");
   });
 
-  it("refuses other methods", async () => {
+  it("refuses other methods on a static site, without touching the origin", async () => {
     const m = mockFetch(running, () => html(""));
     const res = await handle(req("/", { method: "POST" }), ENV, deps(m.fetch));
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toBe("GET, HEAD");
-    expect(m.calls).toHaveLength(0);
+    expect(m.calls.map((c) => c.url)).toEqual([`${ENV.API_URL}/v1/deployments/${ID}/route`]); // the route says it is static
   });
 
   it("uses the route cache so the API is asked once per 30 s", async () => {
@@ -221,5 +221,138 @@ describe("error pages", () => {
     const r2 = await handle(req("/"), ENV, deps(apiDown.fetch, memCache()));
     expect(r2.status).toBe(503);
     expect(apiDown.calls).toHaveLength(1);
+  });
+});
+
+describe("relay", () => {
+  const NODE_A = "0x" + "a".repeat(40);
+  const NODE_B = "0x" + "b".repeat(40);
+  const relayed = (kind: "static" | "container", nodes = [NODE_A]) => ({
+    status: 200,
+    body: { status: "success", id: ID, state: "running", kind, workstation: false, relayed: true, nodes, endpoint: null },
+  });
+  /** Relay stubs per node; each records what it was asked. */
+  function relays(answer: (node: string, init: RequestInit) => Response | Promise<Response>) {
+    const asked: { node: string; init: RequestInit }[] = [];
+    const relay = (node: string) => ({
+      fetch: async (_u: string, init?: RequestInit) => {
+        asked.push({ node, init: init ?? {} });
+        return answer(node, init ?? {});
+      },
+    });
+    return { relay, asked };
+  }
+  const relayErr = (code: string, status = 502) => new Response("{}", { status, headers: { "x-relay-error": code } });
+
+  it("asks the serving node's relay with the deployment, class and path — and sends the internal key to the API", async () => {
+    const m = mockFetch(relayed("static"), () => {
+      throw new Error("no direct origin for a relayed site");
+    });
+    const r = relays(() => html("<h1>hi</h1>"));
+    const res = await handle(req("/a/b?c=1"), { ...ENV, INTERNAL_API_KEY: "ik" }, { ...deps(m.fetch), relay: r.relay });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<h1>hi</h1>");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(new Headers(m.calls[0].init?.headers).get("x-internal-key")).toBe("ik");
+    const h = new Headers(r.asked[0].init.headers);
+    expect(r.asked[0].node).toBe(NODE_A);
+    expect([h.get("x-relay-dep"), h.get("x-relay-class"), h.get("x-relay-path")]).toEqual([ID, "site", "/a/b?c=1"]);
+  });
+
+  it("passes every method, the body, cookies and auth to a container, and keeps its cookies host-only", async () => {
+    const m = mockFetch(relayed("container"), () => new Response("x"));
+    const r = relays(async (_n, init) => {
+      expect(init.method).toBe("POST");
+      const h = new Headers(init.headers);
+      expect(h.get("authorization")).toBe("Bearer user-token");
+      expect(h.get("cookie")).toBe("s=1");
+      expect(h.get("x-relay-class")).toBe("endpoint");
+      expect(await new Response(init.body).text()).toBe('{"prompt":"hi"}');
+      return new Response("ok", { status: 201, headers: { "set-cookie": "sid=1; Domain=.example.run; Path=/", location: "http://127.0.0.1:8000/next" } });
+    });
+    const res = await handle(
+      req("/v1/chat", { method: "POST", body: '{"prompt":"hi"}', headers: { authorization: "Bearer user-token", cookie: "s=1", "content-type": "application/json" } }, `${ID}.example.run`),
+      { ...ENV, SITES_DOMAIN: "example.run" },
+      { ...deps(m.fetch), relay: r.relay },
+    );
+    expect(res.status).toBe(201);
+    expect(res.headers.get("set-cookie")).toBe("sid=1; Path=/");
+    expect(res.headers.get("location")).toBe(`https://${ID}.example.run/next`);
+    expect(res.headers.get("content-security-policy")).toBeNull();
+  });
+
+  it("tries the next node when one is offline or not serving, for GET only", async () => {
+    const m = mockFetch(relayed("static", [NODE_A, NODE_B]), () => new Response("x"));
+    const r = relays((node) => (node === NODE_A ? relayErr("offline", 503) : html("from b")));
+    const res = await handle(req("/"), ENV, { ...deps(m.fetch), relay: r.relay });
+    expect(await res.text()).toBe("from b");
+    expect(r.asked.map((a) => a.node)).toEqual([NODE_A, NODE_B]);
+
+    const m2 = mockFetch(relayed("container", [NODE_A, NODE_B]), () => new Response("x"));
+    const r2 = relays(() => relayErr("not_serving"));
+    const post = await handle(req("/", { method: "POST", body: "x" }), ENV, { ...deps(m2.fetch), relay: r2.relay });
+    expect(post.status).toBe(503);
+    expect(r2.asked).toHaveLength(1); // a body may have reached the app: never replayed
+  });
+
+  it("maps relay errors to clear pages", async () => {
+    for (const [code, status] of [["timeout", 504], ["too_large", 413], ["busy", 503]] as const) {
+      const m = mockFetch(relayed("container"), () => new Response("x"));
+      const r = relays(() => relayErr(code));
+      expect((await handle(req("/"), ENV, { ...deps(m.fetch), relay: r.relay })).status).toBe(status);
+    }
+  });
+
+  it("keeps a container sandboxed and cookie-less while user content shares the first-party domain", async () => {
+    const m = mockFetch(relayed("container"), () => new Response("x"));
+    let seen: Headers | null = null;
+    const r = relays(async (_n, init) => {
+      seen = new Headers(init.headers);
+      return new Response("{}", { headers: { "content-type": "application/json", "set-cookie": "sid=1" } });
+    });
+    const env = { ...ENV, SITES_DOMAIN: "sites.cloudana.io" };
+    const res = await handle(
+      req("/v1/chat", { method: "POST", body: "{}", headers: { cookie: "s=1", authorization: "Bearer t", "content-type": "application/json" } }, `${ID}.sites.cloudana.io`),
+      env,
+      { ...deps(m.fetch), relay: r.relay },
+    );
+    expect(res.status).toBe(200);
+    // An API call still works (type + the caller's own token), but cookies never cross, either way.
+    expect(seen!.get("cookie")).toBeNull();
+    expect(seen!.get("authorization")).toBe("Bearer t");
+    expect(seen!.get("content-type")).toBe("application/json");
+    expect(seen!.get("accept-encoding")).toBe("identity");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("strips Domain from cookies however it is spaced or cased", async () => {
+    const { hostOnlyCookie } = await import("../src/index.js");
+    expect(hostOnlyCookie("sid=1; Domain=.example.run; Path=/")).toBe("sid=1; Path=/");
+    expect(hostOnlyCookie("sid=1; Domain =example.run; Secure")).toBe("sid=1; Secure");
+    expect(hostOnlyCookie("sid=1;DOMAIN= x.run ;HttpOnly")).toBe("sid=1;HttpOnly");
+    expect(hostOnlyCookie("domain=keep-the-name; Path=/")).toBe("domain=keep-the-name; Path=/"); // the cookie's own name stays
+  });
+
+  it("never rewrites a look-alike host in redirects", async () => {
+    const m = mockFetch(relayed("container"), () => new Response("x"));
+    const r = relays(() => new Response(null, { status: 302, headers: { location: "http://localhost.evil.test/x" } }));
+    const res = await handle(req("/", {}, `${ID}.example.run`), { ...ENV, SITES_DOMAIN: "example.run" }, { ...deps(m.fetch), relay: r.relay });
+    expect(res.headers.get("location")).toBe("http://localhost.evil.test/x");
+  });
+
+  it("tells a separate user-content domain from the first-party one", async () => {
+    const { isolatedContentDomain } = await import("../src/index.js");
+    expect(isolatedContentDomain({ SITES_DOMAIN: "cloudana.run" })).toBe(true);
+    expect(isolatedContentDomain({ SITES_DOMAIN: "sites.cloudana.io" })).toBe(false);
+    expect(isolatedContentDomain({ SITES_DOMAIN: "cloudana.io" })).toBe(false);
+    expect(isolatedContentDomain({ SITES_DOMAIN: "evilcloudana.io" })).toBe(true);
+  });
+
+  it("is 503 when no relay is bound or nothing serves it yet", async () => {
+    const m = mockFetch(relayed("static"), () => new Response("x"));
+    expect((await handle(req("/"), ENV, deps(m.fetch))).status).toBe(503);
+    const m2 = mockFetch(relayed("static", []), () => new Response("x"));
+    expect((await handle(req("/"), ENV, deps(m2.fetch))).status).toBe(503);
   });
 });

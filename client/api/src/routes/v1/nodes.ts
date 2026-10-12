@@ -4,6 +4,7 @@
  *   POST /v1/nodes/bind      (payout wallet signs the binding message)
  *   POST /v1/nodes/heartbeat (node-signed) — liveness; runs this node's hosting duties; returns its signed work
  *   GET  /v1/nodes/instruction-key — address of the key that signs node instructions (agents pin it)
+ *   POST /v1/nodes/relay/ticket (node-signed) — short-lived ticket to open the relay socket (docs/V4_RELAY_CONTRACT.md)
  *   GET  /v1/nodes/mine      (JWT) — nodes bound to the caller's wallet
  * Global duties (dead-node requeue, preemption, matmul assignment) run from the cron, not here.
  */
@@ -21,6 +22,7 @@ import { runDeploymentDuties } from "../../services/deployment-duties.service.js
 import { endpointAllowed } from "../../services/deployment-spec.js";
 import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
 import { getEnv } from "../../config/env.js";
+import { issueTicket } from "../../../../../shared/relay-ticket.js";
 import { pubkeyMatchesAddress } from "../../lib/eth.js";
 import { log } from "../../lib/logger.js";
 import { getD1 } from "../../lib/storage.js";
@@ -38,6 +40,9 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 /** Per-node limits, after requireNode so they key on the verified address (see middleware/security.ts). */
 const announceLimit = rateLimit({ bucket: "nodes-announce", limit: 10, windowSec: 60, keyBy: verifiedNodeKey });
 const heartbeatLimit = rateLimit({ bucket: "nodes-heartbeat", limit: 12, windowSec: 60, keyBy: verifiedNodeKey });
+const ticketLimit = rateLimit({ bucket: "nodes-relay-ticket", limit: 12, windowSec: 60, keyBy: verifiedNodeKey });
+/** Capability a relay-capable agent announces; kept only when this API runs the relay (RELAY_TICKET_SECRET). */
+export const RELAY_CAPABILITY = "relay";
 /** A hostname or IP as the node stores and compares it: lowercase, IPv6 without brackets. */
 export const normalizeHost = (host: string) => host.toLowerCase().replace(/^\[|\]$/g, "");
 
@@ -49,7 +54,7 @@ const AnnounceSchema = z.object({
     os: z.string().max(128),
   }),
   benchmarkMmacPerSec: z.number().min(0).max(1e9),
-  /** Work types and capabilities: "matmul", plus "hosting" (static sites) / "container" (Docker present) / "gpu" (Docker + nvidia-smi). */
+  /** Work types and capabilities: "matmul", plus "hosting" (static sites) / "container" (Docker present) / "gpu" (Docker + nvidia-smi) / "relay" (serves through the relay socket). */
   workTypes: z.array(z.string().max(64)).min(1).max(16),
   /** Uncompressed secp256k1 public key of the node key ("04" + 128 hex, no 0x); sealed secrets are encrypted to it. */
   pubkey: z
@@ -94,9 +99,12 @@ const announceRoute = createRoute({
 
 nodesRouter.openapi(announceRoute, async (c) => {
   const body = c.req.valid("json");
-  const known = [...workTypeIds(), ...HOSTING_CAPABILITIES];
+  const relayOn = !!getEnv().RELAY_TICKET_SECRET;
+  const known = [...workTypeIds(), ...HOSTING_CAPABILITIES, ...(relayOn ? [RELAY_CAPABILITY] : [])];
   let workTypes = body.workTypes.filter((w) => known.includes(w));
   if (workTypes.length === 0) return fail(c, "validation_failed", `workTypes must include one of: ${known.join(", ")}`);
+  // A relay node serves through its outbound socket, so hosting needs no public IP (docs/V4_RELAY_CONTRACT.md).
+  const relay = workTypes.includes(RELAY_CAPABILITY);
   // A node whose announced host is not publicly reachable (or missing) cannot serve hosting: never place it there,
   // so a misconfigured home node is not handed sites it then has to refuse. Reported endpoints are later checked
   // against this host, so outside DEV_MODE it must also be the IP the announce itself came from: a self-chosen
@@ -104,12 +112,16 @@ nodesRouter.openapi(announceRoute, async (c) => {
   const dev = getEnv().DEV_MODE;
   const publicHost = body.publicHost ? normalizeHost(body.publicHost) : undefined;
   const hostPublic = !!publicHost && endpointAllowed(`http://${body.publicHost}/`, dev) && (dev || publicHost === normalizeHost(trustedClientIp(c)));
-  if (!hostPublic) workTypes = workTypes.filter((w) => !HOSTING_CAPABILITIES.includes(w));
-  if (workTypes.length === 0) return fail(c, "validation_failed", "hosting capabilities need a public publicHost equal to the node's own IP");
+  if (!hostPublic && !relay) workTypes = workTypes.filter((w) => !HOSTING_CAPABILITIES.includes(w));
+  if (workTypes.every((w) => w === RELAY_CAPABILITY)) {
+    return fail(c, "validation_failed", "hosting capabilities need the relay or a public publicHost equal to the node's own IP");
+  }
+  // Only a verified public host is stored: endpoints (legacy direct nodes, workstation SSH) are checked against it.
+  const storedHost = hostPublic ? publicHost : undefined;
   // The host of a live deployment's endpoint cannot move: changing it would orphan the endpoint checks on sites
   // still being billed. Stop them first (the node re-announces every few heartbeats while unbound anyway).
   const current = await getNode(c.get("node"));
-  if (current?.public_host && current.public_host !== (publicHost ?? null)) {
+  if (current?.public_host && current.public_host !== (storedHost ?? null)) {
     const live = await getD1()
       .prepare("SELECT COUNT(*) AS n FROM deployments WHERE node = ? AND status IN ('assigned','running','unreachable')")
       .bind(c.get("node"))
@@ -124,7 +136,7 @@ nodesRouter.openapi(announceRoute, async (c) => {
     return fail(c, "validation_failed", "pubkey is not the public key of the signing node");
   }
   const node = await announceNode(c.get("node"), body.manifest, body.benchmarkMmacPerSec, workTypes, pubkey, {
-    publicHost,
+    publicHost: storedHost,
     agentVersion: body.agentVersion,
   });
   if (fleet) {
@@ -183,6 +195,8 @@ const NodeDeploymentSchema = z.object({
   spec: z.record(z.unknown()).nullable(),
   sealedEnv: z.string().optional(),
   imageAllowed: z.boolean().optional(),
+  /** "start": serve it through this node's relay socket (fixed at placement). */
+  relayed: z.boolean().optional(),
 });
 
 const HeartbeatResponseSchema = z.object({
@@ -214,7 +228,9 @@ const heartbeatRoute = createRoute({
 nodesRouter.openapi(heartbeatRoute, async (c) => {
   const node = c.get("node");
   await touchNode(node);
-  const body = (c.get("nodeBody") ?? {}) as { agentVersion?: unknown };
+  const body = (c.get("nodeBody") ?? {}) as { agentVersion?: unknown; relay?: unknown };
+  // The agent's relay socket is open (and answered a ping recently): relayed placement may use this node.
+  if (body.relay === true) await getD1().prepare("UPDATE nodes SET relay_at = ? WHERE address = ?").bind(Date.now(), node).run();
   const row = await getNode(node);
   const version = typeof body.agentVersion === "string" && SEMVER.test(body.agentVersion) ? body.agentVersion : row?.agent_version ?? null;
   if (row && version && version !== row.agent_version) {
@@ -231,6 +247,34 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
   const envelope = await signInstruction(node, instructions);
   if (!envelope) log.api.warn("[nodes] INSTRUCTION_SIGNING_KEY is not set — heartbeat instructions go out unsigned (agents ignore them)");
   return ok(c, { ...instructions, ...(envelope ?? {}), minAgentVersion: minAgentVersion(), upgradeRequired: !allowed });
+});
+
+const ticketRoute = createRoute({
+  method: "post",
+  path: "/nodes/relay/ticket",
+  tags: TAGS,
+  description:
+    `${NODE_SIGNED} Body {}. A single-use ticket (valid 60 s) to open wss://<relay>/connect?ticket=… ` +
+    "(docs/V4_RELAY_CONTRACT.md). 503 not_configured when this API runs no relay — the agent stays in legacy mode.",
+  middleware: [requireNode, ticketLimit] as const,
+  responses: responses(
+    { 200: json(z.object({ status: z.literal("success"), ticket: z.string(), url: z.string(), expiresAt: z.number() }), "Ticket") },
+    401,
+    403,
+    429,
+    503,
+  ),
+});
+
+nodesRouter.openapi(ticketRoute, async (c) => {
+  const env = getEnv();
+  if (!env.RELAY_TICKET_SECRET) return fail(c, "not_configured", "this API runs no relay");
+  // Only an announced, bound node gets a socket (an evicted or unknown key reconnects to nothing). 403, never 404:
+  // the agent reads 404 as "this API has no relay" and would fall back to legacy mode.
+  const row = await getNode(c.get("node"));
+  if (!row?.payout) return fail(c, "forbidden", "announce and bind this node before opening the relay");
+  const { ticket, expiresAt } = await issueTicket(env.RELAY_TICKET_SECRET, c.get("node"));
+  return ok(c, { ticket, url: env.RELAY_URL, expiresAt });
 });
 
 const instructionKeyRoute = createRoute({

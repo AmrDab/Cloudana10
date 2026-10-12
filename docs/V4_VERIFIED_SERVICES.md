@@ -27,18 +27,21 @@ job, full transcript 1 in 20) stays low priority.
 
 ## 2. The relay — one way in for every deployment
 
-- Each node keeps **one outbound WebSocket** to `GET /v1/nodes/relay`.
-- A single **`RelayHub` Durable Object**, in a separate, rarely deployed Worker, holds every socket (hibernation),
-  tracks which deployments each node serves, and carries HTTP requests and responses (including SSE streaming) over
-  the socket. API deploys don't drop connections.
-- The gateway (`*.sites.cloudana.io`, plus a new `*.run.cloudana.io` for endpoints) sends traffic **through the hub**
-  instead of to `http://<node-ip>:<port>`. The agent forwards to the container's port on localhost.
-- Auth: challenge-response hello (hub nonce; node signs `RELAY <nonce> <ts>`); only bound, unbanned nodes at or
-  above `minAgentVersion`. Pins and stop/start orders keep the existing signed-instruction envelope.
-- Limits: 1 MB request body (raise per plan later), chunks batched ~50 ms, soft cap ~1,000 req/s per hub (shard by
-  region later).
-- Side effect: static hosting and containers on home nodes stop needing a public host, and the "endpoint host must
-  equal the announced IP" rule becomes unnecessary.
+Build contract: [V4_RELAY_CONTRACT.md](V4_RELAY_CONTRACT.md); reviewed in [V4_REVIEW_RELAY.md](V4_REVIEW_RELAY.md).
+- Each node keeps **one outbound WebSocket** to `wss://relay.cloudana.io/connect`, opened with a single-use 60 s
+  ticket from `POST /v1/nodes/relay/ticket` (the existing signed node request; HMAC shared by API and relay).
+- **One `RelayNode` Durable Object per node** (`idFromName(nodeAddress)`) in a separate, rarely deployed Worker
+  (`cloudana-relay`). The gateway and the API reach it through a `script_name` binding: the gateway to proxy visitor
+  traffic, the API to probe. API deploys never drop a socket.
+- Framing: JSON control (`req/res/end/err/cancel/ack`), binary body frames ≤ 64 KiB tagged with a stream id, 512 KiB
+  window per stream, ≤ 64 streams per node, head timeout 30 s (sites) / 300 s (endpoints), retry on another node
+  only for GET/HEAD that never reached an app.
+- The database decides who serves what: the gateway's route lookup (now internal, `X-Internal-Key`) names the node;
+  a node answers only for deployments it runs. The public route no longer leaks node IPs.
+- Nodes announce the `relay` capability; a relay node takes new work only while its `relay: true` heartbeat is fresh
+  and needs **no public IP**. Containers publish on `127.0.0.1` only. Legacy direct nodes keep working unchanged.
+- **User content moves to its own domain** (e.g. `<id>.cloudana.run`): free one-level wildcard certificate, cookies
+  and phishing reputation kept off `cloudana.io`. Path-based routing was rejected (shared origin).
 
 ## 3. GPU endpoints (the AI product)
 
@@ -125,8 +128,13 @@ Later: `POST /v1/challenges`; autoscaling and scale-to-zero; per-request billing
 8. **Storage** (own spec).
 
 ## 8. Owner decisions
-1. **Workers Paid** (~$5/mo) for the relay hub (Durable Objects) and API CPU.
-2. Two new hostnames on the existing zone: `*.run.cloudana.io` (endpoints) — DNS + route, done by you in Cloudflare.
-3. **First GPU node:** your workstation (in your own fleet). Open item: WSL2/ext4 hosts fail today's storage-quota
-   check for tenant containers; options are an xfs data disk, or allowing owner-fleet nodes to run without the quota.
-4. Verified mode needs a **second reference GPU node** before checks run; until then endpoints are honestly *probed*.
+1. **Workers Paid** (~$5/mo) — needed before ~17 nodes (free plan: 100k requests/day; heartbeats alone use 5,760 per
+   node). Durable Objects themselves run on the free plan.
+2. **A user-content domain** (e.g. `cloudana.run`, ~$10/yr) as a second free Cloudflare zone; every deployment is
+   served at `https://<id>.<domain>`. Until then nothing user-facing is publicly reachable through the relay.
+3. **Secrets you set yourself:** `RELAY_TICKET_SECRET` (same value on `cloudana-api` and `cloudana-relay`) and
+   `INTERNAL_API_KEY` on `cloudana-gateway` (same value as the API's).
+4. **First GPU node:** Ubuntu, or WSL2 with Docker Engine inside the distro (not Docker Desktop), Docker ≥ 28,
+   Docker's data root on an xfs image with `pquota`; the agent runs as root on the host network
+   ([V4_REVIEW_RELAY.md](V4_REVIEW_RELAY.md) §5). No quota exceptions for owner nodes.
+5. Verified mode needs a **second reference GPU node** before checks run; until then endpoints are honestly *probed*.

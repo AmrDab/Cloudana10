@@ -350,3 +350,16 @@ Owner rejected the globe homepage ("cheap"); picked concept A of four rendered c
 - [x] Lenis on the homepage only; old anchors `#services #pays #status` resolve; universe/globe code removed
 - [x] Verified: tsc (4 legacy), tests, build; desktop + phone screenshots; deep link, nav, waitlist, menu probed
 - [x] Owner sign-off on the built page ("ship it"), merged + deployed
+
+## V4 step 2 — relay (2026-10-12)
+Spec: docs/V4_VERIFIED_SERVICES.md §2 · contract: docs/V4_RELAY_CONTRACT.md · reviews: V4_REVIEW_CLOUD.md, V4_REVIEW_RELAY.md
+- [x] shared protocol + HMAC tickets (tests)
+- [x] relay Worker: RelayNode Durable Object per node, StreamHub (window, cancel, errors) — unit + workerd e2e with the real agent
+- [x] API: ticket route, `relay` capability, fresh-socket placement, relayed status/probes, internal route, webPath
+- [x] gateway: relayed proxy with next-node retry, containers full-method only on a separate user-content domain
+- [x] agent (builder): relay client, 127.0.0.1 listeners/publishes, B1 conntrack fix, Docker ≥ 28, relay e2e selftest
+- [x] workstations stay direct (relay has no WebSocket tunnelling yet); placed on public-host nodes only
+- [ ] independent code review of the step-2 diff
+- [ ] deploy relay (custom domain relay.cloudana.io) + API; owner sets RELAY_TICKET_SECRET / INTERNAL_API_KEY
+- [ ] owner: user-content domain; then gateway on it
+- [ ] later: WebSocket tunnelling over the relay (workstations, ComfyUI, Open WebUI)

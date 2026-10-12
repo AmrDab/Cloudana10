@@ -109,6 +109,11 @@ export const envSchema = z.object({
   SITES_DOMAIN: z.string().default("sites.cloudana.io"),
   /** Node instructions: signer key (Worker secret, not a chain key), minimum agent, extra image regexes. */
   INSTRUCTION_SIGNING_KEY: z.string().optional(),
+  // Relay (docs/V4_RELAY_CONTRACT.md): HMAC secret shared with cloudana-relay (≥ 32 chars; unset → no relay, nodes
+  // stay in legacy direct mode), the URL nodes open, and how fresh a node's `relay: true` heartbeat must be.
+  RELAY_TICKET_SECRET: z.string().min(32).optional(),
+  RELAY_URL: z.string().default("wss://relay.cloudana.io/connect"),
+  RELAY_FRESH_SECONDS: int(45),
   MIN_AGENT_VERSION: z.string().default("1.1.0"),
   IMAGE_ALLOWLIST: z.string().optional(),
 

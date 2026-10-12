@@ -249,15 +249,15 @@ deploymentsRouter.openapi(deleteRoute, async (c) => {
 });
 
 // ── Hosting gateway ─────────────────────────────────────────────────────────
-const ROUTE_CACHE_SECONDS = 30;
-
 const routeRoute = createRoute({
   method: "get",
   path: "/deployments/{id}/route",
   tags: TAGS,
   description:
-    "Public (no auth): what the *.sites gateway needs to proxy a site. endpoint is set only while running. " +
-    "Workstations answer 404. Cached 30 s (Cache-Control).",
+    "Internal (X-Internal-Key; the gateway): what it needs to proxy a deployment. Relayed deployments name their node(s) " +
+    "and no address; legacy direct ones carry the node endpoint while running. Direct workstations answer 404. " +
+    "Cached 30 s by the gateway.",
+  middleware: [requireInternalKey] as const,
   request: { params: IdParam },
   responses: responses(
     {
@@ -266,23 +266,27 @@ const routeRoute = createRoute({
           status: z.literal("success"),
           id: z.string(),
           state: Status,
-          endpoint: z.string().nullable(),
           kind: z.enum(["static", "container"]),
+          workstation: z.boolean(),
+          relayed: z.boolean(),
+          nodes: z.array(z.string()),
+          endpoint: z.string().nullable(),
         }),
         "Route",
       ),
     },
     400,
+    401,
     404,
     429,
   ),
 });
 
 deploymentsRouter.openapi(routeRoute, async (c) => {
-  c.header("Cache-Control", `public, max-age=${ROUTE_CACHE_SECONDS}`);
+  c.header("Cache-Control", "no-store"); // the gateway caches; nothing in between should
   const r = await publicRoute(c.req.valid("param").id);
   if (!r) return fail(c, "not_found", "deployment not found");
-  return ok(c, { id: r.id, state: r.state, endpoint: r.endpoint, kind: r.kind });
+  return ok(c, { ...r });
 });
 
 const adminStopRoute = createRoute({
