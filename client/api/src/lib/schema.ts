@@ -115,6 +115,8 @@ const BALANCE_COLUMNS = [
   // Settlement v2: the treasury is posted as an amount, not a leaf; settled_at feeds /network lastSettledEpochAt.
   "ALTER TABLE epochs ADD COLUMN treasury_ucld INTEGER",
   "ALTER TABLE epochs ADD COLUMN settled_at INTEGER",
+  // Verification failures per job: after MAX_JOB_ATTEMPTS the job fails and its hold is released.
+  "ALTER TABLE work_jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

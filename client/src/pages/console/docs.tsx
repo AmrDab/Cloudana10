@@ -153,7 +153,7 @@ export default function DocsPage() {
             <p>
               <b>Building:</b> signed node instructions (nodes ignore anything unsigned or stale); hash-checked hosting
               probes behind a Cloudana gateway; a settlement keeper that runs isolated from the API; sealed secrets —
-              container env encrypted in your browser to the assigned node's key.{" "}
+              container env encrypted in your browser to the assigned node's key (that node can read it; Cloudana can't).{" "}
               <b>Planned:</b> encrypted job data at rest, confidential VMs, browser witness probes.
             </p>
           </Doc>

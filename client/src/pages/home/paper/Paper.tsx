@@ -253,7 +253,7 @@ export function Paper() {
 
         <section id="security" className="pp-quote">
           <Reveal>
-            <p>Every message signed. Every proof re-checked. Secrets sealed to the node that runs them.</p>
+            <p>Every message signed. Every proof re-checked. Secrets encrypted so only the node that runs them can read them.</p>
             <a href="/control/docs#security">What is live, building, planned →</a>
           </Reveal>
         </section>

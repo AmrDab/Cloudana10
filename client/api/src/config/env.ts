@@ -79,7 +79,7 @@ export const envSchema = z.object({
   /** Testnet 3600 / 3600; mainnet 86400 / 604800 (docs/IMPL_SPEC_2026-10.md). */
   EPOCH_SECONDS: int(3600),
   VEST_B_SECONDS: int(3600),
-  SUBSIDY_RHO: z.coerce.number().min(0).max(1).default(0.25),
+  SUBSIDY_RHO: z.coerce.number().min(0).max(1).default(0.04), // capped at RHO_MAX (ledger.service.ts)
   CLUSTER_N_MIN: int(3),
   CLUSTER_S_CAP: z.coerce.number().min(0).max(1).default(0.5),
   /** Initial/reset price in nano-CLD per tera-MAC; the hourly controller moves it from here. */

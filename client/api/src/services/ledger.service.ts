@@ -34,10 +34,17 @@ export interface LaneSplit {
   subsidy: number;
 }
 
+/**
+ * Highest subsidy rate allowed. A provider who pays for its own job gets lane A (95 %) + ρ back, so it must stay
+ * below 1 even when one operator owns every node (cheap wallets defeat the cluster gate): 0.95 + 0.04 < 1, and
+ * self-dealing always loses money (docs/V4_VERIFIED_SERVICES.md rule 4). Enforced here, whatever SUBSIDY_RHO says.
+ */
+export const RHO_MAX = 0.04;
+
 /** Split fee F into lanes. ρ is applied in parts-per-million so the math stays integer. */
 export function splitFee(fee: number, opts: { rho: number; clusterOk: boolean; budgetRemaining: number }): LaneSplit {
   const F = BigInt(fee);
-  const rhoPpm = BigInt(Math.round(opts.rho * 1_000_000));
+  const rhoPpm = BigInt(Math.round(Math.min(opts.rho, RHO_MAX) * 1_000_000));
   const treasuryB = (F * BigInt(TREASURY_PER_MILLE) + 999n) / 1000n;
   const capB = (F * BigInt(LANE_A_PER_MILLE + TREASURY_PER_MILLE)) / 1000n - treasuryB;
   const floorA = (F * BigInt(LANE_A_PER_MILLE)) / 1000n;

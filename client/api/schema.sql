@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   price_ucld INTEGER, public INTEGER DEFAULT 1, status TEXT, node TEXT, sigma TEXT,
   seed_source TEXT, draw_seed TEXT, eligible_hash TEXT, cluster_ok INTEGER,
   assigned_at INTEGER, expires_at INTEGER, result_json TEXT, cert_z TEXT,
-  created_at INTEGER, completed_at INTEGER
+  created_at INTEGER, completed_at INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0  -- verification failures; 3 → failed, hold released
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_status ON work_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_work_jobs_owner ON work_jobs(owner, created_at DESC);

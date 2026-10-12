@@ -77,7 +77,7 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
     if (!r.ok) expect(r.message).toMatch(/hash/);
   });
 
-  it("rejects a wrong answer C (Freivalds)", async () => {
+  it("rejects a wrong answer C (Freivalds) — the third failure fails the job and releases the hold", async () => {
     const a = await assignment();
     const { certificate, result } = solveAssignedJob(a.sigma, A, B, n, nodeAddr, "dev");
     const bad = result.slice();
@@ -85,6 +85,16 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
     const r = await submitWork(nodeAddr, { jobId, certificate, result: bad });
     expect(r).toMatchObject({ ok: false, code: "unprocessable" });
     if (!r.ok) expect(r.message).toMatch(/Freivalds/);
+    const failed = (await getWorkJob(jobId))!;
+    expect(failed).toMatchObject({ status: "failed", attempts: 3, node: null });
+    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 10_000, heldUcld: 0 }); // hold released
+    await runAssignment();
+    expect(await getActiveAssignment(nodeAddr)).toBeNull(); // never handed out again
+
+    // A fresh job for the remaining tests.
+    const q = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
+    if (!q.ok) throw new Error(q.message);
+    jobId = q.jobId;
   });
 
   it("rejects a submit from a node the job is not assigned to", async () => {
@@ -98,14 +108,14 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
     const a = await getActiveAssignment(nodeAddr);
     const { certificate, result } = solveAssignedJob(a!.sigma, A, B, n, nodeAddr, "dev");
     const r = await submitWork(nodeAddr, { jobId, certificate, result });
-    expect(r).toMatchObject({ ok: true, units: 4096, earned: { laneAUcld: 949, laneBUcld: 250 } });
+    expect(r).toMatchObject({ ok: true, units: 4096, earned: { laneAUcld: 949, laneBUcld: 40 } });
 
     const job = (await getWorkJob(jobId))!;
     expect(job.status).toBe("done");
     expect(JSON.parse(job.result_json!)).toEqual(result);
     expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 8999, heldUcld: 0 });
     const ledger = await ledgerSummary(payout.address);
-    expect(ledger.pending).toEqual({ A: 949, B: 250, treasury: 0 });
+    expect(ledger.pending).toEqual({ A: 949, B: 40, treasury: 0 });
     expect((await getNode(nodeAddr))!.jobs_done).toBe(1);
 
     const again = await submitWork(nodeAddr, { jobId, certificate, result });

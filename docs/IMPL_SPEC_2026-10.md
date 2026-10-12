@@ -19,6 +19,10 @@ This file is the contract between workstreams. If you must deviate, write the de
 - Env: `PRICE_CONTROLLER=on|off` (default on), `PRICE_NCLD_PER_TMAC` is the initial/reset value.
 
 ## Subsidy & cluster gate
+> **Superseded (2026-10-11, V4):** ρ is capped at **0.04** in code (`RHO_MAX`, ledger.service.ts) so that
+> 0.95 + ρ < 1: paying yourself can never return more than you paid, even owning every node. "Cluster" = payout
+> wallet, so the gate alone could be passed with three wallets. See [V4_VERIFIED_SERVICES.md](V4_VERIFIED_SERVICES.md) rule 4.
+
 - ρ `SUBSIDY_RHO=0.25`. `EPOCH_SUBSIDY_BUDGET_UCLD` testnet = 7,300,000 per 1 h epoch (80% of chain allowance at 1M supply, 8%/yr).
 - `CLUSTER_N_MIN=3`, `CLUSTER_S_CAP=0.5`. Gate is PER OPERATOR: when an operator (cluster) exceeds S_CAP share of the epoch's eligible work, only that operator's lane-B is withheld; others still receive lane B. If the number of distinct clusters < N_MIN, lane B is withheld for all (no subsidy before a minimal decentralization).
 
