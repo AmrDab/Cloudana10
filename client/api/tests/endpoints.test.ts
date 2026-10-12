@@ -234,6 +234,8 @@ describe("running, route and keys", () => {
       status: "success", id, state: "running", kind: "endpoint", workstation: false, relayed: true, endpoint: null, auth: "key", keys: [],
       targets: [{ node: addr(a), dep: r1.id }, { node: addr(b), dep: r2.id }],
     });
+    // A replica's own id is no address: that would be a way around the endpoint's key.
+    expect((await route(r1.id)).status).toBe(404);
     // One replica gone: the endpoint still runs on the other.
     expect((await signed(a, `/v1/nodes/deployments/${r1.id}/status`, { status: "failed", message: "OOM" })).status).toBe(200);
     expect((await (await route(id)).json()).targets).toEqual([{ node: addr(b), dep: r2.id }]);

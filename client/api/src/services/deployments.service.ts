@@ -567,10 +567,14 @@ export interface PublicRoute {
   keys?: string[];
 }
 
-/** Route info; null for a missing id or a direct workstation (reached by its own token URL / SSH, not the gateway). */
+/**
+ * Route info; null for a missing id, a direct workstation (reached by its own token URL / SSH, not the gateway) and
+ * an endpoint replica (reachable only through its endpoint's route, which carries the key check; by its own id it
+ * would be an open door around the key).
+ */
 export async function publicRoute(id: string): Promise<PublicRoute | null> {
   const row = await getDeploymentRow(id);
-  if (!row || (row.workstation && !row.relayed)) return null;
+  if (!row || (row.workstation && !row.relayed) || row.parent_id) return null;
   if (isEndpoint(row)) {
     const replicas = (await replicasOf([id])).get(id) ?? [];
     const auth = (JSON.parse(row.spec_json) as EndpointSpec).auth;
