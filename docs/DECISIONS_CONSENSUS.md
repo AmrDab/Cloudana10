@@ -18,6 +18,13 @@ CLD is the unit of account and the only settlement asset, and USD is shown for d
 The free tier is a customer the treasury pays for, not new emission.
 
 ## Decisions
+> **Superseded (2026-10-12, owner approved):** prices are **quoted in US dollars and settled in CLD**
+> ([TOKENOMICS_USD_PRICING.md](TOKENOMICS_USD_PRICING.md)). The rate enters in one place only: how many CLD a quote
+> asks for. The ledger, the 95/3/2 split, the subsidy budget (stays in CLD) and the settlement contract are unchanged;
+> no oracle in settlement. Testnet uses a fixed reference rate of **$0.10 per CLD**; after listing, a one-hour TWAP of
+> the CLD/USDC pool with pauses, behind a flag. This replaces the "Denomination" row below. The dollar price table is
+> proposed in [PRICES_USD.md](PRICES_USD.md).
+>
 > **Superseded (2026-10-11, V4):** ρ is capped at **0.04** in code (`RHO_MAX`, ledger.service.ts) so that
 > 0.95 + ρ < 1: paying yourself can never return more than you paid, even owning every node. "Cluster" = payout
 > wallet, so the gate alone could be passed with three wallets. See [V4_VERIFIED_SERVICES.md](V4_VERIFIED_SERVICES.md) rule 4.
