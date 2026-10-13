@@ -381,8 +381,8 @@ Spec: docs/V4_VERIFIED_SERVICES.md §3 · contract: docs/V4_ENDPOINTS_CONTRACT.m
 ## Dollar pricing (owner approved 2026-10-12) · docs/TOKENOMICS_USD_PRICING.md · table: docs/PRICES_USD.md
 Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy and contracts unchanged.
 - [x] Economist study + simulation (scripts/sim/usd-pricing.ts); decision recorded in DECISIONS_CONSENSUS
-- [ ] Owner yes on the price table (three GPU tiers: standard / large / H100-class)
-- [ ] API: USD price env (hourly table, nano-USD/TMAC controller, base fee) × one reference rate; quotes carry {usd, rate, cld, expiresAt}; GPU tiers in classification, specs and placement; drop class "any"
+- [x] Owner yes on the price table (three GPU tiers: standard / large / H100-class) — 2026-10-13
+- [x] API: USD price env (hourly table, nano-USD/TMAC controller, base fee) × one reference rate; quotes carry {usd, rate, cld, expiresAt}; GPU tiers (shared/gpu-tier.ts) in classification, specs, placement and the agent; legacy class names mapped; agent 1.3.0 minimum
 - [ ] Console: prices as "$X/h ≈ Y CLD" (Run, Deploy, Workstations, Endpoints, Overview, Economics, Provide floor, Docs)
 - [ ] Homepage + litepaper + whitepaper §5–6 copy per the report's §5 (say / never say); localhost review before publish
 - [ ] Before listing: TWAP rate module behind a flag; nCLD ledger; subsidy budget as a fraction of supply

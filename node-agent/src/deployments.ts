@@ -376,7 +376,7 @@ export class DeploymentManager {
     if (!spec || !Array.isArray(spec.ports)) throw new Error("container spec has no ports array");
     // Reserve GPUs before the first await so concurrent starts cannot pick the same device (as workstations do).
     const used = new Set([...this.gpuAlloc.values()].flat());
-    const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb);
+    const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb, spec.gpu?.class);
     if (gpus.length) this.gpuAlloc.set(id, gpus);
     const env: Record<string, string> = { ...(spec.env ?? {}), ...this.openSealed(sealedEnv) };
     const taken = this.takenPorts();
@@ -435,7 +435,7 @@ export class DeploymentManager {
     validateWorkstation(spec);
     // Reserve GPUs before the first await so concurrent starts cannot pick the same device.
     const used = new Set([...this.gpuAlloc.values()].flat());
-    const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb);
+    const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb, spec.gpu?.class);
     this.gpuAlloc.set(id, gpus);
     const token = spec.tokenEnv && spec.access.web ? newWebToken() : undefined;
     const env = workstationEnv(spec, this.openSealed(sealedEnv), token);

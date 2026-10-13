@@ -9,7 +9,7 @@ import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
 import { SSH_PUBLIC_KEY, checkSpec, priceUcldPerHour, type WorkstationSpec } from "../src/services/deployment-spec.js";
-import { gpuClass, gpusFit } from "../src/services/workstation.js";
+import { gpuTier, gpusFit } from "../src/services/workstation.js";
 import { probeTarget } from "../src/services/deployment-duties.service.js";
 
 let app: ReturnType<typeof buildApp>;
@@ -57,7 +57,7 @@ async function boundNode(workTypes: string[], gpus: G[] = []) {
     workTypes,
     pubkey: node.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.2.0",
+    agentVersion: "1.3.0",
   });
   expect(res.status).toBe(200);
   const payout = "0x" + (++userSeq).toString(16).padStart(40, "e");
@@ -73,7 +73,7 @@ async function user(credits = 100_000) {
 }
 
 const KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl me@laptop";
-/** 1 consumer-priced GPU on-demand Jupyter-like workstation: 320 + 2000 = 2320 µCLD/h. */
+/** 1 standard-tier GPU on-demand Jupyter-like workstation: 320 + 2000 = 2320 µCLD/h (test price scale). */
 const WS = (o: Partial<WorkstationSpec> = {}) => ({
   image: "quay.io/jupyter/pytorch-notebook:cuda12-latest",
   ports: [{ container: 8888 }],
@@ -167,14 +167,16 @@ describe("pricing", () => {
   const base = { cpu: 1000, memMb: 1024, storageMb: 1024 }; // container formula: 200 + 100 + 20 = 320
   const price = (o: Partial<WorkstationSpec>) => priceUcldPerHour("workstation", WS({ ...base, ...o }) as WorkstationSpec);
 
-  it("adds GPUs by class, the volume, and the interruptible discount", () => {
+  it("adds GPUs by tier, the volume, and the interruptible discount", () => {
     expect(price({ gpu: { count: 0 } })).toBe(320);
-    expect(price({ gpu: { count: 1 } })).toBe(2320); // class unset/any = consumer rate
-    expect(price({ gpu: { count: 1, class: "consumer" } })).toBe(2320);
-    expect(price({ gpu: { count: 2, class: "datacenter" } })).toBe(12_320);
+    expect(price({ gpu: { count: 1 } })).toBe(2320); // tier unset = standard
+    expect(price({ gpu: { count: 1, class: "standard" } })).toBe(2320);
+    expect(price({ gpu: { count: 1, class: "consumer" } })).toBe(2320); // legacy name, mapped
+    expect(price({ gpu: { count: 2, class: "large" } })).toBe(12_320);
+    expect(price({ gpu: { count: 2, class: "datacenter" } })).toBe(12_320); // legacy name, mapped to large
     expect(price({ gpu: { count: 1 }, volume: { sizeGb: 10, keepDays: 7 } })).toBe(2340);
     expect(price({ gpu: { count: 1 }, volume: { sizeGb: 10, keepDays: 7 }, tier: "interruptible" })).toBe(1170);
-    expect(price({ gpu: { count: 2, class: "datacenter" }, tier: "interruptible" })).toBe(6160);
+    expect(price({ gpu: { count: 2, class: "large" }, tier: "interruptible" })).toBe(6160);
     expect(priceUcldPerHour("workstation", WS({ cpu: 100, memMb: 64, storageMb: 64, gpu: { count: 0 }, tier: "interruptible" }) as WorkstationSpec)).toBe(50);
   });
 
@@ -186,22 +188,26 @@ describe("pricing", () => {
   });
 });
 
-describe("GPU classes", () => {
-  it("classifies nvidia-smi names into datacenter and consumer", () => {
-    for (const n of ["NVIDIA A100-SXM4-80GB", "NVIDIA H100 80GB HBM3", "Tesla T4", "NVIDIA L40S", "NVIDIA L4", "NVIDIA A10G", "Tesla V100-SXM2-16GB", "NVIDIA RTX 6000 Ada Generation", "NVIDIA RTX A6000"]) {
-      expect(gpuClass(n), n).toBe("datacenter");
-    }
-    for (const n of ["NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 3060", "NVIDIA GeForce GTX 1080 Ti", "NVIDIA GeForce RTX 5090", "AMD Radeon RX 7900 XTX"]) {
-      expect(gpuClass(n), n).toBe("consumer");
-    }
+describe("GPU tiers", () => {
+  it("classifies nvidia-smi names and memory into standard, large and h100", () => {
+    const tiers: [string, number, string][] = [
+      ["NVIDIA H100 80GB HBM3", 80, "h100"], ["NVIDIA H200", 141, "h100"], ["NVIDIA GH200 480GB", 96, "h100"], ["NVIDIA B200", 180, "h100"],
+      ["NVIDIA A100-SXM4-80GB", 80, "large"], ["NVIDIA A100-PCIE-40GB", 40, "large"], ["NVIDIA L40S", 45, "large"],
+      ["NVIDIA RTX 6000 Ada Generation", 48, "large"], ["NVIDIA RTX A6000", 48, "large"],
+      ["NVIDIA GeForce RTX 4090", 24, "standard"], ["NVIDIA GeForce RTX 5090", 32, "standard"], ["Tesla T4", 15, "standard"],
+      ["NVIDIA L4", 23, "standard"], ["NVIDIA A10G", 23, "standard"], ["Tesla V100-SXM2-16GB", 16, "standard"],
+    ];
+    for (const [name, vramGB, tier] of tiers) expect(gpuTier({ name, vramGB }), name).toBe(tier);
   });
 
-  it("fits by free matching GPUs", () => {
-    expect(gpusFit([A100, A100], 1, { count: 1 })).toBe(true);
-    expect(gpusFit([A100, A100], 1, { count: 2 })).toBe(false);
+  it("fits only GPUs of the requested tier, with enough memory, that are free", () => {
+    expect(gpusFit([A100, A100], 1, { count: 1, class: "large" })).toBe(true);
+    expect(gpusFit([A100, A100], 1, { count: 2, class: "large" })).toBe(false);
+    expect(gpusFit([A100], 0, { count: 1 })).toBe(false); // standard asked: never an A100 at the standard price
     expect(gpusFit([RTX4090], 0, { count: 1, minVramGb: 48 })).toBe(false);
-    expect(gpusFit([RTX4090], 0, { count: 1, class: "datacenter" })).toBe(false);
-    expect(gpusFit([RTX4090], 0, { count: 1, class: "consumer", minVramGb: 24 })).toBe(true);
+    expect(gpusFit([RTX4090], 0, { count: 1, class: "large" })).toBe(false);
+    expect(gpusFit([RTX4090], 0, { count: 1, class: "standard", minVramGb: 24 })).toBe(true);
+    expect(gpusFit([RTX4090], 0, { count: 1, class: "consumer" })).toBe(true); // legacy name
     expect(gpusFit([], 0, { count: 0 })).toBe(true);
   });
 });
@@ -209,10 +215,10 @@ describe("GPU classes", () => {
 describe("assignment", () => {
   it("skips nodes without gpu, without a matching class/vRAM, and without free GPUs", async () => {
     const u = await user();
-    const spec = WS({ gpu: { count: 1, minVramGb: 40, class: "datacenter" } });
+    const spec = WS({ gpu: { count: 1, minVramGb: 40, class: "large" } });
     const id = await createId(u.jwt, spec);
     expect((await heartbeat(await boundNode(["matmul", "container"], [A100]))).map((d) => d.id)).not.toContain(id); // no "gpu"
-    expect((await heartbeat(await boundNode(GPU_CAPS, [RTX4090]))).map((d) => d.id)).not.toContain(id); // consumer, 24 GB
+    expect((await heartbeat(await boundNode(GPU_CAPS, [RTX4090]))).map((d) => d.id)).not.toContain(id); // standard, 24 GB
     expect((await row(id))!.status).toBe("queued");
     const dc = await boundNode(GPU_CAPS, [A100]);
     const hb = await heartbeat(dc);
@@ -225,8 +231,8 @@ describe("assignment", () => {
 
   it("places a 2-GPU workstation only where 2 are free, and CPU workstations on container nodes", async () => {
     const u = await user();
-    const one = await boundNode(GPU_CAPS, [A100]);
-    const two = await boundNode(GPU_CAPS, [A100, A100]);
+    const one = await boundNode(GPU_CAPS, [RTX4090]);
+    const two = await boundNode(GPU_CAPS, [RTX4090, RTX4090]);
     const big = await createId(u.jwt, WS({ gpu: { count: 2 } }));
     expect((await heartbeat(one)).map((d) => d.id)).not.toContain(big);
     expect((await heartbeat(two)).map((d) => d.id)).toContain(big);
@@ -236,7 +242,7 @@ describe("assignment", () => {
 
   it("keeps the 5-container cap shared with containers", async () => {
     const u = await user(1_000_000);
-    const node = await boundNode(GPU_CAPS, [A100, A100, A100, A100, A100, A100, A100, A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090, RTX4090, RTX4090, RTX4090, RTX4090, RTX4090, RTX4090, RTX4090]);
     for (let i = 0; i < 5; i++) await createId(u.jwt, WS({ gpu: { count: 1 } }));
     const sixth = await createId(u.jwt, WS({ gpu: { count: 1 } }));
     const hb = await heartbeat(node);
@@ -248,7 +254,7 @@ describe("assignment", () => {
 describe("preemption", () => {
   it("stops the youngest interruptible workstation for queued on-demand work and bills it pro rata", async () => {
     const u = await user(100_000);
-    const node = await boundNode(GPU_CAPS, [A100, A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090, RTX4090]);
     const older = await running(node, u.jwt, WS({ tier: "interruptible" }), { endpoint: "http://127.0.0.1:42011" });
     const younger = await running(node, u.jwt, WS({ tier: "interruptible" }), { endpoint: "http://127.0.0.1:42012" });
     await shift(older, "started_at", 2 * 3_600_000);
@@ -270,7 +276,7 @@ describe("preemption", () => {
 
   it("never preempts on-demand, and interruptible work does not preempt", async () => {
     const u = await user();
-    const node = await boundNode(GPU_CAPS, [A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
     const first = await running(node, u.jwt, WS());
     const waiting = await createId(u.jwt, WS());
     await runDutiesCron();
@@ -279,7 +285,7 @@ describe("preemption", () => {
     expect((await row(waiting))!.status).toBe("queued");
 
     await getD1().prepare("UPDATE deployments SET status = 'stopped', stop_acked_at = 1 WHERE id = ?").bind(waiting).run();
-    const other = await boundNode(GPU_CAPS, [A100]);
+    const other = await boundNode(GPU_CAPS, [RTX4090]);
     const spot = await running(other, u.jwt, WS({ tier: "interruptible" }));
     const spot2 = await createId(u.jwt, WS({ tier: "interruptible" }));
     await runDutiesCron();
@@ -290,9 +296,9 @@ describe("preemption", () => {
 
   it("does not preempt when another online node can take the work", async () => {
     const u = await user();
-    const busy = await boundNode(GPU_CAPS, [A100]);
+    const busy = await boundNode(GPU_CAPS, [RTX4090]);
     const spot = await running(busy, u.jwt, WS({ tier: "interruptible" }));
-    await boundNode(GPU_CAPS, [A100]); // free, online (announce counts as seen)
+    await boundNode(GPU_CAPS, [RTX4090]); // free, online (announce counts as seen)
     await createId(u.jwt, WS());
     await runDutiesCron();
     await heartbeat(busy);
@@ -303,7 +309,7 @@ describe("preemption", () => {
 describe("max hours", () => {
   it("auto-stops a workstation once startedAt + maxHours has passed", async () => {
     const u = await user(10_000);
-    const node = await boundNode(GPU_CAPS, [A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
     const id = await running(node, u.jwt, WS({ maxHours: 1 }));
     await shift(id, "started_at", 3_600_000 + 1000);
     await shift(id, "last_billed_at", 3_600_000 + 1000);
@@ -315,7 +321,7 @@ describe("max hours", () => {
 
   it("PATCH extends maxHours while assigned/running (owner only, upward only)", async () => {
     const u = await user();
-    const node = await boundNode(GPU_CAPS, [A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
     const id = await running(node, u.jwt, WS({ maxHours: 2 }));
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}`, { maxHours: 5 })).status).toBe(200);
     const got = await detail(u.jwt, id);
@@ -342,7 +348,7 @@ describe("max hours", () => {
 describe("connect and hours", () => {
   it("GET shows connect, hours used/left and the GPU names; probes only the endpoint's origin", async () => {
     const u = await user();
-    const node = await boundNode(GPU_CAPS, [A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
     const spec = WS({ access: { web: { port: 8888, path: "/lab" }, ssh: { publicKey: KEY, user: "jovyan" } } });
     const id = await createId(u.jwt, spec);
     const queued = await detail(u.jwt, id);
@@ -359,7 +365,7 @@ describe("connect and hours", () => {
       hoursUsed: 1.5,
       hoursLeft: 2.5,
       connect: { web: endpoint, ssh: "ssh -p 42022 jovyan@127.0.0.1" },
-      gpu: { count: 1, names: [A100.name] },
+      gpu: { count: 1, names: [RTX4090.name] },
     });
 
     const fetchMock = vi.fn(async () => new Response("ok"));
@@ -374,7 +380,7 @@ describe("connect and hours", () => {
 
   it("webToken is shown on GET /deployments/{id} only; SSH-only workstations run without a web endpoint", async () => {
     const u = await user();
-    const node = await boundNode(GPU_CAPS, [A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
     const web = await running(node, u.jwt, WS({ gpu: { count: 0 } }), { endpoint: "http://127.0.0.1:42030", webToken: "s3cret-pass" });
     expect((await detail(u.jwt, web)).deployment.connect).toEqual({ web: "http://127.0.0.1:42030", webToken: "s3cret-pass" });
     const list = await (await authed(u.jwt, "GET", "/v1/deployments")).json();
@@ -403,7 +409,7 @@ describe("connect and hours", () => {
 describe("volume purge and GPU refusals", () => {
   it("DELETE ?purge=1 sends 'purge' until the node confirms, also after a plain stop", async () => {
     const u = await user();
-    const node = await boundNode(GPU_CAPS, [A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
     const id = await running(node, u.jwt, WS({ volume: { sizeGb: 20, keepDays: 7 } }));
     expect((await authed(u.jwt, "DELETE", `/v1/deployments/${id}`)).status).toBe(200);
     expect(await heartbeat(node)).toEqual([{ id, action: "stop", kind: "workstation", spec: null }]);
@@ -418,14 +424,14 @@ describe("volume purge and GPU refusals", () => {
 
   it("'not enough free GPUs' re-queues on another node instead of failing", async () => {
     const u = await user();
-    const first = await boundNode(GPU_CAPS, [A100]);
+    const first = await boundNode(GPU_CAPS, [RTX4090]);
     const id = await createId(u.jwt, WS());
     await heartbeat(first);
     const res = await report(first, id, { status: "failed", message: "docker: not enough free GPUs (0 of 1)" });
     expect(await res.json()).toEqual({ status: "success", deploymentStatus: "queued" });
     expect(await row(id)).toMatchObject({ status: "queued", node: null, held_ucld: 2320 });
     expect(await heartbeat(first)).toEqual([]); // not straight back to the node that refused it
-    const second = await boundNode(GPU_CAPS, [A100]);
+    const second = await boundNode(GPU_CAPS, [RTX4090]);
     expect((await heartbeat(second)).map((d) => d.id)).toEqual([id]);
   });
 });
@@ -434,8 +440,8 @@ describe("network and templates", () => {
   it("GET /network counts GPUs on online gpu nodes and running workstations", async () => {
     const before = await (await call("/v1/network")).json();
     const u = await user();
-    const node = await boundNode(GPU_CAPS, [A100, RTX4090]);
-    await boundNode(["matmul", "container"], [A100]); // GPUs but no gpu capability: not counted
+    const node = await boundNode(GPU_CAPS, [RTX4090, RTX4090]);
+    await boundNode(["matmul", "container"], [RTX4090]); // GPUs but no gpu capability: not counted
     await running(node, u.jwt, WS());
     const after = await (await call("/v1/network")).json();
     expect(after.gpusOnline - before.gpusOnline).toBe(2);
@@ -457,7 +463,7 @@ describe("network and templates", () => {
     expect(ws.find((t) => t.id === "ws-pytorch-ssh")).toMatchObject({ access: { ssh: true }, sshPort: 22 });
 
     const u = await user();
-    const node = await boundNode(GPU_CAPS, [A100]);
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
     const id = await createId(u.jwt, WS(), { templateId: "ws-jupyter-cuda" });
     const [start] = await heartbeat(node);
     expect(start).toMatchObject({ id, kind: "workstation" });

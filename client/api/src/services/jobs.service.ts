@@ -168,7 +168,7 @@ export async function enqueueWorkJob(input: {
 
   const owner = normalizeAddress(input.owner);
   const quote = await getPriceQuote();
-  const price = feeUcld(wt.meter(input), quote.priceNcldPerTmac, getEnv().BASE_FEE_UCLD);
+  const price = feeUcld(wt.meter(input), quote.priceNcldPerTmac, quote.baseFeeUcld);
   if (input.maxPriceUcld !== undefined && price > input.maxPriceUcld) {
     return { ok: false, code: "unprocessable", message: `Price ${price} µCLD is above your ceiling of ${input.maxPriceUcld} µCLD` };
   }

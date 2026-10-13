@@ -84,7 +84,7 @@ export const V1_TABLES = [
   `CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   // Price controller state (docs/IMPL_SPEC_2026-10.md): one row, id = 1.
   `CREATE TABLE IF NOT EXISTS price_state (
-    id INTEGER PRIMARY KEY CHECK (id = 1), price_ncld_per_tmac INTEGER NOT NULL, ema_ncld_per_tmac REAL NOT NULL,
+    id INTEGER PRIMARY KEY CHECK (id = 1), price_nusd_per_tmac INTEGER NOT NULL, ema_nusd_per_tmac REAL NOT NULL,
     stepped_at INTEGER, quote_price INTEGER, quote_expires_at INTEGER)`,
   // Testnet credit caps (routes/v1/dev.ts): one row per wallet / IP bucket / ASN-day, claimed with an atomic upsert
   // (KV is eventually consistent, so concurrent claims all passed a check-then-set there).
@@ -152,6 +152,34 @@ async function run(): Promise<void> {
   }
   await db.prepare(MIGRATE_BALANCES).run();
   await migrateEpochs(db);
+  await migratePriceUnit(db);
+}
+
+/**
+ * Prices moved from nano-CLD to nano-dollars per tera-MAC (docs/TOKENOMICS_USD_PRICING.md). A database made before
+ * that has price_state in nCLD: its columns are renamed and its values converted at USD_PER_CLD, and an open quote is
+ * dropped, in one transaction. schema_meta('price_unit') makes it run once; a fresh database only records the unit.
+ */
+export async function migratePriceUnit(db = getD1()): Promise<void> {
+  const meta = await db.prepare("SELECT value FROM schema_meta WHERE key = 'price_unit'").first<{ value: string }>();
+  if (meta?.value === "nusd") return;
+  const cols = await db.prepare("SELECT name FROM pragma_table_info('price_state')").all<{ name: string }>();
+  const legacy = (cols.results ?? []).some((c) => c.name === "price_ncld_per_tmac");
+  const rate = getEnv().USD_PER_CLD;
+  const stmts = legacy
+    ? [
+        db.prepare("ALTER TABLE price_state RENAME COLUMN price_ncld_per_tmac TO price_nusd_per_tmac"),
+        db.prepare("ALTER TABLE price_state RENAME COLUMN ema_ncld_per_tmac TO ema_nusd_per_tmac"),
+        db
+          .prepare(
+            "UPDATE price_state SET price_nusd_per_tmac = MAX(1, CAST(ROUND(price_nusd_per_tmac * ?) AS INTEGER)), " +
+              "ema_nusd_per_tmac = ema_nusd_per_tmac * ?, quote_price = NULL, quote_expires_at = NULL",
+          )
+          .bind(rate, rate),
+      ]
+    : [];
+  stmts.push(db.prepare("INSERT INTO schema_meta (key, value) VALUES ('price_unit', 'nusd') ON CONFLICT(key) DO UPDATE SET value = excluded.value"));
+  await db.batch(stmts);
 }
 
 /**

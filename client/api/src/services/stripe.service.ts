@@ -46,11 +46,11 @@ function getStripe(): Stripe {
 
 /**
  * Convert a USD amount to CLD credits using the configured rate.
- * Default: 1 USD = 100 CLD (CLD_USD_RATE=100)
+ * At the reference rate USD_PER_CLD (testnet $0.10: 1 USD = 10 CLD).
  */
 export function convertUsdToCld(usdAmount: number): number {
-  const rate = getEnv().CLD_USD_RATE;
-  if (isNaN(rate) || rate <= 0) throw new Error("Invalid CLD_USD_RATE configuration");
+  const rate = 1 / getEnv().USD_PER_CLD; // CLD per US dollar
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error("Invalid USD_PER_CLD configuration");
   return Math.floor(usdAmount * rate);
 }
 

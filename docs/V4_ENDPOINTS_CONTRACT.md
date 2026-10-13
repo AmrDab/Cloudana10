@@ -35,7 +35,7 @@ the relay every `DEPLOY_PROBE_SECONDS`; a probe the hub refused as `busy` (every
 never reached the node counts for nothing. After `DEPLOY_PROBE_FAILS` real misses a replica is **re-queued** at once
 (replaced) instead of sitting *unreachable*: the failing node is owed a stop and skipped for that replica, and the
 part of the hour it served is billed (so a health path that fails at minute 57 buys no free GPU time).
-Nodes below agent 1.2.0 get no work: older agents ignore `gpu` and `health`.
+Nodes below agent 1.3.0 get no work: older agents ignore `gpu` and `health` (1.2.0) or pick GPUs without the tier (1.3.0, shared/gpu-tier.ts).
 
 ## Billing
 Per replica-hour at the container price plus `gpu.count × PRICE_GPU_{CONSUMER|DATACENTER}_UCLD_PER_HOUR`.

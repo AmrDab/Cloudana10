@@ -5,14 +5,15 @@
  *   ContainerSpec { image, command?, env?, ports[], cpu (millicores), memMb, storageMb }   ≤ 32 KB as JSON
  *   WorkstationSpec = ContainerSpec & { gpu?, tier, maxHours, access, volume?, workdir? }   (docs/WORKSTATIONS.md §1)
  *
- * Price per hour (µCLD): static = PRICE_HOSTING_UCLD_PER_HOUR; container =
- *   ceil(cpu/1000 × CPU + memMb/1024 × MEM + storageMb/1024 × STORAGE), at least PRICE_HOSTING_UCLD_PER_HOUR.
- * Workstation = (container formula + gpu.count × GPU price of its class + volume.sizeGb × VOLUME)
- *   × (1 − INTERRUPTIBLE_DISCOUNT if interruptible), ceil, same floor. Class "any" is priced as consumer.
+ * Price per hour, in US dollars (docs/PRICES_USD.md), converted to µCLD at USD_PER_CLD when the deployment is
+ * created: static = PRICE_HOSTING; container = cpu/1000 × CPU + memMb/1024 × MEM + storageMb/1024 × STORAGE
+ *   + gpu.count × the GPU price of its tier, at least PRICE_HOSTING.
+ * Workstation = (container formula + volume.sizeGb × VOLUME) × (1 − INTERRUPTIBLE_DISCOUNT if interruptible).
  */
 import { z } from "@hono/zod-openapi";
 import { getEnv } from "../config/env.js";
 import { WORKSTATION_TEMPLATES } from "./template-workstations.js";
+import { GPU_TIERS, requestTier, type GpuTier } from "../../../../shared/gpu-tier.js";
 
 export const STATIC_MAX_BYTES = 2 * 1024 * 1024;
 export const CONTAINER_SPEC_MAX_BYTES = 32 * 1024;
@@ -44,7 +45,8 @@ const EnvKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/, "env keys must
 const GpuSpec = z.object({
   count: z.number().int().min(0).max(8),
   minVramGb: z.number().min(0).max(1024).optional(),
-  class: z.enum(["any", "consumer", "datacenter"]).optional(),
+  /** standard | large | h100 (default standard). Legacy any / consumer / datacenter are accepted and mapped (requestTier). */
+  class: z.enum([...GPU_TIERS, "any", "consumer", "datacenter"]).optional(),
 });
 
 export const ContainerSpecSchema = z.object({
@@ -177,6 +179,8 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
   }
   const parsed = (kind === "workstation" ? WorkstationSpecSchema : kind === "endpoint" ? EndpointSpecSchema : ContainerSpecSchema).safeParse(raw);
   if (!parsed.success) return invalid(parsed.error);
+  // One vocabulary from here on: the stored spec (and what nodes receive) names a tier.
+  if (parsed.data.gpu) parsed.data.gpu.class = requestTier(parsed.data.gpu.class);
   // Plain containers never run as root (the node refuses it too); workstations keep the image's user model.
   if (kind !== "workstation" && parsed.data.user && /^0(:|$)/.test(parsed.data.user)) {
     return { ok: false, code: "validation_failed", message: "spec.user: containers cannot run as root (uid 0)" };
@@ -193,24 +197,39 @@ function invalid(err: z.ZodError): SpecCheck {
   return { ok: false, code: "validation_failed", message: `${where}${first?.message ?? "invalid"}`, details: err.issues };
 }
 
-/** Protocol price in µCLD per hour (per replica for an endpoint). */
-export function priceUcldPerHour(kind: ApiKind, spec: StaticSpec | ContainerSpec | WorkstationSpec | EndpointSpec): number {
+/** US dollars per GPU-hour for a tier. */
+export function gpuPriceUsd(tier: GpuTier): number {
   const env = getEnv();
-  const min = env.PRICE_HOSTING_UCLD_PER_HOUR;
+  return tier === "h100" ? env.PRICE_GPU_H100_USD_PER_HOUR : tier === "large" ? env.PRICE_GPU_LARGE_USD_PER_HOUR : env.PRICE_GPU_STANDARD_USD_PER_HOUR;
+}
+
+/** Protocol price in US dollars per hour (per replica for an endpoint). */
+export function priceUsdPerHour(kind: ApiKind, spec: StaticSpec | ContainerSpec | WorkstationSpec | EndpointSpec): number {
+  const env = getEnv();
+  const min = env.PRICE_HOSTING_USD_PER_HOUR;
   if (kind === "static") return min;
   const c = spec as ContainerSpec;
-  const perGpu = c.gpu?.class === "datacenter" ? env.PRICE_GPU_DATACENTER_UCLD_PER_HOUR : env.PRICE_GPU_CONSUMER_UCLD_PER_HOUR;
-  let raw =
-    (c.cpu / 1000) * env.PRICE_CPU_UCLD_PER_HOUR +
-    (c.memMb / 1024) * env.PRICE_MEM_UCLD_PER_GB_HOUR +
-    (c.storageMb / 1024) * env.PRICE_STORAGE_UCLD_PER_GB_HOUR +
-    (c.gpu?.count ?? 0) * perGpu;
+  let usd =
+    (c.cpu / 1000) * env.PRICE_CPU_USD_PER_HOUR +
+    (c.memMb / 1024) * env.PRICE_MEM_USD_PER_GB_HOUR +
+    (c.storageMb / 1024) * env.PRICE_STORAGE_USD_PER_GB_HOUR +
+    (c.gpu?.count ?? 0) * gpuPriceUsd(requestTier(c.gpu?.class));
   if (kind === "workstation") {
     const w = spec as WorkstationSpec;
-    raw += (w.volume?.sizeGb ?? 0) * env.PRICE_VOLUME_UCLD_PER_GB_HOUR;
-    if (w.tier === "interruptible") raw *= 1 - env.INTERRUPTIBLE_DISCOUNT;
+    usd += (w.volume?.sizeGb ?? 0) * env.PRICE_VOLUME_USD_PER_GB_HOUR;
+    if (w.tier === "interruptible") usd *= 1 - env.INTERRUPTIBLE_DISCOUNT;
   }
-  return Math.max(min, Math.ceil(raw - 1e-9));
+  return Math.max(min, usd);
+}
+
+/** µCLD for a dollar amount at the reference rate, rounded up (a float sliver never adds a µCLD). */
+export function usdToUcld(usd: number): number {
+  return Math.ceil((usd * 1e6) / getEnv().USD_PER_CLD - 1e-6);
+}
+
+/** Protocol price in µCLD per hour: the dollar price at the reference rate (per replica for an endpoint). */
+export function priceUcldPerHour(kind: ApiKind, spec: StaticSpec | ContainerSpec | WorkstationSpec | EndpointSpec): number {
+  return usdToUcld(priceUsdPerHour(kind, spec));
 }
 
 /**

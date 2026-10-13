@@ -109,8 +109,9 @@ const createRouteDef = createRoute({
   path: "/deployments",
   tags: TAGS,
   description:
-    "Static price = PRICE_HOSTING_UCLD_PER_HOUR; container = ceil(cpu/1000×CPU + memMb/1024×MEM + storageMb/1024×STORAGE), " +
-    "min the hosting price; GPUs add PRICE_GPU_{CONSUMER|DATACENTER} each. The first hour is held from your credits " +
+    "Prices are quoted in US dollars (GET /network `prices`) and converted to CLD at `usdPerCld` when you create: static = " +
+    "the hosting price; container = cpu/1000×CPU + memMb/1024×MEM + storageMb/1024×STORAGE + gpu.count × the GPU price of " +
+    "its tier (standard | large | h100), at least the hosting price. The first hour is held from your credits " +
     "(× replicas for an endpoint). Static sites need index.html; ≤ 2 MB decoded (and ≤ 1.9 MB encoded — D1 row limit). " +
     "Container specs ≤ 32 KB. An endpoint (your image, one port, 1–8 replicas, auth key|public) is served at " +
     "https://{id}.{SITES_DOMAIN} through the relay; priceUcldPerHour in the answer is for all replicas.",
@@ -119,7 +120,14 @@ const createRouteDef = createRoute({
   responses: responses(
     {
       201: json(
-        z.object({ status: z.literal("success"), id: z.string(), priceUcldPerHour: z.number().int(), deploymentStatus: z.literal("queued") }),
+        z.object({
+          status: z.literal("success"),
+          id: z.string(),
+          priceUcldPerHour: z.number().int(),
+          priceUsdPerHour: z.number(),
+          usdPerCld: z.number(),
+          deploymentStatus: z.literal("queued"),
+        }),
         "Queued. (The envelope owns `status`, so the deployment status is `deploymentStatus`.)",
       ),
     },
@@ -135,7 +143,7 @@ deploymentsRouter.openapi(createRouteDef, async (c) => {
   const body = c.req.valid("json");
   const r = await createDeployment({ owner: c.get("jwtPayload").sub, ...body });
   if (!r.ok) return fail(c, r.code, r.message, r.details);
-  return ok(c, { id: r.id, priceUcldPerHour: r.priceUcldPerHour, deploymentStatus: "queued" as const }, 201);
+  return ok(c, { id: r.id, priceUcldPerHour: r.priceUcldPerHour, priceUsdPerHour: r.priceUsdPerHour, usdPerCld: r.usdPerCld, deploymentStatus: "queued" as const }, 201);
 });
 
 const listRoute = createRoute({

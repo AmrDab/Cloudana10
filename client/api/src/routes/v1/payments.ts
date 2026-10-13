@@ -215,7 +215,7 @@ paymentsRouter.openapi(balanceRoute, async (c) => {
 
   try {
     const balance = await getUserBalance(address);
-    const rate = Number(process.env.CLD_USD_RATE ?? 100);
+    const rate = 1 / getEnv().USD_PER_CLD;
     const usdEquivalent = balance.balance / rate;
 
     return ok(c, {
@@ -321,7 +321,7 @@ paymentsRouter.openapi(convertRoute, (c) => {
 
   try {
     const cld = convertUsdToCld(usd);
-    const rate = Number(process.env.CLD_USD_RATE ?? 100);
+    const rate = 1 / getEnv().USD_PER_CLD;
     return ok(c, { usd, cld, rate, currency: "CLD" });
   } catch (err) {
     return fail(c, "internal", errorMessage(err));

@@ -33,7 +33,7 @@ export const TemplateSchema = z.object({
   files: z.array(z.object({ path: z.string(), contentBase64: z.string() })).optional(),
   // Workstation templates only (docs/WORKSTATIONS.md §6)
   gpu: z
-    .object({ count: z.number().int(), minVramGb: z.number().optional(), class: z.enum(["any", "consumer", "datacenter"]).optional() })
+    .object({ count: z.number().int(), minVramGb: z.number().optional(), class: z.enum(["standard", "large", "h100"]).optional() })
     .optional(),
   access: z.object({ web: z.object({ port: z.number().int(), path: z.string().optional() }).optional(), ssh: z.boolean() }).optional(),
   workdir: z.string().optional(),

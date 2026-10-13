@@ -57,7 +57,7 @@ async function node(workTypes: string[], opts: { fleet?: boolean; gpus?: typeof 
     workTypes,
     pubkey: n.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.2.0",
+    agentVersion: "1.3.0",
   });
   expect(res.status).toBe(200);
   await getD1()
@@ -77,7 +77,7 @@ async function user(credits = 100_000) {
 
 /** Heartbeat with the relay socket up; returns the instructions. */
 async function beat(n: PrivateKeyAccount, relay = true) {
-  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.2.0" });
+  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.3.0" });
   expect(res.status).toBe(200);
   return (await res.json()).deployments as { id: string; action: string; kind: string; spec: any; relayed?: boolean; imageAllowed?: boolean }[];
 }
@@ -135,9 +135,12 @@ describe("create", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     const perReplica = priceUcldPerHour("endpoint", { ...ENDPOINT, auth: "key" } as any);
-    // 4 cores × 200 + 16 GB × 100 + 50 GB × 20 + 1 consumer GPU × 2000
+    // 4 cores × 200 + 16 GB × 100 + 50 GB × 20 + 1 standard GPU × 2000 (test price scale)
     expect(perReplica).toBe(800 + 1600 + 1000 + 2000);
-    expect(body).toEqual({ status: "success", id: expect.any(String), priceUcldPerHour: perReplica * 2, deploymentStatus: "queued" });
+    expect(body).toEqual({
+      status: "success", id: expect.any(String), priceUcldPerHour: perReplica * 2, priceUsdPerHour: expect.any(Number), usdPerCld: 0.1, deploymentStatus: "queued",
+    });
+    expect(body.priceUsdPerHour).toBeCloseTo((perReplica * 2 * 0.1) / 1e6, 12);
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 100_000 - perReplica * 2, heldUcld: perReplica * 2 });
 
     const parent = (await row(body.id))!;
@@ -148,7 +151,7 @@ describe("create", () => {
       expect(k).toMatchObject({ kind: "container", workstation: 0, replicas: 0, held_ucld: perReplica, status: "queued", probe_path: "/health", owner: u.addr });
       expect(JSON.parse(k.spec_json)).toEqual({
         image: ENDPOINT.image, command: ENDPOINT.command, env: ENDPOINT.env, cpu: 4000, memMb: 16_384, storageMb: 51_200,
-        gpu: { count: 1, minVramGb: 16 }, ports: [{ container: 8000 }], health: { path: "/health", startupGraceSec: 900 },
+        gpu: { count: 1, minVramGb: 16, class: "standard" }, ports: [{ container: 8000 }], health: { path: "/health", startupGraceSec: 900 },
       });
     }
     expect(kids.map((k) => k.name)).toEqual(["llm #1", "llm #2"]);
@@ -160,7 +163,7 @@ describe("create", () => {
       kind: "endpoint", status: "queued", auth: "key", url: `https://${body.id}.example.run`, priceUcldPerHour: perReplica * 2,
       replicas: [expect.objectContaining({ id: kids[0].id, status: "queued" }), expect.objectContaining({ id: kids[1].id, status: "queued" })],
     });
-    expect(list[0].spec).toEqual({ ...ENDPOINT, env: undefined, envKeys: ["HF_TOKEN"], auth: "key" });
+    expect(list[0].spec).toEqual({ ...ENDPOINT, gpu: { ...ENDPOINT.gpu, class: "standard" }, env: undefined, envKeys: ["HF_TOKEN"], auth: "key" });
   });
 
   it("defaults health and auth, caps replicas, refuses root and short credits", async () => {

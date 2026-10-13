@@ -1,8 +1,9 @@
 /**
  * Job pricing and the hourly price controller (docs/IMPL_SPEC_2026-10.md "Units", "Price controller").
  *
- * Price unit: nano-CLD per tera-MAC (integer). Job fee in µCLD:
- *   fee = BASE_FEE_UCLD + ceil(units_mac × price / 1e15)       (1e15 = 1e12 MAC/TMAC × 1e3 nCLD/µCLD)
+ * Prices are quoted in US dollars and settled in CLD (docs/TOKENOMICS_USD_PRICING.md): the controller moves a price in
+ * nano-dollars per tera-MAC; a quote converts it, and the base fee, to CLD at USD_PER_CLD. Job fee in µCLD:
+ *   fee = baseFeeUcld + ceil(units_mac × priceNcldPerTmac / 1e15)    (1e15 = 1e12 MAC/TMAC × 1e3 nCLD/µCLD)
  *
  * Controller (once per hour, state in D1 `price_state`): u = served MAC / eligible capacity MAC over
  * the last hour; served = 0 → hold; else p ← p·clamp(1 + (u − 0.7), 0.98, 1.02), kept within
@@ -12,6 +13,7 @@ import { getD1, initStorage } from "../lib/storage.js";
 import { getEnv, resetEnv } from "../config/env.js";
 import { ensureSchema } from "../lib/schema.js";
 import { log } from "../lib/logger.js";
+import { usdToUcld } from "./deployment-spec.js";
 
 export const QUOTE_LOCK_MS = 5 * 60_000;
 export const CONTROLLER_STEP_MS = 3_600_000;
@@ -21,16 +23,16 @@ const TARGET_UTILIZATION = 0.7;
 const FLOOR_X = 0.1;
 const CEILING_X = 10;
 
-/** fee = base + ceil(unitsMac × priceNcldPerTmac / 1e15), all integers (µCLD). */
-export function feeUcld(unitsMac: number, priceNcldPerTmac: number, baseFeeUcld: number): number {
-  const num = BigInt(unitsMac) * BigInt(priceNcldPerTmac);
+/** fee = base + ceil(unitsMac × priceNusdPerTmac / 1e15), all integers (µCLD). */
+export function feeUcld(unitsMac: number, priceNusdPerTmac: number, baseFeeUcld: number): number {
+  const num = BigInt(unitsMac) * BigInt(priceNusdPerTmac);
   const variable = (num + 999_999_999_999_999n) / 1_000_000_000_000_000n;
   return baseFeeUcld + Number(variable);
 }
 
 export interface PriceState {
-  priceNcldPerTmac: number;
-  emaNcldPerTmac: number;
+  priceNusdPerTmac: number;
+  emaNusdPerTmac: number;
 }
 
 export interface PriceStep extends PriceState {
@@ -43,16 +45,16 @@ export function stepPrice(state: PriceState, input: { servedMac: number; capacit
   if (input.servedMac <= 0) return { ...state, held: true, utilization: null };
   const u = input.capacityMac > 0 ? input.servedMac / input.capacityMac : 1;
   const factor = Math.min(1.02, Math.max(0.98, 1 + (u - TARGET_UTILIZATION)));
-  const floor = Math.max(1, Math.round(state.emaNcldPerTmac * FLOOR_X));
-  const ceiling = Math.max(floor, Math.round(state.emaNcldPerTmac * CEILING_X));
-  const price = Math.min(ceiling, Math.max(floor, Math.round(state.priceNcldPerTmac * factor)));
-  const ema = state.emaNcldPerTmac + EMA_ALPHA * (price - state.emaNcldPerTmac);
-  return { priceNcldPerTmac: price, emaNcldPerTmac: ema, held: false, utilization: u };
+  const floor = Math.max(1, Math.round(state.emaNusdPerTmac * FLOOR_X));
+  const ceiling = Math.max(floor, Math.round(state.emaNusdPerTmac * CEILING_X));
+  const price = Math.min(ceiling, Math.max(floor, Math.round(state.priceNusdPerTmac * factor)));
+  const ema = state.emaNusdPerTmac + EMA_ALPHA * (price - state.emaNusdPerTmac);
+  return { priceNusdPerTmac: price, emaNusdPerTmac: ema, held: false, utilization: u };
 }
 
 interface PriceRow {
-  price_ncld_per_tmac: number;
-  ema_ncld_per_tmac: number;
+  price_nusd_per_tmac: number;
+  ema_nusd_per_tmac: number;
   stepped_at: number | null;
   quote_price: number | null;
   quote_expires_at: number | null;
@@ -60,33 +62,51 @@ interface PriceRow {
 
 async function loadState(): Promise<PriceRow> {
   const db = getD1();
-  const initial = getEnv().PRICE_NCLD_PER_TMAC;
+  const initial = getEnv().PRICE_NUSD_PER_TMAC;
   await db
-    .prepare("INSERT OR IGNORE INTO price_state (id, price_ncld_per_tmac, ema_ncld_per_tmac) VALUES (1, ?, ?)")
+    .prepare("INSERT OR IGNORE INTO price_state (id, price_nusd_per_tmac, ema_nusd_per_tmac) VALUES (1, ?, ?)")
     .bind(initial, initial)
     .run();
   return (await db.prepare("SELECT * FROM price_state WHERE id = 1").first<PriceRow>())!;
 }
 
+/** A quote: the dollar price and the CLD amounts it converts to at the reference rate. */
 export interface PriceQuote {
+  priceNusdPerTmac: number;
+  usdPerCld: number;
+  /** priceNusdPerTmac at usdPerCld, rounded up: what fees are computed with. */
   priceNcldPerTmac: number;
+  baseFeeUsd: number;
+  baseFeeUcld: number;
   expiresAt: number;
+}
+
+function toQuote(priceNusdPerTmac: number, expiresAt: number): PriceQuote {
+  const env = getEnv();
+  return {
+    priceNusdPerTmac,
+    usdPerCld: env.USD_PER_CLD,
+    priceNcldPerTmac: Math.ceil(priceNusdPerTmac / env.USD_PER_CLD - 1e-6),
+    baseFeeUsd: env.BASE_FEE_USD,
+    baseFeeUcld: usdToUcld(env.BASE_FEE_USD),
+    expiresAt,
+  };
 }
 
 /** The price jobs are charged at now; locked for QUOTE_LOCK_MS once issued. */
 export async function getPriceQuote(now = Date.now()): Promise<PriceQuote> {
   const env = getEnv();
-  if (env.PRICE_CONTROLLER === "off") return { priceNcldPerTmac: env.PRICE_NCLD_PER_TMAC, expiresAt: now + QUOTE_LOCK_MS };
+  if (env.PRICE_CONTROLLER === "off") return toQuote(env.PRICE_NUSD_PER_TMAC, now + QUOTE_LOCK_MS);
   const row = await loadState();
   if (row.quote_price != null && row.quote_expires_at != null && row.quote_expires_at > now) {
-    return { priceNcldPerTmac: row.quote_price, expiresAt: row.quote_expires_at };
+    return toQuote(row.quote_price, row.quote_expires_at);
   }
   const expiresAt = now + QUOTE_LOCK_MS;
   await getD1()
     .prepare("UPDATE price_state SET quote_price = ?, quote_expires_at = ? WHERE id = 1")
-    .bind(row.price_ncld_per_tmac, expiresAt)
+    .bind(row.price_nusd_per_tmac, expiresAt)
     .run();
-  return { priceNcldPerTmac: row.price_ncld_per_tmac, expiresAt };
+  return toQuote(row.price_nusd_per_tmac, expiresAt);
 }
 
 /** served MAC (verified jobs completed in the window) and eligible capacity MAC (bound nodes seen in the window). */
@@ -131,17 +151,17 @@ export async function runPriceControllerCron(env?: Record<string, unknown>, now 
   if (row.stepped_at != null && Math.floor(row.stepped_at / CONTROLLER_STEP_MS) >= hour) return { ran: false, reason: "already_stepped" };
 
   const window = await utilizationWindow(now - CONTROLLER_STEP_MS, now);
-  const step = stepPrice({ priceNcldPerTmac: row.price_ncld_per_tmac, emaNcldPerTmac: row.ema_ncld_per_tmac }, window);
+  const step = stepPrice({ priceNusdPerTmac: row.price_nusd_per_tmac, emaNusdPerTmac: row.ema_nusd_per_tmac }, window);
   // Conditional on the hour so two concurrent cron isolates cannot both step.
   const r = await getD1()
     .prepare(
-      "UPDATE price_state SET price_ncld_per_tmac = ?, ema_ncld_per_tmac = ?, stepped_at = ? WHERE id = 1 AND (stepped_at IS NULL OR stepped_at < ?)",
+      "UPDATE price_state SET price_nusd_per_tmac = ?, ema_nusd_per_tmac = ?, stepped_at = ? WHERE id = 1 AND (stepped_at IS NULL OR stepped_at < ?)",
     )
-    .bind(step.priceNcldPerTmac, step.emaNcldPerTmac, now, hour * CONTROLLER_STEP_MS)
+    .bind(step.priceNusdPerTmac, step.emaNusdPerTmac, now, hour * CONTROLLER_STEP_MS)
     .run();
   if ((r.meta?.changes ?? 0) === 0) return { ran: false, reason: "already_stepped" };
   log.api.info(
-    `[price] ${step.held ? "hold (no work served)" : `u=${step.utilization!.toFixed(3)}`} → ${step.priceNcldPerTmac} nCLD/TMAC (ema ${step.emaNcldPerTmac.toFixed(1)})`,
+    `[price] ${step.held ? "hold (no work served)" : `u=${step.utilization!.toFixed(3)}`} → ${step.priceNusdPerTmac} nUSD/TMAC (ema ${step.emaNusdPerTmac.toFixed(1)})`,
   );
   return { ran: true, ...step };
 }

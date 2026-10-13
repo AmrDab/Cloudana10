@@ -21,6 +21,7 @@ import {
   checkSpec,
   imageAllowed,
   priceUcldPerHour,
+  priceUsdPerHour,
   redactSpec,
   replicaSpec,
   type ApiKind,
@@ -320,7 +321,7 @@ function neededCapability(kind: ApiKind, spec: unknown): string {
 }
 
 export type CreateResult =
-  | { ok: true; id: string; priceUcldPerHour: number }
+  | { ok: true; id: string; priceUcldPerHour: number; priceUsdPerHour: number; usdPerCld: number }
   | { ok: false; code: "validation_failed" | "payload_too_large" | "unprocessable"; message: string; details?: unknown };
 
 export async function createDeployment(input: {
@@ -332,7 +333,10 @@ export async function createDeployment(input: {
 }): Promise<CreateResult> {
   const checked = checkSpec(input.kind, input.spec);
   if (!checked.ok) return checked;
+  // The dollar price, converted to µCLD at the reference rate now and fixed for this deployment.
+  const usd = priceUsdPerHour(input.kind, checked.spec);
   const price = priceUcldPerHour(input.kind, checked.spec);
+  const quoted = (n: number) => ({ priceUcldPerHour: price * n, priceUsdPerHour: usd * n, usdPerCld: getEnv().USD_PER_CLD });
   if (input.kind === "container" && input.templateId && !(checked.spec as ContainerSpec).expectsSecrets) {
     // A template that declares secretEnv means the browser will seal secrets after assignment.
     const t = await new TemplateService().getTemplateById(input.templateId);
@@ -373,7 +377,7 @@ export async function createDeployment(input: {
     await getD1().batch(rows);
     await addEvent(id, "info", `queued ${replicas} replica${replicas > 1 ? "s" : ""} at ${price} µCLD/replica-hour; first hour held`, now);
     if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) await addEvent(id, "warn", "waiting for a capable node", now);
-    return { ok: true, id, priceUcldPerHour: price * replicas };
+    return { ok: true, id, ...quoted(replicas) };
   }
   await stmt
     .bind(
@@ -395,7 +399,7 @@ export async function createDeployment(input: {
   if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) {
     await addEvent(id, "warn", "waiting for a capable node", now);
   }
-  return { ok: true, id, priceUcldPerHour: price };
+  return { ok: true, id, ...quoted(1) };
 }
 
 export async function listDeployments(owner: string, limit = 100): Promise<Deployment[]> {
