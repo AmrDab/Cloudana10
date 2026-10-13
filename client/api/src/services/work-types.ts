@@ -5,7 +5,7 @@
  */
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 import { verify as cupowVerify } from "../../../../pouw/src/cupow.js";
-import { chooseBlockSize, fieldHash, freivalds, maxAbsEntry } from "../../../../pouw/src/index.js";
+import { chooseBlockSize, fieldHash, freivalds, maxAbsEntry, toFieldMatrix } from "../../../../pouw/src/index.js";
 
 export interface WorkJobInput {
   n: number;
@@ -93,17 +93,24 @@ export const matmul: WorkType = {
     if (certificate.matrixAHash !== fieldHash(job.matrixA, n) || certificate.matrixBHash !== fieldHash(job.matrixB, n)) {
       return { ok: false, reason: "certificate is not for this job's matrices (A/B hash mismatch)" };
     }
+    // The answer first: n² work, so a wrong or garbage submission is refused before the n³ re-execution.
+    // Every entry of A·B is within ±n·bound² < p/2 (bound = maxAbsEntry(n)), so with that bound the mod-p Freivalds
+    // check is exact over the integers: a C shifted by multiples of p is refused (docs/POUW_REVIEW.md §2, g3–g5).
+    const bound = maxAbsEntry(n);
+    const cMax = n * bound * bound;
+    if (!Array.isArray(result) || result.length !== n * n || !result.every((v) => Number.isSafeInteger(v) && Math.abs(v) <= cMax)) {
+      return { ok: false, reason: `result must be n*n = ${n * n} integers within ±${cMax}` };
+    }
+    if (!freivalds(job.matrixA, job.matrixB, result, n)) return { ok: false, reason: "result is not A·B (Freivalds check failed)" };
+    // Re-execute over the job's own matrices, never the copies the node sent: the int32 hash encoding wraps, so a
+    // certificate over A + 2³² would otherwise bind to A (docs/POUW_REVIEW.md §2, h).
     let transcriptOk = false;
     try {
-      transcriptOk = cupowVerify(certificate);
+      transcriptOk = cupowVerify({ ...certificate, matrixA: toFieldMatrix(job.matrixA, n).data, matrixB: toFieldMatrix(job.matrixB, n).data });
     } catch {
       transcriptOk = false;
     }
     if (!transcriptOk) return { ok: false, reason: "certificate transcript failed verification" };
-    if (!Array.isArray(result) || result.length !== n * n || !result.every(Number.isSafeInteger)) {
-      return { ok: false, reason: `result must be n*n = ${n * n} integers` };
-    }
-    if (!freivalds(job.matrixA, job.matrixB, result, n)) return { ok: false, reason: "result is not A·B (Freivalds check failed)" };
     return { ok: true };
   },
 
