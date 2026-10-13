@@ -1,10 +1,11 @@
 // Your workstations — table (cards under 640 px) with an expandable detail: hours, GPUs, Connect, Extend, Stop, events.
+import { GPU_TIER_LABEL, perHour, tierOf, ucldToUsd, usd, usePrices } from "@/lib/prices";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, ChevronDown, ExternalLink, Loader2, MonitorPlay, Plus, Square, Terminal, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, cld } from "@/lib/cld";
+import { api } from "@/lib/cld";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -19,6 +20,13 @@ import { errText, signInWithToast } from "@/components/console/actions";
 import { DeployChip } from "@/pages/console/deploy/deployments";
 import { dur } from "./spec-picker";
 
+/** A workstation's hourly price: dollars, with the CLD it was fixed at. */
+function UsdH({ ucld, brief }: { ucld: number; brief?: boolean }) {
+  const { usdPerCld } = usePrices();
+  const v = ucldToUsd(ucld, usdPerCld);
+  return <span title={perHour(v, usdPerCld)}>{brief ? `${usd(v)}/h` : perHour(v, usdPerCld)}</span>;
+}
+
 const preempted = (w: Workstation) => w.status === "stopped" && /preempt/i.test(w.statusReason ?? "");
 
 export function WsChip({ w }: { w: Workstation }) {
@@ -29,7 +37,7 @@ export function WsChip({ w }: { w: Workstation }) {
 function specLine(w: Workstation) {
   const s = w.spec;
   const g = s.gpu?.count
-    ? `${s.gpu.count}× GPU${s.gpu.minVramGb ? ` ≥${s.gpu.minVramGb} GB` : ""}${s.gpu.class && s.gpu.class !== "any" ? ` ${s.gpu.class}` : ""}`
+    ? `${s.gpu.count}× ${GPU_TIER_LABEL[tierOf(s.gpu.class)]} GPU${s.gpu.minVramGb ? ` ≥${s.gpu.minVramGb} GB` : ""}`
     : "CPU";
   return `${g} · ${s.cpu / 1000} vCPU · ${Math.round(s.memMb / 1024)} GB`;
 }
@@ -137,7 +145,7 @@ export function Workstations({ focusId, onRent }: { focusId: string | null; onRe
                   <div className="flex w-full items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="truncate text-[14px] text-text">{w.name}</div>
-                      <div className="mt-0.5 truncate font-mono text-[12px] text-faint">{specLine(w)} · {cld(w.priceUcldPerHour)}/h</div>
+                      <div className="mt-0.5 truncate font-mono text-[12px] text-faint">{specLine(w)} · <UsdH ucld={w.priceUcldPerHour} brief /></div>
                     </div>
                     <WsChip w={w} />
                   </div>
@@ -174,7 +182,7 @@ function Row({ w, open, fresh, onToggle }: { w: Workstation; open: boolean; fres
         <td className="px-4 py-2.5"><WsChip w={w} /></td>
         <td className="px-4 py-2.5 font-mono text-[12px] whitespace-nowrap text-muted-foreground">{specLine(w)}</td>
         <td className="px-4 py-2.5"><HoursBar w={w} compact /></td>
-        <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground">{cld(w.priceUcldPerHour)}</td>
+        <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground"><UsdH ucld={w.priceUcldPerHour} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><RelTime ms={w.createdAt} /></td>
         <td className="w-10 pr-4 text-right"><ChevronDown className={cn("inline size-4 text-faint transition-transform duration-250", open && "rotate-180")} aria-hidden /></td>
       </tr>
@@ -279,6 +287,7 @@ function Detail({ w }: { w: Workstation }) {
 
 function Extend({ w }: { w: Workstation }) {
   const qc = useQueryClient();
+  const { usdPerCld } = usePrices();
   const [busy, setBusy] = useState<number | null>(null);
   const can = w.status === "running" || w.status === "assigned";
   async function extend(h: number) {
@@ -286,7 +295,7 @@ function Extend({ w }: { w: Workstation }) {
     setBusy(h);
     try {
       await extendWorkstation(w.id, next);
-      toast.success(`Extended to ${dur(next)}`, { description: `${w.name} · +${dur(h)} at ${cld(w.priceUcldPerHour)}/h` });
+      toast.success(`Extended to ${dur(next)}`, { description: `${w.name} · +${dur(h)} at ${usd(ucldToUsd(w.priceUcldPerHour, usdPerCld))}/h` });
       qc.invalidateQueries({ queryKey: ["cld", "deployments"] });
       qc.invalidateQueries({ queryKey: ["cld", "deployment", w.id] });
     } catch (e) {

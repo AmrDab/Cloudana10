@@ -1,4 +1,5 @@
 // How it pays: the orchestrator + per-job minting in one diagram (brief §2.4).
+import { usd } from "@/lib/prices";
 import { forwardRef, useRef, type ReactNode } from "react";
 import { Boxes, Flame, Link2, Server, ShieldCheck, User } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -78,7 +79,7 @@ export function HowItPays() {
           <div className="flex flex-col justify-center rounded-lg border border-line bg-bg-2 px-5 py-4 font-mono text-xs leading-[1.7] text-muted-foreground max-md:col-span-2">
             <span className="text-text">Minted per verified job. Settled on-chain in batches.</span>
             <span className="text-faint">
-              Current price · {data ? `${data.priceNcldPerTmac.toLocaleString("en-US")} nCLD per TMAC + ${data.baseFeeUcld.toLocaleString("en-US")} µCLD per job` : "—"}
+              Current price · {!data ? "—" : data.priceNusdPerTmac != null && data.baseFeeUsd != null ? `${usd(data.priceNusdPerTmac / 1000)} per 10¹⁸ multiply-adds + ${usd(data.baseFeeUsd)} per job, paid in CLD at $${(data.usdPerCld ?? 0.1).toFixed(2)}` : `${data.priceNcldPerTmac.toLocaleString("en-US")} nCLD per TMAC + ${data.baseFeeUcld.toLocaleString("en-US")} µCLD per job`}
             </span>
           </div>
         </div>

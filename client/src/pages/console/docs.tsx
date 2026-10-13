@@ -49,14 +49,15 @@ export default function DocsPage() {
           <Doc id="how" title="How it works">
             <p>
               Cloudana is a decentralized datacenter: home PCs and full racks joined under <b>one orchestrator</b>. It is
-              not a marketplace. Users don't pick providers and providers don't bid — the orchestrator assigns every job
-              and sets its price from supply and demand.
+              not a marketplace. Users don't pick providers and providers don't bid — the orchestrator assigns the work
+              and sets the price.
             </p>
             <p>
-              Each job comes back with a proof. When the proof checks out, CLD is minted for that job — like a block
-              reward, but for useful work. No work, no CLD. Minted amounts settle on Base in batches.
+              A matrix job comes back with a proof; hosting and containers are probed. When the work checks out, CLD is
+              minted for it — like a block reward, but for useful work. No work, no CLD. Minted amounts settle on Base in
+              batches.
             </p>
-            <p>Three roles: <b>users</b> pay for work, <b>providers</b> run it, <b>verifiers</b> check it.</p>
+            <p>Three roles: <b>users</b> pay for work, <b>providers</b> run it, <b>verifiers</b> re-check it in public.</p>
           </Doc>
 
           <Doc id="use" title="Use">
@@ -96,35 +97,39 @@ export default function DocsPage() {
           <Doc id="verify" title="Verify">
             <p>
               Any browser can check finished work: it re-runs a Freivalds check (A·B = C, using random vectors) in a few
-              milliseconds. About one task in six is planted wrong, so careless verifiers are caught. Verifiers earn
-              credits — points, not CLD — kept in the browser until wallet binding opens.
+              milliseconds. It is a public re-check: verdicts don't change any job's outcome. About one task in six is
+              planted wrong, so careless verifiers are caught. Verifiers earn credits — points, not CLD — kept in the
+              browser until wallet binding opens.
             </p>
             <Link href="/verify" className={linkCls}>Verify in browser <ArrowRight className="size-3.5" /></Link>
           </Doc>
 
           <Doc id="cld" title="How CLD is minted">
             <p>
-              CLD is the unit of account for compute on Cloudana: every job is priced and settled in CLD. New CLD exists
-              only because someone paid for real, verified computation. For each verified job with fee F:
+              Prices are in US dollars. You pay in CLD at the rate on your quote, and every fee settles in CLD. New CLD
+              exists only because someone paid for real, verified computation. For each verified job with fee F:
             </p>
             <ul className="grid gap-2 pl-5 [list-style:disc]">
               <li>F is burned at settlement.</li>
               <li><b>0.95 F</b> is minted to the provider and <b>0.03 F</b> to the treasury; <b>0.02 F</b> is destroyed for good.</li>
               <li>
-                A <b>small, capped, declining subsidy</b> is added only when the orchestrator's random draw chose a provider
-                in a genuinely independent cluster, so routing jobs to yourself doesn't pay. It is withheld from any operator
-                above the cluster share cap, and from everyone while fewer than three independent clusters are online.
+                A <b>small, capped, declining subsidy</b> — for proven work only, at most 4 % of F — is added only when the
+                orchestrator's random draw chose a provider in a genuinely independent cluster, so routing jobs to yourself
+                doesn't pay. It is withheld from any operator above the cluster share cap, and from everyone while fewer
+                than three independent clusters are online. If an epoch's subsidy adds up to more than its budget, every
+                entry in it is scaled down by the same factor.
               </li>
             </ul>
             <p>
-              The amount is fixed when the job verifies. Entries are then posted to Base in batches (one Merkle root per
+              The provider's and treasury's amounts are fixed when the job verifies; the subsidy is fixed when its epoch
+              closes. Entries are then posted to Base in batches (one Merkle root per
               epoch — hourly on testnet, daily at mainnet), with a veto window of the same length; the subsidy part vests
               before it can be claimed. Batching is delivery, not the reward unit.
             </p>
             <p>
               <b>Paying.</b> If you hold another asset, your own wallet swaps it into CLD at the moment you pay; Cloudana
-              never holds customer assets other than escrowed CLD. USD figures are display only. Card payments are off during
-              testnet. One static site per verified identity is free, paid for by the ecosystem treasury at normal fees.
+              never holds customer assets other than escrowed CLD. Card payments are off during testnet. One static site
+              per verified identity is free, paid for by the ecosystem treasury at normal fees.
             </p>
             <p>
               <b>Testnet CLD has no monetary value.</b> Testnet credits are 10 CLD per day per verified identity. There is no
@@ -135,11 +140,16 @@ export default function DocsPage() {
 
           <Doc id="price" title="Price">
             <p>
-              The protocol sets the price per unit of work from utilization. Compute is priced in nano-CLD per tera-MAC
-              (nCLD/TMAC) plus a small per-job base fee; hosting, containers and workstations are priced per hour. The price
-              moves at most ±2 % per hour toward a 70 % utilization target and holds when the network is idle; there is no
-              price oracle, and a quote is locked for five minutes. Users may add a ceiling; providers may add a floor. Both
-              are optional.
+              Prices are in US dollars. You pay in CLD at the rate on your quote: a fixed reference rate of $0.10 per CLD
+              on testnet; after listing, a one-hour average of the public CLD/USDC pool. Compute jobs are priced in
+              nano-dollars per tera-multiply-add (about $2.02 per H100-hour of matrix work) plus a $0.0001 base fee; that
+              price moves at most ±2 % per hour toward a 70 % utilization target and holds when the network is idle.
+              Hosting, containers, workstations and GPU endpoints are priced per hour: a static site $0.0014 (about $1 a
+              month), vCPU $0.010, RAM $0.0012 per GB, disk and volumes $0.0001 per GB, and GPUs by tier — standard
+              (under 40 GB) $0.30, large (40–80 GB, A100-class) $1.20, H100-class $2.00. Interruptible runs are half
+              price. A quote is locked for five minutes. Settlement is in CLD and uses no oracle. Testnet prices
+              are shown in dollars for reference; test CLD has no value. Users may add a ceiling; providers may add a
+              floor. Both are optional.
             </p>
           </Doc>
 
@@ -147,7 +157,8 @@ export default function DocsPage() {
             <p>
               <b>Live today:</b> wallet sign-in by server nonce and EIP-191 signature; a short-lived token stays in the
               tab. Node messages are signed with each node's secp256k1 key; bind codes work once; fleet tokens are
-              stored hashed and shown once. Work is checked by σ-bound cuPOW transcripts, Freivalds and planted tasks.
+              stored hashed and shown once. Matrix jobs are re-executed by the orchestrator and answer-checked
+              (Freivalds), each transcript bound to its assignment by σ; services are probed.
               Rate limits, CORS allow-list, TLS in transit; settlement on Base has a veto window and guardian.
             </p>
             <p>
@@ -159,7 +170,7 @@ export default function DocsPage() {
           </Doc>
 
           <Doc id="services" title="Services and proofs">
-            <p>Status is the truth today. Compute is proven end to end; static hosting is live and probed for reachability.</p>
+            <p>Status is the truth today. Only matrix jobs are proven: re-executed by the orchestrator and answer-checked (Freivalds). Static hosting is live and probed for reachability.</p>
             <Panel className="divide-y divide-line">
               {CATALOG.map((s) => (
                 <div key={s.id} className="grid gap-1 p-4 sm:grid-cols-[180px_1fr_auto] sm:items-center sm:gap-4">

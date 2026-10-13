@@ -215,7 +215,7 @@ export type Deployment = {
   id: string;
   templateId: string | null;
   name: string;
-  kind: "static" | "container";
+  kind: "static" | "container" | "endpoint";
   status: DeploymentStatus;
   statusReason: string | null;
   node: string | null;
@@ -261,7 +261,8 @@ export function useDeployment(id: string | null, ms: number | false = 5_000) {
 
 // ── Workstations (docs/WORKSTATIONS.md §1, §4) ──────────────────────────────
 
-export type GpuClass = "any" | "consumer" | "datacenter";
+/** The GPU tier a request names (lib/prices.ts); older deployments may still carry any / consumer / datacenter. */
+export type GpuClass = "standard" | "large" | "h100" | "any" | "consumer" | "datacenter";
 export type WorkstationTier = "on-demand" | "interruptible";
 export type WorkstationSpec = {
   image: string;
@@ -332,3 +333,62 @@ export function useWorkstation(id: string | null, ms: number | false = 5_000) {
 /** `PATCH /deployments/{id} { maxHours }` — extend a running or assigned workstation (1–720 h). */
 export const extendWorkstation = (id: string, maxHours: number) =>
   api(`/deployments/${id}`, { method: "PATCH", auth: true, body: { maxHours } });
+
+// ── GPU endpoints (docs/V4_ENDPOINTS_CONTRACT.md) ───────────────────────────
+export type EndpointSpec = {
+  image: string;
+  command?: string[];
+  envKeys?: string[];
+  port: number;
+  cpu: number;
+  memMb: number;
+  storageMb: number;
+  gpu?: { count: number; minVramGb?: number; class?: GpuClass };
+  health?: { path?: string; startupGraceSec?: number };
+  replicas: number;
+  auth: "public" | "key";
+};
+export type Replica = {
+  id: string;
+  status: DeploymentStatus;
+  statusReason: string | null;
+  node: string | null;
+  startedAt: number | null;
+  probeOk: boolean | null;
+  /** Detail only: the node's log tail from this replica's last failure. */
+  logs?: string;
+};
+export type Endpoint = Omit<Deployment, "kind" | "spec"> & {
+  kind: "endpoint";
+  url: string | null;
+  spec: EndpointSpec;
+  replicas: Replica[];
+  auth: "public" | "key";
+};
+export type EndpointDetail = { deployment: Endpoint; events: DeploymentEvent[] };
+export const isEndpoint = (d: { kind: string }): d is Endpoint => d.kind === "endpoint";
+
+export function useEndpoint(id: string | null, ms: number | false = 5_000) {
+  const s = useSession();
+  return useQuery({
+    queryKey: ["cld", "deployment", id],
+    queryFn: () => api<EndpointDetail>(`/deployments/${id}`, { auth: true }),
+    enabled: !!s && !!id,
+    staleTime: 0,
+    retry: false,
+    refetchInterval: ms,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export type EndpointKey = { id: string; name: string; prefix: string; createdAt: number; revokedAt: number | null };
+export function useEndpointKeys(id: string | null) {
+  const s = useSession();
+  return useQuery({
+    queryKey: ["cld", "endpoint-keys", id],
+    queryFn: () => api<{ keys: EndpointKey[] }>(`/deployments/${id}/keys`, { auth: true }).then((r) => r.keys ?? []),
+    enabled: !!s && !!id,
+    staleTime: 10_000,
+    retry: false,
+  });
+}

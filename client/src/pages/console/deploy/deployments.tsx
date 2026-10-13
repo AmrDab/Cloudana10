@@ -4,7 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronDown, ExternalLink, FileCode2, KeyRound, Loader2, Lock, Rocket, Square, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ago, api, cld, short } from "@/lib/cld";
+import { ago, api, short } from "@/lib/cld";
+import { perHour, ucldToUsd, usd, usePrices } from "@/lib/prices";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -58,6 +59,13 @@ function Endpoint({ url }: { url: string | null }) {
       <ExternalLink className="size-3 shrink-0 text-faint" aria-hidden />
     </a>
   );
+}
+
+/** A deployment's hourly price: dollars, with the CLD it was fixed at (µCLD × the reference rate). */
+function PriceH({ ucld, short: brief }: { ucld: number; short?: boolean }) {
+  const { usdPerCld } = usePrices();
+  const v = ucldToUsd(ucld, usdPerCld);
+  return <span title={perHour(v, usdPerCld)}>{brief ? `${usd(v)}/h` : perHour(v, usdPerCld)}</span>;
 }
 
 // ── Secret sealing ──────────────────────────────────────────────────────────
@@ -146,8 +154,8 @@ const COLS = ["Name", "Kind", "Status", "Node", "URL", "Price / h", "Probe", "Cr
 export function Deployments({ focusId, onBlank }: { focusId: string | null; onBlank: () => void }) {
   const session = useSession();
   const q = useDeployments();
-  // Workstations have their own tab.
-  const deps = (q.data ?? []).filter((d) => (d.kind as string) !== "workstation");
+  // Workstations and endpoints have their own tabs.
+  const deps = (q.data ?? []).filter((d) => (d.kind as string) !== "workstation" && d.kind !== "endpoint");
   const [open, setOpen] = useState<string | null>(null);
   const fresh = useFreshIds(deps.map((d) => d.id));
   const bone = useDelayed(q.isLoading);
@@ -214,7 +222,7 @@ export function Deployments({ focusId, onBlank }: { focusId: string | null; onBl
                   <div className="min-w-0">
                     <div className="truncate text-[14px] text-text">{d.name}</div>
                     <div className="mt-0.5 truncate font-mono text-[12px] text-faint">
-                      {liveUrl(d) ? hostOf(liveUrl(d)!) : d.statusReason ?? d.kind} · {cld(d.priceUcldPerHour)}/h
+                      {liveUrl(d) ? hostOf(liveUrl(d)!) : d.statusReason ?? d.kind} · <PriceH ucld={d.priceUcldPerHour} short />
                     </div>
                   </div>
                   <DeployChip status={d.status} />
@@ -245,11 +253,11 @@ function Row({ d, open, fresh, onToggle }: { d: Deployment; open: boolean; fresh
           {d.statusReason && !isTerminal(d.status) && d.status !== "running" && <div className="truncate text-[12px] text-faint">{d.statusReason}</div>}
           <div className="mt-1 empty:hidden"><SealLine d={d} /></div>
         </td>
-        <td className="px-4 py-2.5"><KindPill kind={d.kind} /></td>
+        <td className="px-4 py-2.5"><KindPill kind={d.kind as "static" | "container"} /></td>
         <td className="px-4 py-2.5"><DeployChip status={d.status} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><Hash value={d.node} /></td>
         <td className="px-4 py-2.5"><Endpoint url={liveUrl(d)} /></td>
-        <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground">{cld(d.priceUcldPerHour)}</td>
+        <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground"><PriceH ucld={d.priceUcldPerHour} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><Probe d={d} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><RelTime ms={d.createdAt} /></td>
         <td className="w-10 pr-4 text-right"><ChevronDown className={cn("inline size-4 text-faint transition-transform duration-250", open && "rotate-180")} aria-hidden /></td>

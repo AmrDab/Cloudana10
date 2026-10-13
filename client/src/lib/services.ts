@@ -48,11 +48,11 @@ export const GROUPS: { id: ServiceGroup; label: string }[] = [
 export const CATALOG: Service[] = [
   // Compute
   { id: "compute", group: "compute", name: "GPU / CPU compute", line: "Verified matrix jobs on assigned hardware.", icon: Cpu, status: "live",
-    proof: "cuPOW transcript bound to the job, answer checked by Freivalds.", subsidy: true },
-  { id: "ai-inference", group: "compute", name: "AI inference", line: "Int8 models, same proof rule.", icon: Brain, status: "early",
-    proof: "Matrix-heavy layers will carry the same cuPOW proof.", subsidy: true },
+    proof: "Re-executed by the orchestrator and answer-checked (Freivalds); the transcript is bound to its assignment.", subsidy: true },
+  { id: "ai-inference", group: "compute", name: "AI inference", line: "Your own model server on assigned GPUs.", icon: Brain, status: "early",
+    proof: "Health probed through the relay; fees only.", subsidy: false },
   { id: "containers", group: "compute", name: "Containers", line: "Docker images on assigned nodes.", icon: Container, status: "early",
-    proof: "Reachability probed by the orchestrator; correctness attested where hardware allows.", subsidy: false },
+    proof: "Health probed through the relay; fees only.", subsidy: false },
   // Built (docs/WORKSTATIONS.md); stays early until a Docker + GPU node runs one end to end.
   { id: "workstations", interest: "compute", group: "compute", name: "GPU workstations & rentals", line: "Jupyter, VS Code or a desktop on an assigned GPU.", icon: MonitorPlay, status: "early",
     proof: "Rented time, uptime probed; no subsidy.", subsidy: false },
@@ -64,7 +64,7 @@ export const CATALOG: Service[] = [
   { id: "hosting", group: "hosting", name: "Static hosting", line: "Sites served by nodes, probed every minute.", icon: Globe, status: "live",
     proof: "Reachability probed by the orchestrator every minute; browser witnesses planned.", subsidy: false },
   { id: "cdn", interest: "hosting", group: "hosting", name: "CDN & edge cache", line: "Cached copies close to every reader.", icon: Network, status: "planned",
-    proof: "Random probes from many residential verifiers check hash and latency.", subsidy: true },
+    proof: "Random probes from many residential verifiers check hash and latency.", subsidy: false },
   { id: "dns", interest: "hosting", group: "hosting", name: "DNS", line: "Authoritative answers from many nodes.", icon: Waypoints, status: "planned",
     proof: "Answers probed from many vantage points.", subsidy: false },
   { id: "tls", interest: "hosting", group: "hosting", name: "TLS certificates", line: "Issued and renewed for every endpoint.", icon: KeyRound, status: "planned",
@@ -72,13 +72,13 @@ export const CATALOG: Service[] = [
   { id: "tunnels", interest: "hosting", group: "hosting", name: "Tunnels", line: "Reach home nodes behind NAT.", icon: Cable, status: "planned",
     proof: "Reachability probed through the tunnel.", subsidy: false },
   { id: "bandwidth", group: "hosting", name: "Bandwidth", line: "Paid by signed receipts.", icon: Radio, status: "planned",
-    proof: "Payer-signed receipts; subsidy only on witness-probed traffic.", subsidy: true },
+    proof: "Payer-signed receipts; fees only.", subsidy: false },
 
   // Storage & data
-  { id: "storage", group: "storage", name: "Storage", line: "Sealed replicas, challenged at random.", icon: HardDrive, status: "early",
-    proof: "Random chunk challenges within a latency bound, plus retrieval probes (early access).", subsidy: false },
-  { id: "object-storage", interest: "storage", group: "storage", name: "Object storage", line: "Buckets over sealed replicas.", icon: Layers, status: "planned",
-    proof: "Same chunk challenges as storage, plus retrieval probes.", subsidy: true },
+  { id: "storage", group: "storage", name: "Storage", line: "Data held by nodes, challenged at random.", icon: HardDrive, status: "early",
+    proof: "Not live yet. Planned: random chunk challenges that prove data can be retrieved (not that it is replicated), plus retrieval probes.", subsidy: false },
+  { id: "object-storage", interest: "storage", group: "storage", name: "Object storage", line: "Buckets on Cloudana storage.", icon: Layers, status: "planned",
+    proof: "Same chunk challenges as storage, plus retrieval probes.", subsidy: false },
   { id: "kv-queues", interest: "storage", group: "storage", name: "KV & queues", line: "Small state and messages for apps.", icon: ListOrdered, status: "planned",
     proof: "Availability probes only — fees, no subsidy.", subsidy: false },
   { id: "databases", group: "storage", name: "Databases & apps", line: "Stateful services, uptime-probed.", icon: Database, status: "planned",

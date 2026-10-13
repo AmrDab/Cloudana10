@@ -383,8 +383,13 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [x] Economist study + simulation (scripts/sim/usd-pricing.ts); decision recorded in DECISIONS_CONSENSUS
 - [x] Owner yes on the price table (three GPU tiers: standard / large / H100-class) — 2026-10-13
 - [x] API: USD price env (hourly table, nano-USD/TMAC controller, base fee) × one reference rate; quotes carry {usd, rate, cld, expiresAt}; GPU tiers (shared/gpu-tier.ts) in classification, specs, placement and the agent; legacy class names mapped; agent 1.3.0 minimum
-- [ ] Console: prices as "$X/h ≈ Y CLD" (Run, Deploy, Workstations, Endpoints, Overview, Economics, Provide floor, Docs)
-- [ ] Homepage + litepaper + whitepaper §5–6 copy per the report's §5 (say / never say); localhost review before publish
+- [x] Console: prices as "$X/h ≈ Y CLD" (Run, Deploy, Workstations, Endpoints, Overview, lab); live table from GET /network (lib/prices.ts). Provide floor stays in CLD (not used by placement yet)
+- [x] Homepage + litepaper + whitepaper §5–6 + console docs + catalog copy per the report's §5 and docs/POUW_REVIEW.md §6
+- [ ] Owner review on localhost, then publish both Pages projects
+
+## V4 step 7 — console Endpoints tab (owner picked concept A via "go with what you recommend", 2026-10-13)
+- [x] Run → Endpoints: list (replicas, failure log tail, call-it, keys create/revoke, events, stop) + create form with live dollar price
+- [x] Verified on the local stack with three simulated GPU nodes (running, starting, failed with logs); desktop + 390 px
 - [ ] Before listing: TWAP rate module behind a flag; nCLD ledger; subsidy budget as a fraction of supply
 
 ## Subsidy pro rata (owner approved 2026-10-13)

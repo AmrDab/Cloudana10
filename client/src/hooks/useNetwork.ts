@@ -14,12 +14,20 @@ export type NetworkStats = {
   burnedUcld: number;
   verifiersToday: number;
   epoch: number;
-  /** Current quote, nano-CLD per tera-MAC (1e12 multiply-adds); locked until priceExpiresAt. */
+  /** Current quote converted to nano-CLD per tera-MAC (1e12 multiply-adds) at usdPerCld; locked until priceExpiresAt. */
   priceNcldPerTmac: number;
   priceExpiresAt: number;
-  /** Flat part of every job fee, µCLD. */
+  /** Flat part of every job fee, µCLD (baseFeeUsd at usdPerCld). */
   baseFeeUcld: number;
   lastSettledEpochAt: number | null;
+  /** Prices are quoted in US dollars and settled in CLD (absent on an API older than 2026-10-13). */
+  priceNusdPerTmac?: number;
+  baseFeeUsd?: number;
+  usdPerCld?: number;
+  prices?: import("@/lib/prices").PriceTable;
+  deploymentsRunning?: number;
+  gpusOnline?: number;
+  workstationsRunning?: number;
 };
 
 type State = { data: NetworkStats | null; offline: boolean; updatedAt: number | null };

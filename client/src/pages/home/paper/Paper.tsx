@@ -29,14 +29,14 @@ const STEPS = [
   ["Submit", "Send a job or deploy a container."],
   ["Assign", "The orchestrator picks the hardware. No bidding."],
   ["Run", "A provider node does the work."],
-  ["Prove", "The work returns its own transcript."],
+  ["Prove", "A matrix job returns its own transcript; a container is probed."],
   ["Verify", "Re-checked before anything mints."],
   ["Mint", "The fee is burned; 95% is minted to the provider."],
 ];
 
 const DOORS = [
   { id: "run", title: "Run", text: "Submit work. The network picks the hardware and returns the result with its proof.", cta: "Run a job", href: "/control/run" },
-  { id: "provide", title: "Provide", text: "One command. Your PC or your racks. Paid for every job you prove.", cta: "Start providing", href: "/control/provide" },
+  { id: "provide", title: "Provide", text: "One command. Your PC or your racks. Paid for verified work.", cta: "Start providing", href: "/control/provide" },
   { id: "verify", title: "Verify", text: "Your browser re-checks finished work. No install, no wallet.", cta: "Verify in your browser", href: "/control/verify" },
 ];
 
@@ -191,7 +191,7 @@ export function Paper() {
             <h2>
               Assigned, not auctioned.
               <br />
-              <em>Proven, then paid.</em>
+              <em>Checked, then paid.</em>
             </h2>
           </Reveal>
           <ol>
@@ -232,8 +232,8 @@ export function Paper() {
               <em>mints CLD.</em>
             </h2>
             <p className="pp-body">
-              The fee is burned; CLD is minted for the verified job and settled on Base in batches. Nothing about CLD is a
-              promise of price or return.
+              Prices are in US dollars. You pay in CLD at the rate on your quote. The fee is burned; CLD is minted for the
+              verified job and settled on Base in batches. Nothing about CLD is a promise of price or return.
             </p>
           </Reveal>
           <Reveal delay={0.08} className="pp-split">

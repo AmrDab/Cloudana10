@@ -164,8 +164,8 @@
   <div class="hero">
     <div class="kicker">Litepaper</div>
     <h1>Useful compute, <span class="g">proven.</span></h1>
-    <p class="lede"><b>Cloudana is a decentralized datacenter. For compute, the work that earns a provider's CLD <em>is</em> the user's computation.</b></p>
-    <p>Independent providers contribute CPUs, GPUs, and servers. One orchestrator assigns all the work and sets the price from supply and demand &mdash; users never pick a node, and providers don't compete on price. Three roles keep it honest: <b>users</b> pay for work, <b>providers</b> do it, and <b>verifiers</b> check it. For matrix workloads, Cloudana's <b>Proof of Useful Work</b> makes the proof and the useful result the same operation.</p>
+    <p class="lede"><b>Cloudana is a decentralized datacenter. For matrix jobs, the work that earns a provider's CLD <em>is</em> the user's computation.</b></p>
+    <p>Independent providers contribute CPUs, GPUs, and servers. One orchestrator assigns all the work and sets the price &mdash; users never pick a node, and providers don't compete on price. Three roles: <b>users</b> pay for work, <b>providers</b> do it, and <b>verifiers</b> re-check it in public. For matrix jobs, Cloudana's <b>Proof of Useful Work</b> makes the proof and the useful result the same operation.</p>
   </div>
 
   <section class="sec" aria-labelledby="h-how">
@@ -174,16 +174,16 @@
     <div class="steps">
       <div class="step card"><span class="n">01</span><p><b>Flash and go.</b> A provider installs the node agent once. It detects CPU, RAM, disk, and GPU, runs a benchmark, and binds to the provider's wallet with a one-time code. No spec forms, no price lists.</p></div>
       <div class="step card"><span class="n">02</span><p><b>You say what to run; the orchestrator places it.</b> Submit a job or a site. The orchestrator picks a node that fits by a random draw, sets the price, and handles placement. You never choose a provider.</p></div>
-      <div class="step card"><span class="n">03</span><p><b>Proof = product.</b> For matrix workloads, the provider proves the work by computing it. The proof's hardness comes from the full transcript of the computation, and the decoded result is the answer you paid for. Checked by a <span class="nt">σ</span>-bound transcript, Freivalds, and planted tasks.</p></div>
+      <div class="step card"><span class="n">03</span><p><b>Proof = product.</b> For matrix jobs, the provider proves the work by computing it. The proof is the full transcript of the computation, and the decoded result is the answer you paid for. The orchestrator re-executes the <span class="nt">σ</span>-bound transcript and checks the answer with Freivalds.</p></div>
     </div>
   </section>
 
   <section class="sec" aria-labelledby="h-proof">
     <div class="kicker">02 · Thesis</div>
     <h2 id="h-proof">Why the transcript is the proof</h2>
-    <p>The hardness of Cloudana's proof comes from the <b>full transcript</b> of intermediate computation blocks &mdash; not from the answer. You can shortcut the answer with low-rank tricks; you cannot shortcut the transcript. So the proof is only valid if the provider genuinely did the work.</p>
-    <p>And that work is the user's matrix multiply &mdash; so the same operation yields a proof you can't fake and a result somebody actually wanted. Because the orchestrator assigns paid inputs, the provider can't swap in matrices of its own choosing.</p>
-    <div class="note"><b>Why it matters</b>Proof-of-work chains spend electricity on puzzles nobody asked for. Cloudana's difficulty lives inside paid work &mdash; energy in, useful computation out, proof attached.</div>
+    <p>Cloudana's proof is the <b>full transcript</b> of intermediate computation blocks &mdash; not just the answer. In the construction it comes from, the answer can be shortcut with low-rank tricks; the transcript cannot. Here the orchestrator re-executes the transcript and checks the answer before anything mints, so a node that skipped the work is refused.</p>
+    <p>And that work is the user's matrix multiply &mdash; so the same operation yields the proof and a result somebody actually wanted. A seed issued at assignment binds each transcript to its job and node, and the orchestrator assigns paid inputs, so the provider can't precompute, copy, or swap in matrices of its own choosing. Only the orchestrator checks the transcript today; nobody else can check it more cheaply than by redoing the multiply.</p>
+    <div class="note"><b>Why it matters</b>Proof-of-work chains spend electricity on puzzles nobody asked for. Cloudana's proof lives inside paid work &mdash; energy in, useful computation out, proof attached.</div>
     <p class="fn">After Komargodski &amp; Weinstein, <i>Proofs of Useful Work from Arbitrary Matrix Multiplication</i> (2025). Our construction is cuPOW; the module is <a href="https://github.com/AmrDab/Cloudana10/tree/main/pouw" rel="noopener">public in the repository</a>.</p>
   </section>
 
@@ -193,14 +193,14 @@
     <div class="specimen" aria-label="Anatomy of a cuPOW certificate">
       <div class="shead"><span>cuPOW certificate · testnet specimen</span><span class="badge">specimen · illustrative</span></div>
       <div class="sgrid">
-        <div class="sfield"><span class="fk">Matrix n</span><span class="fv">512 × 512</span></div>
+        <div class="sfield"><span class="fk">Matrix n</span><span class="fv">256 × 256</span></div>
         <div class="sfield"><span class="fk">Block r</span><span class="fv">8 × 8</span></div>
-        <div class="sfield"><span class="fk">Transcript blocks</span><span class="fv w">4,096 hashed</span></div>
+        <div class="sfield"><span class="fk">Transcript blocks</span><span class="fv w">32,768 hashed</span></div>
         <div class="sfield"><span class="fk">Wall time</span><span class="fv">1.84 s</span></div>
-        <div class="sfield wide"><span class="fk">Seed <span class="nt">σ</span> · latest Base block hash</span><span class="fv w">0x8f3a…c41e · unpredictable, 5-min validity</span></div>
-        <div class="sfield wide"><span class="fk">Proof z · difficulty 16 bits</span><span class="fv v">0000b9f31e4a7d20c685f9e0b3a1d47c28e5f60a91c3e7d24b86a0f5e1c93d7b</span></div>
+        <div class="sfield wide"><span class="fk">Seed <span class="nt">σ</span> · issued at assignment</span><span class="fv w">0x8f3a…c41e · hash of job, node, nonce and latest Base block</span></div>
+        <div class="sfield wide"><span class="fk">Proof z · H(σ ‖ transcript ‖ A ‖ B)</span><span class="fv v">0000b9f31e4a7d20c685f9e0b3a1d47c28e5f60a91c3e7d24b86a0f5e1c93d7b</span></div>
         <div class="sfield wide"><span class="fk">Backed by workload</span><span class="fv v">true — reward gated on a real, paid job</span></div>
-        <div class="sfield wide"><span class="fk">Replay protection</span><span class="fv">z recorded in usedZ — a certificate spends once</span></div>
+        <div class="sfield wide"><span class="fk">Replay protection</span><span class="fv">σ is per assignment — a certificate can't be reused or copied</span></div>
       </div>
       <div class="sfoot">field layout from <a href="https://github.com/AmrDab/Cloudana10/blob/main/pouw/src/cupow.ts" rel="noopener">pouw/src/cupow.ts</a> — values are an illustrative specimen, not live network data</div>
     </div>
@@ -219,16 +219,16 @@
   <section class="sec" aria-labelledby="h-token">
     <div class="kicker w">05 · The token</div>
     <h2 id="h-token">How CLD is issued</h2>
-    <p>CLD is the unit of account for compute on Cloudana: every job is priced and settled in CLD. When a verified job is paid for, the fee is burned and the provider who did the work is minted most of it &mdash; so new CLD exists only because someone paid for real, verified computation:</p>
+    <p>Prices are in US dollars. You pay in CLD at the rate on your quote. When a verified job is paid for, the fee is burned and the provider who did the work is minted most of it &mdash; so new CLD exists only because someone paid for real, verified computation:</p>
     <div class="params">
       <div class="param"><div class="v" style="color:var(--work)">95%</div><div class="l">of the fee minted to the provider</div></div>
       <div class="param"><div class="v">3%</div><div class="l">minted to the treasury</div></div>
       <div class="param"><div class="v" style="color:var(--burn)">2%</div><div class="l">net burn, destroyed for good</div></div>
-      <div class="param"><div class="v" style="color:var(--ok)">capped</div><div class="l">declining subsidy, random-draw jobs only</div></div>
+      <div class="param"><div class="v" style="color:var(--ok)">&le;4%</div><div class="l">capped subsidy, proven random-draw jobs only</div></div>
     </div>
     <ul>
-      <li><b>Burn the fee, mint for the verified job.</b> The whole fee is burned at settlement; the provider is minted 95 % of it and the treasury 3 %. A small, capped, declining subsidy is added only when the orchestrator's random draw picked a provider in a genuinely independent cluster &mdash; so routing a job to yourself doesn't pay.</li>
-      <li><b>Priced from utilization.</b> Compute is priced in nano-CLD per tera-MAC plus a small per-job base fee; the price moves with utilization, with no oracle. USD is shown for display only.</li>
+      <li><b>Burn the fee, mint for the verified job.</b> The whole fee is burned at settlement; the provider is minted 95 % of it and the treasury 3 %. A small, capped, declining subsidy of up to 4 % of the fee is added, for proven work only, when the orchestrator's random draw picked a provider in a genuinely independent cluster &mdash; so routing a job to yourself doesn't pay. If a settlement period's budget runs short, it is shared pro rata.</li>
+      <li><b>Priced in US dollars, settled in CLD.</b> The rate is a fixed $0.10 per CLD on testnet and, after listing, a one-hour average of the public CLD/USDC pool. Compute jobs are priced per tera-multiply-add plus a small base fee, moving with utilization; hosting, containers, workstations and GPUs have hourly prices. There is no oracle in settlement. Testnet prices are shown in dollars for reference; test CLD has no value.</li>
       <li><b>Minted per verified job, settled on Base in batches.</b> Each epoch (hourly on testnet, daily at mainnet) is posted as a Merkle root, with a veto window and a guardian before claims open.</li>
       <li><b>Paying.</b> If you hold another asset, your own wallet can swap it into CLD at the moment you pay; Cloudana never holds it. Cards are off during testnet. One static site per verified identity is free, paid for by the ecosystem treasury at normal fees.</li>
       <li><b>No stake to lose.</b> A misbehaving node is unbound and banned. Verifier credits are points, not CLD.</li>
@@ -239,7 +239,7 @@
   <section class="sec" aria-labelledby="h-status">
     <div class="kicker w">06 · Status</div>
     <h2 id="h-status">Status, stated plainly</h2>
-    <p>Cloudana today is an <b>orchestrator-coordinated testnet</b>. Verification is the orchestrator's check of each transcript plus re-checks by browser verifiers, who are also handed planted tasks with known answers. An on-chain Groth16 verifier is in development; until it ships, the orchestrator stays in the critical path, and we say so.</p>
+    <p>Cloudana today is an <b>orchestrator-coordinated testnet</b>. Verification is the orchestrator's re-execution of each matrix job plus a Freivalds check of its answer; hosting and containers are probed. Browser verifiers can re-check public jobs, but their verdicts don't change outcomes. The planned trustless path is an on-chain Freivalds challenge against a bonded poster; until it ships, the orchestrator stays in the critical path, and we say so.</p>
     <div class="card warn">
       <p>We'll claim decentralized verification when it's true, not before. Before CLD carries value, the contracts, the issuance rules, and these pages will be reviewed and versioned in the public repository.</p>
     </div>
@@ -250,8 +250,8 @@
     <div class="kicker">07 · Differentiators</div>
     <h2 id="h-diff">What's different</h2>
     <ul>
-      <li><b>Proof of Useful Work</b> for compute &mdash; proof and product coincide.</li>
-      <li><b>One orchestrator, one price</b> &mdash; the price comes from utilization, and placement is a random draw.</li>
+      <li><b>Proof of Useful Work</b> for matrix jobs &mdash; proof and product coincide.</li>
+      <li><b>One orchestrator, one price</b> &mdash; prices in US dollars, paid in CLD, and placement is a random draw.</li>
       <li><b>Fee-first issuance</b> &mdash; every fee burned, CLD minted per verified job.</li>
       <li><b>Plug-and-play onboarding</b> &mdash; hardware detection, not configuration.</li>
     </ul>

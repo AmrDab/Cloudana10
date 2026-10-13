@@ -4,12 +4,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Gpu, Loader2, MonitorPlay, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, cld, int } from "@/lib/cld";
+import { api, int } from "@/lib/cld";
+import { cldAmount, GPU_TIER_HINT, GPU_TIER_LABEL, GPU_TIERS, hourlyUsd, ucldToUsd, usd, usdToCld, usePrices, type GpuTier, type PriceTable } from "@/lib/prices";
 import { useNetwork } from "@/hooks/useNetwork";
 import { Switch } from "@/components/ui/switch";
 import { btn, MonoLabel, Panel, PanelHeader, Updated } from "@/components/console/primitives";
 import {
-  useSession, type GpuClass, type WorkstationCapacity, type WorkstationSpec, type WorkstationTemplate, type WorkstationTier,
+  useSession, type WorkstationCapacity, type WorkstationSpec, type WorkstationTemplate, type WorkstationTier,
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { EnvironmentCards, hasSsh, hasWeb } from "./templates";
@@ -17,7 +18,6 @@ import { EnvironmentCards, hasSsh, hasWeb } from "./templates";
 // ── Options ─────────────────────────────────────────────────────────────────
 const GPU_COUNTS = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 const VRAM = [0, 8, 16, 24, 48, 80];
-const CLASSES: GpuClass[] = ["any", "consumer", "datacenter"];
 export const PRESETS = {
   S: { cpu: 2000, memMb: 4 * 1024, storageMb: 20 * 1024 },
   M: { cpu: 4000, memMb: 16 * 1024, storageMb: 50 * 1024 },
@@ -28,23 +28,13 @@ type Preset = keyof typeof PRESETS;
 const DURATIONS = [1, 6, 24, 72, 168, 720];
 export const dur = (h: number) => (h < 24 ? `${+h.toFixed(1)} h` : `${+(h / 24).toFixed(1)} d`);
 
-// ── Price (§2 contract defaults; the live values are protocol-set) ───────────
-const PRICE = { consumer: 2000, datacenter: 6000, cpu: 200, memGb: 100, storageGb: 20, volumeGbHour: 2, min: 50, interruptible: 0.5 };
-type Draft = { preset: Preset; gpuCount: number; gpuClass: GpuClass; tier: WorkstationTier; volumeGb: number | null };
+// ── Price: US dollars from GET /network `prices` (docs/PRICES_USD.md), paid in CLD at the quoted rate ───────
+type Draft = { preset: Preset; gpuCount: number; gpuTier: GpuTier; tier: WorkstationTier; volumeGb: number | null };
 
-/** µCLD per hour as [low, high]: class "any" may land on a consumer or a datacenter GPU. */
-function hourly(d: Draft): [number, number] {
-  const r = PRESETS[d.preset];
-  const machine = (r.cpu / 1000) * PRICE.cpu + (r.memMb / 1024) * PRICE.memGb + (r.storageMb / 1024) * PRICE.storageGb;
-  const at = (gpuRate: number) => {
-    const run = (machine + d.gpuCount * gpuRate) * (d.tier === "interruptible" ? 1 - PRICE.interruptible : 1);
-    return Math.max(PRICE.min, Math.ceil(run + (d.volumeGb ?? 0) * PRICE.volumeGbHour));
-  };
-  const lo = d.gpuClass === "datacenter" ? PRICE.datacenter : PRICE.consumer;
-  const hi = d.gpuClass === "consumer" ? PRICE.consumer : PRICE.datacenter;
-  return d.gpuCount ? [at(lo), at(hi)] : [at(0), at(0)];
+/** US dollars per hour, the API's formula: one tier, so one price (no range). */
+function hourly(p: PriceTable, d: Draft): number {
+  return hourlyUsd(p, "workstation", PRESETS[d.preset], { gpuCount: d.gpuCount, tier: d.gpuTier, volumeGb: d.volumeGb ?? 0, interruptible: d.tier === "interruptible" });
 }
-const range = ([lo, hi]: [number, number]) => (lo === hi ? cld(lo) : `${cld(lo)} – ${cld(hi)}`);
 
 const SSH_KEY = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,3}( [^\r\n]*)?$/;
 const input = "h-10 w-full rounded-md border border-line-2 bg-bg-2 px-3 text-sm text-text placeholder:text-faint";
@@ -58,7 +48,8 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
   const [name, setName] = useState("");
   const [gpuCount, setGpuCount] = useState(1);
   const [vram, setVram] = useState(0);
-  const [gpuClass, setGpuClass] = useState<GpuClass>("any");
+  const [gpuTier, setGpuTier] = useState<GpuTier>("standard");
+  const { prices, usdPerCld } = usePrices();
   const [preset, setPreset] = useState<Preset>("M");
   const [hours, setHours] = useState(6);
   const [tier, setTier] = useState<WorkstationTier>("on-demand");
@@ -94,11 +85,11 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
     : volumeOn && (keepDays < 0 || keepDays > 30) ? "Keep the volume 0–30 days."
     : null;
 
-  const draft: Draft = { preset, gpuCount, gpuClass, tier, volumeGb: volumeOn ? volumeGb : null };
-  const price = hourly(draft);
-  const other = hourly({ ...draft, tier: tier === "on-demand" ? "interruptible" : "on-demand" });
+  const draft: Draft = { preset, gpuCount, gpuTier, tier, volumeGb: volumeOn ? volumeGb : null };
+  const price = hourly(prices, draft);
+  const other = hourly(prices, { ...draft, tier: tier === "on-demand" ? "interruptible" : "on-demand" });
   const [onDemand, interruptible] = tier === "on-demand" ? [price, other] : [other, price];
-  const keptAfter = volumeOn ? volumeGb * PRICE.volumeGbHour * 24 * keepDays : 0;
+  const keptAfter = volumeOn ? volumeGb * prices.volumeUsdPerGbHour * 24 * keepDays : 0;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -114,7 +105,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
       ...(tpl.env && Object.keys(tpl.env).length ? { env: tpl.env } : {}),
       ports: [...(webOn ? [{ container: tpl.access!.web!.port, protocol: "tcp" as const }] : []), ...(useSsh ? [{ container: sshPort, protocol: "tcp" as const }] : [])],
       ...PRESETS[preset],
-      gpu: gpuCount ? { count: gpuCount, ...(vram ? { minVramGb: vram } : {}), class: gpuClass } : { count: 0 },
+      gpu: gpuCount ? { count: gpuCount, ...(vram ? { minVramGb: vram } : {}), class: gpuTier } : { count: 0 },
       tier,
       maxHours: Math.round(hours),
       access: { ...(webOn ? { web: tpl.access!.web! } : {}), ...(useSsh ? { ssh: { publicKey: key } } : {}) },
@@ -126,7 +117,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
         auth: true,
         body: { templateId: tpl.id, name: name.trim(), kind: "workstation", spec },
       });
-      toast.success("Workstation queued", { description: `${name.trim()} · ${cld(r.priceUcldPerHour)} / h · the orchestrator assigns a node that fits` });
+      toast.success("Workstation queued", { description: `${name.trim()} · ${usd(ucldToUsd(r.priceUcldPerHour, usdPerCld))}/h · the orchestrator assigns a node that fits` });
       qc.invalidateQueries({ queryKey: ["cld", "deployments"] });
       qc.invalidateQueries({ queryKey: ["cld", "account"] });
       onDone(r.id);
@@ -146,7 +137,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
             <EnvironmentCards value={tpl?.id ?? null} onChange={pickTemplate} />
           </Section>
 
-          <Section label="GPUs" hint={gpuCount === 0 ? "0 GPUs is a CPU workstation." : undefined}>
+          <Section label="GPUs" hint={gpuCount === 0 ? "0 GPUs is a CPU workstation." : GPU_TIER_HINT[gpuTier]}>
             <Segmented label="GPU count" options={GPU_COUNTS.map((n) => [n, String(n)])} value={gpuCount} onChange={setGpuCount} mono />
             <div className={cn("mt-3 grid gap-3 sm:grid-cols-2", gpuCount === 0 && "pointer-events-none opacity-45")} aria-disabled={gpuCount === 0}>
               <div>
@@ -154,8 +145,8 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
                 <Segmented label="Minimum vRAM" options={VRAM.map((v) => [v, v ? `≥${v}` : "any"])} value={vram} onChange={setVram} mono />
               </div>
               <div>
-                <SubLabel>Class</SubLabel>
-                <Segmented label="GPU class" options={CLASSES.map((c) => [c, c])} value={gpuClass} onChange={setGpuClass} />
+                <SubLabel>Tier</SubLabel>
+                <Segmented label="GPU tier" options={GPU_TIERS.map((t) => [t, `${GPU_TIER_LABEL[t]} · ${usd(prices.gpuUsdPerHour[t])}`])} value={gpuTier} onChange={setGpuTier} />
               </div>
             </div>
           </Section>
@@ -223,14 +214,14 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <span className={cn("text-[14px] font-medium", tier === id ? "text-ok" : "text-text")}>{label}</span>
-                    <span className="font-mono text-[12px] tabular-nums text-muted-foreground">{range(p)}/h</span>
+                    <span className="font-mono text-[12px] tabular-nums text-muted-foreground">{usd(p)}/h</span>
                   </div>
                   <p className="mt-1 text-[12px] leading-4 text-faint">{line}</p>
                 </button>
               ))}
             </div>
             <p className="mt-2 font-mono text-[12px] text-faint" aria-live="polite">
-              interruptible saves {range([onDemand[0] - interruptible[0], onDemand[1] - interruptible[1]])} per hour
+              interruptible saves {usd(onDemand - interruptible)} per hour
             </p>
           </Section>
 
@@ -285,17 +276,18 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
           <div className="space-y-5 lg:sticky lg:top-6">
             <div>
               <MonoLabel>Price per hour</MonoLabel>
-              <div className={cn("mt-2 font-mono leading-8 tabular-nums text-text", price[0] === price[1] ? "text-[24px]" : "text-[18px]")}>{range(price)}</div>
-              <p className="mt-1 font-mono text-[12px] text-faint">estimate; the orchestrator sets the live price</p>
+              <div className="mt-2 font-mono text-[24px] leading-8 tabular-nums text-text">{usd(price)}</div>
+              <div className="font-mono text-[13px] tabular-nums text-muted-foreground">≈ {cldAmount(usdToCld(price, usdPerCld))} at ${usdPerCld.toFixed(2)} per CLD</div>
+              <p className="mt-1 font-mono text-[12px] text-faint">estimate; prices are in dollars, paid in CLD at the rate on your quote</p>
             </div>
             <div className="border-t border-line pt-4">
               <div className="flex items-baseline justify-between gap-3">
                 <MonoLabel>Total for {dur(hours || 0)}</MonoLabel>
-                <span className="font-mono text-[15px] tabular-nums text-text">{range([price[0] * (hours || 0), price[1] * (hours || 0)])}</span>
+                <span className="font-mono text-[15px] tabular-nums text-text">{usd(price * (hours || 0))}</span>
               </div>
               {keptAfter > 0 && (
                 <p className="mt-1.5 text-[12px] leading-4 text-faint">
-                  Plus up to {cld(keptAfter)} while the {volumeGb} GB volume is kept {keepDays} {keepDays === 1 ? "day" : "days"} after it stops.
+                  Plus up to {usd(keptAfter)} while the {volumeGb} GB volume is kept {keepDays} {keepDays === 1 ? "day" : "days"} after it stops.
                 </p>
               )}
               <p className="mt-1.5 text-[12px] leading-4 text-faint">Billed by the hour for time used; the first hour is held from your balance.</p>
@@ -340,7 +332,7 @@ function Capacity({ gpuCount }: { gpuCount: number }) {
 }
 
 // ── Small form parts ────────────────────────────────────────────────────────
-function Section({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Section({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <fieldset className="min-w-0">
       <legend className="mb-2.5 font-mono text-[11px] uppercase tracking-[.08em] text-faint">{label}</legend>
@@ -350,11 +342,11 @@ function Section({ label, hint, children }: { label: string; hint?: string; chil
   );
 }
 
-function SubLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: string }) {
+export function SubLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: string }) {
   return <label htmlFor={htmlFor} className="mb-1.5 block text-[12px] text-muted-foreground">{children}</label>;
 }
 
-function Segmented<T extends string | number>({ label, options, value, onChange, mono }: { label: string; options: [T, string][]; value: T; onChange: (v: T) => void; mono?: boolean }) {
+export function Segmented<T extends string | number>({ label, options, value, onChange, mono }: { label: string; options: [T, string][]; value: T; onChange: (v: T) => void; mono?: boolean }) {
   return (
     <div role="radiogroup" aria-label={label} className="inline-flex max-w-full flex-wrap gap-1 rounded-md border border-line-2 bg-bg-2 p-1">
       {options.map(([v, text]) => (
@@ -377,7 +369,7 @@ function Segmented<T extends string | number>({ label, options, value, onChange,
   );
 }
 
-function NumberField({ label, unit, min, max, value, onChange, disabled }: { label: string; unit: string; min: number; max: number; value: number; onChange: (n: number) => void; disabled?: boolean }) {
+export function NumberField({ label, unit, min, max, value, onChange, disabled }: { label: string; unit: string; min: number; max: number; value: number; onChange: (n: number) => void; disabled?: boolean }) {
   return (
     <label className={cn("block", disabled && "opacity-45")}>
       <span className="mb-1.5 block text-[12px] text-muted-foreground">{label}</span>

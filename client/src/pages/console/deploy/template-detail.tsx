@@ -1,8 +1,8 @@
 // Template detail — a right-hand sheet: README, resources, price/hour estimate, then the deploy form in place.
+import { perHour, usePrices } from "@/lib/prices";
 import { useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ExternalLink, Rocket } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { cld } from "@/lib/cld";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { btn, MonoLabel } from "@/components/console/primitives";
 import { useTemplate } from "@/components/console/data";
@@ -76,18 +76,19 @@ function Detail({ t, onDeploy }: { t: ListedTemplate; onDeploy: () => void }) {
   const kind = kindOf(t);
   const d = useMemo(() => containerDefaults(t), [t]);
   const size = sizeFor(d);
-  const price = priceEstimate(kind, SIZES[size]);
+  const { prices, usdPerCld } = usePrices();
+  const price = priceEstimate(prices, kind, SIZES[size]);
 
   return (
     <div className="space-y-6 px-6 py-5">
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-line bg-line font-mono text-[12px] sm:grid-cols-4">
         {(kind === "static"
-          ? [["Kind", "Static"], ["Files", t.files?.length ? String(t.files.length) : "—"], ["Limit", "2 MB"], ["Price / h", `≈ ${cld(price)}`]]
+          ? [["Kind", "Static"], ["Files", t.files?.length ? String(t.files.length) : "—"], ["Limit", "2 MB"], ["Price / h", `≈ ${perHour(price, usdPerCld)}`]]
           : [
               ["CPU", d.cpu != null ? `${+(d.cpu / 1000).toFixed(2)} vCPU` : "—"],
               ["Memory", d.memMb != null ? mb(d.memMb) : "—"],
               ["Storage", d.storageMb != null ? mb(d.storageMb) : "—"],
-              ["Price / h", `≈ ${cld(price)}`],
+              ["Price / h", `≈ ${perHour(price, usdPerCld)}`],
             ]
         ).map(([k, v]) => (
           <div key={k} className="bg-bg-2 px-3 py-2.5">
@@ -97,7 +98,7 @@ function Detail({ t, onDeploy }: { t: ListedTemplate; onDeploy: () => void }) {
         ))}
       </dl>
       <p className="-mt-3 text-[12px] leading-4 text-faint">
-        Price is an estimate from the protocol's default rates{kind === "container" ? ` at the ${size === "S" ? "smallest" : size === "M" ? "medium" : "largest"} size` : ""}; the orchestrator sets the live price and holds the first hour from your balance.
+        Price is an estimate in US dollars at the protocol's rates, paid in CLD at the quoted rate{kind === "container" ? ` at the ${size === "S" ? "smallest" : size === "M" ? "medium" : "largest"} size` : ""}; the orchestrator sets the live price and holds the first hour from your balance.
         {kind === "container" && d.image && <> Image <span className="font-mono text-muted-foreground">{d.image}</span>.</>}
         {kind === "container" && <> Containers are early access: they start only when a Docker-capable node is online; until then the deployment waits.</>}
         {!!t.secretEnv?.length && <> Asks for secrets <span className="font-mono text-muted-foreground">{t.secretEnv.join(", ")}</span>, sealed in your browser to the assigned node.</>}

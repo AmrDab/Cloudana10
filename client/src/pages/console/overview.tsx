@@ -1,4 +1,5 @@
 // Console · Overview (docs/V2_BRIEF.md §4): live tiles, recent proofs, your position, the full service surface.
+import { usd } from "@/lib/prices";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { ArrowRight, Boxes, CheckCircle2, ChevronDown, Flame, Play, Server, ShieldCheck, Sparkles, Timer } from "lucide-react";
@@ -35,7 +36,7 @@ export default function OverviewPage() {
         <Tile label="CLD burned" value={d?.burnedUcld} unit="cld" loading={loading} icon={Flame} tone="burn" caption="Every fee" />
         <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-4 xl:col-span-1 xl:grid-cols-1">
           <MiniStat label="Settlement epoch · hourly" value={d ? `#${int(d.epoch)}` : null} loading={loading} />
-          <MiniStat label="Price" value={d ? `${int(d.priceNcldPerTmac)} nCLD/TMAC` : null} loading={loading} />
+          <MiniStat label="Price" value={d ? (d.priceNusdPerTmac != null ? `${usd(d.priceNusdPerTmac / 1000)} / 10¹⁸ MAC` : `${int(d.priceNcldPerTmac)} nCLD/TMAC`) : null} loading={loading} />
         </div>
       </div>
 

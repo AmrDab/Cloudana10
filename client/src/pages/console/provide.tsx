@@ -195,7 +195,7 @@ function HomeNode({ params }: { params: URLSearchParams }) {
           <ul className="divide-y divide-line rounded-md border border-line">
             <ShareRow icon={Cpu} name="Compute" desc="Verified matrix jobs" on />
             <ShareRow icon={Globe} name="Hosting" desc="Static sites, probed every minute" on />
-            <ShareRow icon={HardDrive} name="Storage" desc="Sealed replicas" interest="storage" />
+            <ShareRow icon={HardDrive} name="Storage" desc="Not live yet · retrievability challenges" interest="storage" />
           </ul>
           <p className="mt-auto pt-3 text-[12px] text-faint">Compute is on whenever the agent runs.</p>
         </StepCard>
