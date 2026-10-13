@@ -390,3 +390,12 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 ## Subsidy pro rata (owner approved 2026-10-13)
 - [x] Lane B recorded as ρF per job; closeEpochs scales an over-budget epoch pro rata (fitLaneB); tests (API 288)
 - [ ] Owner: weekly pool needs a CloudanaSettlementV2 change (per-epoch lane-B cap); decide before the contract is deployed (runbook step 4)
+
+## PoUW fixes (owner go 2026-10-13) · docs/POUW_REVIEW.md §7 "Now"
+- [x] Bound C to ±n·maxAbsEntry(n)² so mod-p Freivalds is exact (C + p·K refused)
+- [x] Re-execute the transcript over the job's stored A, B (int32 hash wrap no longer binds a different matrix)
+- [x] Freivalds before the transcript (garbage costs n², not n³)
+- [x] Legacy write routes removed (/pouw/job, /jobs, /job/{id}, /queue, /submit); read-only views kept
+- [x] Node decode O(n²r) via the thin factors (n=256 solve 3.1 s → 1.0 s); agent 1.2.1
+- [ ] Copy (ρ 0.04, "matrix jobs proven, services probed", Groth16 not started) — with the dollar-pricing copy batch
+- [ ] Before mainnet: Freivalds every job + transcript 1-in-k with delayed earnings and claw; on-chain Freivalds challenge

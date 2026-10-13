@@ -20,7 +20,6 @@ export function applySecurity(app: AnyHono): void {
   app.use("/v1/payments/*", rateLimit({ bucket: "payments", limit: 60, windowSec: 60 }));
 
   // Verification is CPU-heavy (full re-execution of the matrix multiply).
-  app.use("/v1/pouw/submit", rateLimit({ bucket: "pouw-submit", limit: 60, windowSec: 60 }));
 
   // Outbound fetch to a caller-supplied host.
   app.use("/v1/providers/scan", rateLimit({ bucket: "scan", limit: 10, windowSec: 60 }));

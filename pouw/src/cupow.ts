@@ -126,7 +126,8 @@ function encode(sigma: string, A: Matrix, B: Matrix, r: number): Encoding {
  * Expansion: C' = AB + AF + EB + EF
  * So:        C  = C' - AF - EB - EF
  *
- * Cost: 4× O(n²·r) multiplications (EL·ER, FL·FR steps are already O(n²·r)).
+ * Cost: O(n²·r). E = EL·ER and F = FL·FR are rank r, so every product is taken through the thin factors; forming
+ * E or F first and multiplying by an n×n matrix would be O(n³) each (docs/POUW_REVIEW.md §3).
  */
 function decode(
   A: Matrix,
@@ -137,11 +138,9 @@ function decode(
   FL: Matrix,
   FR: Matrix,
 ): Matrix {
-  const F = matMul(FL, FR);   // F = FL·FR  — O(n²·r)
-  const E = matMul(EL, ER);   // E = EL·ER  — O(n²·r)
-  const AF = matMul(matMul(A, FL), FR); // A·F = (A·FL)·FR — O(n²·r)
-  const EB = matMul(E, B);              // E·B              — O(n²·r)
-  const EF = matMul(E, F);              // E·F              — O(n²·r)
+  const AF = matMul(matMul(A, FL), FR);              // A·F = (A·FL)·FR        — O(n²·r)
+  const EB = matMul(EL, matMul(ER, B));              // E·B = EL·(ER·B)        — O(n²·r)
+  const EF = matMul(matMul(EL, matMul(ER, FL)), FR); // E·F = (EL·(ER·FL))·FR — O(n²·r)
   return matSub(matSub(matSub(Cprime, AF), EB), EF);
 }
 
