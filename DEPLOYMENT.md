@@ -66,10 +66,8 @@ Error codes and their HTTP status (`client/api/src/lib/http.ts`):
 
 Routes requiring a valid JWT (`client/api/src/middleware/security.ts` +
 per-route middleware): `/v1/providers/scan`, `/v1/ipfs/*`, all of `/v1/payments/*`,
-`/v1/pouw/jobs`, `/v1/pouw/job/{id}` (read result only if you're the payer),
-`POST /v1/pouw/job` (or `X-Internal-Key` — see PoUW below), and the Node-only
-surfaces `build-provider`, `build-provider-status`, `update-provider-attributes`,
-`orchestration`, `deploy`, `deployments`, `verify`.
+and the Node-only surfaces `build-provider`, `build-provider-status`,
+`update-provider-attributes`, `orchestration`, `deploy`, `deployments`, `verify`.
 
 **The Worker and the Node orchestrator must share the same `JWT_SECRET`** — a
 token minted by one must be accepted by the other.
@@ -84,32 +82,15 @@ backed by KV on the Worker, in-memory on Node):
 | `auth` (`/v1/auth/*`) | 20 | 60s |
 | `payments` (`/v1/payments/*`) | 60 | 60s |
 | `faucet` (`/v1/faucet/claim`) | 10 | 3600s |
-| `pouw-submit` (`/v1/pouw/submit`) | 60 | 60s |
 | `scan` (`/v1/providers/scan`) | 10 | 60s |
 | `ipfs` (`/v1/ipfs/*`) | 30 | 60s |
 
-### PoUW paid-job loop
+### PoUW legacy views
 
-- `POST /v1/pouw/job` (JWT, or `X-Internal-Key: <INTERNAL_API_KEY>` to seed work
-  without charge) — queues a real matrix multiplication. A signed-in wallet is
-  charged `POUW_JOB_PRICE_CLD × (n/64)^1.5` CLD credits; `difficulty` is clamped
-  up to `POUW_MIN_DIFFICULTY`.
-- `GET /v1/pouw/job?provider=0x…` — a miner claims the next queued job.
-- `POST /v1/pouw/submit` — a miner submits its certificate (+ result if backed by
-  a job). Verified by **full re-execution** of the matrix multiply, not just
-  hash-checking. The response includes a `settlement` object:
-  - `settlement.reward.status`: `paid` | `skipped` | `failed` | `disabled` | `not_configured`
-  - `settlement.chain.status`: `recorded` | `pending` | `failed` | `not_configured`
-- `GET /v1/pouw/job/{id}` (JWT) — status always; `result` only to the wallet that paid.
-- `GET /v1/pouw/jobs` (JWT) — the caller's own jobs.
-- `GET /v1/pouw/queue` — queue depth and current price at n=64.
-
-Settlement columns (`backed_by_workload`, `workload_id`, `reward_status`,
-`reward_wei`, `reward_tx`, `chain_status`, `chain_tx`, `chain_attempts`) are added
-to `pouw_certificates` at runtime via `ALTER TABLE`
-(`client/api/src/services/certificate-store.service.ts`) so older databases pick
-them up automatically; `schema.sql` documents them in a comment rather than the
-`CREATE TABLE` itself.
+Read-only: `GET /v1/pouw/seed`, `/v1/pouw/stats`, `/v1/pouw/leaderboard`,
+`/v1/pouw/certificates`. The legacy write path (`/v1/pouw/job`, `/jobs`, `/queue`,
+`/submit`) was removed on 2026-10-13 (docs/POUW_REVIEW.md §7); paid matrix work
+goes through `/v1/jobs` and `/v1/work`.
 
 ## Secrets
 
@@ -153,7 +134,7 @@ curl localhost:7002/health
 ```
 
 Checks: `npm run type-check` (tsc), `npm test` (vitest). End-to-end scripts:
-`scripts/dev/e2e-auth.mjs`, `scripts/dev/e2e-loop.sh`.
+`scripts/dev/e2e-auth.mjs`.
 
 ## CI
 
@@ -220,5 +201,5 @@ for f in seed-chunks/chunk-*.sql; do npx wrangler d1 execute cloudana-db --remot
 - [ ] Fund Akash wallet; `provider-services` deploy via `deploy.akash.yaml` — use the **same `JWT_SECRET`** as the Worker
 - [ ] Add `node-api.cloudana.io` DNS → lease URI
 - [ ] Set `VITE_NODE_API_URL`; redeploy console
-- [ ] Smoke-test provider onboarding + a template deploy + `/v1/pouw/job` → `/v1/pouw/submit` loop
+- [ ] Smoke-test provider onboarding + a template deploy + a `/v1/jobs` → `/v1/work` loop
 - [ ] (Phase 2) on-chain `claimWorkload` + trustless POUW — see roadmap

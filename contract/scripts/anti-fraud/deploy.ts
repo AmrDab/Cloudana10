@@ -5,9 +5,7 @@ import * as path from "path";
 
 /**
  * Deploy anti-fraud contracts:
- *   1. POUWVerifier  — proof of useful work certificate verification
- *   2. StakingManager — CLD staking/slashing (MVP mode: no minimum stake)
- *   3. ChallengeManager — challenger network
+ *   StakingManager — CLD staking/slashing (MVP mode: no minimum stake)
  *
  * MVP mode is enabled by default on both StakingManager and ProviderRegistry:
  *   - No minimum stake required to register as provider
@@ -33,15 +31,7 @@ async function main() {
 
   console.log("Using CLDToken at:", cldTokenAddress);
 
-  // ── 1. POUWVerifier ──────────────────────────────────────────────────────────
-  await delay(1000);
-  const POUWVerifier = await ethers.getContractFactory("POUWVerifier");
-  const pouwVerifier = await deployWithRetry(POUWVerifier, [], "POUWVerifier", deployer);
-  const pouwVerifierAddress = await pouwVerifier.getAddress();
-
-  await saveContractInfo("POUWVerifier", pouwVerifierAddress, "baseSepolia", 84532);
-
-  // ── 2. StakingManager ────────────────────────────────────────────────────────
+  // ── 1. StakingManager ────────────────────────────────────────────────────────
   await delay(2000);
   const StakingManager = await ethers.getContractFactory("StakingManager");
   const stakingManager = await deployWithRetry(
@@ -54,34 +44,11 @@ async function main() {
 
   await saveContractInfo("StakingManager", stakingManagerAddress, "baseSepolia", 84532);
 
-  // ── 3. ChallengeManager ──────────────────────────────────────────────────────
-  await delay(2000);
-  const ChallengeManager = await ethers.getContractFactory("ChallengeManager");
-  const challengeManager = await deployWithRetry(
-    ChallengeManager,
-    [cldTokenAddress, stakingManagerAddress, pouwVerifierAddress],
-    "ChallengeManager",
-    deployer
-  );
-  const challengeManagerAddress = await challengeManager.getAddress();
-
-  await saveContractInfo("ChallengeManager", challengeManagerAddress, "baseSepolia", 84532);
-
-  // ── 4. Grant SLASHER_ROLE to ChallengeManager on StakingManager ──────────────
-  console.log("\nGranting SLASHER_ROLE to ChallengeManager...");
-  await delay(1000);
-  const SLASHER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SLASHER_ROLE"));
-  const grantTx = await (stakingManager as any).grantRole(SLASHER_ROLE, challengeManagerAddress);
-  await grantTx.wait();
-  console.log("✓ SLASHER_ROLE granted");
-
-  // ── 5. Summary ───────────────────────────────────────────────────────────────
+  // ── 2. Summary ───────────────────────────────────────────────────────────────
   console.log("\n═══════════════════════════════════════════════════");
   console.log("  Anti-Fraud Deployment Summary");
   console.log("═══════════════════════════════════════════════════");
-  console.log("  POUWVerifier:     ", pouwVerifierAddress);
   console.log("  StakingManager:   ", stakingManagerAddress);
-  console.log("  ChallengeManager: ", challengeManagerAddress);
   console.log("───────────────────────────────────────────────────");
   console.log("  MVP Mode: ON");
   console.log("  → No minimum stake required");
@@ -91,9 +58,7 @@ async function main() {
 
   // Verify on Basescan
   console.log("To verify on Basescan:");
-  console.log(`  npx hardhat verify --network baseSepolia ${pouwVerifierAddress}`);
   console.log(`  npx hardhat verify --network baseSepolia ${stakingManagerAddress} "${cldTokenAddress}"`);
-  console.log(`  npx hardhat verify --network baseSepolia ${challengeManagerAddress} "${cldTokenAddress}" "${stakingManagerAddress}" "${pouwVerifierAddress}"`);
 }
 
 main()

@@ -56,7 +56,7 @@ npx wrangler dev --port 8790 --local
 | `npm run build-manifest` | Ad-hoc manifest build check |
 
 End-to-end scripts (not run by CI): `scripts/dev/e2e-auth.mjs` (nonce → sign →
-login), `scripts/dev/e2e-loop.sh` (full paid-job → claim → submit loop).
+login).
 
 ## API surface
 
@@ -88,9 +88,8 @@ protected routes. **The Worker and the Node orchestrator must share the same
 `JWT_SECRET`** or tokens minted by one will be rejected by the other.
 
 Routes requiring a valid JWT (`src/middleware/security.ts` plus per-route
-middleware in `payments.ts` / `pouw.ts` / `ipfs.ts`): `/v1/providers/scan`,
-`/v1/ipfs/*`, `/v1/payments/*`, `/v1/pouw/jobs`, `/v1/pouw/job/{id}`,
-`POST /v1/pouw/job` (or `X-Internal-Key`, see below), and the Node-only
+middleware in `payments.ts` / `ipfs.ts`): `/v1/providers/scan`,
+`/v1/ipfs/*`, `/v1/payments/*`, and the Node-only
 `build-provider`, `build-provider-status`, `update-provider-attributes`,
 `orchestration`, `deploy`, `deployments`, `verify` routes.
 
@@ -101,35 +100,17 @@ middleware in `payments.ts` / `pouw.ts` / `ipfs.ts`): `/v1/providers/scan`,
 | `auth` | 20 | 60s |
 | `payments` | 60 | 60s |
 | `faucet` | 10 | 3600s |
-| `pouw-submit` | 60 | 60s |
 | `scan` | 10 | 60s |
 | `ipfs` | 30 | 60s |
 
 Backed by Cloudflare KV on the Worker, an in-memory map on Node.
 
-### PoUW paid-job loop (`src/routes/v1/pouw.ts`)
+### PoUW legacy views (`src/routes/v1/pouw.ts`)
 
-```
-POST /v1/pouw/job          (JWT, or X-Internal-Key to seed without charge)
-GET  /v1/pouw/job?provider=0x…      (a miner claims the next job)
-POST /v1/pouw/submit                (certificate + result, verified by full re-execution)
-GET  /v1/pouw/job/{id}     (JWT — result only for the wallet that paid)
-GET  /v1/pouw/jobs         (JWT — caller's own jobs)
-GET  /v1/pouw/queue                 (depth + current price at n=64)
-```
-
-A signed-in wallet is charged `POUW_JOB_PRICE_CLD × (n/64)^1.5` CLD credits per
-job; `difficulty` is clamped up to `POUW_MIN_DIFFICULTY`. `POST /v1/pouw/submit`
-verifies by re-running the matrix multiply, not by trusting the payload, and its
-response's `settlement` object reports both outcomes honestly:
-- `settlement.reward.status`: `paid` | `skipped` | `failed` | `disabled` | `not_configured`
-- `settlement.chain.status`: `recorded` | `pending` | `failed` | `not_configured`
-
-Settlement columns (`backed_by_workload`, `workload_id`, `reward_status`,
-`reward_wei`, `reward_tx`, `chain_status`, `chain_tx`, `chain_attempts`) are added
-to `pouw_certificates` at runtime via `ALTER TABLE`
-(`src/services/certificate-store.service.ts`); `schema.sql` documents them in a
-comment next to the table rather than in the `CREATE TABLE` itself.
+Read-only: `GET /v1/pouw/seed`, `/v1/pouw/stats`, `/v1/pouw/leaderboard`,
+`/v1/pouw/certificates`. The legacy write path (`/v1/pouw/job`, `/jobs`, `/queue`,
+`/submit`) was removed on 2026-10-13 (docs/POUW_REVIEW.md §7); paid matrix work
+goes through `/v1/jobs` and `/v1/work`.
 
 ## Environment variables
 

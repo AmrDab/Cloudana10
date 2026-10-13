@@ -6,14 +6,13 @@ import {
   ProviderRegistry,
   WorkloadRegistry,
   RewardContract,
-  POUWVerifier,
 } from "../typechain-types";
 
 /**
  * Cloudana MVP Integration Tests
  *
  * End-to-end tests exercising the full contract stack:
- *   CLDToken → ProviderRegistry → WorkloadRegistry → RewardContract → POUWVerifier
+ *   CLDToken → ProviderRegistry → WorkloadRegistry → RewardContract
  */
 describe("Cloudana MVP", function () {
   async function deployContracts() {
@@ -40,11 +39,6 @@ describe("Cloudana MVP", function () {
     const rewardContract = await RewardContractFactory.deploy(await cldToken.getAddress());
     await rewardContract.waitForDeployment();
 
-    // Deploy POUWVerifier (no constructor args)
-    const POUWVerifierFactory = await ethers.getContractFactory("POUWVerifier");
-    const pouwVerifier = await POUWVerifierFactory.deploy();
-    await pouwVerifier.waitForDeployment();
-
     // Grant MINTER_ROLE to deployer for test token distribution
     const MINTER_ROLE = await cldToken.MINTER_ROLE();
     await cldToken.grantRole(MINTER_ROLE, deployer.address);
@@ -57,16 +51,11 @@ describe("Cloudana MVP", function () {
     const RC_ORCH_ROLE = await rewardContract.ORCHESTRATOR_ROLE();
     await rewardContract.grantRole(RC_ORCH_ROLE, orchestrator.address);
 
-    // Grant ORCHESTRATOR_ROLE on POUWVerifier
-    const PV_ORCH_ROLE = await pouwVerifier.ORCHESTRATOR_ROLE();
-    await pouwVerifier.grantRole(PV_ORCH_ROLE, orchestrator.address);
-
     return {
       cldToken,
       providerRegistry,
       workloadRegistry,
       rewardContract,
-      pouwVerifier,
       deployer,
       orchestrator,
       user,
@@ -477,80 +466,6 @@ describe("Cloudana MVP", function () {
     });
   });
 
-  // ─── POUWVerifier ──────────────────────────────────────────────────────────
-
-  describe("POUWVerifier", function () {
-    const deviceId = ethers.id("miner-device-1");
-    const matrixSize = 64;
-    const difficulty = 10;
-    const transcriptHash = ethers.id("transcript-hash-abc");
-    const z = ethers.id("proof-z-value-1");
-
-    it("Should record a certificate", async function () {
-      const { pouwVerifier, orchestrator, providerOwner } = await loadFixture(deployContracts);
-
-      await expect(
-        pouwVerifier
-          .connect(orchestrator)
-          .recordCertificate(
-            providerOwner.address,
-            deviceId,
-            matrixSize,
-            difficulty,
-            transcriptHash,
-            z,
-            Date.now()
-          )
-      ).to.emit(pouwVerifier, "CertificateRecorded");
-
-      expect(await pouwVerifier.certificateCount()).to.equal(1);
-      expect(await pouwVerifier.isZUsed(z)).to.be.true;
-    });
-
-    it("Should reject duplicate z (replay protection)", async function () {
-      const { pouwVerifier, orchestrator, providerOwner } = await loadFixture(deployContracts);
-      const ts = Date.now();
-
-      await pouwVerifier
-        .connect(orchestrator)
-        .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, ts);
-
-      await expect(
-        pouwVerifier
-          .connect(orchestrator)
-          .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, ts)
-      ).to.be.revertedWith("Certificate z already recorded (replay)");
-    });
-
-    it("Should reject from non-orchestrator", async function () {
-      const { pouwVerifier, user, providerOwner } = await loadFixture(deployContracts);
-
-      await expect(
-        pouwVerifier
-          .connect(user)
-          .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, Date.now())
-      ).to.be.revertedWithCustomError(pouwVerifier, "AccessControlUnauthorizedAccount");
-    });
-
-    it("Should track per-provider stats", async function () {
-      const { pouwVerifier, orchestrator, providerOwner } = await loadFixture(deployContracts);
-
-      await pouwVerifier
-        .connect(orchestrator)
-        .recordCertificate(providerOwner.address, deviceId, matrixSize, difficulty, transcriptHash, z, Date.now());
-
-      const z2 = ethers.id("proof-z-value-2");
-      await pouwVerifier
-        .connect(orchestrator)
-        .recordCertificate(providerOwner.address, deviceId, matrixSize, 15, ethers.id("tx2"), z2, Date.now());
-
-      const [totalCerts, totalDiff] = await pouwVerifier.getMinerStats(providerOwner.address);
-      expect(totalCerts).to.equal(2);
-      expect(totalDiff).to.equal(difficulty + 15);
-      expect(await pouwVerifier.minerCount()).to.equal(1);
-    });
-  });
-
   // ─── End-to-End Integration ────────────────────────────────────────────────
 
   describe("End-to-End Flow", function () {
@@ -560,7 +475,6 @@ describe("Cloudana MVP", function () {
         providerRegistry,
         workloadRegistry,
         rewardContract,
-        pouwVerifier,
         orchestrator,
         user,
         providerOwner,
@@ -590,32 +504,18 @@ describe("Cloudana MVP", function () {
       await cldToken.connect(user).approve(await rewardContract.getAddress(), deposit);
       await rewardContract.connect(user).fundWorkload(0, deposit);
 
-      // 5. Provider submits POUW certificate
-      const z = ethers.id("e2e-proof");
-      await pouwVerifier
-        .connect(orchestrator)
-        .recordCertificate(
-          providerOwner.address,
-          deviceId,
-          64,
-          12,
-          ethers.id("e2e-transcript"),
-          z,
-          Date.now()
-        );
-
-      // 6. Orchestrator rewards provider
+      // 5. Orchestrator rewards provider
       await rewardContract
         .connect(orchestrator)
         .rewardProvider(providerOwner.address, 0, reward);
 
-      // 7. Provider withdraws earnings
+      // 6. Provider withdraws earnings
       const balBefore = await cldToken.balanceOf(providerOwner.address);
       await rewardContract.connect(providerOwner).withdrawEarnings();
       const balAfter = await cldToken.balanceOf(providerOwner.address);
       expect(balAfter - balBefore).to.equal(reward);
 
-      // 8. Remaining deposit refunded to user
+      // 7. Remaining deposit refunded to user
       const remaining = deposit - reward;
       const userBalBefore = await cldToken.balanceOf(user.address);
       await rewardContract.connect(orchestrator).refundWorkload(0, user.address);
@@ -625,7 +525,6 @@ describe("Cloudana MVP", function () {
       // Verify final state
       expect(await rewardContract.workloadDeposits(0)).to.equal(0);
       expect(await rewardContract.providerPendingRewards(providerOwner.address)).to.equal(0);
-      expect(await pouwVerifier.certificateCount()).to.equal(1);
 
       const workload = await workloadRegistry.getWorkload(0);
       expect(workload.placementProvider).to.equal(providerOwner.address);

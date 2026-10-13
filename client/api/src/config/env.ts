@@ -45,7 +45,6 @@ export const envSchema = z.object({
   ORCHESTRATOR_PRIVATE_KEY: hex32.optional(),
 
   // ── Contracts (addresses default from shared/addresses.*.json in config/contracts.ts) ──
-  POUW_VERIFIER_CONTRACT_ADDRESS: address.optional(),
   REWARD_CONTRACT_ADDRESS: address.optional(),
   CLD_TOKEN_ADDRESS: address.optional(),
   CLD_TREASURY_ADDRESS: address.optional(),
@@ -60,16 +59,6 @@ export const envSchema = z.object({
   WORKLOAD_STATUS_POLLING_ENABLED: flag(true),
   WORKLOAD_STATUS_POLL_INTERVAL_MS: int(15_000),
   WORKLOAD_STATUS_CACHE_TTL_MS: int(60_000),
-
-  // ── PoUW ─────────────────────────────────────────────────────────────────
-  POUW_MIN_DIFFICULTY: int(8),
-  /** How many times the API retries an on-chain certificate record before giving up. */
-  POUW_CHAIN_RECORD_MAX_ATTEMPTS: int(5),
-  POUW_MINING_POOL_WORKLOAD_ID: z.coerce.number().int().optional(),
-  POUW_JOB_CLAIM_TTL_MS: int(5 * 60_000),
-  POUW_FILLER_REWARD_FRACTION: z.coerce.number().min(0).max(1).default(0.1),
-  POUW_FILLER_DAILY_CERT_CAP: int(20),
-  MINING_REWARDS_ENABLED: flag(true),
 
   // ── v1 work pipeline (docs/BUILD_SPEC_V1.md) ────────────────────────────
   /** Enables POST /v1/dev/credits. Never set in production. */

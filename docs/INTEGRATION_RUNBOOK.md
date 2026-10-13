@@ -23,6 +23,10 @@ Work top to bottom. Each step is independently testable; commit after each.
 5. `npx hardhat compile` → fix any import paths → `npx hardhat test`.
 
 ## B. True PoUW — wire real workloads  ✅ APPLIED
+
+> **Removed 2026-10-13:** items 3–5 (`pouw-miner.ts`, `matrix-job-queue.service.ts` + `/v1/pouw/job`, `/pouw/submit` →
+> `mining-reward.service`) were deleted (docs/POUW_REVIEW.md §7). Paid matrix work runs through `/v1/jobs` + `/v1/work`.
+
 1. ✅ `pouw/src/workload-bridge.ts` maps signed workload matrices into F_p, mines
    on them, and lifts the decoded result back to signed (with exact-recovery
    bound checks).

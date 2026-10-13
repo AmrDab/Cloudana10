@@ -1,5 +1,9 @@
 # Cloudana POUW Testnet Plan
 
+> **Superseded (2026-10-13).** The legacy mining path this plan describes — `provider-node-server/src/pouw-miner.ts`,
+> `POST /v1/pouw/submit`, `pouw-verifier.service.ts`, `mining-reward.service.ts`, `pouw-chain-recorder.service.ts` and
+> `POUWVerifier.sol` — has been removed (docs/POUW_REVIEW.md §7). Paid matrix work runs through `/v1/jobs` + `/v1/work`.
+
 ## What Was Built
 
 ### Core cuPOW Algorithm (`pouw/`)
