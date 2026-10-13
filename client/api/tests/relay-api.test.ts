@@ -169,7 +169,7 @@ describe("relayed deployments", () => {
     };
     setRelay(fake);
     await signed(node, "/v1/nodes/heartbeat", { relay: true });
-    expect(seen).toContainEqual({ node: node.address.toLowerCase(), headers: { "x-relay-dep": id, "x-relay-class": "site", "x-relay-path": "/index.html" } });
+    expect(seen).toContainEqual({ node: node.address.toLowerCase(), headers: { "x-relay-dep": id, "x-relay-class": "site", "x-relay-path": "/index.html", "x-relay-probe": "1" } });
     expect(await depRow(id)).toMatchObject({ probe_fail: 0 });
     expect((await depRow(id))!.last_probe_at).toBeGreaterThan(0);
     expect(createHash("sha256").update(INDEX).digest("hex")).toBe((await depRow(id))!.probe_hash);

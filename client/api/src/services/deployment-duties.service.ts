@@ -39,6 +39,7 @@ export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { runAssignment } from "./jobs.service.js";
 import { getRelay } from "../lib/relay.js";
+import { PROBE_SLOTS } from "../../../../shared/relay-protocol.js";
 import type { NodeManifest } from "./nodes.service.js";
 
 /** Live deployments per node, per kind. */
@@ -408,10 +409,10 @@ export type ProbeResult = boolean | "inconclusive";
 /**
  * The same probe through the node's relay socket (docs/V4_RELAY_CONTRACT.md): the node can only answer for a
  * deployment it serves, so a content hash still proves the right site is up. No relay binding → fails (billing
- * pauses rather than charging for something nobody checked). A hub that refuses the probe because the deployment
- * already has every stream in use (`busy`), or a relay call that fails before reaching the node, says nothing about
- * the app: inconclusive. An app that does not answer within the timeout, or a node that is offline / not serving it,
- * fails.
+ * pauses rather than charging for something nobody checked). Probes carry `x-relay-probe: 1`, which the hub admits
+ * into slots visitor traffic can never fill (PROBE_SLOTS), so load never refuses a probe: `busy`, a timeout, offline
+ * or not serving all fail (a node that answered `busy` to dodge checks kept billing before — docs/V4_REVIEW_STORAGE.md
+ * #5). Only a relay call that fails before reaching the node (the binding itself) is inconclusive.
  */
 export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" | "kind" | "probe_path" | "probe_hash">): Promise<ProbeResult> {
   const relay = getRelay();
@@ -422,13 +423,9 @@ export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" |
   try {
     const res = await relay(node, "/proxy", {
       method: "GET",
-      headers: { "x-relay-dep": row.id, "x-relay-class": row.kind === "static" ? "site" : "endpoint", "x-relay-path": path },
+      headers: { "x-relay-dep": row.id, "x-relay-class": row.kind === "static" ? "site" : "endpoint", "x-relay-path": path, "x-relay-probe": "1" },
       signal: AbortSignal.timeout(RELAY_PROBE_TIMEOUT_MS),
     });
-    if (res.headers.get("x-relay-error") === "busy") {
-      await res.body?.cancel().catch(() => undefined);
-      return "inconclusive";
-    }
     return await probePassed(res, probe);
   } catch (err) {
     return (err as Error)?.name === "TimeoutError" ? false : "inconclusive";
@@ -449,11 +446,17 @@ async function probe(node: string, now: number): Promise<void> {
     .bind(node, now - env.DEPLOY_PROBE_SECONDS * 1000)
     .all<DeploymentRow>();
   const rows = due.results ?? [];
-  const results: ProbeResult[] = await Promise.all(
-    rows.map((r) =>
-      r.relayed ? probeRelayed(node, r) : endpointAllowed(r.endpoint!, env.DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : false,
-    ),
-  );
+  // At most PROBE_SLOTS probes in flight per node: that is what the hub reserves for them.
+  const results: ProbeResult[] = [];
+  for (let i = 0; i < rows.length; i += PROBE_SLOTS) {
+    results.push(
+      ...(await Promise.all(
+        rows.slice(i, i + PROBE_SLOTS).map((r) =>
+          r.relayed ? probeRelayed(node, r) : endpointAllowed(r.endpoint!, env.DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : false,
+        ),
+      )),
+    );
+  }
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (results[i] === "inconclusive") {
