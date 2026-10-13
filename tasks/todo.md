@@ -399,3 +399,8 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [x] Node decode O(n²r) via the thin factors (n=256 solve 3.1 s → 1.0 s); agent 1.2.1
 - [ ] Copy (ρ 0.04, "matrix jobs proven, services probed", Groth16 not started) — with the dollar-pricing copy batch
 - [ ] Before mainnet: Freivalds every job + transcript 1-in-k with delayed earnings and claw; on-chain Freivalds challenge
+
+## Storage (step 8) — spec v2 for owner decision (2026-10-13)
+- [x] Spec v1 + independent review (17 findings); finding 5 (busy dodged hosting probes) fixed and deployed (PR #31: relay 3e6666fd, API 08e78ae3)
+- [x] Spec v2: three phases (network artifacts → buckets with an R2 copy → provider durability at ≥ 14 independent operators)
+- [ ] Owner: phased plan, phase-2 prices ($0.02/GB-month, $0.01/GB down), key custody, DMCA/abuse contacts

@@ -1,94 +1,99 @@
-# Storage v1 — object storage on provider disks
+# Storage — object storage on provider disks, in three phases
 
-Status: **draft for owner approval** · 2026-10-13. Build order step 8 of [V4_VERIFIED_SERVICES.md](V4_VERIFIED_SERVICES.md).
-Builds on the relay ([V4_RELAY_CONTRACT.md](V4_RELAY_CONTRACT.md)), dollar pricing ([PRICES_USD.md](PRICES_USD.md)) and the
-research in [UNIVERSAL_POUW.md](UNIVERSAL_POUW.md) §3 (capacity proofs attract fake capacity).
+Status: **v2, for owner decision** · 2026-10-13. v1 was dissected in [V4_REVIEW_STORAGE.md](V4_REVIEW_STORAGE.md)
+(17 findings, all accepted; finding 5 was a live hole in hosting probes and is already fixed and deployed).
+Build order step 8 of [V4_VERIFIED_SERVICES.md](V4_VERIFIED_SERVICES.md).
 
-## What it is
-- **For users:** buckets of files (model weights, datasets, job inputs and outputs, backups) behind an S3-compatible
-  API, so existing tools work (`aws s3`, rclone, boto3). Address: `https://s3.<content domain>/<bucket>/<key>`.
-- **For providers:** a machine can offer **storage only** (a NAS, a box of drives): `CLOUDANA_ROLES=storage` announces
-  only `storage` (plus `relay`), runs no compute and no tenant code, and uses only the disk area and size the operator
-  sets (`CLOUDANA_STORAGE_DIR`, `CLOUDANA_STORAGE_GB`). Home nodes need no public IP: everything goes through the relay.
+## Why phases
+The review's core point: durable storage on home disks needs things the network doesn't have yet — enough independent
+operators to spread copies, and checks cheap enough to run on every node every day. Promising durability before that
+would be dishonest; refusing storage until then would hide a product users want. So storage ships in three phases,
+each honest about what holds the data.
 
-## Five decisions
-1. **Three replicas on three different operators** (payout wallet and fleet both distinct), not erasure coding, in v1.
-   Simplest reads and repair; erasure coding (e.g. 10-of-14, 1.4× instead of 3×) is v2 once there are enough operators.
-2. **Providers only ever see ciphertext.** The gateway splits an object into 4 MiB chunks and encrypts each with a
-   per-object key (AES-256-GCM, WebCrypto); the object key is wrapped by a bucket key the API holds. Honest line:
-   Cloudana could decrypt (same trust as today's orchestrator); users who need zero-knowledge encrypt before upload.
-3. **Content-addressed chunks with a Merkle root.** Chunk id = sha256(ciphertext); the manifest keeps a Merkle root over
-   64 KiB leaves. A node verifies the hash on every write.
-4. **The check is retrievability, never "replication".** Once a day per replica (and at random times), the API asks the
-   node through the relay for one random leaf plus its Merkle path and checks it against the root within 2 s; 1 % of
-   checks fetch and rehash the whole chunk. This proves the node can produce the data quickly; it does not prove a
-   separate physical copy, which is why the three replicas must sit with three different operators. Label: **challenged**.
-5. **Fees only, paid for real data.** Users pay per GB-month stored and per GB downloaded; providers are paid per
-   replica-GB-hour held, booked daily, only for replicas that passed that day's checks. No subsidy: empty disks earn
-   nothing, so there is no reason to fake capacity (the Filecoin lesson).
+| Phase | Users get | Who holds the durable copy | Providers do | Label |
+|---|---|---|---|---|
+| **1. Network artifacts** | nothing new (internal) | Cloudana's R2 | hold job inputs/outputs; prove the chunk store, checks and repair | — |
+| **2. Buckets, early access** | S3-compatible buckets | Cloudflare R2 (one copy) | hold 2 more copies, serve reads, earn for bytes held and served | **early access · durable copy on Cloudflare R2** |
+| **3. Provider durability** | same buckets | provider disks (erasure-coded) | the R2 copy is dropped per object once its pieces pass checks | **challenged** |
 
-## Flows
-**Upload** (`PutObject` ≤ 100 MB — the Workers body limit — or multipart with parts ≤ 64 MiB, ≤ 10,000 parts):
-1. The gateway authenticates the request (SigV4 with an access key the owner created; see Keys).
-2. It asks the API for placement (internal): three relay-fresh `storage` nodes per chunk on distinct operators with
-   free quota.
-3. It streams each chunk, encrypted, to its three nodes through the relay (`PUT /chunks/<id>`); a node checks the hash
-   and size against its quota before writing.
-4. The object becomes visible once every chunk has **two** acknowledged replicas; the third is filled by repair if it
-   failed. The ETag is the MD5 S3 clients expect (multipart: MD5 of part MD5s).
+Phase 3 starts only when the network has **≥ 14 independent operators** (distinct /24 or /48 and ASN, see below) and
+phase 1–2 checks have run clean for 60 days.
 
-**Download** (`GetObject`, `HeadObject`, `Range`): the gateway reads the manifest, fetches the chunks covering the range
-from the first replica that answers (the next on `offline` / `not_serving` / timeout), decrypts and streams them.
+## The design, finding by finding
+**Data path (findings 7, 8, 9, 10)**
+- Uploads stream into R2 first (no buffering in a Worker; the S3 `200` means the R2 copy is durable). A Queue consumer
+  then chunks, encrypts and places copies on providers, so a slow home uplink never fails an upload.
+- AWS CLI / boto3 checksum trailers (`aws-chunked`, CRC64NVME, CRC32) are decoded; MD5 ETags use `DigestStream`;
+  documented rclone settings (`--s3-upload-cutoff 64M --s3-chunk-size 64M`).
+- Encryption per 64 KiB leaf (STREAM construction) with a random 96-bit nonce per chunk — no nonce reuse on retried
+  parts, and a range read fetches only its leaves. The chunk id is its Merkle root (one hash pass).
+- Objects under 64 KiB are packed into shared 4 MiB segments; billing has a 64 KiB minimum per object.
+- Metadata lives in **one Durable Object per bucket** (SQLite), not the shared `cloudana-db`: per-bucket ordering gives
+  read-after-write, listing with prefixes and delimiters stays local, and a 10,000-part upload commits as parts arrive.
 
-**Delete:** the manifest row is marked deleted at once (billing stops); nodes get `delete` instructions on their
-heartbeats and confirm; space is reclaimed after confirmation.
+**Copies and Sybil resistance (findings 3, 13)**
+- Each provider copy is encrypted under its **own** subkey (HKDF from the object key and the copy index), so three
+  copies are three different ciphertexts with three roots: one disk cannot answer for three identities.
+- Placement spreads copies by network (/24 for IPv4, /48 for IPv6) and ASN, never by wallet alone. New nodes get at most
+  5 % of new copies until they have passed 30 days of checks; no node or ASN holds more than one copy of a chunk.
 
-**Repair** (API cron, small batches): a replica whose node has been offline for 6 h, or that failed two checks, is
-copied from a healthy replica to a new node (read and write through the relay) and the old one is dropped. Chunks with
-a single healthy replica go first; a chunk with none is reported lost to its owner (honest event, prorated refund).
+**Checks (findings 1, 4, 5, 6)**
+- **Per node, not per replica:** the node's RelayNode Durable Object keeps that node's chunk → root index in its own
+  SQLite and, once a day at a random time, samples ~20 chunks, asking for 3 random leaves each with their Merkle paths.
+  One D1 row per node-day. A node missing 10 % of its data fails a day with probability ≈ 0.88; a failed day triggers a
+  full audit, holds back that day's pay and starts repair.
+- Deadline 15 s per sample, measured at the hub (spun-down NAS disks wake in 5–10 s); no 1 % full rehash.
+- Checks use the reserved probe slots (deployed with the hosting fix), so `busy` is a failure, never a pass.
+- A `storage` traffic class with its own stream budget; proofs are small control frames that go ahead of bulk data.
+- Reads double as checks: a copy that fails to serve a read within 5 s is hedged to the next and counted.
 
-## Node agent
-A chunk store under `CLOUDANA_STORAGE_DIR` with a hard byte quota, served only through the relay:
-`PUT /chunks/<id>` (sha256 checked), `GET /chunks/<id>` (with `Range`), `GET /chunks/<id>/leaf/<i>` (leaf + Merkle path),
-`DELETE /chunks/<id>`. It announces `storage`, the bytes offered and the bytes used. No containers, no Docker.
+**Repair (findings 11, 12)**
+- The **destination** pulls: a node receives a signed heartbeat instruction, fetches from a healthy copy (or R2 while it
+  exists), verifies the root, then reports; the old copy is kept until the new one verifies.
+- Budgets: 1–2 repair streams per source node, a global cap, fewest-copies first. A home node is declared gone after
+  48 h offline (at once if a chunk is down to one copy). Leaving providers drain gracefully.
+- Fixed three-node placement groups, so a handful of failures can't each take a piece of many objects.
+- In phase 2 nothing can be lost (R2 holds the object). In phase 3, a lost object refunds every fee it paid; "lost" and
+  "temporarily unavailable" are shown differently; 50 % of a new node's storage earnings are held back for 6 months and
+  forfeited if it abandons data.
 
-## API surface
-| Endpoint | Auth |
-|---|---|
-| `POST /v1/storage/buckets` · `GET` · `DELETE /v1/storage/buckets/{name}` (empty buckets only) | JWT |
-| `POST /v1/storage/keys` (access key id + secret, secret shown once) · `GET` · `DELETE /v1/storage/keys/{id}` | JWT |
-| `GET /v1/storage/usage` (bytes, objects, this month's cost in $ and CLD) | JWT |
-| `POST /v1/storage/placements` · `POST /v1/storage/objects` (commit manifest) · `GET /v1/storage/objects/{bucket}/{key}` | internal (gateway) |
-| `https://s3.<content domain>`: PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload | SigV4 |
+**Money (findings 2, 16)**
+- Storage is booked as `deployment_bills` rows — one charge per owner-day, one payout per node-day — so epoch fees
+  burned include it and the contract's 98 % bound holds. Credits running out: read-only for 7 days, then the object keys
+  are destroyed (the data becomes unreadable everywhere).
+- Fees only; no subsidy. Empty disks earn nothing, so faking capacity pays nothing.
 
-SigV4 needs the secret to verify a signature, so access-key secrets are stored encrypted under a Worker secret
-(`STORAGE_KEY_SECRET`), never in plain text and never returned after creation.
-
-## Data (D1)
-`buckets(id, owner, name, created_at, deleted_at)` · `storage_keys(id, owner, access_key_id, secret_enc, created_at, revoked_at)` ·
-`objects(id, bucket_id, key, size, etag, key_wrapped, created_at, deleted_at)` · `chunks(object_id, idx, id, size, merkle_root)` ·
-`replicas(chunk_id, node, state, stored_at, checked_at, fails)` · `storage_bills(id, owner, node, kind, bytes, fee_ucld, at)`.
-Rough size: ~250 bytes per replica → 10 GB of D1 holds ~40M replicas (~160 TB of user data at 4 MiB chunks). Enough for
-testnet; the chunk index moves to Durable Objects or R2 before that.
+**Keys, abuse, law (findings 14, 15)**
+- The key-encryption key lives only on the gateway (versioned); D1 / the bucket DO hold access-key secrets and object
+  keys wrapped, with the id as associated data. Read-only and per-bucket access keys. Deleting an object destroys its
+  key, which also makes copies on offline nodes unreadable (erasure on request).
+- Chunk deletes reach nodes only as signed heartbeat instructions, never through a relay call.
+- No anonymous reads or public buckets in phases 1–2; downloads are served from `s3.<content domain>` with
+  `Content-Disposition: attachment`, `nosniff` and a sandbox CSP. Cloudana can decrypt, so it is the host: a takedown
+  destroys the object's key; a DMCA agent and a notice-and-action contact are needed before phase 2 opens (counsel).
 
 ## Prices (owner decision)
-| | Proposed | Market |
-|---|---|---|
-| Stored | **$0.006 per GB-month** | Backblaze B2 $0.006, Storj $0.004, S3 $0.023 |
-| Downloaded | **$0.01 per GB** | Storj $0.007, S3 $0.09 |
-| Uploads, requests | free in v1 | — |
+| | Phase 2 (R2 copy + 2 provider copies) | Phase 3 (provider durability) | Market |
+|---|---|---|---|
+| Stored, per GB-month | **$0.02** | **$0.006** | S3 $0.023, Backblaze B2 $0.006, Storj $0.004 |
+| Downloaded, per GB | **$0.01** | **$0.01** | Storj $0.007, S3 $0.09 |
+| Minimum object | 64 KiB | 64 KiB | — |
 
-Providers get 95 % of fees: about **$0.0019 per GB-month of disk held** (three replicas share the storage fee) plus
-their share of downloads served. A 4 TB drive kept full earns about $7.60 a month; this is honest, not a sales pitch.
+Phase 2 costs more because R2 itself is $0.015 per GB-month; providers earn $0.004 per GB-month per copy held plus 95 %
+of download fees. In phase 3 a TB held earns a provider about $1.90 a month — honest, and the same disk earns far more
+as container or GPU disk.
 
-## Build order (each step tested; nothing user-facing before the content domain exists)
-1. Agent: storage role, chunk store with quota, leaf proofs, selftests.
-2. API: tables, placement on distinct operators, checks, repair, daily billing, buckets/keys/usage routes.
-3. Gateway: S3 subset with SigV4, encryption, chunking, replica fallback; tested with `aws s3` and rclone.
-4. Console: Storage tab (buckets, keys, usage); catalog flips Storage to early access.
+## Build order
+1. **Phase 1** — agent storage role (`CLOUDANA_ROLES=storage`, quota, chunk store, leaf proofs over the `storage`
+   class), the RelayNode sampling alarm, destination-pull repair; used for Cloudana's own job artifacts.
+2. **Phase 2** — S3 gateway (R2 staging, queue placement, checksums, per-bucket DO metadata), access keys, daily
+   billing, console Storage tab; opens after the content domain and the DMCA/notice contacts exist.
+3. **Phase 3** — erasure coding (10-of-14) and dropping the R2 copy object by object, once the operator threshold holds.
 
 ## Owner decisions
-1. The two prices above.
-2. Three replicas in v1 (erasure coding later).
-3. Bucket keys held by the API (providers see ciphertext; Cloudana could decrypt) — or client-side encryption only.
-4. No free tier in v1.
+1. **The phased plan with an R2 copy until the network can hold data itself** (recommended), or provider-only storage
+   that waits for 14 independent operators before anyone can store anything.
+2. **Phase 2 prices:** $0.02 per GB-month and $0.01 per GB downloaded.
+3. **Cloudana holds the object keys** (providers see ciphertext; Cloudana could decrypt and is the legal host), or
+   client-side encryption only.
+4. **A DMCA agent and an abuse contact** before phase 2 opens (counsel; the abuse@ alias from runbook step 7 helps).
