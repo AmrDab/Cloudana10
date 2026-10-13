@@ -18,6 +18,11 @@ CLD is the unit of account and the only settlement asset, and USD is shown for d
 The free tier is a customer the treasury pays for, not new emission.
 
 ## Decisions
+> **Changed (2026-10-13, owner approved):** the subsidy (lane B) is split **pro rata** within each settlement
+> epoch: every verified job records ρF (ρ ≤ 0.04), and if the epoch's total exceeds its budget all entries are
+> scaled by the same factor when the epoch closes (it was first come, first served). The provider's 95 % stays paid
+> per job. A weekly pool would need a settlement-contract change (its lane-B cap is per epoch); not adopted yet.
+>
 > **Superseded (2026-10-12, owner approved):** prices are **quoted in US dollars and settled in CLD**
 > ([TOKENOMICS_USD_PRICING.md](TOKENOMICS_USD_PRICING.md)). The rate enters in one place only: how many CLD a quote
 > asks for. The ledger, the 95/3/2 split, the subsidy budget (stays in CLD) and the settlement contract are unchanged;

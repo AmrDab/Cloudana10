@@ -7,7 +7,9 @@
  * Per completed job with fee F:
  *   lane A    provider payout min(floor(0.950F), floor(0.980F) − treasury)   claimable after finalize
  *   treasury  ceil(0.030F)                         posted per epoch as an amount (not a Merkle leaf)
- *   lane B    floor(ρF) if the per-operator cluster gate passed, capped by the epoch budget; vests on-chain
+ *   lane B    floor(ρF) if the per-operator cluster gate passed; vests on-chain. If an epoch's lane-B entries
+ *             exceed its budget, closeEpochs scales them all by the same factor (pro rata by fee), so every
+ *             job in the epoch gets the same share of its ρF; never first come, first served.
  *   the user's F is burned (epoch fees_burned); the remaining 20‰ is the net burn
  * Browser verifiers earn lane "verify" credits (points) — never minted.
  */
@@ -56,46 +58,25 @@ export function splitFee(fee: number, opts: { rho: number; clusterOk: boolean; b
 }
 
 /**
- * Reserve lane-B subsidy atomically: one INSERT … SELECT computes the epoch's
- * remaining budget and writes min(wanted, remaining) in the same statement, so
- * two concurrent submits can never both spend the same budget. (A read-then-insert
- * across two round trips could over-mint, and the contract would then reject the
- * whole epoch's post — freezing every provider's earnings for it.)
- * Returns the amount actually granted (0 if the budget is spent).
+ * Fit an epoch's lane B to its budget, pro rata: when the pending entries add up to more than `budget`, every entry
+ * is scaled by budget / total (rounded down), so each job keeps the same fraction of its ρF and the total never
+ * exceeds the budget (an over-budget post would make the contract reject the whole epoch, lane A included). One
+ * UPDATE, run by the single epoch closer; idempotent once the total fits. Returns the factor applied (1 = none).
  */
-async function reserveSubsidy(input: {
-  jobId: string;
-  epoch: number;
-  provider: string;
-  workType: string;
-  wanted: number;
-  budget: number;
-  vestsAt: number;
-  now: number;
-}): Promise<number> {
-  if (input.wanted <= 0) return 0;
-  const id = crypto.randomUUID();
-  const used =
-    "COALESCE((SELECT SUM(amount_ucld) FROM reward_entries WHERE epoch = ? AND lane = 'B' AND status != 'clawed'), 0)";
+export async function fitLaneB(epoch: number, budget: number): Promise<number> {
   const db = getD1();
-  await db
-    .prepare(
-      "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
-        `SELECT ?, ?, ?, ?, 'B', ?, MIN(?, ? - ${used}), ?, 'pending', ? ` +
-        `WHERE ? - ${used} > 0`,
-    )
-    .bind(
-      id, input.jobId, input.epoch, normalizeAddress(input.provider), input.workType,
-      input.wanted, input.budget, input.epoch, input.vestsAt, input.now,
-      input.budget, input.epoch,
-    )
-    .run();
-  const row = await db.prepare("SELECT amount_ucld FROM reward_entries WHERE id = ?").bind(id).first<{ amount_ucld: number }>();
-  return row?.amount_ucld ?? 0;
+  const pending = "epoch = ? AND lane = 'B' AND status = 'pending'";
+  const row = await db.prepare(`SELECT COALESCE(SUM(amount_ucld), 0) AS total FROM reward_entries WHERE ${pending}`).bind(epoch).first<{ total: number }>();
+  const total = row?.total ?? 0;
+  if (total <= budget) return 1;
+  await db.prepare(`UPDATE reward_entries SET amount_ucld = amount_ucld * ? / ? WHERE ${pending}`).bind(Math.max(0, budget), total, epoch).run();
+  log.api.info(`[ledger] epoch ${epoch}: lane B ${total} µCLD over the ${budget} µCLD budget — scaled pro rata`);
+  return budget / total;
 }
 
 export interface JobRewards {
   laneAUcld: number;
+  /** The most this job's subsidy can be (ρF): final when the epoch closes, lower if the epoch's budget binds. */
   laneBUcld: number;
   treasuryUcld: number;
   vestsAt: number;
@@ -114,7 +95,7 @@ export async function recordJobRewards(input: {
   const env = getEnv();
   const now = input.now ?? Date.now();
   const epoch = epochOf(now);
-  // The budget cap is applied atomically in reserveSubsidy, not here.
+  // The epoch budget is applied pro rata when the epoch closes (fitLaneB), not here.
   const split = splitFee(input.feeUcld, {
     rho: env.SUBSIDY_RHO,
     clusterOk: input.clusterOk,
@@ -125,17 +106,16 @@ export async function recordJobRewards(input: {
     ["A", normalizeAddress(input.provider), split.laneA],
     ["treasury", TREASURY_ACCOUNT, split.treasury],
   ], now);
-  const granted = await reserveSubsidy({
-    jobId: input.jobId,
-    epoch,
-    provider: input.provider,
-    workType: input.workType,
-    wanted: split.subsidy,
-    budget: env.EPOCH_SUBSIDY_BUDGET_UCLD,
-    vestsAt,
-    now,
-  });
-  return { laneAUcld: split.laneA, laneBUcld: granted, treasuryUcld: split.treasury, vestsAt, epoch };
+  if (split.subsidy > 0) {
+    await getD1()
+      .prepare(
+        "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
+          "VALUES (?, ?, ?, ?, 'B', ?, ?, ?, 'pending', ?)",
+      )
+      .bind(crypto.randomUUID(), input.jobId, epoch, normalizeAddress(input.provider), input.workType, split.subsidy, vestsAt, now)
+      .run();
+  }
+  return { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch };
 }
 
 /** Insert the non-zero A/treasury entries of one job or bill (vests_at = now: lane A has no vest). */
@@ -352,6 +332,8 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
       continue;
     }
 
+    // Lane B over the epoch's budget is scaled pro rata before anything is summed.
+    await fitLaneB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD);
     const pending = "epoch = ?1 AND status = 'pending'";
     const leafRows = await db
       .prepare(

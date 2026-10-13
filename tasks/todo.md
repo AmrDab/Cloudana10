@@ -386,3 +386,7 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [ ] Console: prices as "$X/h ≈ Y CLD" (Run, Deploy, Workstations, Endpoints, Overview, Economics, Provide floor, Docs)
 - [ ] Homepage + litepaper + whitepaper §5–6 copy per the report's §5 (say / never say); localhost review before publish
 - [ ] Before listing: TWAP rate module behind a flag; nCLD ledger; subsidy budget as a fraction of supply
+
+## Subsidy pro rata (owner approved 2026-10-13)
+- [x] Lane B recorded as ρF per job; closeEpochs scales an over-budget epoch pro rata (fitLaneB); tests (API 288)
+- [ ] Owner: weekly pool needs a CloudanaSettlementV2 change (per-epoch lane-B cap); decide before the contract is deployed (runbook step 4)

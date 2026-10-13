@@ -2,6 +2,7 @@ import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { epochOf, recordJobRewards, splitFee, closeEpochs, ledgerSummary, TREASURY_ACCOUNT } from "../src/services/ledger.service.js";
 import { epochRoot } from "../src/services/epoch-merkle.js";
+import { getD1 } from "../src/lib/storage.js";
 
 describe("lane split", () => {
   it("pays 0.95F / 0.03F / ρF (treasury rounds up, A trimmed to the 98% cap)", () => {
@@ -38,17 +39,17 @@ describe("ledger entries + epoch close (SQLite)", () => {
     }),
   );
 
-  it("writes lanes, enforces the epoch budget, and closes lane A as soon as the epoch ends", async () => {
+  it("writes lanes, fits lane B to the epoch budget pro rata, and closes lane A as soon as the epoch ends", async () => {
     const t0 = 1_000 * 120_000; // start of epoch 1000
     const provider = "0x00000000000000000000000000000000000000aa";
     const r1 = await recordJobRewards({ jobId: "j1", workType: "matmul", provider, feeUcld: 1000, clusterOk: true, now: t0 });
     expect(r1).toMatchObject({ laneAUcld: 950, laneBUcld: 40, treasuryUcld: 30, epoch: 1000, vestsAt: t0 + 120_000 });
     const r2 = await recordJobRewards({ jobId: "j2", workType: "matmul", provider, feeUcld: 1000, clusterOk: true, now: t0 + 1 });
-    expect(r2.laneBUcld).toBe(10); // budget 50 − 40 already used
+    expect(r2.laneBUcld).toBe(40); // the most it can be: the budget is applied when the epoch closes
 
     const summary = await ledgerSummary(provider, t0 + 2);
-    expect(summary.pending).toEqual({ A: 1900, B: 50, treasury: 0 });
-    expect(summary.vesting.B).toBe(50);
+    expect(summary.pending).toEqual({ A: 1900, B: 80, treasury: 0 });
+    expect(summary.vesting.B).toBe(80);
     expect((await ledgerSummary(TREASURY_ACCOUNT)).pending.treasury).toBe(60);
 
     // Not before the epoch has ended…
@@ -70,23 +71,37 @@ describe("ledger entries + epoch close (SQLite)", () => {
     ]);
     expect(await closeEpochs(t0 + 240_001)).toEqual([]); // posted once
     expect(epochOf(t0)).toBe(1000);
+    // 80 wanted, budget 50: both jobs got 25, not 40 then 10.
+    const b = await getD1().prepare("SELECT job_id, amount_ucld FROM reward_entries WHERE lane = 'B' AND epoch = 1000 ORDER BY job_id").all<{ job_id: string; amount_ucld: number }>();
+    expect(b.results).toEqual([{ job_id: "j1", amount_ucld: 25 }, { job_id: "j2", amount_ucld: 25 }]);
   });
 });
 
-describe("lane-B subsidy budget under concurrency", () => {
-  it("never grants more than the epoch budget, even when submits race", async () => {
+describe("lane-B subsidy budget, pro rata", () => {
+  it("never posts more than the epoch budget, however many submits race, and every job gets the same share", async () => {
     const { setupV1Db } = await import("./helpers/v1-db.js");
-    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "100", SUBSIDY_RHO: "0.25" });
-    const { recordJobRewards } = await import("../src/services/ledger.service.js");
+    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "100", SUBSIDY_RHO: "0.25", EPOCH_SECONDS: "3600" });
+    const { recordJobRewards, closeEpochs, epochOf } = await import("../src/services/ledger.service.js");
     const now = 1_700_000_000_000;
-    // 10 jobs of fee 1000 each want 40 µCLD of subsidy (ρ capped at 0.04); budget is 100.
+    // 10 jobs of fee 1000 each want 40 µCLD of subsidy (ρ capped at 0.04), 400 in all; the budget is 100.
+    const providers = Array.from({ length: 10 }, (_, i) => "0x" + (i + 1).toString(16).padStart(40, "b"));
     const results = await Promise.all(
-      Array.from({ length: 10 }, (_, i) =>
-        recordJobRewards({ jobId: `race-${i}`, workType: "matmul", provider: "0x" + "ab".repeat(20), feeUcld: 1000, clusterOk: true, now }),
-      ),
+      providers.map((provider, i) => recordJobRewards({ jobId: `race-${i}`, workType: "matmul", provider, feeUcld: 1000, clusterOk: true, now })),
     );
-    const granted = results.reduce((s, r) => s + r.laneBUcld, 0);
-    expect(granted).toBe(100);
-    expect(results.every((r) => r.laneAUcld === 950)).toBe(true);
+    expect(results.every((r) => r.laneAUcld === 950 && r.laneBUcld === 40)).toBe(true);
+    const [closed] = (await closeEpochs(now + 3_600_000)).filter((e) => e.epoch === epochOf(now));
+    expect(closed.totalLaneBUcld).toBe(100);
+    expect(closed.leaves.map((l) => l.laneBUcld)).toEqual(Array(10).fill(10));
+  });
+
+  it("leaves an epoch under its budget untouched", async () => {
+    const { setupV1Db } = await import("./helpers/v1-db.js");
+    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "1000", SUBSIDY_RHO: "0.04", EPOCH_SECONDS: "3600" });
+    const { recordJobRewards, fitLaneB, epochOf } = await import("../src/services/ledger.service.js");
+    const now = 1_800_000_000_000;
+    await recordJobRewards({ jobId: "under-1", workType: "matmul", provider: "0x" + "cd".repeat(20), feeUcld: 1000, clusterOk: true, now });
+    expect(await fitLaneB(epochOf(now), 1000)).toBe(1);
+    expect(await fitLaneB(epochOf(now), 20)).toBe(0.5);
+    expect(await fitLaneB(epochOf(now), 20)).toBe(1); // idempotent once it fits
   });
 });

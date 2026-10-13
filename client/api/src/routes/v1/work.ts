@@ -42,7 +42,9 @@ const submitRoute = createRoute({
   method: "post",
   path: "/work/submit",
   tags: ["Nodes"],
-  description: "Node-signed. Returns the µCLD earned (lane A now, lane B vesting until vestsAt).",
+  description:
+    "Node-signed. Returns the µCLD earned: lane A, and lane B as the most this job's subsidy can be (scaled pro rata " +
+    "with every other job in the epoch if the epoch's budget binds; vesting until vestsAt).",
   middleware: [requireNode] as const,
   request: { body: { required: true, content: { "application/json": { schema: SubmitSchema } } } },
   responses: responses(
