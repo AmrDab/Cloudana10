@@ -298,18 +298,26 @@ describe("health probes and replacement", () => {
     expect(seen).toEqual([{ node: addr(a), path: "/health", dep: r1.id }]);
     expect(await row(r1.id)).toMatchObject({ probe_fail: 0, status: "running" });
 
-    // The hub refusing the probe (every stream in use) or the relay call failing says nothing about the app.
+    // Probes are marked so the hub admits them into reserved slots: a node answering `busy` is refusing, which fails.
     const reprobe = () => getD1().prepare("UPDATE deployments SET last_probe_at = 0 WHERE id = ?").bind(r1.id).run();
-    setRelay(async () => new Response("", { status: 503, headers: { "x-relay-error": "busy" } }));
+    let marked = false;
+    setRelay(async (_n, _p, init) => {
+      marked = init?.headers?.["x-relay-probe"] === "1";
+      return new Response("", { status: 503, headers: { "x-relay-error": "busy" } });
+    });
     await reprobe();
     await beat(a);
+    expect(marked).toBe(true);
+    expect(await row(r1.id)).toMatchObject({ probe_fail: 1, status: "running" });
+    // Only the relay binding itself failing says nothing about the app.
     setRelay(async () => {
       throw new Error("binding exploded");
     });
     await reprobe();
     await beat(a);
-    expect(await row(r1.id)).toMatchObject({ probe_fail: 0, status: "running" });
+    expect(await row(r1.id)).toMatchObject({ probe_fail: 1, status: "running" });
     expect((await row(r1.id))!.last_probe_at).toBeGreaterThan(0);
+    await getD1().prepare("UPDATE deployments SET probe_fail = 0 WHERE id = ?").bind(r1.id).run();
 
     setRelay(async () => new Response("", { status: 503 }));
     // 30 minutes into the hour: the part served is billed at the re-queue, so failing health buys no free time.

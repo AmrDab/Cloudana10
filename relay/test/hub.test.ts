@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { StreamHub } from "../src/hub.js";
-import { MAX_FRAME_BYTES, MAX_STREAMS, WINDOW_BYTES, decodeData, encodeData, parseHubMessage, type HubMessage } from "../../shared/relay-protocol.js";
+import { MAX_FRAME_BYTES, MAX_STREAMS, PROBE_SLOTS, WINDOW_BYTES, decodeData, encodeData, parseHubMessage, type HubMessage } from "../../shared/relay-protocol.js";
 
 /** A hub wired to a scripted fake node: `sent` collects everything the hub sends. */
 function setup() {
@@ -75,12 +75,27 @@ describe("StreamHub", () => {
     expect((await p).headers.get("x-relay-error")).toBe("offline");
   });
 
-  it("caps open streams at MAX_STREAMS", async () => {
+  it("caps visitor streams at MAX_STREAMS − PROBE_SLOTS and keeps the rest for probes", async () => {
     const { hub } = setup();
-    for (let i = 0; i < MAX_STREAMS; i++) void hub.proxy({ dep: "d", cls: "site", method: "GET", path: "/", headers: [], body: null });
+    for (let i = 0; i < MAX_STREAMS - PROBE_SLOTS; i++) void hub.proxy({ dep: `d${i % 8}`, cls: "site", method: "GET", path: "/", headers: [], body: null });
     await tick();
     const extra = await hub.proxy({ dep: "d", cls: "site", method: "GET", path: "/", headers: [], body: null });
     expect(extra.headers.get("x-relay-error")).toBe("busy");
+    for (let i = 0; i < PROBE_SLOTS; i++) void hub.proxy({ dep: "d0", cls: "site", method: "GET", path: "/", headers: [], body: null, probe: true });
+    await tick();
+    expect(hub.open).toBe(MAX_STREAMS);
+    const third = await hub.proxy({ dep: "d0", cls: "site", method: "GET", path: "/", headers: [], body: null, probe: true });
+    expect(third.headers.get("x-relay-error")).toBe("busy"); // the node is full even for probes
+  });
+
+  it("lets a probe past a deployment's full per-app cap", async () => {
+    const { hub } = setup();
+    for (let i = 0; i < 16; i++) void hub.proxy({ dep: "busy-app", cls: "endpoint", method: "GET", path: "/sse", headers: [], body: null });
+    await tick();
+    expect((await hub.proxy({ dep: "busy-app", cls: "endpoint", method: "GET", path: "/", headers: [], body: null })).headers.get("x-relay-error")).toBe("busy");
+    void hub.proxy({ dep: "busy-app", cls: "endpoint", method: "GET", path: "/health", headers: [], body: null, probe: true });
+    await tick();
+    expect(hub.open).toBe(17);
   });
 
   it("refuses request bodies over the class cap with 413 and cancels the stream", async () => {

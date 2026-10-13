@@ -116,6 +116,7 @@ export class RelayNode extends DurableObject<Env> {
     return this.hubFor(ws).proxy({
       dep,
       cls,
+      probe: request.headers.get("x-relay-probe") === "1",
       method: request.method,
       path,
       headers: request.headers,
