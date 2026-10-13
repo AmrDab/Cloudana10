@@ -20,7 +20,7 @@ import { keccak256, stringToBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 /** The agent version this API was built against (node-agent/package.json). MIN_AGENT_VERSION defaults to it. */
-export const CURRENT_AGENT_VERSION = "1.2.0";
+export const CURRENT_AGENT_VERSION = "1.3.0";
 
 export interface InstructionEnvelope {
   ts: number;

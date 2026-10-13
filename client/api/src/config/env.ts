@@ -82,10 +82,13 @@ export const envSchema = z.object({
   SUBSIDY_RHO: z.coerce.number().min(0).max(1).default(0.04), // capped at RHO_MAX (ledger.service.ts)
   CLUSTER_N_MIN: int(3),
   CLUSTER_S_CAP: z.coerce.number().min(0).max(1).default(0.5),
-  /** Initial/reset price in nano-CLD per tera-MAC; the hourly controller moves it from here. */
-  PRICE_NCLD_PER_TMAC: int(14_000),
-  /** Flat part of every job fee, µCLD. */
-  BASE_FEE_UCLD: int(1000),
+  // Prices are quoted in US dollars and settled in CLD (docs/TOKENOMICS_USD_PRICING.md, docs/PRICES_USD.md).
+  /** The reference rate: US dollars per CLD. Testnet: a fixed $0.10; after listing a TWAP replaces it (behind a flag). */
+  USD_PER_CLD: z.coerce.number().positive().default(0.1),
+  /** Initial/reset price in nano-dollars per tera-MAC (≈ $2.02 per H100-hour); the hourly controller moves it from here. */
+  PRICE_NUSD_PER_TMAC: int(1400),
+  /** Flat part of every job fee, US dollars. */
+  BASE_FEE_USD: z.coerce.number().min(0).default(0.0001),
   PRICE_CONTROLLER: z.enum(["on", "off"]).default("on"),
   /** Lane-B subsidy per epoch: 80 % of the chain allowance for a 1 h epoch at 1M supply, 8 %/yr. */
   EPOCH_SUBSIDY_BUDGET_UCLD: int(7_300_000),
@@ -114,18 +117,19 @@ export const envSchema = z.object({
   RELAY_TICKET_SECRET: z.string().min(32).optional(),
   RELAY_URL: z.string().default("wss://relay.cloudana.io/connect"),
   RELAY_FRESH_SECONDS: int(45),
-  MIN_AGENT_VERSION: z.string().default("1.2.0"),
+  MIN_AGENT_VERSION: z.string().default("1.3.0"),
   IMAGE_ALLOWLIST: z.string().optional(),
 
-  // ── V3 hosting (docs/V3_CONTRACT.md §3–§4) ──────────────────────────────
-  PRICE_HOSTING_UCLD_PER_HOUR: int(50),
-  PRICE_CPU_UCLD_PER_HOUR: int(200),
-  PRICE_MEM_UCLD_PER_GB_HOUR: int(100),
-  PRICE_STORAGE_UCLD_PER_GB_HOUR: int(20),
-  // Workstations (docs/WORKSTATIONS.md §2): per GPU per hour, by class; volume per GB-hour.
-  PRICE_GPU_CONSUMER_UCLD_PER_HOUR: int(2000),
-  PRICE_GPU_DATACENTER_UCLD_PER_HOUR: int(6000),
-  PRICE_VOLUME_UCLD_PER_GB_HOUR: int(2),
+  // ── Hourly prices in US dollars (docs/PRICES_USD.md); converted to µCLD at USD_PER_CLD when a deployment is created.
+  PRICE_HOSTING_USD_PER_HOUR: z.coerce.number().min(0).default(0.0014),
+  PRICE_CPU_USD_PER_HOUR: z.coerce.number().min(0).default(0.01),
+  PRICE_MEM_USD_PER_GB_HOUR: z.coerce.number().min(0).default(0.0012),
+  PRICE_STORAGE_USD_PER_GB_HOUR: z.coerce.number().min(0).default(0.0001),
+  PRICE_VOLUME_USD_PER_GB_HOUR: z.coerce.number().min(0).default(0.0001),
+  /** Per GPU per hour, by tier (shared/gpu-tier.ts). */
+  PRICE_GPU_STANDARD_USD_PER_HOUR: z.coerce.number().min(0).default(0.3),
+  PRICE_GPU_LARGE_USD_PER_HOUR: z.coerce.number().min(0).default(1.2),
+  PRICE_GPU_H100_USD_PER_HOUR: z.coerce.number().min(0).default(2),
   /** Fraction taken off an interruptible workstation's price. */
   INTERRUPTIBLE_DISCOUNT: z.coerce.number().min(0).max(1).default(0.5),
   /** Seconds between uptime probes of one deployment. */
@@ -134,7 +138,6 @@ export const envSchema = z.object({
   DEPLOY_PROBE_FAILS: int(3),
 
   // ── Payments ─────────────────────────────────────────────────────────────
-  CLD_USD_RATE: z.coerce.number().positive().default(100),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_PUBLISHABLE_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),

@@ -53,7 +53,7 @@ async function boundNode(workTypes: string[]) {
     workTypes,
     pubkey: node.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.2.0",
+    agentVersion: "1.3.0",
   });
   expect(res.status).toBe(200);
   const payout = "0x" + (++userSeq).toString(16).padStart(40, "e");
@@ -112,7 +112,9 @@ describe("create", () => {
     const res = await create(u.jwt);
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body).toEqual({ status: "success", id: expect.any(String), priceUcldPerHour: 50, deploymentStatus: "queued" });
+    expect(body).toEqual({
+      status: "success", id: expect.any(String), priceUcldPerHour: 50, priceUsdPerHour: 0.000005, usdPerCld: 0.1, deploymentStatus: "queued",
+    });
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 950, heldUcld: 50 });
 
     const got = await (await authed(u.jwt, "GET", `/v1/deployments/${body.id}`)).json();

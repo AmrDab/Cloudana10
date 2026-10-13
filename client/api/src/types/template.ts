@@ -37,7 +37,7 @@ export type TemplateRun = {
   files: { path: string; contentBase64: string }[];
   // Workstation templates (docs/WORKSTATIONS.md §6) — copied into the spec at create.
   /** Default GPU request (count 0 = CPU workstation). */
-  gpu?: { count: number; minVramGb?: number; class?: "any" | "consumer" | "datacenter" };
+  gpu?: { count: number; minVramGb?: number; class?: "standard" | "large" | "h100" };
   /** How the user reaches it: web port (+ path) and/or whether the image runs sshd. */
   access?: { web?: { port: number; path?: string }; ssh: boolean };
   workdir?: string;

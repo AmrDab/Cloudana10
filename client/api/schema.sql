@@ -230,7 +230,7 @@ CREATE INDEX IF NOT EXISTS idx_deployment_stale_nodes_node ON deployment_stale_n
 CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- Price controller state (docs/IMPL_SPEC_2026-10.md): one row, id = 1.
 CREATE TABLE IF NOT EXISTS price_state (
-  id INTEGER PRIMARY KEY CHECK (id = 1), price_ncld_per_tmac INTEGER NOT NULL, ema_ncld_per_tmac REAL NOT NULL,
+  id INTEGER PRIMARY KEY CHECK (id = 1), price_nusd_per_tmac INTEGER NOT NULL, ema_nusd_per_tmac REAL NOT NULL,
   stepped_at INTEGER, quote_price INTEGER, quote_expires_at INTEGER
 );
 

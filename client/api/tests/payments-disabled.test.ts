@@ -61,7 +61,7 @@ describe("Stripe routes are off unless STRIPE_ENABLED=true", () => {
       resetEnv();
       const res = await app.request("/v1/payments/convert?usd=10");
       expect(res.status, v).toBe(200);
-      expect((await res.json()).cld).toBe(1000);
+      expect((await res.json()).cld).toBe(100); // $10 at the $0.10/CLD reference rate
     }
     process.env.STRIPE_ENABLED = "0";
     resetEnv();

@@ -10,12 +10,12 @@ routes = [
 
 [vars]
 CHAIN_NETWORK = "baseSepolia"
-CLD_USD_RATE = "100"
+USD_PER_CLD = "0.1"
 # Public testnet: test credits (no value), once per wallet per day. Remove before CLD carries value.
 TESTNET_CREDITS = "true"
 # Economics (docs/IMPL_SPEC_2026-10.md). Price is the controller's initial/reset value, nCLD per TMAC.
-PRICE_NCLD_PER_TMAC = "14000"
-BASE_FEE_UCLD = "1000"
+PRICE_NUSD_PER_TMAC = "1400"
+BASE_FEE_USD = "0.0001"
 PRICE_CONTROLLER = "on"
 EPOCH_SECONDS = "3600"
 VEST_B_SECONDS = "3600"

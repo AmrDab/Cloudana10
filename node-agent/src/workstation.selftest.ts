@@ -270,10 +270,13 @@ async function main() {
   const t0 = Date.now();
   check((await httpOk(`http://127.0.0.1:${(hang.address() as AddressInfo).port}/health`, 150)) === false && Date.now() - t0 < 1000, "httpOk gives up at its deadline");
   hang.close();
-  // VRAM-aware picking: a 40 GB request skips the 12 GB card.
-  const mixed = [{ name: "RTX 3060", vramGB: 12 }, { name: "A100", vramGB: 80 }];
-  check(pickGpus(1, mixed, new Set(), 40).join() === "1" && pickGpus(1, mixed, new Set()).join() === "0", "minVramGb picks the card that has it");
-  throws(() => pickGpus(1, mixed, new Set([1]), 40), /not enough free GPUs/, "no eligible free GPU");
+  // Tier- and VRAM-aware picking on a mixed node (shared/gpu-tier.ts).
+  const mixed = [{ name: "NVIDIA GeForce RTX 3060", vramGB: 12 }, { name: "NVIDIA A100-SXM4-80GB", vramGB: 80 }, { name: "NVIDIA H100 80GB HBM3", vramGB: 80 }];
+  check(pickGpus(1, mixed, new Set()).join() === "0", "standard (default) gets the 3060, never the A100 or H100");
+  check(pickGpus(1, mixed, new Set(), 40, "large").join() === "1" && pickGpus(1, mixed, new Set(), 0, "h100").join() === "2", "large → A100, h100 → H100");
+  check(pickGpus(1, mixed, new Set(), 0, "datacenter").join() === "1" && pickGpus(1, mixed, new Set(), 0, "any").join() === "0", "legacy class names are mapped");
+  throws(() => pickGpus(1, mixed, new Set(), 16), /not enough free GPUs/, "no standard card with 16 GB");
+  throws(() => pickGpus(1, mixed, new Set([1]), 40, "large"), /not enough free GPUs/, "no eligible free GPU");
   // A GPU replica refused by a node whose GPU is taken: "not enough free GPUs" (the API re-queues it).
   await e3.handle({ id: "ep4", action: "start", kind: "container", spec: { ...replica, gpu: { count: 2 } }, imageAllowed: false, relayed: true });
   check(reports.at(-1)?.status === "failed" && reports.at(-1)?.message === "not enough free GPUs", "GPU shortage is reported as such");

@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { isIPv4, isIPv6 } from "node:net";
 import { containerName, ENV_KEY, hardeningArgs, sanitizeTenantEnv, userArgs, volumeName, type ContainerSpec } from "./container.ts";
 import type { GpuInfo } from "./hardware.ts";
+import { gpuTier, requestTier } from "../../shared/gpu-tier.ts";
 
 /**
  * The spec on a `kind: "workstation"` start command. The last four fields come from the environment template;
@@ -80,14 +81,15 @@ export const gpuCountOf = (spec: unknown) => {
 
 /**
  * Lowest `count` free device indices. `nodeGpus` is the GPU count, or the node's GPU list in device order: then only
- * GPUs with at least `minVramGb` qualify (a 12 GB card is never handed a 40 GB request on a mixed node). Throws when
- * the node cannot satisfy it.
+ * GPUs of the requested tier (shared/gpu-tier.ts) with at least `minVramGb` qualify, so on a mixed node a standard
+ * request never gets the H100 and a 40 GB request never gets the 12 GB card. Throws when the node cannot satisfy it.
  */
-export function pickGpus(count: number, nodeGpus: number | GpuInfo[], used: Set<number>, minVramGb = 0): number[] {
+export function pickGpus(count: number, nodeGpus: number | GpuInfo[], used: Set<number>, minVramGb = 0, tier?: string): number[] {
   if (count <= 0) return [];
   const total = typeof nodeGpus === "number" ? nodeGpus : nodeGpus.length;
   if (total < 1) throw new Error("this node has no usable GPU");
-  const fits = (i: number) => typeof nodeGpus === "number" || nodeGpus[i].vramGB >= minVramGb;
+  const want = requestTier(tier);
+  const fits = (i: number) => typeof nodeGpus === "number" || (nodeGpus[i].vramGB >= minVramGb && gpuTier(nodeGpus[i]) === want);
   const free: number[] = [];
   for (let i = 0; i < total && free.length < count; i++) if (!used.has(i) && fits(i)) free.push(i);
   if (free.length < count) throw new Error("not enough free GPUs");

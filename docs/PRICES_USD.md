@@ -1,6 +1,6 @@
-# Dollar price table — proposal
+# Dollar price table
 
-Status: **proposal, awaiting the owner's yes** · 2026-10-12. Follows the approved decision to quote in US dollars and
+Status: **approved by the owner 2026-10-13; live in the API** (env.ts defaults, `GET /v1/network` → `prices`) · proposed 2026-10-12. Follows the approved decision to quote in US dollars and
 settle in CLD ([TOKENOMICS_USD_PRICING.md](TOKENOMICS_USD_PRICING.md)); testnet reference rate **$0.10 per CLD**.
 Every price is what the user pays per hour; the provider is minted 95 % of it, the treasury 3 %, 2 % is destroyed.
 

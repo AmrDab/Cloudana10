@@ -42,7 +42,7 @@ const createJobRoute = createRoute({
   path: "/jobs",
   tags: TAGS,
   description:
-    "Queue work. Price = BASE_FEE_UCLD + ceil(n³ × priceNcldPerTmac / 1e15) µCLD at the current quote (see /network), held until the result verifies.",
+    "Queue work. Price = baseFeeUcld + ceil(n³ × priceNcldPerTmac / 1e15) µCLD at the current quote (see /network: a dollar price converted at usdPerCld), held until the result verifies.",
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: CreateJobSchema } } } },
   responses: responses(

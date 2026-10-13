@@ -112,7 +112,8 @@ hosting. Deployments arrive on the heartbeat:
   one free host port per container port (every port is tracked, so two
   containers never collide). Stop is `docker rm -f cld-<id>`.
   A spec with `gpu.count` gets `--gpus "device=<i>,…" --shm-size=1g` (explicit
-  indices reserved like a workstation's); a spec with `health` is reported
+  indices reserved like a workstation's, of the requested tier — standard, large or h100,
+  shared/gpu-tier.ts — so a mixed node never hands an H100 to a standard request); a spec with `health` is reported
   `running` only once `GET http://127.0.0.1:<port><health.path>` answers 2xx/3xx
   (polled every 3 s for `health.startupGraceSec`, default 600 s). If it exits or
   the grace runs out, the report is `failed` with the last 100 lines of

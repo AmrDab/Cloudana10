@@ -34,7 +34,7 @@ const ITEMS: W[] = [
     // UNVERIFIED tag: Jupyter Docker Stacks publish CUDA variants as cuda12-* on quay.io.
     id: "ws-jupyter-cuda", name: "JupyterLab (PyTorch, CUDA)", summary: "JupyterLab with PyTorch on an assigned GPU. The default GPU workstation.",
     image: "quay.io/jupyter/pytorch-notebook:cuda12-latest", ports: [8888], cpu: 4000, memMb: 16384, storageMb: 20480,
-    gpu: { count: 1, class: "any" }, access: { web: { port: 8888, path: "/lab" }, ssh: false },
+    gpu: { count: 1, class: "standard" }, access: { web: { port: 8888, path: "/lab" }, ssh: false },
     workdir: "/home/jovyan/work", tokenEnv: "JUPYTER_TOKEN", tokenQuery: "token", logo: "jupyter",
     notes: "Opens with a one-time token in the link.",
   },
@@ -57,7 +57,7 @@ const ITEMS: W[] = [
     // UNVERIFIED tag: RunPod's PyTorch images run sshd and read the key from PUBLIC_KEY.
     id: "ws-pytorch-ssh", name: "PyTorch over SSH", summary: "PyTorch + CUDA with sshd: bring your own key and work from your terminal or IDE.",
     image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04", ports: [22], cpu: 4000, memMb: 16384, storageMb: 30720,
-    gpu: { count: 1, class: "any" }, access: { ssh: true },
+    gpu: { count: 1, class: "standard" }, access: { ssh: true },
     workdir: "/workspace", sshPort: 22, logo: "pytorch",
     notes: "SSH only: paste your public key. Login user root.",
   },
@@ -65,7 +65,7 @@ const ITEMS: W[] = [
     // UNVERIFIED tag: yanwk/comfyui-boot publishes CUDA-specific tags; latest assumed.
     id: "ws-comfyui", name: "ComfyUI", summary: "Node-based Stable Diffusion / Flux image workflows.",
     image: "yanwk/comfyui-boot:latest", ports: [8188], cpu: 4000, memMb: 16384, storageMb: 40960,
-    gpu: { count: 1, minVramGb: 8, class: "any" }, access: { web: { port: 8188 }, ssh: false },
+    gpu: { count: 1, minVramGb: 8, class: "standard" }, access: { web: { port: 8188 }, ssh: false },
     workdir: "/root", logo: null,
     notes: "No login: anyone with the link can use it while it runs.",
   },
@@ -73,7 +73,7 @@ const ITEMS: W[] = [
     // UNVERIFIED port: the image's README maps 8080 (the contract's 7860 is the stock A1111 port).
     id: "ws-sd-webui", name: "Stable Diffusion WebUI", summary: "AUTOMATIC1111 web UI for image generation.",
     image: "universonic/stable-diffusion-webui:latest", ports: [8080], cpu: 4000, memMb: 16384, storageMb: 40960,
-    gpu: { count: 1, minVramGb: 8, class: "any" }, access: { web: { port: 8080 }, ssh: false },
+    gpu: { count: 1, minVramGb: 8, class: "standard" }, access: { web: { port: 8080 }, ssh: false },
     workdir: "/app/stable-diffusion-webui/models", logo: null,
     notes: "No login: anyone with the link can use it while it runs.",
   },
@@ -81,14 +81,14 @@ const ITEMS: W[] = [
     // Single-container variant: Open WebUI's :ollama tag bundles Ollama (the two-container setup is not supported).
     id: "ws-ollama-webui", name: "Ollama + Open WebUI", summary: "Chat with open LLMs on your own GPU — Ollama and Open WebUI in one container.",
     image: "ghcr.io/open-webui/open-webui:ollama", ports: [8080], cpu: 4000, memMb: 16384, storageMb: 40960,
-    gpu: { count: 1, minVramGb: 8, class: "any" }, access: { web: { port: 8080 }, ssh: false },
+    gpu: { count: 1, minVramGb: 8, class: "standard" }, access: { web: { port: 8080 }, ssh: false },
     workdir: "/app/backend/data", logo: "ollama",
     notes: "Create the admin account on first open. Models are kept on the volume.",
   },
   {
     id: "ws-blender", name: "Blender", summary: "Blender in a browser desktop, rendering on an assigned GPU.",
     image: "lscr.io/linuxserver/blender:latest", ports: [3000], cpu: 4000, memMb: 8192, storageMb: 20480,
-    gpu: { count: 1, class: "any" }, access: { web: { port: 3000 }, ssh: false },
+    gpu: { count: 1, class: "standard" }, access: { web: { port: 3000 }, ssh: false },
     workdir: "/config", tokenEnv: "PASSWORD", logo: "blender",
     notes: "Sign in as user abc with the password shown in the console.",
   },
