@@ -12,6 +12,12 @@ export const WINDOW_BYTES = 512 * 1024;
 export const MAX_STREAMS = 64;
 /** Open streams per deployment, so one app (SSE fans, slow uploads) can't take a node's every slot. */
 export const MAX_STREAMS_PER_DEP = 16;
+/**
+ * Slots of MAX_STREAMS kept for the orchestrator's health probes (`x-relay-probe: 1`, set only through the API's
+ * binding; forwardableHeaders drops every x-relay-* header a visitor sends). Visitor traffic gets MAX_STREAMS − 2, and
+ * a probe skips the per-deployment cap, so load can never refuse a probe: a `busy` answer is the node's own refusal.
+ */
+export const PROBE_SLOTS = 2;
 /** Request limits both sides enforce (the hub refuses up front; the agent answers `bad_request`, never silence). */
 export const MAX_PATH_CHARS = 8192;
 export const MAX_REQUEST_HEADERS = 128;

@@ -10,6 +10,7 @@ import {
   MAX_REQUEST_HEADERS,
   MAX_STREAMS,
   MAX_STREAMS_PER_DEP,
+  PROBE_SLOTS,
   METHOD,
   WINDOW_BYTES,
   chunks,
@@ -48,6 +49,8 @@ const NULL_BODY = new Set([101, 103, 204, 205, 304]);
 export interface ProxyRequest {
   dep: string;
   cls: TrafficClass;
+  /** The orchestrator's health probe: uses the reserved PROBE_SLOTS and skips the per-deployment cap. */
+  probe?: boolean;
   method: string;
   /** Path and query, starting with "/". */
   path: string;
@@ -96,10 +99,12 @@ export class StreamHub {
 
   /** Send a request to the node and resolve with its response (streaming) or a relay error. */
   async proxy(req: ProxyRequest): Promise<Response> {
-    if (this.streams.size >= MAX_STREAMS) return relayError("busy");
-    let ofDep = 0;
-    for (const st of this.streams.values()) if (st.dep === req.dep) ofDep++;
-    if (ofDep >= MAX_STREAMS_PER_DEP) return relayError("busy");
+    if (this.streams.size >= (req.probe ? MAX_STREAMS : MAX_STREAMS - PROBE_SLOTS)) return relayError("busy");
+    if (!req.probe) {
+      let ofDep = 0;
+      for (const st of this.streams.values()) if (st.dep === req.dep) ofDep++;
+      if (ofDep >= MAX_STREAMS_PER_DEP) return relayError("busy");
+    }
     // Refuse here what the agent would refuse: a request it can't parse must never sit in a slot until it times out.
     const h = forwardableHeaders(req.headers, { keepLength: true });
     if (!METHOD.test(req.method) || req.path.length > MAX_PATH_CHARS || h.length > MAX_REQUEST_HEADERS) {
