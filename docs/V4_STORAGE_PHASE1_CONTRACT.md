@@ -1,6 +1,6 @@
 # Storage phase 1 — build contract
 
-Status: **part A live; part B revised after review** · 2026-10-15.
+Status: **part A live; part B: relay live (storage class, 4 probe slots), API built (PR #41), agent 1.4.0 next** · 2026-10-15.
 - This contract implements build-order step 1 of [V4_STORAGE_SPEC.md](V4_STORAGE_SPEC.md) v2, owner-approved
   2026-10-15.
 - Users get nothing new. Cloudana's own job data moves out of D1 into R2, and providers start holding encrypted copies
@@ -162,4 +162,4 @@ failed day then holds back that day's pay.
 5. **`CLOUDANA_STORAGE_GB` instead of `CLOUDANA_ROLES=storage`.** One variable opts in and sets the quota.
 
 ## Owner
-- Set `STORAGE_KEK` on `cloudana-api` (runbook). Until then artifacts move to R2, but no provider copies are made.
+- Set `STORAGE_KEK` on `cloudana-api` (runbook step 2, with the other two API secrets). Until then artifacts move to R2, but no provider copies are made.

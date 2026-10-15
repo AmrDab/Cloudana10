@@ -32,6 +32,7 @@ import { waitlistRouter } from "./routes/v1/waitlist.js";
 import { fleetsRouter } from "./routes/v1/fleets.js";
 import { deploymentsRouter } from "./routes/v1/deployments.js";
 import { nodesDeploymentsRouter } from "./routes/v1/nodes-deployments.js";
+import { nodesStorageRouter } from "./routes/v1/nodes-storage.js";
 import { adminTemplatesRouter } from "./routes/v1/admin-templates.js";
 import { ensureSchema } from "./lib/schema.js";
 
@@ -127,6 +128,7 @@ export function buildApp<B extends object = Record<string, unknown>>(opts: Build
   // so these answer /v1/deployments and /v1/deployments/{id} on both runtimes.
   app.route("/v1", deploymentsRouter);
   app.route("/v1", nodesDeploymentsRouter);
+  app.route("/v1", nodesStorageRouter);
   app.route("/v1", adminTemplatesRouter);
 
   app.get("/v1/doc", (c) =>

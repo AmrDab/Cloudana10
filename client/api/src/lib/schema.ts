@@ -102,6 +102,25 @@ export const V1_TABLES = [
     id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, owner TEXT NOT NULL, at INTEGER NOT NULL,
     probe_ok INTEGER, forgiven_ucld INTEGER NOT NULL DEFAULT 0, note TEXT)`,
   `CREATE INDEX IF NOT EXISTS idx_deployment_reports_owner ON deployment_reports(owner, at)`,
+  // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): objects (job artifacts), provider copies, node-day checks.
+  `CREATE TABLE IF NOT EXISTS storage_objects (
+    id TEXT PRIMARY KEY, size INTEGER NOT NULL, leaves INTEGER NOT NULL, created_at INTEGER NOT NULL, next_attempt_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_objects_due ON storage_objects(next_attempt_at) WHERE next_attempt_at IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS storage_copies (
+    id TEXT PRIMARY KEY, object_id TEXT NOT NULL, copy_idx INTEGER NOT NULL, node TEXT NOT NULL, nonce TEXT NOT NULL,
+    root TEXT NOT NULL, state TEXT NOT NULL, fetches INTEGER NOT NULL DEFAULT 0, assigned_at INTEGER NOT NULL,
+    held_at INTEGER, checked_at INTEGER)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_copies_live ON storage_copies(object_id, copy_idx) WHERE state <> 'dropping'`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_copies_node ON storage_copies(node, state)`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_copies_object ON storage_copies(object_id, state)`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_copies_pending ON storage_copies(assigned_at) WHERE state = 'pending'`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_copies_suspect ON storage_copies(checked_at) WHERE state = 'suspect'`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_objects_created ON storage_objects(created_at)`,
+  `CREATE TABLE IF NOT EXISTS storage_checks (
+    node TEXT NOT NULL, day INTEGER NOT NULL, samples INTEGER NOT NULL DEFAULT 0, misses INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node, day))`,
+  // The artifacts cron reads only jobs it hasn't moved yet.
+  `CREATE INDEX IF NOT EXISTS idx_work_jobs_unmoved ON work_jobs(completed_at) WHERE status = 'done' AND artifact IS NULL`,
 ];
 
 const BALANCE_COLUMNS = [
@@ -141,6 +160,17 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE work_jobs ADD COLUMN artifact TEXT",
   // Inconclusive probes in a row: the third counts as a failure (docs/V4_STORAGE_PHASE1_CONTRACT.md review #2).
   "ALTER TABLE deployments ADD COLUMN probe_inconclusive INTEGER NOT NULL DEFAULT 0",
+  // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
+  "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE nodes ADD COLUMN net_prefix TEXT",
+  "ALTER TABLE nodes ADD COLUMN asn INTEGER",
+  "ALTER TABLE nodes ADD COLUMN storage_next_check_at INTEGER",
+  "ALTER TABLE nodes ADD COLUMN storage_cooldown_until INTEGER",
+  "ALTER TABLE nodes ADD COLUMN storage_backoff_until INTEGER",
+  "ALTER TABLE nodes ADD COLUMN storage_strikes INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE nodes ADD COLUMN storage_passed_days INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE nodes ADD COLUMN storage_open_day INTEGER",
+  "ALTER TABLE nodes ADD COLUMN storage_inconclusive INTEGER NOT NULL DEFAULT 0",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

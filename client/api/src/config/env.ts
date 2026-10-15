@@ -107,6 +107,11 @@ export const envSchema = z.object({
   RELAY_URL: z.string().default("wss://relay.cloudana.io/connect"),
   RELAY_FRESH_SECONDS: int(45),
   MIN_AGENT_VERSION: z.string().default("1.3.0"),
+  // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md): key-encryption key (Worker secret, base64 of 32 bytes; unset
+  // → no provider copies, artifacts stay R2-only; DEV_MODE uses a fixed dev key), copies per object, copy retention.
+  STORAGE_KEK: z.string().optional(),
+  STORAGE_COPIES: int(2),
+  STORAGE_RETENTION_DAYS: int(30),
   IMAGE_ALLOWLIST: z.string().optional(),
 
   // ── Hourly prices in US dollars (docs/PRICES_USD.md); converted to µCLD at USD_PER_CLD when a deployment is created.

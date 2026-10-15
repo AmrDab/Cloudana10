@@ -117,7 +117,13 @@ CREATE TABLE IF NOT EXISTS nodes (
   pubkey TEXT,     -- uncompressed secp256k1 hex of the node key (sealed secrets)
   public_host TEXT, -- host the node announced; hosting endpoints must use exactly this host
   agent_version TEXT, -- work is refused below MIN_AGENT_VERSION
-  relay_at INTEGER    -- last heartbeat with an open relay socket (docs/V4_RELAY_CONTRACT.md)
+  relay_at INTEGER,   -- last heartbeat with an open relay socket (docs/V4_RELAY_CONTRACT.md)
+  -- Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B)
+  storage_quota_mb INTEGER NOT NULL DEFAULT 0, -- declared; effective = min(this, 1 GB × (1 + passed days))
+  net_prefix TEXT, asn INTEGER,               -- /24 or /48 and ASN seen at announce / heartbeat (copy placement)
+  storage_next_check_at INTEGER, storage_cooldown_until INTEGER, storage_backoff_until INTEGER,
+  storage_strikes INTEGER NOT NULL DEFAULT 0, storage_passed_days INTEGER NOT NULL DEFAULT 0,
+  storage_open_day INTEGER, storage_inconclusive INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS work_jobs (
@@ -254,3 +260,30 @@ CREATE TABLE IF NOT EXISTS deployment_reports (
   probe_ok INTEGER, forgiven_ucld INTEGER NOT NULL DEFAULT 0, note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_deployment_reports_owner ON deployment_reports(owner, at);
+-- Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): objects (job artifacts), provider copies, node-day checks.
+CREATE TABLE IF NOT EXISTS storage_objects (
+  id TEXT PRIMARY KEY,            -- the artifact's R2 key
+  size INTEGER NOT NULL,          -- plaintext bytes
+  leaves INTEGER NOT NULL,        -- 64 KiB leaves (the verifier's own count; the root does not bind it)
+  created_at INTEGER NOT NULL,
+  next_attempt_at INTEGER         -- non-null while copies are missing
+);
+CREATE INDEX IF NOT EXISTS idx_storage_objects_due ON storage_objects(next_attempt_at) WHERE next_attempt_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS storage_copies (
+  id TEXT PRIMARY KEY, object_id TEXT NOT NULL, copy_idx INTEGER NOT NULL, node TEXT NOT NULL,
+  nonce TEXT NOT NULL,            -- 8 random bytes (hex): the copy's IV prefix
+  root TEXT NOT NULL,             -- Merkle root of the copy's ciphertext
+  state TEXT NOT NULL,            -- pending | held | suspect | dropping
+  fetches INTEGER NOT NULL DEFAULT 0, assigned_at INTEGER NOT NULL, held_at INTEGER, checked_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_copies_live ON storage_copies(object_id, copy_idx) WHERE state <> 'dropping';
+CREATE INDEX IF NOT EXISTS idx_storage_copies_node ON storage_copies(node, state);
+CREATE INDEX IF NOT EXISTS idx_storage_copies_object ON storage_copies(object_id, state);
+CREATE INDEX IF NOT EXISTS idx_storage_copies_pending ON storage_copies(assigned_at) WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS idx_storage_copies_suspect ON storage_copies(checked_at) WHERE state = 'suspect';
+CREATE INDEX IF NOT EXISTS idx_storage_objects_created ON storage_objects(created_at);
+CREATE TABLE IF NOT EXISTS storage_checks (
+  node TEXT NOT NULL, day INTEGER NOT NULL, samples INTEGER NOT NULL DEFAULT 0, misses INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node, day)
+);
+CREATE INDEX IF NOT EXISTS idx_work_jobs_unmoved ON work_jobs(completed_at) WHERE status = 'done' AND artifact IS NULL;

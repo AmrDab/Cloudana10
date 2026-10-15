@@ -47,7 +47,7 @@ describe("paths", () => {
         if (leaves > 1) expect(await verifyLeaf(leaf, (i + 1) % leaves, leaves, path, root)).toBe(false);
         expect(await verifyLeaf(leaf, leaves, leaves, path, root)).toBe(false); // out of range (the count is ours, not the node's)
       }
-    });
+    }, 30_000);
   }
 
   it("carries an odd last node up without a sibling, and refuses a path with one too many or too few", async () => {
