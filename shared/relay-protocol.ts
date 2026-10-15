@@ -13,11 +13,12 @@ export const MAX_STREAMS = 64;
 /** Open streams per deployment, so one app (SSE fans, slow uploads) can't take a node's every slot. */
 export const MAX_STREAMS_PER_DEP = 16;
 /**
- * Slots of MAX_STREAMS kept for the orchestrator's health probes (`x-relay-probe: 1`, set only through the API's
- * binding; forwardableHeaders drops every x-relay-* header a visitor sends). Visitor traffic gets MAX_STREAMS − 2, and
- * a probe skips the per-deployment cap, so load can never refuse a probe: a `busy` answer is the node's own refusal.
+ * Slots of MAX_STREAMS kept for the orchestrator's checks (`x-relay-probe: 1`, set only through the API's binding;
+ * forwardableHeaders drops every x-relay-* header a visitor sends): hosting probes (2 at a time), a storage check and
+ * an owner's report can all be in flight. Visitor traffic gets MAX_STREAMS − PROBE_SLOTS, and a probe skips the
+ * per-deployment cap, so load can never refuse a probe: a `busy` answer is the node's own refusal.
  */
-export const PROBE_SLOTS = 2;
+export const PROBE_SLOTS = 4;
 /** Request limits both sides enforce (the hub refuses up front; the agent answers `bad_request`, never silence). */
 export const MAX_PATH_CHARS = 8192;
 export const MAX_REQUEST_HEADERS = 128;
@@ -30,14 +31,18 @@ export const PONG_TIMEOUT_MS = 10_000;
 export const PING = "ping";
 export const PONG = "pong";
 
-/** Two traffic classes: static sites and everything else (containers, workstations, GPU endpoints). */
-export type TrafficClass = "site" | "endpoint";
+/**
+ * Traffic classes: static sites, everything else a node serves (containers, workstations, GPU endpoints), and storage
+ * (dep "storage": leaf proofs for checks — docs/V4_STORAGE_PHASE1_CONTRACT.md).
+ */
+export type TrafficClass = "site" | "endpoint" | "storage";
+export const TRAFFIC_CLASSES: readonly TrafficClass[] = ["site", "endpoint", "storage"];
 /** The response head must arrive within this long after the request was sent. */
-export const HEAD_TIMEOUT_MS: Record<TrafficClass, number> = { site: 30_000, endpoint: 300_000 };
+export const HEAD_TIMEOUT_MS: Record<TrafficClass, number> = { site: 30_000, endpoint: 300_000, storage: 15_000 };
 /** A stream with no frame either way for this long is cancelled. */
 export const IDLE_TIMEOUT_MS = 300_000;
 /** Largest request body forwarded. */
-export const BODY_CAP_BYTES: Record<TrafficClass, number> = { site: 1024 * 1024, endpoint: 16 * 1024 * 1024 };
+export const BODY_CAP_BYTES: Record<TrafficClass, number> = { site: 1024 * 1024, endpoint: 16 * 1024 * 1024, storage: 1024 * 1024 };
 
 export type ErrCode = "not_serving" | "upstream" | "too_large" | "timeout" | "busy" | "bad_request";
 export type Header = [string, string];

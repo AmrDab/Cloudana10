@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { StreamHub } from "../src/hub.js";
-import { MAX_FRAME_BYTES, MAX_STREAMS, PROBE_SLOTS, WINDOW_BYTES, decodeData, encodeData, parseHubMessage, type HubMessage } from "../../shared/relay-protocol.js";
+import { HEAD_TIMEOUT_MS, MAX_FRAME_BYTES, MAX_STREAMS, PROBE_SLOTS, WINDOW_BYTES, decodeData, encodeData, parseHubMessage, type HubMessage } from "../../shared/relay-protocol.js";
 
 /** A hub wired to a scripted fake node: `sent` collects everything the hub sends. */
 function setup() {
@@ -26,6 +26,25 @@ const body = (bytes: Uint8Array) =>
   });
 
 describe("StreamHub", () => {
+  it("gives a storage check (class storage) 15 s for the head, then fails it with timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hub } = setup();
+      const p = hub.proxy({ dep: "storage", cls: "storage", probe: true, method: "GET", path: "/proof?copy=c1&i=0", headers: [], body: null });
+      expect(HEAD_TIMEOUT_MS.storage).toBe(15_000);
+      await vi.advanceTimersByTimeAsync(14_999);
+      let settled = false;
+      void p.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      const res = await p;
+      expect(res.headers.get("x-relay-error")).toBe("timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends req + body + end, and streams the node's response back", async () => {
     const { hub, ctl, data, node } = setup();
     const p = hub.proxy({ dep: "d1", cls: "endpoint", method: "POST", path: "/v1/x?a=1", headers: [["Content-Type", "application/json"], ["Host", "h"]], body: body(new TextEncoder().encode('{"q":1}')) });
