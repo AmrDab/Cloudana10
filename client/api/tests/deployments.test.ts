@@ -192,6 +192,24 @@ describe("node side", () => {
     expect(res.status).toBe(400);
   });
 
+  it("an outage is not charged, the time served before it is", async () => {
+    const { id, node } = await runningSite();
+    // 40 minutes into the hour; checks passed until 10 minutes ago; unreachable since.
+    const now = Date.now();
+    await getD1()
+      .prepare("UPDATE deployments SET last_billed_at = ?, last_ok_at = ?, status = 'unreachable', probe_fail = 3, last_probe_at = 0 WHERE id = ?")
+      .bind(now - 40 * 60_000, now - 10 * 60_000, id)
+      .run();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<h1>hi</h1>", { status: 200 })));
+    await heartbeat(node);
+    const back = (await row(id))!;
+    expect(back).toMatchObject({ status: "running", probe_fail: 0 });
+    // The clock moved forward by the 10-minute outage only: the 30 minutes served are still billed with this hour.
+    expect(back.last_billed_at - (now - 30 * 60_000)).toBeGreaterThanOrEqual(0);
+    expect(back.last_billed_at - (now - 30 * 60_000)).toBeLessThan(5_000);
+    expect(back.last_ok_at).toBeGreaterThanOrEqual(now);
+  });
+
   it("probes: 3 failures → unreachable, success → running again", async () => {
     const { node, id } = await runningSite();
     const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
@@ -239,6 +257,16 @@ describe("node side", () => {
     const closed = await closeEpochs(Date.now() + 2 * 3_600_000);
     const epoch = closed.find((e) => e.leaves.some((l) => l.account === payout));
     expect(epoch!.feesBurnedUcld).toBeGreaterThanOrEqual(50);
+
+    // The public job list shows the bill as the epoch counted it: fee, lanes, provider; the summary without its leaves.
+    const listed = await (await call(`/v1/epochs/${epoch!.epoch}/jobs?limit=500`)).json();
+    expect(listed.epoch).toEqual({ ...epoch, leaves: undefined });
+    expect(listed.jobs).toContainEqual({
+      jobId: entries.results![0].job_id, workType: expect.any(String), provider: payout, feeUcld: 50, laneAUcld: 47, laneBUcld: 0, treasuryUcld: expect.any(Number),
+    });
+    expect(listed.jobs.reduce((s: number, j: any) => s + j.laneAUcld, 0)).toBe(epoch!.totalLaneAUcld);
+    expect(listed.jobs.reduce((s: number, j: any) => s + j.treasuryUcld, 0)).toBe(epoch!.treasuryUcld);
+    expect(await (await call("/v1/epochs/1/jobs")).json()).toEqual({ status: "success", epoch: null, jobs: [], next: null });
   });
 
   it("stops with 'out of credits' when the next hour cannot be held", async () => {
@@ -249,6 +277,28 @@ describe("node side", () => {
     expect(await row(id)).toMatchObject({ status: "stopped", status_reason: "out of credits", stop_acked_at: null });
     expect(hb.deployments).toEqual([{ id, action: "stop", kind: "static", spec: null }]);
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 0, heldUcld: 0 });
+  });
+});
+
+describe("report a problem", () => {
+  it("probes a site now: a failed probe leaves the time since its last passing check uncharged; an unreachable one is already paused", async () => {
+    const { u, id } = await runningSite();
+    await shift(id, "last_billed_at", 20 * 60_000);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+    const res = await authed(u.jwt, "POST", `/v1/deployments/${id}/report`, {});
+    expect(res.status).toBe(200);
+    expect((await res.json()).results).toEqual([
+      { id, probeOk: false, forgivenUcld: 16, message: "probe failed: the time since its last passing check is not charged" }, // ⌊50 × 20/60⌋: never passed one
+    ]);
+    expect(await row(id)).toMatchObject({ status: "running", probe_fail: 1 });
+
+    await getD1().prepare("UPDATE deployments SET status = 'unreachable', probe_fail = 3 WHERE id = ?").bind(id).run();
+    const paused = (await (await authed(u.jwt, "POST", `/v1/deployments/${id}/report`)).json()).results;
+    expect(paused).toEqual([{ id, probeOk: false, forgivenUcld: 0, message: "probe failed: already unreachable, billing was paused" }]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<h1>hi</h1>", { status: 200 })));
+    const back = (await (await authed(u.jwt, "POST", `/v1/deployments/${id}/report`)).json()).results;
+    expect(back).toEqual([{ id, probeOk: true, forgivenUcld: 0, message: "probe ok: reachable again, billing resumes" }]);
+    expect(await row(id)).toMatchObject({ status: "running", probe_fail: 0 });
   });
 });
 

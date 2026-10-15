@@ -79,6 +79,7 @@ export interface DeploymentRow {
   replicas: number;
   /** The node's `docker logs` tail from its last failed report. */
   last_logs: string | null;
+  last_ok_at: number | null;
 }
 
 export const isEndpoint = (r: Pick<DeploymentRow, "replicas">) => r.replicas > 0;

@@ -388,6 +388,56 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
   return closed;
 }
 
+/** One job (or hosting bill) in an epoch: what was paid and what was minted for it, by lane. */
+export interface EpochJob {
+  jobId: string;
+  workType: string;
+  provider: string | null;
+  feeUcld: number | null;
+  laneAUcld: number;
+  laneBUcld: number;
+  treasuryUcld: number;
+}
+
+/**
+ * Every job and hosting bill in epoch `id` (public: the epoch's Merkle leaves are on-chain anyway), counted exactly as
+ * closeEpochs counted them: once closed, the entries it posted (late ones wait for the open epoch); while open or
+ * vetoed, the pending ones (epoch null). So anyone can recompute the leaves and the fees burned. Page by `after`
+ * (a jobId), `limit` ≤ 500. Verifier points are not epoch entries and are not listed.
+ */
+export async function epochJobs(
+  id: number,
+  opts: { after?: string; limit?: number } = {},
+): Promise<{ epoch: EpochPayload | null; jobs: EpochJob[]; next: string | null }> {
+  const db = getD1();
+  const row = await db.prepare("SELECT * FROM epochs WHERE id = ?").bind(id).first<EpochRow>();
+  const closed = !!row && row.status !== "vetoed";
+  const limit = Math.min(500, Math.max(1, opts.limit ?? 200));
+  const res = await db
+    .prepare(
+      "SELECT e.job_id AS jobId, MIN(e.work_type) AS workType, " +
+        "MAX(CASE WHEN e.lane IN ('A','B') THEN e.address END) AS provider, " +
+        "SUM(CASE WHEN e.lane = 'A' THEN e.amount_ucld ELSE 0 END) AS a, SUM(CASE WHEN e.lane = 'B' THEN e.amount_ucld ELSE 0 END) AS b, " +
+        "SUM(CASE WHEN e.lane = 'treasury' THEN e.amount_ucld ELSE 0 END) AS t, " +
+        "COALESCE((SELECT price_ucld FROM work_jobs WHERE id = e.job_id), (SELECT fee_ucld FROM deployment_bills WHERE id = e.job_id)) AS fee " +
+        `FROM reward_entries e WHERE e.epoch = ? AND e.lane IN ('A','B','treasury') AND e.status IN ${closed ? "('posted','settled')" : "('pending')"} ` +
+        "AND e.job_id > ? " +
+        "GROUP BY e.job_id ORDER BY e.job_id LIMIT ?",
+    )
+    .bind(id, opts.after ?? "", limit + 1)
+    .all<{ jobId: string; workType: string; provider: string | null; a: number; b: number; t: number; fee: number | null }>();
+  const rows = res.results ?? [];
+  const page = rows.slice(0, limit);
+  return {
+    epoch: closed ? toPayload(row!) : null,
+    jobs: page.map((r) => ({
+      jobId: r.jobId, workType: r.workType, provider: r.provider, feeUcld: r.fee,
+      laneAUcld: r.a, laneBUcld: r.b, treasuryUcld: r.t,
+    })),
+    next: rows.length > limit ? page[page.length - 1].jobId : null,
+  };
+}
+
 /** Epochs by status, oldest first — lets a stateless keeper re-read what it has to post or finalize. */
 export async function listEpochs(status: "closed" | "posted" | "settled" | "vetoed"): Promise<EpochPayload[]> {
   const rows = await getD1().prepare("SELECT * FROM epochs WHERE status = ? ORDER BY id").bind(status).all<EpochRow>();

@@ -34,7 +34,7 @@ import {
   setSealedEnv,
   stopDeployment,
 } from "../../services/deployments.service.js";
-import { requeueDeadNodeDeployments } from "../../services/deployment-duties.service.js";
+import { REPORTS_PER_DAY, reportProblem, requeueDeadNodeDeployments } from "../../services/deployment-duties.service.js";
 import { log } from "../../lib/logger.js";
 import { requireInternalKey } from "./admin-epochs.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
@@ -204,6 +204,49 @@ deploymentsRouter.openapi(getRoute, async (c) => {
   const [deployment] = await presentDeployments([row], true);
   const replicas = isEndpoint(row) ? (await replicasOf([row.id])).get(row.id) ?? [] : [];
   return ok(c, { deployment, events: await listEvents(row.id, 50, replicas), ...(pubkey && { nodePubkey: pubkey }) });
+});
+
+// ── Report a problem (docs/V4_VERIFIED_SERVICES.md §5) ──────────────────────
+const reportRoute = createRoute({
+  method: "post",
+  path: "/deployments/{id}/report",
+  tags: TAGS,
+  description:
+    `Probe it now, through the relay like the scheduled probes. If that probe fails, the time since its last passing probe ` +
+    `is not charged and the failure counts like any other (3 in a row: unreachable, or an endpoint replica is replaced). ` +
+    `A probe that passes changes nothing. An endpoint checks each live replica. At most ${REPORTS_PER_DAY} reports per account per UTC day.`,
+  security: BEARER_AUTH,
+  request: {
+    params: IdParam,
+    body: { required: false, content: { "application/json": { schema: z.object({ note: z.string().trim().max(500).optional() }) } } },
+  },
+  responses: responses(
+    {
+      200: json(
+        z.object({
+          status: z.literal("success"),
+          results: z.array(z.object({ id: z.string(), probeOk: z.boolean().nullable(), forgivenUcld: z.number().int(), message: z.string() })),
+        }),
+        "Checked",
+      ),
+    },
+    400,
+    401,
+    404,
+    409,
+    429,
+  ),
+});
+
+deploymentsRouter.openapi(reportRoute, async (c) => {
+  let note: string | undefined;
+  try {
+    note = (c.req.valid("json") as { note?: string } | undefined)?.note;
+  } catch {
+    note = undefined;
+  }
+  const r = await reportProblem(c.get("jwtPayload").sub, c.req.valid("param").id, note);
+  return r.ok ? ok(c, { results: r.results }) : fail(c, r.code, r.message);
 });
 
 // ── Endpoint keys (docs/V4_ENDPOINTS_CONTRACT.md) ───────────────────────────

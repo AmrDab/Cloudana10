@@ -1,6 +1,6 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
-import { epochOf, recordJobRewards, splitFee, closeEpochs, ledgerSummary, TREASURY_ACCOUNT } from "../src/services/ledger.service.js";
+import { epochOf, epochJobs, recordJobRewards, splitFee, closeEpochs, ledgerSummary, TREASURY_ACCOUNT } from "../src/services/ledger.service.js";
 import { epochRoot } from "../src/services/epoch-merkle.js";
 import { getD1 } from "../src/lib/storage.js";
 
@@ -74,6 +74,15 @@ describe("ledger entries + epoch close (SQLite)", () => {
     // 80 wanted, budget 50: both jobs got 25, not 40 then 10.
     const b = await getD1().prepare("SELECT job_id, amount_ucld FROM reward_entries WHERE lane = 'B' AND epoch = 1000 ORDER BY job_id").all<{ job_id: string; amount_ucld: number }>();
     expect(b.results).toEqual([{ job_id: "j1", amount_ucld: 25 }, { job_id: "j2", amount_ucld: 25 }]);
+
+    // The public job list, page by page, as the close counted it (no work_jobs rows here: no fee).
+    const job = (jobId: string) => ({ jobId, workType: "matmul", provider, feeUcld: null, laneAUcld: 950, laneBUcld: 25, treasuryUcld: 30 });
+    const first = await epochJobs(1000, { limit: 1 });
+    expect(first).toEqual({ epoch: closed[0], jobs: [job("j1")], next: "j1" });
+    expect(await epochJobs(1000, { after: "j1", limit: 1 })).toEqual({ epoch: closed[0], jobs: [job("j2")], next: null });
+    // A job that commits into the epoch after it closed is not in its root (it moves on at the next close): not listed.
+    await recordJobRewards({ jobId: "j3", workType: "matmul", provider, feeUcld: 1000, clusterOk: true, now: t0 + 5 });
+    expect((await epochJobs(1000)).jobs.map((j) => j.jobId)).toEqual(["j1", "j2"]);
   });
 });
 
