@@ -4,11 +4,11 @@
  * expiry live here; the cron runs runStorageCron(), the heartbeat asks storageInstructions().
  */
 import { getD1 } from "../lib/storage.js";
-import { getEnv } from "../config/env.js";
+import { getEnv, resetEnv } from "../config/env.js";
 import { getRelay } from "../lib/relay.js";
 import { getArtifactStore } from "../lib/artifacts.js";
 import { readCapped } from "../lib/read-capped.js";
-import { compareVersions, instructionSignerAddress } from "./instruction-signing.service.js";
+import { agentVersionAllowed, compareVersions, instructionSignerAddress } from "./instruction-signing.service.js";
 import {
   GCM_TAG_BYTES, LEAF_BYTES, LEAF_PLAIN_BYTES, cipherSize, fromHex, leafCount, leafRange, merkleRoot, toHex, verifyLeaf, type LeafProof,
 } from "../../../../shared/storage-proof.js";
@@ -214,6 +214,7 @@ async function storageNodes(now: number): Promise<StorageNode[]> {
       (JSON.parse(n.work_types ?? "[]") as string[]).includes(STORAGE_CAPABILITY) &&
       !!n.agent_version &&
       compareVersions(n.agent_version, STORAGE_MIN_AGENT) >= 0 &&
+      agentVersionAllowed(n.agent_version) &&
       (env.DEV_MODE || (n.net_prefix !== null && n.asn !== null)),
   );
 }
@@ -245,6 +246,8 @@ export async function placeCopies(now: number, master: Uint8Array): Promise<numb
   const store = getArtifactStore();
   if (!store) return 0;
   const db = getD1();
+  const nodes = await storageNodes(now);
+  if (nodes.length === 0) return 0; // nobody can take a copy: leave the queue as it is
   const objects =
     (
       await db
@@ -256,7 +259,6 @@ export async function placeCopies(now: number, master: Uint8Array): Promise<numb
         .all<{ id: string; size: number; leaves: number }>()
     ).results ?? [];
   if (objects.length === 0) return 0;
-  const nodes = await storageNodes(now);
   const share = await concentration();
   let placed = 0;
   let attempts = 0;
@@ -294,7 +296,12 @@ export async function placeCopies(now: number, master: Uint8Array): Promise<numb
         )
         .sort((a, b) => a.used / effectiveQuota(a) - b.used / effectiveQuota(b))[0];
       if (!pick) break;
-      plain ??= await store.get(obj.id);
+      try {
+        plain ??= await store.get(obj.id);
+      } catch (err) {
+        console.error(`[storage] reading ${obj.id} failed:`, err);
+        break; // R2 hiccup: this object goes to the back of the queue, the rest of the run continues
+      }
       if (!plain) {
         gone = true;
         break;
@@ -515,8 +522,13 @@ async function recordSample(n: DueNode, now: number, miss: boolean, failure: boo
   if (n.storage_open_day !== day) {
     const prev = n.storage_open_day === null
       ? null
-      : await db.prepare("SELECT samples, failures FROM storage_checks WHERE node = ? AND day = ?").bind(n.address, n.storage_open_day).first<{ samples: number; failures: number }>();
-    const passed = prev && prev.samples > 0 && prev.failures === 0 ? 1 : 0;
+      : await db
+          .prepare("SELECT samples, misses, failures FROM storage_checks WHERE node = ? AND day = ?")
+          .bind(n.address, n.storage_open_day)
+          .first<{ samples: number; misses: number; failures: number }>();
+    // A passed day: no confirmed failure, at least one conclusive pass, and misses (flakes, unanswered re-challenges)
+    // on at most half the samples — a node can't earn quota on answers it never gave.
+    const passed = prev && prev.failures === 0 && prev.samples - prev.misses >= 1 && prev.misses * 2 <= prev.samples ? 1 : 0;
     await db
       .prepare("UPDATE nodes SET storage_open_day = ?, storage_passed_days = storage_passed_days + ? WHERE address = ?")
       .bind(day, passed, n.address)
@@ -555,7 +567,13 @@ async function checkNode(n: DueNode, now: number): Promise<void> {
     .bind(n.address)
     .first<CheckedCopy>();
   if (!c) {
-    await db.prepare("UPDATE nodes SET storage_next_check_at = NULL WHERE address = ? AND NOT EXISTS (SELECT 1 FROM storage_copies WHERE node = ? AND state IN ('pending','held'))").bind(n.address, n.address).run();
+    await db
+      .prepare(
+        "UPDATE nodes SET storage_next_check_at = NULL WHERE address = ? " +
+          "AND NOT EXISTS (SELECT 1 FROM storage_copies WHERE node = ? AND state IN ('pending','held','suspect'))",
+      )
+      .bind(n.address, n.address)
+      .run();
     return;
   }
   let r = await sample(n.address, c, 3);
@@ -614,15 +632,17 @@ export async function runChecks(now: number): Promise<Set<string>> {
 export async function auditSuspects(now: number, skip: Set<string>): Promise<void> {
   const db = getD1();
   const fresh = now - getEnv().RELAY_FRESH_SECONDS * 1000;
+  // One candidate per node (oldest audit first), so a node with a large backlog can't crowd out the others.
   const rows =
     (
       await db
         .prepare(
-          "SELECT c.id, c.node, c.object_id, c.root, o.size, o.leaves FROM storage_copies c JOIN storage_objects o ON o.id = c.object_id " +
-            "JOIN nodes n ON n.address = c.node WHERE c.state = 'suspect' AND (c.checked_at IS NULL OR c.checked_at < ?) AND n.relay_at >= ? " +
-            "ORDER BY c.checked_at LIMIT ?",
+          "SELECT id, node, object_id, root, size, leaves FROM (SELECT c.id, c.node, c.object_id, c.root, o.size, o.leaves, " +
+            "ROW_NUMBER() OVER (PARTITION BY c.node ORDER BY c.checked_at) AS rn FROM storage_copies c " +
+            "JOIN storage_objects o ON o.id = c.object_id JOIN nodes n ON n.address = c.node " +
+            "WHERE c.state = 'suspect' AND (c.checked_at IS NULL OR c.checked_at < ?) AND n.relay_at >= ?) WHERE rn = 1 LIMIT ?",
         )
-        .bind(now - AUDIT_AGAIN_MS, fresh, AUDITS_PER_RUN * 5)
+        .bind(now - AUDIT_AGAIN_MS, fresh, AUDITS_PER_RUN + skip.size)
         .all<CheckedCopy & { node: string }>()
     ).results ?? [];
   const picked: (CheckedCopy & { node: string })[] = [];
@@ -640,7 +660,12 @@ export async function auditSuspects(now: number, skip: Set<string>): Promise<voi
   await Promise.all(
     picked.map(async (c) => {
       const r = await sample(c.node, c, 1);
-      if (r === "pass") await db.prepare("UPDATE storage_copies SET state = 'held' WHERE id = ? AND state = 'suspect'").bind(c.id).run();
+      if (r === "pass") {
+        await db.batch([
+          db.prepare("UPDATE storage_copies SET state = 'held' WHERE id = ? AND state = 'suspect'").bind(c.id),
+          db.prepare("UPDATE nodes SET storage_next_check_at = COALESCE(storage_next_check_at, ?) WHERE address = ?").bind(now, c.node),
+        ]);
+      }
       else if (r === "fail") {
         await db.batch([
           db.prepare("UPDATE storage_copies SET state = 'dropping' WHERE id = ? AND state = 'suspect'").bind(c.id),
@@ -669,7 +694,8 @@ export async function expireCopies(now: number): Promise<void> {
       db.prepare("UPDATE storage_objects SET next_attempt_at = ? WHERE id = ?").bind(now, s.object_id),
     ]);
   }
-  const offline = "SELECT address FROM nodes WHERE last_seen IS NULL OR last_seen < ?";
+  // Offline: no heartbeat, or no relay socket (copies are only checked through it), for OFFLINE_MS.
+  const offline = "SELECT address FROM nodes WHERE COALESCE(MIN(last_seen, relay_at), 0) < ?";
   const retained = now - getEnv().STORAGE_RETENTION_DAYS * DAY_MS;
   await db.batch([
     db
@@ -690,12 +716,34 @@ export async function expireCopies(now: number): Promise<void> {
   ]);
 }
 
-/** Cron: expiry, placement, checks, audits — only when copies can be encrypted and instructions signed. */
-export async function runStorageCron(now = Date.now()): Promise<void> {
+/**
+ * Cron: expiry, placement, checks, audits — only when copies can be encrypted and instructions signed. Each phase
+ * runs on its own: one failing never blocks the others. `env` bridges the Worker's string bindings (secrets) on a
+ * cold isolate, like the other cron jobs.
+ */
+export async function runStorageCron(env?: Record<string, unknown>, now = Date.now()): Promise<void> {
+  if (env) {
+    let changed = false;
+    for (const [key, value] of Object.entries(env)) {
+      if (typeof value === "string" && process.env[key] !== value) {
+        process.env[key] = value;
+        changed = true;
+      }
+    }
+    if (changed) resetEnv();
+  }
   const master = await masterKey();
   if (!master || !instructionSignerAddress()) return;
-  await expireCopies(now);
-  await placeCopies(now, master);
-  const checked = await runChecks(now);
-  await auditSuspects(now, checked);
+  const phase = async <T>(name: string, run: () => Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await run();
+    } catch (err) {
+      console.error(`[storage] ${name} failed:`, err);
+      return fallback;
+    }
+  };
+  await phase("expire", () => expireCopies(now), undefined);
+  await phase("place", () => placeCopies(now, master), 0);
+  const checked = await phase("checks", () => runChecks(now), new Set<string>());
+  await phase("audits", () => auditSuspects(now, checked), undefined);
 }

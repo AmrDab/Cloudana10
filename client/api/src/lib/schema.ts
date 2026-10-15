@@ -113,6 +113,9 @@ export const V1_TABLES = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_copies_live ON storage_copies(object_id, copy_idx) WHERE state <> 'dropping'`,
   `CREATE INDEX IF NOT EXISTS idx_storage_copies_node ON storage_copies(node, state)`,
   `CREATE INDEX IF NOT EXISTS idx_storage_copies_object ON storage_copies(object_id, state)`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_copies_pending ON storage_copies(assigned_at) WHERE state = 'pending'`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_copies_suspect ON storage_copies(checked_at) WHERE state = 'suspect'`,
+  `CREATE INDEX IF NOT EXISTS idx_storage_objects_created ON storage_objects(created_at)`,
   `CREATE TABLE IF NOT EXISTS storage_checks (
     node TEXT NOT NULL, day INTEGER NOT NULL, samples INTEGER NOT NULL DEFAULT 0, misses INTEGER NOT NULL DEFAULT 0,
     failures INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node, day))`,

@@ -75,7 +75,7 @@ async function scheduled(_event: ScheduledController, env: Bindings, ctx: Execut
   const jobs: Array<[string, () => Promise<unknown>]> = [
     ["duties", () => runDutiesCron(env as never)],
     ["artifacts", () => moveJobArtifacts()],
-    ["storage", () => runStorageCron()],
+    ["storage", () => runStorageCron(env)],
     ["price", () => runPriceControllerCron(env)],
     ["deposits", () => runDepositWatcherCron(env as never)],
   ];

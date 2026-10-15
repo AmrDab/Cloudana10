@@ -97,6 +97,7 @@ export async function moveJobArtifacts(limit = 20): Promise<number> {
     const body = new TextEncoder().encode(`{"n":${r.n},"matrixA":${r.a_json},"matrixB":${r.b_json},"matrixC":${r.result_json ?? "null"}}`);
     try {
       await store.put(key, body);
+      await registerObject(key, body.byteLength); // provider copies (docs/V4_STORAGE_PHASE1_CONTRACT.md §B); idempotent
     } catch (err) {
       console.error(`[artifacts] put ${key} failed:`, err);
       continue;
@@ -105,10 +106,7 @@ export async function moveJobArtifacts(limit = 20): Promise<number> {
       .prepare("UPDATE work_jobs SET a_json = NULL, b_json = NULL, result_json = NULL, artifact = ? WHERE id = ? AND artifact IS NULL")
       .bind(key, r.id)
       .run();
-    if ((res.meta?.changes ?? 0) > 0) {
-      moved++;
-      await registerObject(key, body.byteLength); // provider copies (docs/V4_STORAGE_PHASE1_CONTRACT.md §B)
-    }
+    if ((res.meta?.changes ?? 0) > 0) moved++;
   }
   return moved;
 }

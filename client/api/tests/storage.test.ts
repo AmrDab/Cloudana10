@@ -230,7 +230,7 @@ describe("placement and instructions", () => {
     expect((await getD1().prepare("SELECT COUNT(*) AS n FROM storage_copies WHERE node = ? AND state = 'pending'").bind(addr(a)).first<{ n: number }>())!.n).toBe(0);
     const later = Date.now() + 11 * 60_000; // past the 10-minute retry; the node is still online then
     await getD1().prepare("UPDATE nodes SET storage_passed_days = 1, relay_at = ?, last_seen = ? WHERE address = ?").bind(later, later, addr(a)).run();
-    await runStorageCron(later);
+    await runStorageCron(undefined, later);
     expect((await getD1().prepare("SELECT COUNT(*) AS n FROM storage_copies WHERE node = ? AND state = 'pending'").bind(addr(a)).first<{ n: number }>())!.n).toBe(8);
   });
 
@@ -365,7 +365,7 @@ describe("expiry", () => {
     const a = await node();
     const obj = await object();
     const t0 = Date.now();
-    await runStorageCron(t0);
+    await runStorageCron(undefined, t0);
     const [p] = await copiesOf(obj.id);
     await expireCopies(t0 + 3_600_001);
     expect((await copiesOf(obj.id))[0].state).toBe("dropping");
@@ -375,16 +375,103 @@ describe("expiry", () => {
 
     const b = await node();
     await getD1().prepare("UPDATE storage_objects SET next_attempt_at = ?").bind(t0).run();
-    await runStorageCron(t0);
+    await runStorageCron(undefined, t0);
     const held = (await copiesOf(obj.id)).find((x) => x.node === addr(b))!;
     await getD1().prepare("UPDATE storage_copies SET state = 'held' WHERE id = ?").bind(held.id).run();
     await getD1().prepare("UPDATE nodes SET last_seen = ? WHERE address = ?").bind(t0 - 49 * 3_600_000, addr(b)).run();
     await expireCopies(t0);
     expect((await copiesOf(obj.id)).find((x) => x.id === held.id)!.state).toBe("dropping");
 
+    // A node that keeps heartbeating but has had no relay socket for 48 h can't be checked: its copies go too.
+    const c2 = await node();
+    await getD1().prepare("UPDATE storage_objects SET next_attempt_at = ?").bind(t0).run();
+    await runStorageCron(undefined, t0);
+    const onC = (await copiesOf(obj.id)).find((x) => x.node === addr(c2))!;
+    await getD1().prepare("UPDATE nodes SET last_seen = ?, relay_at = ? WHERE address = ?").bind(t0, t0 - 49 * 3_600_000, addr(c2)).run();
+    await expireCopies(t0);
+    expect((await copiesOf(obj.id)).find((x) => x.id === onC.id)!.state).toBe("dropping");
+
     await getD1().prepare("UPDATE storage_objects SET created_at = ?").bind(t0 - 31 * 86_400_000).run();
     await expireCopies(t0);
     expect((await copiesOf(obj.id)).every((x) => x.state === "dropping")).toBe(true);
     expect((await getD1().prepare("SELECT next_attempt_at FROM storage_objects WHERE id = ?").bind(obj.id).first<any>())!.next_attempt_at).toBeNull();
+  });
+});
+
+describe("review fixes (PR #41)", () => {
+  async function holdingOn(n: PrivateKeyAccount) {
+    const obj = await object(70_000);
+    await runStorageCron();
+    await fetchAll(n, (await beat(n)).storage);
+    return obj;
+  }
+
+  it("keeps checking a node whose copies are all suspect, and an audit pass re-arms its schedule", async () => {
+    const n = await node();
+    const o1 = await holdingOn(n);
+    await getD1().prepare("UPDATE storage_copies SET state = 'suspect' WHERE object_id = ?").bind(o1.id).run();
+    await getD1().prepare("UPDATE nodes SET storage_next_check_at = 0 WHERE address = ?").bind(addr(n)).run();
+    setRelay(honestRelay());
+    await runChecks(Date.now()); // no held copy to sample: the schedule must survive while suspects remain
+    expect((await nodeRow(n))!.storage_next_check_at).not.toBeNull();
+    await getD1().prepare("UPDATE nodes SET storage_next_check_at = NULL WHERE address = ?").bind(addr(n)).run();
+    await auditSuspects(Date.now(), new Set());
+    expect((await copiesOf(o1.id))[0].state).toBe("held");
+    expect((await nodeRow(n))!.storage_next_check_at).not.toBeNull();
+  });
+
+  it("audits one suspect per node, so a node with a backlog can't starve the others", async () => {
+    const big = await node();
+    for (let i = 0; i < 6; i++) await holdingOn(big); // one copy each (no second node yet; retried in 10 min)
+    const small = await node();
+    await getD1().prepare("UPDATE nodes SET storage_quota_mb = 0 WHERE address = ?").bind(addr(big)).run();
+    const smallObj = await holdingOn(small);
+    await getD1().prepare("UPDATE storage_copies SET state = 'suspect', checked_at = NULL WHERE state = 'held'").run();
+    setRelay(honestRelay());
+    await auditSuspects(Date.now(), new Set());
+    expect((await copiesOf(smallObj.id)).find((x) => x.node === addr(small))!.state).toBe("held");
+    const bigHeld = (await getD1().prepare("SELECT COUNT(*) AS n FROM storage_copies WHERE node = ? AND state = 'held'").bind(addr(big)).first<{ n: number }>())!.n;
+    expect(bigHeld).toBe(1); // one per node per run
+  });
+
+  it("credits a day only with a conclusive pass", async () => {
+    const n = await node();
+    await holdingOn(n);
+    const today = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+    let calls = 0;
+    const honest = honestRelay();
+    // Every sample: the first answer fails, the re-challenge passes → misses only, no conclusive pass.
+    setRelay(async (...args) => (++calls % 2 === 1 ? new Response("", { status: 502, headers: { "x-relay-error": "offline" } }) : honest(...args)));
+    for (const t of [today + 3_600_000, today + 7_200_000]) {
+      await getD1().prepare("UPDATE nodes SET storage_next_check_at = 0, relay_at = ? WHERE address = ?").bind(t, addr(n)).run();
+      await runChecks(t);
+    }
+    const tomorrow = today + 86_400_000 + 3_600_000;
+    setRelay(honest);
+    await getD1().prepare("UPDATE nodes SET storage_next_check_at = 0, relay_at = ? WHERE address = ?").bind(tomorrow, addr(n)).run();
+    await runChecks(tomorrow);
+    expect((await nodeRow(n))!.storage_passed_days).toBe(0);
+  });
+
+  it("skips nodes below the network minimum, refuses reports from unknown nodes, and one bad read doesn't stop placement", async () => {
+    const n = await node();
+    const obj = await object();
+    process.env.MIN_AGENT_VERSION = "1.5.0";
+    try {
+      await runStorageCron();
+      expect(await copiesOf(obj.id)).toHaveLength(0);
+    } finally {
+      delete process.env.MIN_AGENT_VERSION;
+    }
+    const stranger = privateKeyToAccount(generatePrivateKey());
+    expect((await signed(stranger, "POST", "/v1/nodes/storage/report", { copies: [] })).status).toBe(404);
+
+    const other = await object();
+    const failing = { ...store, get: async (k: string) => (k === obj.id ? Promise.reject(new Error("r2 hiccup")) : store.get(k)) };
+    setArtifactStore(failing);
+    await getD1().prepare("UPDATE storage_objects SET next_attempt_at = 0").run();
+    await runStorageCron();
+    expect(await copiesOf(obj.id)).toHaveLength(0);
+    expect((await copiesOf(other.id)).some((x) => x.node === addr(n))).toBe(true);
   });
 });
