@@ -154,8 +154,7 @@ export function solveAssignedJob(
 /* ───────────────────────────────────────────────────────────────────────────
  * STATUS (2026-07-03): both patch points are APPLIED.
  *   - cupow.ts solve() now returns `result` (the decoded C = A·B).
- *   - mining-reward.service.ts gates full rewards on a live, claimed workload;
- *     filler certificates earn a reduced fraction under a per-provider daily cap.
- * The bridge itself is consumed by provider-node-server/src/pouw-miner.ts, which
- * claims jobs from GET /v1/pouw/job and submits result + workloadId together.
+ * Its legacy consumers (provider-node-server/src/pouw-miner.ts, GET /v1/pouw/job,
+ * mining-reward.service.ts) were removed on 2026-10-13; assigned work uses
+ * solveAssignedJob via /v1/work.
  * ─────────────────────────────────────────────────────────────────────────── */

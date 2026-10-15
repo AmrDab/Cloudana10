@@ -36,6 +36,9 @@ for the transcript/commitment hashes. The off-chain miner and verifier
 witness matches. This is a coordinated change across miner, verifier, and circuit.
 
 ## Wiring into the contract
+> `POUWVerifier.sol` was deleted on 2026-10-13 (abandoned; docs/POUW_REVIEW.md §7, which also recommends dropping
+> Groth16 over this transcript). The sketch below is the original plan; a verifier contract would be written fresh.
+
 `npm run verifier:sol` emits `Groth16Verifier.sol`. In `POUWVerifier.sol`, replace
 the orchestrator-trusted `recordCertificate(...)` path with:
 

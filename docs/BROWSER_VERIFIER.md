@@ -4,6 +4,10 @@
 **One-liner:** anyone can contribute spare browser compute *as a verifier* in the challenger
 network — no install, opt-in, earning non-transferable testnet credits.
 
+> **Update (2026-10-13):** `ChallengeManager` was never wired in and has been deleted (docs/POUW_REVIEW.md §7). The
+> challenger-network design below is the original plan, not current behaviour; the shipped feed is a public re-check
+> whose verdicts do not feed back into jobs or providers (POUW_REVIEW §5).
+
 ---
 
 ## Why this exists

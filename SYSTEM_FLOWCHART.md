@@ -1,5 +1,9 @@
 # Cloudana System Flowchart — Provider to User
 
+> **Partly superseded (2026-10-13).** The PoUW mining path drawn here (`pouw-miner.ts` → `POST /v1/pouw/submit` →
+> `pouw-verifier.service.ts` → `pouw-chain-recorder` / `mining-reward.service.ts` → `POUWVerifier`) and
+> `ChallengeManager` have been removed (docs/POUW_REVIEW.md §7). Paid matrix work runs through `/v1/jobs` + `/v1/work`.
+
 ## High-Level Architecture
 
 ```
