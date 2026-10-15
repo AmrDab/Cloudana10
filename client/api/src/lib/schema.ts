@@ -139,6 +139,8 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE deployments ADD COLUMN last_ok_at INTEGER",
   // Job artifacts (docs/V4_STORAGE_PHASE1_CONTRACT.md §A): R2 key once a finished job's matrices left D1.
   "ALTER TABLE work_jobs ADD COLUMN artifact TEXT",
+  // Inconclusive probes in a row: the third counts as a failure (docs/V4_STORAGE_PHASE1_CONTRACT.md review #2).
+  "ALTER TABLE deployments ADD COLUMN probe_inconclusive INTEGER NOT NULL DEFAULT 0",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

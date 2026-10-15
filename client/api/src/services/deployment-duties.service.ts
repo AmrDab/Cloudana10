@@ -48,6 +48,8 @@ const PROBE_TIMEOUT_MS = 3000;
 /** Probes through the relay cross one more hop (Worker → Durable Object → node socket). */
 const RELAY_PROBE_TIMEOUT_MS = 5000;
 const PROBE_MAX_BYTES = 4 * 1024 * 1024;
+/** Inconclusive probes in a row before the next one counts as a failure. */
+const INCONCLUSIVE_MAX = 3;
 /** Hours billed per heartbeat at most (a long-silent orchestrator catches up over a few beats). */
 const MAX_HOURS_PER_BEAT = 24;
 /** RAM kept back for the host when fitting containers onto a node. */
@@ -389,7 +391,10 @@ export async function probeOne(endpoint: string, probe?: { path: string; hash: s
   }
 }
 
-/** With a content hash: 200 and sha256(body) == hash (≤ PROBE_MAX_BYTES). Without: reachability (2xx/3xx). */
+/**
+ * With a content hash: 200 and sha256(body) == hash, reading at most PROBE_MAX_BYTES (relayed responses carry no
+ * content-length, so the cap is enforced while reading). Without: reachability (2xx/3xx). A body that breaks off throws.
+ */
 async function probePassed(res: Response, probe?: { path: string; hash: string } | null): Promise<boolean> {
   if (!probe) {
     await res.body?.cancel().catch(() => undefined);
@@ -399,8 +404,33 @@ async function probePassed(res: Response, probe?: { path: string; hash: string }
     await res.body?.cancel().catch(() => undefined);
     return false;
   }
-  const body = await res.arrayBuffer();
-  return body.byteLength <= PROBE_MAX_BYTES && sha256Hex(body) === probe.hash.toLowerCase();
+  const body = await readCapped(res, PROBE_MAX_BYTES);
+  return body !== null && sha256Hex(body) === probe.hash.toLowerCase();
+}
+
+/** The response body, or null once it passes `max` bytes (reading stops there). A stream error throws. */
+async function readCapped(res: Response, max: number): Promise<Uint8Array | null> {
+  if (!res.body) return new Uint8Array();
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
 }
 
 /** "inconclusive": nobody reached the app, so the probe neither passes nor counts as a failure. */
@@ -412,7 +442,8 @@ export type ProbeResult = boolean | "inconclusive";
  * pauses rather than charging for something nobody checked). Probes carry `x-relay-probe: 1`, which the hub admits
  * into slots visitor traffic can never fill (PROBE_SLOTS), so load never refuses a probe: `busy`, a timeout, offline
  * or not serving all fail (a node that answered `busy` to dodge checks kept billing before — docs/V4_REVIEW_STORAGE.md
- * #5). Only a relay call that fails before reaching the node (the binding itself) is inconclusive.
+ * #5). Only the relay call itself failing (the binding) is inconclusive: once the node has answered, a body that breaks
+ * off or runs past the deadline fails (a node could otherwise answer 200 and abort to dodge every content check).
  */
 export async function probeRelayed(
   node: string,
@@ -424,16 +455,24 @@ export async function probeRelayed(
   const probe = row.probe_path && row.probe_hash ? { path: row.probe_path, hash: row.probe_hash } : null;
   // A content probe fetches its file; an endpoint replica its health path (stored verbatim, no hash); else "/".
   const path = probe ? `/${probe.path.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/")}` : row.probe_path || "/";
+  let res: Response;
   try {
-    const res = await relay(node, "/proxy", {
+    res = await relay(node, "/proxy", {
       method: "GET",
       headers: { "x-relay-dep": row.id, "x-relay-class": row.kind === "static" ? "site" : "endpoint", "x-relay-path": path, "x-relay-probe": "1" },
       signal: AbortSignal.timeout(RELAY_PROBE_TIMEOUT_MS),
     });
-    if (opts.busyInconclusive && res.headers.get("x-relay-error") === "busy") return "inconclusive";
-    return await probePassed(res, probe);
   } catch (err) {
     return (err as Error)?.name === "TimeoutError" ? false : "inconclusive";
+  }
+  if (opts.busyInconclusive && res.headers.get("x-relay-error") === "busy") {
+    await res.body?.cancel().catch(() => undefined);
+    return "inconclusive";
+  }
+  try {
+    return await probePassed(res, probe);
+  } catch {
+    return false;
   }
 }
 
@@ -479,9 +518,16 @@ async function recordProbe(node: string, row: DeploymentRow, result: ProbeResult
   const env = getEnv();
   const db = getD1();
   if (result === "inconclusive") {
-    // Nobody reached the app: try again next time, counting nothing either way.
-    await db.prepare("UPDATE deployments SET last_probe_at = ? WHERE id = ?").bind(now, row.id).run();
-    return;
+    // Nobody reached the app: try again next time, counting nothing either way — up to INCONCLUSIVE_MAX in a row,
+    // then it counts as a failure (nothing a node does should keep it unchecked for good).
+    if ((row.probe_inconclusive ?? 0) + 1 < INCONCLUSIVE_MAX) {
+      await db.prepare("UPDATE deployments SET last_probe_at = ?, probe_inconclusive = COALESCE(probe_inconclusive, 0) + 1 WHERE id = ?").bind(now, row.id).run();
+      return;
+    }
+    result = false;
+  }
+  if ((row.probe_inconclusive ?? 0) > 0) {
+    await db.prepare("UPDATE deployments SET probe_inconclusive = 0 WHERE id = ?").bind(row.id).run();
   }
   if (result) {
     if (row.status === "unreachable") {

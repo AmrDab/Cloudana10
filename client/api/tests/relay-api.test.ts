@@ -185,6 +185,62 @@ describe("relayed deployments", () => {
     await signed(node, "/v1/nodes/heartbeat", { relay: true });
     expect((await depRow(id))!.probe_fail).toBe(2);
   });
+
+  it("fails a node that answers 200 and breaks off, or sends more than the cap; never 'inconclusive'", async () => {
+    const { node, id } = await runningRelayed();
+    const reprobe = () => getD1().prepare("UPDATE deployments SET last_probe_at = 0 WHERE id = ?").bind(id).run();
+    // The head arrives, then the stream errors (a node aborting after the 200).
+    setRelay(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(ctl) {
+          ctl.enqueue(new TextEncoder().encode(INDEX.slice(0, 5)));
+          ctl.error(new Error("node sent err"));
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    await signed(node, "/v1/nodes/heartbeat", { relay: true });
+    expect(await depRow(id)).toMatchObject({ probe_fail: 1, probe_inconclusive: 0 });
+    // No content-length through the relay: the cap is enforced while reading.
+    let pulled = 0;
+    setRelay(async () => {
+      const chunk = new Uint8Array(1024 * 1024);
+      const body = new ReadableStream<Uint8Array>({
+        pull(ctl) {
+          pulled++;
+          ctl.enqueue(chunk);
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    await reprobe();
+    await signed(node, "/v1/nodes/heartbeat", { relay: true });
+    expect((await depRow(id))!.probe_fail).toBe(2);
+    expect(pulled).toBeLessThanOrEqual(6); // stopped just past 4 MiB, not read to the end
+  });
+
+  it("counts the third inconclusive probe in a row as a failure", async () => {
+    const { node, id } = await runningRelayed();
+    const reprobe = () => getD1().prepare("UPDATE deployments SET last_probe_at = 0 WHERE id = ?").bind(id).run();
+    setRelay(async () => {
+      throw new Error("binding exploded");
+    });
+    for (const [inconclusive, fails] of [[1, 0], [2, 0], [0, 1]]) {
+      await reprobe();
+      await signed(node, "/v1/nodes/heartbeat", { relay: true });
+      expect(await depRow(id)).toMatchObject({ probe_inconclusive: inconclusive, probe_fail: fails });
+    }
+    // A conclusive probe resets the streak.
+    setRelay(async () => {
+      throw new Error("binding exploded");
+    });
+    await reprobe();
+    await signed(node, "/v1/nodes/heartbeat", { relay: true });
+    setRelay(async () => new Response(INDEX, { status: 200 }));
+    await reprobe();
+    await signed(node, "/v1/nodes/heartbeat", { relay: true });
+    expect(await depRow(id)).toMatchObject({ probe_inconclusive: 0, probe_fail: 0 });
+  });
 });
 
 describe("workstation webPath", () => {

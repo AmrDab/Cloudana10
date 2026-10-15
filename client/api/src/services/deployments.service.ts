@@ -80,6 +80,8 @@ export interface DeploymentRow {
   /** The node's `docker logs` tail from its last failed report. */
   last_logs: string | null;
   last_ok_at: number | null;
+  /** Inconclusive probes in a row (the relay binding failed); INCONCLUSIVE_MAX of them count as a failure. */
+  probe_inconclusive: number | null;
 }
 
 export const isEndpoint = (r: Pick<DeploymentRow, "replicas">) => r.replicas > 0;
