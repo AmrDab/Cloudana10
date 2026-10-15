@@ -17,6 +17,7 @@ import {
   isTerminal, isUnavailable, useDeployment, useDeployments, useSession, type Deployment, type DeploymentDetail,
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
+import { ReportProblem } from "@/components/console/report-problem";
 import { KindPill } from "./templates";
 import { autoSeal, clearPendingSecrets, getSealState, hostOf, pendingSecrets, publicUrl, setSealState, useSealVersion } from "./model";
 
@@ -320,6 +321,7 @@ function Detail({ d }: { d: Deployment }) {
               <ExternalLink /> Open site
             </a>
           )}
+          {(d.status === "running" || d.status === "unreachable") && <ReportProblem id={d.id} name={d.name} />}
           {!isTerminal(d.status) && <StopButton d={d} />}
         </div>
       </div>
