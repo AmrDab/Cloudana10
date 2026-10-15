@@ -408,10 +408,19 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 ## Storage (step 8) — spec v2 for owner decision (2026-10-13)
 - [x] Spec v1 + independent review (17 findings); finding 5 (busy dodged hosting probes) fixed and deployed (PR #31: relay 3e6666fd, API 08e78ae3)
 - [x] Spec v2: three phases (network artifacts → buckets with an R2 copy → provider durability at ≥ 14 independent operators)
-- [ ] Owner: phased plan, phase-2 prices ($0.02/GB-month, $0.01/GB down), key custody, DMCA/abuse contacts
+- [x] Owner decisions (2026-10-15, "go with what you recommend"): phased plan with R2 copy; $0.02/GB-month + $0.01/GB down; Cloudana holds keys; DMCA agent + abuse contact before phase 2 (runbook step 11) — PR #37
 
 ## V4 step 6 — report a problem + epoch job list (2026-10-15)
 - [x] API (PR #34, live as API b0587e56): POST /v1/deployments/{id}/report (immediate probe through the relay; ≤ 5/account/day, claimed atomically); GET /v1/epochs/{n}/jobs (public; counts what the close posted)
 - [x] Billing rule after review: pay for time a probe saw working (deployments.last_ok_at). A failed report probe and recovery from unreachable forgive only the time since the last passing probe; closes "flap 3 probes before each hour = pay nothing" and "fail one check + report = ~59 min free"
-- [ ] Console button (PR #35): shown on localhost; publish on the owner's "publish"
+- [x] Console button (PR #35): published 2026-10-15
 - [ ] Network check counters come with verified mode (step 4)
+
+## Storage phase 1 (2026-10-15) · docs/V4_STORAGE_PHASE1_CONTRACT.md
+- [x] Part A: finished jobs' matrices move from D1 to R2 (cloudana-artifacts); verify tasks stop copying matrices (PR #38)
+- [x] Contract reviewed (7 findings folded in); review finding #2 was a live hosting-probe hole: a node answering 200 then aborting was never failed — fixed (PR #39)
+- [x] Proof library + relay storage class + PROBE_SLOTS 4 (PR #40, relay 8b664f6f)
+- [x] API: encrypted copies, placement (network diversity, growing quota, 50% caps), signed storage ops, downloads only while pending, cron checks with re-challenge, suspect audits, cooldowns, expiry; code review's 10 findings fixed (PR #41, API 8e5d2c27)
+- [x] Agent 1.4.0 storage role (PR #42); the agent image build had failed on main since #29 (shared/gpu-tier.ts missing from the Docker context) — fixed, PRs now build the image; 1.4.0 published
+- [ ] Owner: STORAGE_KEK with the step-2 secrets; then storage nodes (CLOUDANA_STORAGE_GB) start holding copies
+- [ ] Phase 2 (buckets): after the content domain (step 8) and the DMCA agent (step 11)

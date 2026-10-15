@@ -1,6 +1,6 @@
 # Storage phase 1 — build contract
 
-Status: **part A live; part B: relay live (storage class, 4 probe slots), API built (PR #41), agent 1.4.0 next** · 2026-10-15.
+Status: **built and live 2026-10-15** — API 8e5d2c27 (PRs #38, #41), relay 8b664f6f (#40), agent image 1.4.0 (#42). Copies start once `STORAGE_KEK` and the instruction-signing key are set and storage nodes (`CLOUDANA_STORAGE_GB`) join.
 - This contract implements build-order step 1 of [V4_STORAGE_SPEC.md](V4_STORAGE_SPEC.md) v2, owner-approved
   2026-10-15.
 - Users get nothing new. Cloudana's own job data moves out of D1 into R2, and providers start holding encrypted copies
