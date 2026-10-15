@@ -428,3 +428,82 @@ describe("stop and secrets", () => {
     expect(await beat(a)).toEqual([expect.objectContaining({ id: r1.id, action: "start", sealedEnv: sealed })]);
   });
 });
+
+describe("report a problem", () => {
+  const report = (jwt: string, id: string, body?: unknown) => authed(jwt, "POST", `/v1/deployments/${id}/report`, body);
+
+  it("probes each replica now: a failed probe leaves the elapsed hour uncharged, a passing one changes nothing", async () => {
+    const { u, id, a, r1, r2 } = await liveEndpoint();
+    // 30 minutes into both replicas' hour.
+    await getD1().prepare("UPDATE deployments SET last_billed_at = last_billed_at - ? WHERE parent_id = ?").bind(30 * 60_000, id).run();
+    const marked: boolean[] = [];
+    setRelay(async (node, _p, init) => {
+      marked.push(init?.headers?.["x-relay-probe"] === "1");
+      return node === addr(a) ? new Response("", { status: 503 }) : new Response('{"ok":true}');
+    });
+    const before = await getBalanceUcld(u.addr);
+    const res = await report(u.jwt, id, { note: "502s since noon" });
+    expect(res.status).toBe(200);
+    const { results } = await res.json();
+    expect(results).toEqual([
+      { id: r1.id, probeOk: false, forgivenUcld: expect.any(Number), message: "probe failed: this hour is not charged" },
+      { id: r2.id, probeOk: true, forgivenUcld: 0, message: expect.stringMatching(/^probe ok: it answered/) },
+    ]);
+    expect(marked).toEqual([true, true]);
+    expect(results[0].forgivenUcld).toBeGreaterThanOrEqual(2699); // ≈ 30/60 × 5400
+    expect(results[0].forgivenUcld).toBeLessThanOrEqual(2701);
+    // The failure counts like a scheduled one; the next hour starts now; nothing was charged or released.
+    const failed = (await row(r1.id))!;
+    expect(failed).toMatchObject({ status: "running", probe_fail: 1 });
+    expect(failed.last_billed_at).toBeGreaterThan(Date.now() - 10_000);
+    expect((await row(r2.id))!.last_billed_at).toBeLessThan(Date.now() - 29 * 60_000);
+    expect(await getBalanceUcld(u.addr)).toEqual(before);
+
+    const stored = await getD1().prepare("SELECT * FROM deployment_reports WHERE deployment_id = ?").bind(id).all<Record<string, any>>();
+    expect(stored.results).toEqual([expect.objectContaining({ owner: u.addr, probe_ok: 0, forgiven_ucld: results[0].forgivenUcld, note: "502s since noon" })]);
+    const events = (await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json()).events.map((e: any) => e.message);
+    expect(events).toContain("llm #1: reported by the owner — probe failed: this hour is not charged");
+    expect(events).toContain("reported by the owner: 1 of 2 replicas failed the check");
+
+    // A probe that passes after this hour's probes failed still leaves the hour uncharged, once: it resets the count.
+    await getD1().prepare("UPDATE deployments SET last_billed_at = last_billed_at - ? WHERE id = ?").bind(10 * 60_000, r1.id).run();
+    setRelay(async () => new Response('{"ok":true}'));
+    const again = (await (await report(u.jwt, id)).json()).results;
+    expect(again[0]).toMatchObject({ id: r1.id, probeOk: true, message: "probe ok now, but this hour's probes had failed: this hour is not charged" });
+    expect(again[0].forgivenUcld).toBeGreaterThanOrEqual(899);
+    expect(await row(r1.id)).toMatchObject({ status: "running", probe_fail: 0 });
+    const third = (await (await report(u.jwt, id)).json()).results;
+    expect(third.map((r: any) => r.forgivenUcld)).toEqual([0, 0]);
+  });
+
+  it("forgives nothing when the check can't reach the node, and limits reports per account per day", async () => {
+    const { u, id, r1 } = await liveEndpoint();
+    await getD1().prepare("UPDATE deployments SET last_billed_at = last_billed_at - ? WHERE parent_id = ?").bind(30 * 60_000, id).run();
+    setRelay(async () => {
+      throw new Error("binding exploded");
+    });
+    const res = await report(u.jwt, id);
+    expect(res.status).toBe(200);
+    expect((await res.json()).results.map((r: any) => [r.probeOk, r.forgivenUcld])).toEqual([[null, 0], [null, 0]]);
+    expect(await row(r1.id)).toMatchObject({ status: "running", probe_fail: 0 });
+    expect((await row(r1.id))!.last_billed_at).toBeLessThan(Date.now() - 29 * 60_000);
+
+    for (let i = 2; i <= 5; i++) expect((await report(u.jwt, id)).status).toBe(200);
+    const sixth = await report(u.jwt, id);
+    expect(sixth.status).toBe(429);
+    expect((await sixth.json()).error.message).toMatch(/at most 5 reports a day/);
+  });
+
+  it("is the owner's, on the endpoint (not a replica), and needs something running", async () => {
+    const { u, id, r1 } = await liveEndpoint();
+    const other = await user();
+    expect((await report(other.jwt, id)).status).toBe(404);
+    expect((await report(u.jwt, r1.id)).status).toBe(404);
+    expect((await authed(u.jwt, "DELETE", `/v1/deployments/${id}`)).status).toBe(200);
+    const res = await report(u.jwt, id);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.message).toBe("nothing is running to check (status stopped)");
+    // Refusals are not counted.
+    expect((await getD1().prepare("SELECT COUNT(*) AS n FROM deployment_reports WHERE owner = ?").bind(u.addr).first<{ n: number }>())!.n).toBe(0);
+  });
+});

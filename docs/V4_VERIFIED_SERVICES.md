@@ -124,8 +124,11 @@ Later: `POST /v1/challenges`; autoscaling and scale-to-zero; per-request billing
 4. **Verified mode:** pinned open models, sampling, reference pool, teacher-forced checker, receipts, flag-only.
 5. **Calibration** on two GPUs (~1,000 honest requests + substitution tests; false positives < 0.1 %) → enable
    claw + ban.
-6. **Report a problem** + epoch job list + network counters.
-7. **Console:** Run → **Endpoints** tab (deploy, keys, URL, health, logs, cost); Services labels; docs.
+6. ~~**Report a problem** + epoch job list~~ — built (`POST /v1/deployments/{id}/report`: an immediate probe through
+   the relay; a failed probe, or this hour's probes already failing, leaves the elapsed part of the hour uncharged;
+   `GET /v1/epochs/{n}/jobs`). The check counters in `GET /v1/network` come with verified mode (step 4).
+7. ~~**Console:** Run → **Endpoints** tab (deploy, keys, URL, health, logs, cost); Services labels; docs~~ — live
+   2026-10-14.
 8. **Storage** (own spec).
 
 ## 8. Owner decisions

@@ -449,57 +449,153 @@ async function probe(node: string, now: number): Promise<void> {
   // At most PROBE_SLOTS probes in flight per node: that is what the hub reserves for them.
   const results: ProbeResult[] = [];
   for (let i = 0; i < rows.length; i += PROBE_SLOTS) {
-    results.push(
-      ...(await Promise.all(
-        rows.slice(i, i + PROBE_SLOTS).map((r) =>
-          r.relayed ? probeRelayed(node, r) : endpointAllowed(r.endpoint!, env.DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : false,
-        ),
-      )),
-    );
+    results.push(...(await Promise.all(rows.slice(i, i + PROBE_SLOTS).map((r) => probeRow(node, r)))));
   }
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (results[i] === "inconclusive") {
-      // Nobody reached the app: try again next time, counting nothing either way.
-      await db.prepare("UPDATE deployments SET last_probe_at = ? WHERE id = ?").bind(now, row.id).run();
-      continue;
+  for (let i = 0; i < rows.length; i++) await recordProbe(node, rows[i], results[i], now);
+}
+
+/** One probe of one running/unreachable deployment on `node` (through the relay, or direct for a legacy node). */
+function probeRow(node: string, r: DeploymentRow): Promise<ProbeResult> {
+  if (r.relayed) return probeRelayed(node, r);
+  return endpointAllowed(r.endpoint!, getEnv().DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : Promise.resolve(false);
+}
+
+/** What a probe result does to its deployment: the same for scheduled probes and for those a report triggers. */
+async function recordProbe(node: string, row: DeploymentRow, result: ProbeResult, now: number): Promise<void> {
+  const env = getEnv();
+  const db = getD1();
+  if (result === "inconclusive") {
+    // Nobody reached the app: try again next time, counting nothing either way.
+    await db.prepare("UPDATE deployments SET last_probe_at = ? WHERE id = ?").bind(now, row.id).run();
+    return;
+  }
+  if (result) {
+    if (row.status === "unreachable") {
+      // Billing resumes with a fresh hour: the outage and the partial hour before it are not charged.
+      await db
+        .prepare(
+          "UPDATE deployments SET status = 'running', status_reason = NULL, probe_fail = 0, last_probe_at = ?, last_billed_at = ? " +
+            "WHERE id = ? AND status = 'unreachable'",
+        )
+        .bind(now, now, row.id)
+        .run();
+      await addEvent(row.id, "info", "probe ok — reachable again; billing resumed", now);
+    } else {
+      await db.prepare("UPDATE deployments SET probe_fail = 0, last_probe_at = ? WHERE id = ?").bind(now, row.id).run();
     }
-    if (results[i]) {
-      if (row.status === "unreachable") {
-        // Billing resumes with a fresh hour: the outage and the partial hour before it are not charged.
-        await db
-          .prepare(
-            "UPDATE deployments SET status = 'running', status_reason = NULL, probe_fail = 0, last_probe_at = ?, last_billed_at = ? " +
-              "WHERE id = ? AND status = 'unreachable'",
-          )
-          .bind(now, now, row.id)
-          .run();
-        await addEvent(row.id, "info", "probe ok — reachable again; billing resumed", now);
-      } else {
-        await db.prepare("UPDATE deployments SET probe_fail = 0, last_probe_at = ? WHERE id = ?").bind(now, row.id).run();
+    return;
+  }
+  const fails = row.probe_fail + 1;
+  const toUnreachable = row.status === "running" && fails >= env.DEPLOY_PROBE_FAILS;
+  if (toUnreachable && row.parent_id) {
+    // An endpoint replica is replaced, not waited for: back to the queue for another node. This node is owed a stop
+    // and is skipped for this replica (nodeRefusalPrefix) so it cannot reclaim it while that stop is still running;
+    // the part of the hour it served is billed (the app, not the node, failed).
+    await requeueRows([row], `${nodeRefusalPrefix(node)} replica failed ${fails} health probes`, now, { settleHour: true });
+    return;
+  }
+  await db
+    .prepare(
+      `UPDATE deployments SET probe_fail = ?, last_probe_at = ?${toUnreachable ? ", status = 'unreachable', status_reason = ?" : ""} ` +
+        "WHERE id = ? AND status = ?",
+    )
+    .bind(...(toUnreachable ? [fails, now, `${fails} failed probes`, row.id, row.status] : [fails, now, row.id, row.status]))
+    .run();
+  const what = probeOf(row) ? "content probe failed" : "probe failed";
+  if (toUnreachable) await addEvent(row.id, "error", `unreachable after ${fails} failed probes — billing paused`, now);
+  else if (row.status === "running") await addEvent(row.id, "warn", `${what} (${fails}/${env.DEPLOY_PROBE_FAILS})`, now);
+}
+
+// ── Report a problem (docs/V4_VERIFIED_SERVICES.md §5) ──────────────────────
+/** Reports one owner may file per UTC day. */
+export const REPORTS_PER_DAY = 5;
+
+export interface ReportOutcome {
+  /** The deployment (or endpoint replica) that was probed. */
+  id: string;
+  /** null: the check could not reach the node (inconclusive) or there was nothing running to check. */
+  probeOk: boolean | null;
+  /** µCLD of the current hour that will not be charged. */
+  forgivenUcld: number;
+  message: string;
+}
+
+export type ProblemReportResult =
+  | { ok: true; results: ReportOutcome[] }
+  | { ok: false; code: "not_found" | "conflict" | "rate_limited"; message: string };
+
+/**
+ * The owner says it's broken: probe it now (through the relay, like the scheduled probes). If that probe fails, or
+ * the probes already failed this hour, the current hour is not charged (last_billed_at moves to now) and the failure
+ * counts like any other. A healthy service can't be reported out of paying. An endpoint reports each live replica.
+ * ≤ REPORTS_PER_DAY per owner per UTC day.
+ */
+export async function reportProblem(owner: string, id: string, note: string | undefined, now = Date.now()): Promise<ProblemReportResult> {
+  const db = getD1();
+  const who = normalizeAddress(owner);
+  const row = await getDeploymentRow(id);
+  if (!row || row.owner !== who || row.parent_id) return { ok: false, code: "not_found", message: "deployment not found" };
+  const dayStart = now - (now % 86_400_000);
+  const used = await db.prepare("SELECT COUNT(*) AS n FROM deployment_reports WHERE owner = ? AND at >= ?").bind(who, dayStart).first<{ n: number }>();
+  if ((used?.n ?? 0) >= REPORTS_PER_DAY) {
+    return { ok: false, code: "rate_limited", message: `at most ${REPORTS_PER_DAY} reports a day; the network probes every minute anyway` };
+  }
+  const live =
+    row.replicas > 0
+      ? ((await db.prepare("SELECT * FROM deployments WHERE parent_id = ? AND status IN ('running','unreachable') ORDER BY created_at").bind(id).all<DeploymentRow>()).results ?? [])
+      : row.status === "running" || row.status === "unreachable"
+        ? [row]
+        : [];
+  // Only what the scheduled probes can reach: on a node, through the relay or at a reported endpoint.
+  const targets = live.filter((t) => t.node && (t.relayed || t.endpoint));
+  if (targets.length === 0) return { ok: false, code: "conflict", message: `nothing is running to check (status ${row.status})` };
+
+  const results: ReportOutcome[] = [];
+  for (const t of targets) {
+    const node = t.node!;
+    const result = await probeRow(node, t);
+    const alreadyFailing = t.status === "unreachable" || t.probe_fail > 0;
+    let forgiven = 0;
+    let current = t;
+    if ((result === false || alreadyFailing) && t.status === "running" && t.last_billed_at !== null && t.last_billed_at < now) {
+      const r = await db
+        .prepare("UPDATE deployments SET last_billed_at = ? WHERE id = ? AND status = 'running' AND last_billed_at = ?")
+        .bind(now, t.id, t.last_billed_at)
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) {
+        forgiven = Math.floor((t.price_ucld_per_hour * Math.min(HOUR_MS, now - t.last_billed_at)) / HOUR_MS);
+        current = { ...t, last_billed_at: now };
       }
-      continue;
     }
-    const fails = row.probe_fail + 1;
-    const toUnreachable = row.status === "running" && fails >= env.DEPLOY_PROBE_FAILS;
-    if (toUnreachable && row.parent_id) {
-      // An endpoint replica is replaced, not waited for: back to the queue for another node. This node is owed a stop
-      // and is skipped for this replica (nodeRefusalPrefix) so it cannot reclaim it while that stop is still running;
-      // the part of the hour it served is billed (the app, not the node, failed).
-      await requeueRows([row], `${nodeRefusalPrefix(node)} replica failed ${fails} health probes`, now, { settleHour: true });
-      continue;
-    }
-    await db
-      .prepare(
-        `UPDATE deployments SET probe_fail = ?, last_probe_at = ?${toUnreachable ? ", status = 'unreachable', status_reason = ?" : ""} ` +
-          "WHERE id = ? AND status = ?",
-      )
-      .bind(...(toUnreachable ? [fails, now, `${fails} failed probes`, row.id, row.status] : [fails, now, row.id, row.status]))
-      .run();
-    const what = probeOf(row) ? "content probe failed" : "probe failed";
-    if (toUnreachable) await addEvent(row.id, "error", `unreachable after ${fails} failed probes — billing paused`, now);
-    else if (row.status === "running") await addEvent(row.id, "warn", `${what} (${fails}/${env.DEPLOY_PROBE_FAILS})`, now);
+    await recordProbe(node, current, result, now);
+    const message =
+      result === "inconclusive"
+        ? forgiven > 0
+          ? "the check could not reach the node, but this hour's probes had failed: this hour is not charged"
+          : "the check could not reach the node; the network keeps probing every minute"
+        : result
+          ? forgiven > 0
+            ? "probe ok now, but this hour's probes had failed: this hour is not charged"
+            : t.status === "unreachable"
+              ? "probe ok: reachable again, billing resumes"
+              : "probe ok: it answered the network's check; if it is still broken for you, check your app's logs"
+          : t.status === "unreachable"
+            ? "probe failed: already unreachable, billing was paused"
+            : "probe failed: this hour is not charged";
+    await addEvent(t.id, result === false ? "warn" : "info", `reported by the owner — ${message}`, now);
+    results.push({ id: t.id, probeOk: result === "inconclusive" ? null : result, forgivenUcld: forgiven, message });
   }
+  await db
+    .prepare("INSERT INTO deployment_reports (id, deployment_id, owner, at, probe_ok, forgiven_ucld, note) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(
+      crypto.randomUUID(), id, who, now,
+      results.every((r) => r.probeOk === true) ? 1 : results.some((r) => r.probeOk === false) ? 0 : null,
+      results.reduce((s, r) => s + r.forgivenUcld, 0),
+      note?.slice(0, 500) ?? null,
+    )
+    .run();
+  if (row.replicas > 0) await addEvent(id, "info", `reported by the owner: ${results.filter((r) => r.probeOk === false).length} of ${results.length} replicas failed the check`, now);
+  return { ok: true, results };
 }
 
 /** N4. */

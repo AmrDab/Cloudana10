@@ -245,3 +245,9 @@ CREATE TABLE IF NOT EXISTS endpoint_keys (
   created_at INTEGER NOT NULL, revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_endpoint_keys_dep ON endpoint_keys(deployment_id, created_at);
+-- Report a problem (docs/V4_VERIFIED_SERVICES.md §5): one row per report; ≤ 5 per owner per UTC day.
+CREATE TABLE IF NOT EXISTS deployment_reports (
+  id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, owner TEXT NOT NULL, at INTEGER NOT NULL,
+  probe_ok INTEGER, forgiven_ucld INTEGER NOT NULL DEFAULT 0, note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_deployment_reports_owner ON deployment_reports(owner, at);
