@@ -9,6 +9,7 @@ import { solveAssignedJob } from "../../pouw/src/index.ts";
 import { publicKeyOf } from "../../shared/sealed.ts";
 import { dockerAvailable, anyImageOptIn } from "./container.ts";
 import { hardeningSelfCheck } from "./hardening.ts";
+import { STORAGE_CAPABILITY, StorageRole, storageQuotaGb, type StorageOp } from "./storage.ts";
 import { detectPublicIp } from "./public-ip.ts";
 import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from "./deployments.ts";
 import { workTypes as capabilities } from "./workstation.ts";
@@ -89,6 +90,8 @@ const allowContainers = /^(1|true|yes)$/i.test(process.env.CLOUDANA_ALLOW_CONTAI
 /** Run images outside the curated list (announced as `any-image`; GPU endpoints need it). */
 const anyImage = anyImageOptIn();
 const instructionSigner = (process.env.CLOUDANA_INSTRUCTION_SIGNER?.trim() || DEFAULT_INSTRUCTION_SIGNER) ?? null;
+/** Storage role (docs/V4_STORAGE_PHASE1_CONTRACT.md): CLOUDANA_STORAGE_GB=<n> holds up to n GB of encrypted copies. */
+const storageGb = storageQuotaGb();
 const VERSION = agentVersion();
 
 if (!/^https:\/\//i.test(api) && !/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(api)) {
@@ -172,7 +175,7 @@ async function main() {
     log("containers: Docker found but CLOUDANA_ALLOW_CONTAINERS is not set — this node does compute + static hosting only");
   }
   const manifest: Manifest = detectHardware(); // gpus come from nvidia-smi (3 s timeout; [] without it)
-  const workTypes = capabilities(containersReady, manifest.gpus, anyImage);
+  const workTypes = [...capabilities(containersReady, manifest.gpus, anyImage), ...(storageGb > 0 ? [STORAGE_CAPABILITY] : [])];
   if (anyImage && !containersReady) log("CLOUDANA_ANY_IMAGE is set but containers are off — ignored");
   log(`capabilities: ${workTypes.join(", ")} · serving on ${publicHost}:${ports[0]}-${ports[1]}`);
 
@@ -251,6 +254,7 @@ async function main() {
       publicHost,
       agentVersion: VERSION,
       ...(fleetToken && { fleetToken }),
+      ...(storageGb > 0 && { storageGb }),
     });
     const wasBound = bound;
     bound = !!res.bound;
@@ -270,11 +274,45 @@ async function main() {
     }
   }
 
+  // Holds encrypted copies and answers checks (only with CLOUDANA_STORAGE_GB; needs the relay to be checked).
+  const storage: StorageRole | null =
+    storageGb > 0
+      ? new StorageRole({
+          dir: process.env.CLOUDANA_STORAGE_DIR?.trim() || fileURLToPath(new URL("../.data/storage/", import.meta.url)),
+          quotaGb: storageGb,
+          download: async (copy) => {
+            const p = `/v1/nodes/storage/copies/${copy}`;
+            try {
+              const res = await fetch(`${api}${p}`, { method: "GET", headers: { ...(await signRequest(account, "GET", p, "")) }, signal: AbortSignal.timeout(60_000) });
+              if (res.status === 409 || res.status === 404) return new Uint8Array(); // refused: reported as failed (size mismatch)
+              return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+            } catch {
+              return null;
+            }
+          },
+          report: async (copies) => {
+            try {
+              await request(account, "POST", "/v1/nodes/storage/report", { copies });
+              return true;
+            } catch (err) {
+              if (err instanceof Fatal) throw err;
+              return false;
+            }
+          },
+          log,
+        })
+      : null;
+  if (storage) {
+    await storage.start();
+    log(`storage: holding up to ${storageGb} GB of encrypted copies (${(storage.used() / 1024 ** 3).toFixed(2)} GB now)`);
+  }
+
   // Serves this node's deployments through the relay socket; re-announces on a mode change (relay.ts).
   const relay: RelayClient = new RelayClient({
     request: (path, body) => request(account, "POST", path, body),
     announce,
-    target: (id) => deployments.localTarget(id),
+    // dep "storage" is a check of the copies this node holds (served in-process); everything else is a deployment.
+    target: (id) => (id === "storage" ? storage?.target() ?? null : deployments.localTarget(id)),
     log,
   });
 
@@ -327,7 +365,12 @@ async function main() {
       }
       // Only instructions signed by the pinned key, fresh and unseen, are acted on. Everything else is ignored.
       // Freshness is judged against the learned server clock, like our own request timestamps.
-      const body = { assignment: res.assignment ?? null, deployments: Array.isArray(res.deployments) ? res.deployments : [] };
+      // A storage node's body carries a third signed key; others are exactly { assignment, deployments }.
+      const body = {
+        assignment: res.assignment ?? null,
+        deployments: Array.isArray(res.deployments) ? res.deployments : [],
+        ...(Array.isArray(res.storage) ? { storage: res.storage as StorageOp[] } : {}),
+      };
       const verdict = await verifyInstruction(res, account.address, body, instructionSigner!, seenNonces, serverNow());
       if (!verdict.ok) {
         if (body.assignment || body.deployments.length) {
@@ -340,6 +383,7 @@ async function main() {
       } else {
         // Deployment commands run in the background so slow image pulls never stall heartbeats.
         for (const cmd of body.deployments as DeploymentCommand[]) void deployments.handle(cmd);
+        if (storage && body.storage?.length) void storage.handle(body.storage);
         if (body.assignment) await handleAssignment(body.assignment);
       }
       void deployments.flush();

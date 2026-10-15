@@ -16,13 +16,13 @@ on:
     paths:
       - "node-agent/**"
       - "pouw/**"
-      - "shared/sealed.ts"
+      - "shared/*.ts"
       - ".github/workflows/build-node-agent.yml"
   pull_request:
     paths:
       - "node-agent/**"
       - "pouw/**"
-      - "shared/sealed.ts"
+      - "shared/*.ts"
       - ".github/workflows/build-node-agent.yml"
   workflow_dispatch: {}
 
@@ -53,6 +53,10 @@ jobs:
       - name: Production build compiles
         working-directory: node-agent
         run: npm run build
+      # The image builds from a narrow context (Dockerfile.dockerignore): build it on every PR too, without pushing,
+      # so a module the agent imports but the context leaves out fails here, not on main.
+      - name: Image builds
+        run: docker build -f node-agent/Dockerfile -t cloudana-node-agent:check .
 
   build:
     needs: check

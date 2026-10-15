@@ -1,6 +1,6 @@
 # Cloudana node agent.
 #
-# The agent imports the shared PoUW solver from ../pouw and ../shared/sealed.ts, so build from the repo root:
+# The agent imports the shared PoUW solver from ../pouw and modules from ../shared/*.ts, so build from the repo root:
 #   docker build -f node-agent/Dockerfile -t cloudana-node-agent .
 # (node-agent/Dockerfile.dockerignore keeps the context to node-agent/, pouw/ and shared/.)
 #
@@ -13,7 +13,7 @@ COPY node-agent/package.json node-agent/package-lock.json node-agent/tsconfig.js
 RUN cd node-agent && npm ci --include=dev
 COPY pouw/package.json pouw/
 COPY pouw/src pouw/src
-COPY shared/sealed.ts shared/relay-protocol.ts shared/
+COPY shared/*.ts shared/
 COPY node-agent/src node-agent/src
 RUN cd node-agent && npm run build && npm prune --omit=dev && npm cache clean --force
 
