@@ -19,6 +19,7 @@ import {
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { DeployChip } from "@/pages/console/deploy/deployments";
+import { ReportProblem } from "@/components/console/report-problem";
 import { EndpointKeys } from "./keys";
 
 export function specLine(e: Endpoint) {
@@ -150,7 +151,7 @@ function Row({ e, open, fresh, onToggle }: { e: Endpoint; open: boolean; fresh: 
         </td>
         <td className="px-4 py-2.5">
           <div className="flex items-center gap-2"><DeployChip status={e.status} /><ReplicaDots e={e} /></div>
-          {why && <div className="mt-1 max-w-[220px] truncate text-[12px] text-faint" title={why}>{why}</div>}
+          {why && <div className="mt-1 line-clamp-2 max-w-[220px] text-[12px] leading-4 [overflow-wrap:anywhere] text-faint" title={why}>{why}</div>}
         </td>
         <td className="px-4 py-2.5 text-[13px] whitespace-nowrap text-muted-foreground">{specLine(e)}</td>
         <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums text-text">{running(e)} / {e.replicas.length}</td>
@@ -182,8 +183,13 @@ function Detail({ e }: { e: Endpoint }) {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-5">
           <div>
-            <MonoLabel>Replicas</MonoLabel>
-            <ul className="mt-2 divide-y divide-line rounded-md border border-line bg-panel" aria-label="Replicas">
+            <div className="flex min-h-8 items-center justify-between gap-3">
+              <MonoLabel>Replicas</MonoLabel>
+              {d.replicas.some((r) => r.status === "running" || r.status === "unreachable") && (
+                <ReportProblem id={d.id} name={d.name} replicas={d.replicas.length} className={cn(btn.quiet, "-mr-3")} />
+              )}
+            </div>
+            <ul className="mt-1 divide-y divide-line rounded-md border border-line bg-panel" aria-label="Replicas">
               {d.replicas.map((r, i) => <ReplicaRow key={r.id} r={r} n={i + 1} />)}
             </ul>
           </div>
