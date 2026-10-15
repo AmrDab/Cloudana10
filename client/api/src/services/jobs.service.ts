@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { getD1 } from "../lib/storage.js";
 import { getArtifactStore } from "../lib/artifacts.js";
+import { registerObject } from "./storage.service.js";
 import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
@@ -93,8 +94,9 @@ export async function moveJobArtifacts(limit = 20): Promise<number> {
   let moved = 0;
   for (const r of rows) {
     const key = `jobs/${r.id}.json`;
+    const body = new TextEncoder().encode(`{"n":${r.n},"matrixA":${r.a_json},"matrixB":${r.b_json},"matrixC":${r.result_json ?? "null"}}`);
     try {
-      await store.put(key, `{"n":${r.n},"matrixA":${r.a_json},"matrixB":${r.b_json},"matrixC":${r.result_json ?? "null"}}`);
+      await store.put(key, body);
     } catch (err) {
       console.error(`[artifacts] put ${key} failed:`, err);
       continue;
@@ -103,7 +105,10 @@ export async function moveJobArtifacts(limit = 20): Promise<number> {
       .prepare("UPDATE work_jobs SET a_json = NULL, b_json = NULL, result_json = NULL, artifact = ? WHERE id = ? AND artifact IS NULL")
       .bind(key, r.id)
       .run();
-    if ((res.meta?.changes ?? 0) > 0) moved++;
+    if ((res.meta?.changes ?? 0) > 0) {
+      moved++;
+      await registerObject(key, body.byteLength); // provider copies (docs/V4_STORAGE_PHASE1_CONTRACT.md §B)
+    }
   }
   return moved;
 }

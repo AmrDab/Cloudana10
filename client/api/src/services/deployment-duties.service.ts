@@ -39,6 +39,7 @@ export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { runAssignment } from "./jobs.service.js";
 import { getRelay } from "../lib/relay.js";
+import { readCapped } from "../lib/read-capped.js";
 /** Hosting probes in flight per node at once (the hub reserves PROBE_SLOTS for all of the API's checks). */
 const HOSTING_PROBES_AT_ONCE = 2;
 import type { NodeManifest } from "./nodes.service.js";
@@ -407,31 +408,6 @@ async function probePassed(res: Response, probe?: { path: string; hash: string }
   }
   const body = await readCapped(res, PROBE_MAX_BYTES);
   return body !== null && sha256Hex(body) === probe.hash.toLowerCase();
-}
-
-/** The response body, or null once it passes `max` bytes (reading stops there). A stream error throws. */
-async function readCapped(res: Response, max: number): Promise<Uint8Array | null> {
-  if (!res.body) return new Uint8Array();
-  const reader = res.body.getReader();
-  const parts: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
-    parts.push(value);
-  }
-  const out = new Uint8Array(size);
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.byteLength;
-  }
-  return out;
 }
 
 /** "inconclusive": nobody reached the app, so the probe neither passes nor counts as a failure. */

@@ -21,6 +21,7 @@ import { workTypeIds } from "../../services/work-types.js";
 import { runDeploymentDuties } from "../../services/deployment-duties.service.js";
 import { endpointAllowed } from "../../services/deployment-spec.js";
 import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
+import { STORAGE_CAPABILITY, recordNodeNetwork, storageCapable, storageInstructions } from "../../services/storage.service.js";
 import { getEnv } from "../../config/env.js";
 import { issueTicket } from "../../../../../shared/relay-ticket.js";
 import { pubkeyMatchesAddress } from "../../lib/eth.js";
@@ -38,6 +39,8 @@ const NODE_SIGNED =
   "X-Node-Signature = personal_sign(\"<METHOD> <path> <timestamp> <sha256(body) hex> <nonce>\").";
 const HOST = /^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*)$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
+/** Cloudflare's ASN for the request (Workers only). */
+const cfAsn = (c: { req: { raw: Request } }) => (c.req.raw as Request & { cf?: { asn?: number } }).cf?.asn;
 /** Per-node limits, after requireNode so they key on the verified address (see middleware/security.ts). */
 const announceLimit = rateLimit({ bucket: "nodes-announce", limit: 10, windowSec: 60, keyBy: verifiedNodeKey });
 const heartbeatLimit = rateLimit({ bucket: "nodes-heartbeat", limit: 12, windowSec: 60, keyBy: verifiedNodeKey });
@@ -68,6 +71,8 @@ const AnnounceSchema = z.object({
   publicHost: z.string().max(253).regex(HOST, "publicHost must be a hostname or IP").optional(),
   /** Agent version (semver). Nodes below MIN_AGENT_VERSION receive no work. */
   agentVersion: z.string().regex(SEMVER, "agentVersion must be x.y.z").optional(),
+  /** Storage quota in GB (agent ≥ 1.4.0 with the `storage` capability and the relay; docs/V4_STORAGE_PHASE1_CONTRACT.md). */
+  storageGb: z.number().min(0).max(1_000_000).optional(),
 });
 
 const announceRoute = createRoute({
@@ -101,7 +106,8 @@ const announceRoute = createRoute({
 nodesRouter.openapi(announceRoute, async (c) => {
   const body = c.req.valid("json");
   const relayOn = !!getEnv().RELAY_TICKET_SECRET;
-  const known = [...workTypeIds(), ...HOSTING_CAPABILITIES, ...(relayOn ? [RELAY_CAPABILITY] : [])];
+  const storage = storageCapable(body.agentVersion, body.storageGb, relayOn && body.workTypes.includes(RELAY_CAPABILITY));
+  const known = [...workTypeIds(), ...HOSTING_CAPABILITIES, ...(relayOn ? [RELAY_CAPABILITY] : []), ...(storage ? [STORAGE_CAPABILITY] : [])];
   let workTypes = body.workTypes.filter((w) => known.includes(w));
   if (workTypes.length === 0) return fail(c, "validation_failed", `workTypes must include one of: ${known.join(", ")}`);
   // A relay node serves through its outbound socket, so hosting needs no public IP (docs/V4_RELAY_CONTRACT.md).
@@ -114,7 +120,7 @@ nodesRouter.openapi(announceRoute, async (c) => {
   const publicHost = body.publicHost ? normalizeHost(body.publicHost) : undefined;
   const hostPublic = !!publicHost && endpointAllowed(`http://${body.publicHost}/`, dev) && (dev || publicHost === normalizeHost(trustedClientIp(c)));
   if (!hostPublic && !relay) workTypes = workTypes.filter((w) => !HOSTING_CAPABILITIES.includes(w));
-  if (workTypes.every((w) => w === RELAY_CAPABILITY)) {
+  if (workTypes.every((w) => w === RELAY_CAPABILITY || w === STORAGE_CAPABILITY)) {
     return fail(c, "validation_failed", "hosting capabilities need the relay or a public publicHost equal to the node's own IP");
   }
   // Only a verified public host is stored: endpoints (legacy direct nodes, workstation SSH) are checked against it.
@@ -140,6 +146,9 @@ nodesRouter.openapi(announceRoute, async (c) => {
     publicHost: storedHost,
     agentVersion: body.agentVersion,
   });
+  const quotaMb = workTypes.includes(STORAGE_CAPABILITY) ? Math.floor((body.storageGb ?? 0) * 1024) : 0;
+  await getD1().prepare("UPDATE nodes SET storage_quota_mb = ? WHERE address = ?").bind(quotaMb, node.address).run();
+  await recordNodeNetwork(node.address, trustedClientIp(c), cfAsn(c));
   if (fleet) {
     const r = await bindNodeToFleet(node.address, fleet);
     if (!r.ok) return fail(c, r.code, r.message);
@@ -200,10 +209,17 @@ const NodeDeploymentSchema = z.object({
   relayed: z.boolean().optional(),
 });
 
+const StorageOpSchema = z.union([
+  z.object({ op: z.literal("fetch"), copy: z.string(), size: z.number().int(), leaves: z.number().int(), root: z.string() }),
+  z.object({ op: z.literal("delete"), copy: z.string() }),
+]);
+
 const HeartbeatResponseSchema = z.object({
   status: z.literal("success"),
   assignment: AssignmentSchema.nullable(),
   deployments: z.array(NodeDeploymentSchema),
+  /** Storage-capable nodes only (docs/V4_STORAGE_PHASE1_CONTRACT.md): signed with assignment and deployments. */
+  storage: z.array(StorageOpSchema).optional(),
   /** Signature over { nodeAddress, ts, nonce, body: { assignment, deployments } } — see GET /v1/nodes/instruction-key. Absent only when the API has no signing key. */
   sig: z.string().optional(),
   ts: z.number().optional(),
@@ -233,6 +249,7 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
   // The agent's relay socket is open (and answered a ping recently): relayed placement may use this node.
   if (body.relay === true) await getD1().prepare("UPDATE nodes SET relay_at = ? WHERE address = ?").bind(Date.now(), node).run();
   const row = await getNode(node);
+  if (row) await recordNodeNetwork(node, trustedClientIp(c), cfAsn(c), row);
   const version = typeof body.agentVersion === "string" && SEMVER.test(body.agentVersion) ? body.agentVersion : row?.agent_version ?? null;
   if (row && version && version !== row.agent_version) {
     await getD1().prepare("UPDATE nodes SET agent_version = ? WHERE address = ?").bind(version, node).run();
@@ -244,7 +261,13 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
   });
   // Below the minimum version: no new work (stops and purges still go out so the node winds down cleanly).
   if (!allowed) deployments = deployments.filter((d) => d.action !== "start");
-  const instructions = { assignment: allowed ? await getActiveAssignment(node) : null, deployments };
+  // Storage-capable nodes get a third signed key; others keep the exact { assignment, deployments } body 1.3.x verifies.
+  const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed).catch(() => null) : null;
+  const instructions = {
+    assignment: allowed ? await getActiveAssignment(node) : null,
+    deployments,
+    ...(storage ? { storage } : {}),
+  };
   const envelope = await signInstruction(node, instructions);
   if (!envelope) log.api.warn("[nodes] INSTRUCTION_SIGNING_KEY is not set — heartbeat instructions go out unsigned (agents ignore them)");
   return ok(c, { ...instructions, ...(envelope ?? {}), minAgentVersion: minAgentVersion(), upgradeRequired: !allowed });

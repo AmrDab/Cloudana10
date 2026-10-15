@@ -23,6 +23,9 @@ export interface NodeRow {
   public_host?: string | null;
   /** Agent version from announce; null for agents that predate it. */
   agent_version?: string | null;
+  /** /24 or /48 and ASN last seen (storage copy placement; docs/V4_STORAGE_PHASE1_CONTRACT.md). */
+  net_prefix?: string | null;
+  asn?: number | null;
   bound_at: number | null;
   last_seen: number | null;
 }

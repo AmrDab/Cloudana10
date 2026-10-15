@@ -65,15 +65,17 @@ async function scheduled(_event: ScheduledController, env: Bindings, ctx: Execut
   initStorage(env.DB, env.CLOUDANA_KV);
   setRelay(env.RELAY ? relayFromBinding(env.RELAY) : null);
   setArtifactStore(env.ARTIFACTS ? r2Artifacts(env.ARTIFACTS) : null);
-  const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }, { moveJobArtifacts }] = await Promise.all([
+  const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }, { moveJobArtifacts }, { runStorageCron }] = await Promise.all([
     import("./services/deployment-duties.service.js"),
     import("./services/pricing.service.js"),
     import("./services/deposit-watcher.service.js"),
     import("./services/jobs.service.js"),
+    import("./services/storage.service.js"),
   ]);
   const jobs: Array<[string, () => Promise<unknown>]> = [
     ["duties", () => runDutiesCron(env as never)],
     ["artifacts", () => moveJobArtifacts()],
+    ["storage", () => runStorageCron()],
     ["price", () => runPriceControllerCron(env)],
     ["deposits", () => runDepositWatcherCron(env as never)],
   ];

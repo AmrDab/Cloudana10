@@ -23,7 +23,7 @@ Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10
 |---|---|---|---|---|
 | ☐ | 0. Set up PowerShell | 5 min | — | — |
 | ☐ | 1. Kill the old Alchemy key | 5 min | Alchemy login | "Alchemy done" |
-| ☐ | 2. Two API secrets | 5 min | PowerShell | the `0x…` address from the link |
+| ☐ | 2. Three API secrets | 5 min | PowerShell | the `0x…` address from the link |
 | ☐ | 3. MetaMask, 5 accounts, test ETH, Safe | 30 min | Browser | Safe + Poster addresses |
 | ☐ | 4. Deploy the contracts | 10 min | Deployer key | "contracts deployed" |
 | ☐ | 5. Turn on the keeper | 10 min | Poster key | "keeper deployed" |
@@ -101,17 +101,19 @@ Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10
 
 ---
 
-## Step 2: Two secrets for the API (5 min)
+## Step 2: Three secrets for the API (5 min)
 
 **Why:**
 - **Instruction key:** a signature key the API uses to sign orders it sends to nodes, so nodes can tell real orders from fake ones. It is *not* a wallet and holds no money.
 - **Sign-in secret:** the old one existed while the leaked file was public, so we replace it. Everyone gets signed out of the console once.
+- **Storage key:** encrypts the copies of job data that provider nodes hold (storage phase 1), so providers only ever see scrambled bytes. Set it once; ask Claude before ever changing it.
 
 **Do** (in your PowerShell window from step 0; paste one line at a time):
 ```powershell
 cd client\api
 node -e "process.stdout.write('0x'+require('crypto').randomBytes(32).toString('hex'))" | wr secret put INSTRUCTION_SIGNING_KEY
 node -e "process.stdout.write(require('crypto').randomBytes(48).toString('hex'))" | wr secret put JWT_SECRET
+node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | wr secret put STORAGE_KEK
 cd ..\..
 ```
 Each `node -e …` part makes a random value on your computer and hands it straight to Cloudflare. You never see it, so you can't leak it.
