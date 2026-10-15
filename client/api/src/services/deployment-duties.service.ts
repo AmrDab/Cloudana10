@@ -39,7 +39,8 @@ export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { runAssignment } from "./jobs.service.js";
 import { getRelay } from "../lib/relay.js";
-import { PROBE_SLOTS } from "../../../../shared/relay-protocol.js";
+/** Hosting probes in flight per node at once (the hub reserves PROBE_SLOTS for all of the API's checks). */
+const HOSTING_PROBES_AT_ONCE = 2;
 import type { NodeManifest } from "./nodes.service.js";
 
 /** Live deployments per node, per kind. */
@@ -440,7 +441,7 @@ export type ProbeResult = boolean | "inconclusive";
  * The same probe through the node's relay socket (docs/V4_RELAY_CONTRACT.md): the node can only answer for a
  * deployment it serves, so a content hash still proves the right site is up. No relay binding → fails (billing
  * pauses rather than charging for something nobody checked). Probes carry `x-relay-probe: 1`, which the hub admits
- * into slots visitor traffic can never fill (PROBE_SLOTS), so load never refuses a probe: `busy`, a timeout, offline
+ * into slots visitor traffic can never fill (shared PROBE_SLOTS), so load never refuses a probe: `busy`, a timeout, offline
  * or not serving all fail (a node that answered `busy` to dodge checks kept billing before — docs/V4_REVIEW_STORAGE.md
  * #5). Only the relay call itself failing (the binding) is inconclusive: once the node has answered, a body that breaks
  * off or runs past the deadline fails (a node could otherwise answer 200 and abort to dodge every content check).
@@ -490,10 +491,10 @@ async function probe(node: string, now: number): Promise<void> {
     .bind(node, now - env.DEPLOY_PROBE_SECONDS * 1000)
     .all<DeploymentRow>();
   const rows = due.results ?? [];
-  // At most PROBE_SLOTS probes in flight per node: that is what the hub reserves for them.
+  // A few probes in flight per node at once, within the slots the hub reserves for the API's checks.
   const results: ProbeResult[] = [];
-  for (let i = 0; i < rows.length; i += PROBE_SLOTS) {
-    results.push(...(await Promise.all(rows.slice(i, i + PROBE_SLOTS).map((r) => probeRow(node, r)))));
+  for (let i = 0; i < rows.length; i += HOSTING_PROBES_AT_ONCE) {
+    results.push(...(await Promise.all(rows.slice(i, i + HOSTING_PROBES_AT_ONCE).map((r) => probeRow(node, r)))));
   }
   for (let i = 0; i < rows.length; i++) await recordProbe(node, rows[i], results[i], now);
 }

@@ -2,7 +2,7 @@
 // (docs/V4_RELAY_CONTRACT.md). Hibernation keeps idle sockets free; the in-memory StreamHub only lives while
 // requests are in flight, which also keeps the object awake.
 import { DurableObject } from "cloudflare:workers";
-import { PING, PONG, type TrafficClass } from "../../shared/relay-protocol.js";
+import { PING, PONG, TRAFFIC_CLASSES, type TrafficClass } from "../../shared/relay-protocol.js";
 import { StreamHub, relayError } from "./hub.js";
 
 export interface Env {
@@ -110,7 +110,8 @@ export class RelayNode extends DurableObject<Env> {
     const ws = this.socket();
     if (!ws) return relayError("offline");
     const dep = request.headers.get("x-relay-dep") ?? "";
-    const cls = (request.headers.get("x-relay-class") === "site" ? "site" : "endpoint") as TrafficClass;
+    const named = request.headers.get("x-relay-class") as TrafficClass | null;
+    const cls: TrafficClass = named && TRAFFIC_CLASSES.includes(named) ? named : "endpoint";
     const path = request.headers.get("x-relay-path") ?? "/";
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(dep) || !path.startsWith("/")) return relayError("bad_request");
     return this.hubFor(ws).proxy({
