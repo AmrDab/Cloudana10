@@ -14,12 +14,15 @@ import { buildApp, type AppEnv } from "./app.js";
 import { initStorage, getD1 } from "./lib/storage.js";
 import { resetEnv } from "./config/env.js";
 import { relayFromBinding, setRelay } from "./lib/relay.js";
+import { r2Artifacts, setArtifactStore } from "./lib/artifacts.js";
 
 type Bindings = {
   DB: D1Database;
   CLOUDANA_KV: KVNamespace;
   /** Node relay Durable Objects (script_name = cloudana-relay); absent → relayed deployments are not probed. */
   RELAY?: DurableObjectNamespace;
+  /** Job artifacts (R2 cloudana-artifacts); absent → finished jobs keep their matrices in D1. */
+  ARTIFACTS?: R2Bucket;
   [key: string]: unknown;
 };
 
@@ -35,6 +38,7 @@ const bindBindings: MiddlewareHandler<AppEnv<Bindings>> = async (c, next) => {
   if (changed) resetEnv();
   initStorage(c.env.DB, c.env.CLOUDANA_KV);
   setRelay(c.env.RELAY ? relayFromBinding(c.env.RELAY) : null);
+  setArtifactStore(c.env.ARTIFACTS ? r2Artifacts(c.env.ARTIFACTS) : null);
   await next();
 };
 
@@ -53,20 +57,23 @@ const app = buildApp<Bindings>({
 
 /**
  * Cron (wrangler.toml [triggers], every minute): node duties (requeue dead nodes, preempt, assign
- * matmul work) moved off the heartbeat; the price controller (steps at most once per hour); and the
- * v2 Settlement Deposited watcher (inactive until SETTLEMENT_ADDRESS is set). Each binds env/storage
+ * matmul work) moved off the heartbeat; finished jobs' matrices into R2; the price controller (steps at
+ * most once per hour); and the v2 Settlement Deposited watcher (inactive until SETTLEMENT_ADDRESS is set). Each binds env/storage
  * itself; one failing job never blocks the others.
  */
 async function scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext): Promise<void> {
   initStorage(env.DB, env.CLOUDANA_KV);
   setRelay(env.RELAY ? relayFromBinding(env.RELAY) : null);
-  const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }] = await Promise.all([
+  setArtifactStore(env.ARTIFACTS ? r2Artifacts(env.ARTIFACTS) : null);
+  const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }, { moveJobArtifacts }] = await Promise.all([
     import("./services/deployment-duties.service.js"),
     import("./services/pricing.service.js"),
     import("./services/deposit-watcher.service.js"),
+    import("./services/jobs.service.js"),
   ]);
   const jobs: Array<[string, () => Promise<unknown>]> = [
     ["duties", () => runDutiesCron(env as never)],
+    ["artifacts", () => moveJobArtifacts()],
     ["price", () => runPriceControllerCron(env)],
     ["deposits", () => runDepositWatcherCron(env as never)],
   ];

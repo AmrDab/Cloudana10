@@ -41,5 +41,10 @@ name = "RELAY"
 class_name = "RelayNode"
 script_name = "cloudana-relay"
 
+# Job artifacts (docs/V4_STORAGE_PHASE1_CONTRACT.md §A): finished jobs' matrices move here out of D1.
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "cloudana-artifacts"
+
 [triggers]
 crons = ["* * * * *"]

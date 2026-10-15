@@ -6,6 +6,7 @@
  */
 import { createHash } from "node:crypto";
 import { getD1 } from "../lib/storage.js";
+import { getArtifactStore } from "../lib/artifacts.js";
 import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
@@ -23,8 +24,9 @@ export interface WorkJobRow {
   owner: string;
   work_type: string;
   n: number;
-  a_json: string;
-  b_json: string;
+  /** null once the job is done and its matrices moved to `artifact`. */
+  a_json: string | null;
+  b_json: string | null;
   price_ucld: number;
   public: number;
   status: "queued" | "assigned" | "done" | "failed";
@@ -42,6 +44,68 @@ export interface WorkJobRow {
   completed_at: number | null;
   /** Failed verifications so far (schema.ts migration; null on rows from before it). */
   attempts: number | null;
+  /** Artifact-store key of the job's matrices once they left D1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §A). */
+  artifact: string | null;
+}
+
+export interface JobMatrices {
+  n: number;
+  matrixA: number[];
+  matrixB: number[];
+  matrixC: number[] | null;
+}
+
+/** A job's matrices: inline while they are still in D1, else from its artifact (null if neither is readable). */
+export async function jobMatrices(
+  row: Pick<WorkJobRow, "n" | "a_json" | "b_json" | "result_json" | "artifact">,
+): Promise<JobMatrices | null> {
+  if (row.a_json !== null && row.b_json !== null) {
+    return {
+      n: row.n,
+      matrixA: JSON.parse(row.a_json) as number[],
+      matrixB: JSON.parse(row.b_json) as number[],
+      matrixC: row.result_json ? (JSON.parse(row.result_json) as number[]) : null,
+    };
+  }
+  if (!row.artifact) return null;
+  const bytes = await getArtifactStore()?.get(row.artifact);
+  return bytes ? (JSON.parse(new TextDecoder().decode(bytes)) as JobMatrices) : null;
+}
+
+/**
+ * Moves finished jobs' matrices out of D1 into the artifact store, oldest first, `limit` per run (cron). The columns
+ * are cleared only after the put succeeded; a failed put leaves the row for the next run.
+ */
+export async function moveJobArtifacts(limit = 20): Promise<number> {
+  const store = getArtifactStore();
+  if (!store) return 0;
+  const db = getD1();
+  const rows =
+    (
+      await db
+        .prepare(
+          "SELECT id, n, a_json, b_json, result_json FROM work_jobs WHERE status = 'done' AND artifact IS NULL " +
+            "AND a_json IS NOT NULL ORDER BY completed_at LIMIT ?",
+        )
+        .bind(limit)
+        .all<{ id: string; n: number; a_json: string; b_json: string; result_json: string | null }>()
+    ).results ?? [];
+  let moved = 0;
+  for (const r of rows) {
+    const key = `jobs/${r.id}.json`;
+    try {
+      await store.put(key, `{"n":${r.n},"matrixA":${r.a_json},"matrixB":${r.b_json},"matrixC":${r.result_json ?? "null"}}`);
+    } catch (err) {
+      console.error(`[artifacts] put ${key} failed:`, err);
+      continue;
+    }
+    const res = await db
+      .prepare("UPDATE work_jobs SET a_json = NULL, b_json = NULL, result_json = NULL, artifact = ? WHERE id = ? AND artifact IS NULL")
+      .bind(key, r.id)
+      .run();
+    if ((res.meta?.changes ?? 0) > 0) moved++;
+  }
+  return moved;
 }
 
 export function sha256(text: string): string {
@@ -286,8 +350,8 @@ export async function getActiveAssignment(node: string, now = Date.now()): Promi
     jobId: r.id,
     workType: r.work_type,
     n: r.n,
-    matrixA: JSON.parse(r.a_json),
-    matrixB: JSON.parse(r.b_json),
+    matrixA: JSON.parse(r.a_json!),
+    matrixB: JSON.parse(r.b_json!),
     sigma: r.sigma!,
     expiresAt: r.expires_at!,
   };
@@ -315,7 +379,7 @@ export async function submitWork(
   if (!nodeRow?.payout) return { ok: false, code: "conflict", message: "bind this node first" };
 
   const wt = getWorkType(job.work_type)!;
-  const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json) as number[], matrixB: JSON.parse(job.b_json) as number[] };
+  const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json!) as number[], matrixB: JSON.parse(job.b_json!) as number[] };
   const verdict = wt.verify({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result });
 
   if (!verdict.ok) {

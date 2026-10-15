@@ -137,6 +137,8 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE deployments ADD COLUMN last_logs TEXT",
   // Last passing probe: an outage (from here on) is not charged; the time served before it is.
   "ALTER TABLE deployments ADD COLUMN last_ok_at INTEGER",
+  // Job artifacts (docs/V4_STORAGE_PHASE1_CONTRACT.md §A): R2 key once a finished job's matrices left D1.
+  "ALTER TABLE work_jobs ADD COLUMN artifact TEXT",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

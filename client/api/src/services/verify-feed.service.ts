@@ -5,6 +5,7 @@
  */
 import { getD1 } from "../lib/storage.js";
 import { getWorkType } from "./work-types.js";
+import { jobMatrices } from "./jobs.service.js";
 import { recordVerifyCredit, verifyCredits } from "./ledger.service.js";
 
 export const PLANT_ONE_IN = 6;
@@ -28,16 +29,17 @@ export async function nextVerifyTask(): Promise<VerifyTask> {
   const matmul = getWorkType("matmul")!;
   const job = await db
     .prepare(
-      "SELECT id, n, a_json, b_json, result_json FROM work_jobs WHERE status = 'done' AND public = 1 AND work_type = 'matmul' " +
+      "SELECT id, n, a_json, b_json, result_json, artifact FROM work_jobs WHERE status = 'done' AND public = 1 AND work_type = 'matmul' " +
         "ORDER BY RANDOM() LIMIT 1",
     )
-    .first<{ id: string; n: number; a_json: string; b_json: string; result_json: string }>();
+    .first<{ id: string; n: number; a_json: string | null; b_json: string | null; result_json: string | null; artifact: string | null }>();
+  const m = job ? await jobMatrices(job) : null;
 
   let jobId: string | null = null;
   let task;
-  if (job) {
+  if (job && m?.matrixC) {
     jobId = job.id;
-    const base = { n: job.n, matrixA: JSON.parse(job.a_json), matrixB: JSON.parse(job.b_json), matrixC: JSON.parse(job.result_json) };
+    const base = { n: m.n, matrixA: m.matrixA, matrixB: m.matrixB, matrixC: m.matrixC };
     const planted = randomBelow(PLANT_ONE_IN) === 0;
     // Real task: C already passed the orchestrator's own verification → "valid".
     task = planted ? matmul.plantedTask(base, true) : { ...base, expected: "valid" as const };
@@ -49,11 +51,10 @@ export async function nextVerifyTask(): Promise<VerifyTask> {
   }
 
   const id = crypto.randomUUID();
+  // Grading reads only `expected`: the matrices go to the browser, not into D1.
   await db
-    .prepare(
-      "INSERT INTO verify_tasks (id, job_id, n, a_json, b_json, c_json, planted, expected, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(id, jobId, task.n, JSON.stringify(task.matrixA), JSON.stringify(task.matrixB), JSON.stringify(task.matrixC), task.planted ? 1 : 0, task.expected, Date.now())
+    .prepare("INSERT INTO verify_tasks (id, job_id, n, planted, expected, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(id, jobId, task.n, task.planted ? 1 : 0, task.expected, Date.now())
     .run();
   return { taskId: id, n: task.n, matrixA: task.matrixA, matrixB: task.matrixB, matrixC: task.matrixC };
 }
