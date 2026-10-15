@@ -6,7 +6,7 @@
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
-import { enqueueWorkJob, getWorkJob, listWorkJobs, toSummary } from "../../services/jobs.service.js";
+import { enqueueWorkJob, getWorkJob, jobMatrices, listWorkJobs, toSummary } from "../../services/jobs.service.js";
 import { MATMUL_N_MAX, MATMUL_N_MIN } from "../../services/work-types.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
@@ -113,10 +113,11 @@ jobsRouter.openapi(getJobRoute, async (c) => {
   const row = await getWorkJob(c.req.valid("param").id);
   if (!row) return fail(c, "not_found", "job not found");
   const isOwner = row.owner === c.get("jwtPayload").sub.toLowerCase();
+  const result = isOwner && row.status === "done" ? (await jobMatrices(row))?.matrixC : null;
   return ok(c, {
     job: {
       ...toSummary(row),
-      ...(isOwner && row.result_json ? { result: JSON.parse(row.result_json) as number[] } : {}),
+      ...(result ? { result } : {}),
       certificate: row.sigma
         ? {
             z: row.cert_z,
