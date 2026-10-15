@@ -192,6 +192,24 @@ describe("node side", () => {
     expect(res.status).toBe(400);
   });
 
+  it("an outage is not charged, the time served before it is", async () => {
+    const { id, node } = await runningSite();
+    // 40 minutes into the hour; checks passed until 10 minutes ago; unreachable since.
+    const now = Date.now();
+    await getD1()
+      .prepare("UPDATE deployments SET last_billed_at = ?, last_ok_at = ?, status = 'unreachable', probe_fail = 3, last_probe_at = 0 WHERE id = ?")
+      .bind(now - 40 * 60_000, now - 10 * 60_000, id)
+      .run();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<h1>hi</h1>", { status: 200 })));
+    await heartbeat(node);
+    const back = (await row(id))!;
+    expect(back).toMatchObject({ status: "running", probe_fail: 0 });
+    // The clock moved forward by the 10-minute outage only: the 30 minutes served are still billed with this hour.
+    expect(back.last_billed_at - (now - 30 * 60_000)).toBeGreaterThanOrEqual(0);
+    expect(back.last_billed_at - (now - 30 * 60_000)).toBeLessThan(5_000);
+    expect(back.last_ok_at).toBeGreaterThanOrEqual(now);
+  });
+
   it("probes: 3 failures → unreachable, success → running again", async () => {
     const { node, id } = await runningSite();
     const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
@@ -263,13 +281,15 @@ describe("node side", () => {
 });
 
 describe("report a problem", () => {
-  it("probes a site now: a failed probe leaves the elapsed hour uncharged; an unreachable one is already paused", async () => {
+  it("probes a site now: a failed probe leaves the time since its last passing check uncharged; an unreachable one is already paused", async () => {
     const { u, id } = await runningSite();
     await shift(id, "last_billed_at", 20 * 60_000);
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
     const res = await authed(u.jwt, "POST", `/v1/deployments/${id}/report`, {});
     expect(res.status).toBe(200);
-    expect((await res.json()).results).toEqual([{ id, probeOk: false, forgivenUcld: 16, message: "probe failed: this hour is not charged" }]); // ⌊50 × 20/60⌋
+    expect((await res.json()).results).toEqual([
+      { id, probeOk: false, forgivenUcld: 16, message: "probe failed: the time since its last passing check is not charged" }, // ⌊50 × 20/60⌋: never passed one
+    ]);
     expect(await row(id)).toMatchObject({ status: "running", probe_fail: 1 });
 
     await getD1().prepare("UPDATE deployments SET status = 'unreachable', probe_fail = 3 WHERE id = ?").bind(id).run();

@@ -414,7 +414,11 @@ export type ProbeResult = boolean | "inconclusive";
  * or not serving all fail (a node that answered `busy` to dodge checks kept billing before — docs/V4_REVIEW_STORAGE.md
  * #5). Only a relay call that fails before reaching the node (the binding itself) is inconclusive.
  */
-export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" | "kind" | "probe_path" | "probe_hash">): Promise<ProbeResult> {
+export async function probeRelayed(
+  node: string,
+  row: Pick<DeploymentRow, "id" | "kind" | "probe_path" | "probe_hash">,
+  opts: { busyInconclusive?: boolean } = {},
+): Promise<ProbeResult> {
   const relay = getRelay();
   if (!relay) return false;
   const probe = row.probe_path && row.probe_hash ? { path: row.probe_path, hash: row.probe_hash } : null;
@@ -426,6 +430,7 @@ export async function probeRelayed(node: string, row: Pick<DeploymentRow, "id" |
       headers: { "x-relay-dep": row.id, "x-relay-class": row.kind === "static" ? "site" : "endpoint", "x-relay-path": path, "x-relay-probe": "1" },
       signal: AbortSignal.timeout(RELAY_PROBE_TIMEOUT_MS),
     });
+    if (opts.busyInconclusive && res.headers.get("x-relay-error") === "busy") return "inconclusive";
     return await probePassed(res, probe);
   } catch (err) {
     return (err as Error)?.name === "TimeoutError" ? false : "inconclusive";
@@ -455,9 +460,18 @@ async function probe(node: string, now: number): Promise<void> {
 }
 
 /** One probe of one running/unreachable deployment on `node` (through the relay, or direct for a legacy node). */
-function probeRow(node: string, r: DeploymentRow): Promise<ProbeResult> {
-  if (r.relayed) return probeRelayed(node, r);
+function probeRow(node: string, r: DeploymentRow, opts: { busyInconclusive?: boolean } = {}): Promise<ProbeResult> {
+  if (r.relayed) return probeRelayed(node, r, opts);
   return endpointAllowed(r.endpoint!, getEnv().DEV_MODE) ? probeOne(r.endpoint!, probeOf(r)) : Promise.resolve(false);
+}
+
+/**
+ * Time since `row` last passed a probe (or was last billed, if later): what an outage leaves uncharged. Moving
+ * last_billed_at forward by this much charges the time served before the outage and none of the outage itself.
+ */
+function unservedMs(row: Pick<DeploymentRow, "last_billed_at" | "last_ok_at">, now: number): number {
+  if (row.last_billed_at === null) return 0;
+  return Math.max(0, now - Math.max(row.last_billed_at, row.last_ok_at ?? 0));
 }
 
 /** What a probe result does to its deployment: the same for scheduled probes and for those a report triggers. */
@@ -471,17 +485,18 @@ async function recordProbe(node: string, row: DeploymentRow, result: ProbeResult
   }
   if (result) {
     if (row.status === "unreachable") {
-      // Billing resumes with a fresh hour: the outage and the partial hour before it are not charged.
+      // Billing resumes: the outage (since the last passing probe) is not charged, the time served before it is.
+      const billedTo = row.last_billed_at === null ? now : row.last_billed_at + unservedMs(row, now);
       await db
         .prepare(
-          "UPDATE deployments SET status = 'running', status_reason = NULL, probe_fail = 0, last_probe_at = ?, last_billed_at = ? " +
+          "UPDATE deployments SET status = 'running', status_reason = NULL, probe_fail = 0, last_probe_at = ?, last_ok_at = ?, last_billed_at = ? " +
             "WHERE id = ? AND status = 'unreachable'",
         )
-        .bind(now, now, row.id)
+        .bind(now, now, billedTo, row.id)
         .run();
       await addEvent(row.id, "info", "probe ok — reachable again; billing resumed", now);
     } else {
-      await db.prepare("UPDATE deployments SET probe_fail = 0, last_probe_at = ? WHERE id = ?").bind(now, row.id).run();
+      await db.prepare("UPDATE deployments SET probe_fail = 0, last_probe_at = ?, last_ok_at = ? WHERE id = ?").bind(now, now, row.id).run();
     }
     return;
   }
@@ -525,21 +540,17 @@ export type ProblemReportResult =
   | { ok: false; code: "not_found" | "conflict" | "rate_limited"; message: string };
 
 /**
- * The owner says it's broken: probe it now (through the relay, like the scheduled probes). If that probe fails, or
- * the probes already failed this hour, the current hour is not charged (last_billed_at moves to now) and the failure
- * counts like any other. A healthy service can't be reported out of paying. An endpoint reports each live replica.
- * ≤ REPORTS_PER_DAY per owner per UTC day.
+ * The owner says it's broken: probe it now (through the relay, like the scheduled probes). If that probe fails (or
+ * can't reach the node while the last scheduled one had failed), the time since the last passing probe is not charged
+ * (last_billed_at moves forward by it) and the failure counts like any other. A passing probe changes nothing, and
+ * failing a check on purpose gains at most the minute since the last scheduled probe. An endpoint reports each live
+ * replica. ≤ REPORTS_PER_DAY per owner per UTC day, claimed before probing so parallel reports can't exceed it.
  */
 export async function reportProblem(owner: string, id: string, note: string | undefined, now = Date.now()): Promise<ProblemReportResult> {
   const db = getD1();
   const who = normalizeAddress(owner);
   const row = await getDeploymentRow(id);
   if (!row || row.owner !== who || row.parent_id) return { ok: false, code: "not_found", message: "deployment not found" };
-  const dayStart = now - (now % 86_400_000);
-  const used = await db.prepare("SELECT COUNT(*) AS n FROM deployment_reports WHERE owner = ? AND at >= ?").bind(who, dayStart).first<{ n: number }>();
-  if ((used?.n ?? 0) >= REPORTS_PER_DAY) {
-    return { ok: false, code: "rate_limited", message: `at most ${REPORTS_PER_DAY} reports a day; the network probes every minute anyway` };
-  }
   const live =
     row.replicas > 0
       ? ((await db.prepare("SELECT * FROM deployments WHERE parent_id = ? AND status IN ('running','unreachable') ORDER BY created_at").bind(id).all<DeploymentRow>()).results ?? [])
@@ -549,49 +560,61 @@ export async function reportProblem(owner: string, id: string, note: string | un
   // Only what the scheduled probes can reach: on a node, through the relay or at a reported endpoint.
   const targets = live.filter((t) => t.node && (t.relayed || t.endpoint));
   if (targets.length === 0) return { ok: false, code: "conflict", message: `nothing is running to check (status ${row.status})` };
+  const reportId = crypto.randomUUID();
+  const claimed = await db
+    .prepare(
+      "INSERT INTO deployment_reports (id, deployment_id, owner, at, note) SELECT ?, ?, ?, ?, ? " +
+        "WHERE (SELECT COUNT(*) FROM deployment_reports WHERE owner = ? AND at >= ?) < ?",
+    )
+    .bind(reportId, id, who, now, note?.slice(0, 500) ?? null, who, now - (now % 86_400_000), REPORTS_PER_DAY)
+    .run();
+  if ((claimed.meta?.changes ?? 0) === 0) {
+    return { ok: false, code: "rate_limited", message: `at most ${REPORTS_PER_DAY} reports a day; the network probes every minute anyway` };
+  }
 
+  // Replicas sit on different nodes (anti-affinity): probe them together, then record one by one. A report's probe
+  // that finds the hub's probe slots taken (scheduled probes in flight) is inconclusive, not the app failing.
+  const probed = await Promise.all(targets.map((t) => probeRow(t.node!, t, { busyInconclusive: true })));
   const results: ReportOutcome[] = [];
-  for (const t of targets) {
+  for (const [i, t] of targets.entries()) {
     const node = t.node!;
-    const result = await probeRow(node, t);
-    const alreadyFailing = t.status === "unreachable" || t.probe_fail > 0;
+    const result = probed[i];
+    const failing = result === false || (result === "inconclusive" && t.probe_fail > 0);
+    const skip = failing && t.status === "running" ? unservedMs(t, now) : 0;
     let forgiven = 0;
     let current = t;
-    if ((result === false || alreadyFailing) && t.status === "running" && t.last_billed_at !== null && t.last_billed_at < now) {
+    if (skip > 0) {
       const r = await db
         .prepare("UPDATE deployments SET last_billed_at = ? WHERE id = ? AND status = 'running' AND last_billed_at = ?")
-        .bind(now, t.id, t.last_billed_at)
+        .bind(t.last_billed_at! + skip, t.id, t.last_billed_at)
         .run();
       if ((r.meta?.changes ?? 0) > 0) {
-        forgiven = Math.floor((t.price_ucld_per_hour * Math.min(HOUR_MS, now - t.last_billed_at)) / HOUR_MS);
-        current = { ...t, last_billed_at: now };
+        forgiven = Math.floor((t.price_ucld_per_hour * skip) / HOUR_MS);
+        current = { ...t, last_billed_at: t.last_billed_at! + skip };
       }
     }
     await recordProbe(node, current, result, now);
     const message =
       result === "inconclusive"
         ? forgiven > 0
-          ? "the check could not reach the node, but this hour's probes had failed: this hour is not charged"
+          ? "the check could not reach the node and the last one had failed: the time since its last passing check is not charged"
           : "the check could not reach the node; the network keeps probing every minute"
         : result
-          ? forgiven > 0
-            ? "probe ok now, but this hour's probes had failed: this hour is not charged"
-            : t.status === "unreachable"
-              ? "probe ok: reachable again, billing resumes"
-              : "probe ok: it answered the network's check; if it is still broken for you, check your app's logs"
+          ? t.status === "unreachable"
+            ? "probe ok: reachable again, billing resumes"
+            : "probe ok: it answered the network's check; if it is still broken for you, check your app's logs"
           : t.status === "unreachable"
             ? "probe failed: already unreachable, billing was paused"
-            : "probe failed: this hour is not charged";
+            : "probe failed: the time since its last passing check is not charged";
     await addEvent(t.id, result === false ? "warn" : "info", `reported by the owner — ${message}`, now);
     results.push({ id: t.id, probeOk: result === "inconclusive" ? null : result, forgivenUcld: forgiven, message });
   }
   await db
-    .prepare("INSERT INTO deployment_reports (id, deployment_id, owner, at, probe_ok, forgiven_ucld, note) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .prepare("UPDATE deployment_reports SET probe_ok = ?, forgiven_ucld = ? WHERE id = ?")
     .bind(
-      crypto.randomUUID(), id, who, now,
       results.every((r) => r.probeOk === true) ? 1 : results.some((r) => r.probeOk === false) ? 0 : null,
       results.reduce((s, r) => s + r.forgivenUcld, 0),
-      note?.slice(0, 500) ?? null,
+      reportId,
     )
     .run();
   if (row.replicas > 0) await addEvent(id, "info", `reported by the owner: ${results.filter((r) => r.probeOk === false).length} of ${results.length} replicas failed the check`, now);

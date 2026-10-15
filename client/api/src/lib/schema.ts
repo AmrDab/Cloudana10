@@ -135,6 +135,8 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE deployments ADD COLUMN parent_id TEXT",
   "ALTER TABLE deployments ADD COLUMN replicas INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE deployments ADD COLUMN last_logs TEXT",
+  // Last passing probe: an outage (from here on) is not charged; the time served before it is.
+  "ALTER TABLE deployments ADD COLUMN last_ok_at INTEGER",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

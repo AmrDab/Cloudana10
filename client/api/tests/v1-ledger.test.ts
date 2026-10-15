@@ -80,6 +80,9 @@ describe("ledger entries + epoch close (SQLite)", () => {
     const first = await epochJobs(1000, { limit: 1 });
     expect(first).toEqual({ epoch: closed[0], jobs: [job("j1")], next: "j1" });
     expect(await epochJobs(1000, { after: "j1", limit: 1 })).toEqual({ epoch: closed[0], jobs: [job("j2")], next: null });
+    // A job that commits into the epoch after it closed is not in its root (it moves on at the next close): not listed.
+    await recordJobRewards({ jobId: "j3", workType: "matmul", provider, feeUcld: 1000, clusterOk: true, now: t0 + 5 });
+    expect((await epochJobs(1000)).jobs.map((j) => j.jobId)).toEqual(["j1", "j2"]);
   });
 });
 

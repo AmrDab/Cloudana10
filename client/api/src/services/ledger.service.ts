@@ -401,8 +401,9 @@ export interface EpochJob {
 
 /**
  * Every job and hosting bill in epoch `id` (public: the epoch's Merkle leaves are on-chain anyway), counted exactly as
- * closeEpochs counts them (clawed entries left out), so anyone can recompute the leaves and the fees burned. Page by
- * `after` (a jobId), `limit` ≤ 500. Verifier points are not epoch entries and are not listed.
+ * closeEpochs counted them: once closed, the entries it posted (late ones wait for the open epoch); while open or
+ * vetoed, the pending ones (epoch null). So anyone can recompute the leaves and the fees burned. Page by `after`
+ * (a jobId), `limit` ≤ 500. Verifier points are not epoch entries and are not listed.
  */
 export async function epochJobs(
   id: number,
@@ -410,6 +411,7 @@ export async function epochJobs(
 ): Promise<{ epoch: EpochPayload | null; jobs: EpochJob[]; next: string | null }> {
   const db = getD1();
   const row = await db.prepare("SELECT * FROM epochs WHERE id = ?").bind(id).first<EpochRow>();
+  const closed = !!row && row.status !== "vetoed";
   const limit = Math.min(500, Math.max(1, opts.limit ?? 200));
   const res = await db
     .prepare(
@@ -418,7 +420,8 @@ export async function epochJobs(
         "SUM(CASE WHEN e.lane = 'A' THEN e.amount_ucld ELSE 0 END) AS a, SUM(CASE WHEN e.lane = 'B' THEN e.amount_ucld ELSE 0 END) AS b, " +
         "SUM(CASE WHEN e.lane = 'treasury' THEN e.amount_ucld ELSE 0 END) AS t, " +
         "COALESCE((SELECT price_ucld FROM work_jobs WHERE id = e.job_id), (SELECT fee_ucld FROM deployment_bills WHERE id = e.job_id)) AS fee " +
-        "FROM reward_entries e WHERE e.epoch = ? AND e.lane IN ('A','B','treasury') AND e.status <> 'clawed' AND e.job_id > ? " +
+        `FROM reward_entries e WHERE e.epoch = ? AND e.lane IN ('A','B','treasury') AND e.status IN ${closed ? "('posted','settled')" : "('pending')"} ` +
+        "AND e.job_id > ? " +
         "GROUP BY e.job_id ORDER BY e.job_id LIMIT ?",
     )
     .bind(id, opts.after ?? "", limit + 1)
@@ -426,7 +429,7 @@ export async function epochJobs(
   const rows = res.results ?? [];
   const page = rows.slice(0, limit);
   return {
-    epoch: row ? toPayload(row) : null,
+    epoch: closed ? toPayload(row!) : null,
     jobs: page.map((r) => ({
       jobId: r.jobId, workType: r.workType, provider: r.provider, feeUcld: r.fee,
       laneAUcld: r.a, laneBUcld: r.b, treasuryUcld: r.t,

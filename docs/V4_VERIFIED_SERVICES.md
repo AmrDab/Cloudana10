@@ -92,7 +92,7 @@ For users who want proof their endpoint really ran *their* model:
 |---|---|---|
 | Matmul | cuPOW + Freivalds | **proven**, lanes A+B |
 | Static hosting | content-hash probe (through the relay) | **probed**, fees only |
-| Containers / GPU endpoints | health probe through the relay; **Report a problem** refunds the hour only if a probe it triggers fails (or the hour's probes already failed); ≤ 5 reports/account/day | **probed**, fees only |
+| Containers / GPU endpoints | health probe through the relay; you pay for time a probe saw it working: an outage (since the last passing probe) is not charged; **Report a problem** probes now and, if that fails, leaves the time since the last passing probe uncharged; ≤ 5 reports/account/day | **probed**, fees only |
 | Verified endpoints | §4 | **spot-checked**, lanes A+B |
 | GPU workstations | reachability probe; report rule as above | **probed · GPU reported by node** |
 | Storage | separate spec; chunk challenges prove retrievability, never replication | **challenged** (later) |
@@ -125,8 +125,9 @@ Later: `POST /v1/challenges`; autoscaling and scale-to-zero; per-request billing
 5. **Calibration** on two GPUs (~1,000 honest requests + substitution tests; false positives < 0.1 %) → enable
    claw + ban.
 6. ~~**Report a problem** + epoch job list~~ — built (`POST /v1/deployments/{id}/report`: an immediate probe through
-   the relay; a failed probe, or this hour's probes already failing, leaves the elapsed part of the hour uncharged;
-   `GET /v1/epochs/{n}/jobs`). The check counters in `GET /v1/network` come with verified mode (step 4).
+   the relay; a failed probe leaves the time since the last passing probe uncharged — failing a check on purpose
+   gains about a minute, not the hour; `GET /v1/epochs/{n}/jobs`). Recovering from unreachable now bills the time
+   served before the outage (it used to forgive the whole partial hour). The check counters in `GET /v1/network` come with verified mode (step 4).
 7. ~~**Console:** Run → **Endpoints** tab (deploy, keys, URL, health, logs, cost); Services labels; docs~~ — live
    2026-10-14.
 8. **Storage** (own spec).

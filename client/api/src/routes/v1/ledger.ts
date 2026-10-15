@@ -61,7 +61,7 @@ const epochJobsRoute = createRoute({
   description:
     "Every job and hosting bill in an epoch with what was paid and minted for it, by lane — enough to recompute the epoch's " +
     "Merkle leaves (one per provider: lane A and lane B summed) and its fees burned. `epoch` is null while the epoch is " +
-    "still open. Page with `after` = the last jobId; `limit` ≤ 500.",
+    "open (or vetoed, until it closes again) and the list is what is pending in it. Page with `after` = the last jobId; `limit` ≤ 500.",
   request: {
     params: z.object({ id: z.coerce.number().int().min(0) }),
     query: z.object({ after: z.string().max(80).optional(), limit: z.coerce.number().int().min(1).max(500).optional() }),

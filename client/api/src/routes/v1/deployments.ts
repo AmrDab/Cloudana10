@@ -212,9 +212,9 @@ const reportRoute = createRoute({
   path: "/deployments/{id}/report",
   tags: TAGS,
   description:
-    `Probe it now, through the relay like the scheduled probes. If that probe fails, or this hour's probes already failed, ` +
-    `the current hour is not charged and the failure counts like any other (3 in a row: unreachable, or an endpoint replica is ` +
-    `replaced). A probe that passes changes nothing. An endpoint checks each live replica. At most ${REPORTS_PER_DAY} reports per account per UTC day.`,
+    `Probe it now, through the relay like the scheduled probes. If that probe fails, the time since its last passing probe ` +
+    `is not charged and the failure counts like any other (3 in a row: unreachable, or an endpoint replica is replaced). ` +
+    `A probe that passes changes nothing. An endpoint checks each live replica. At most ${REPORTS_PER_DAY} reports per account per UTC day.`,
   security: BEARER_AUTH,
   request: {
     params: IdParam,
