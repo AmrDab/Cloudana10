@@ -1,6 +1,6 @@
 # Storage — object storage on provider disks, in three phases
 
-Status: **v2, for owner decision** · 2026-10-13. v1 was dissected in [V4_REVIEW_STORAGE.md](V4_REVIEW_STORAGE.md)
+Status: **v2, approved 2026-10-15** (owner: "go with what you recommend" — the four decisions below, as recommended) · 2026-10-13. v1 was dissected in [V4_REVIEW_STORAGE.md](V4_REVIEW_STORAGE.md)
 (17 findings, all accepted; finding 5 was a live hole in hosting probes and is already fixed and deployed).
 Build order step 8 of [V4_VERIFIED_SERVICES.md](V4_VERIFIED_SERVICES.md).
 
@@ -90,10 +90,12 @@ as container or GPU disk.
    billing, console Storage tab; opens after the content domain and the DMCA/notice contacts exist.
 3. **Phase 3** — erasure coding (10-of-14) and dropping the R2 copy object by object, once the operator threshold holds.
 
-## Owner decisions
-1. **The phased plan with an R2 copy until the network can hold data itself** (recommended), or provider-only storage
-   that waits for 14 independent operators before anyone can store anything.
-2. **Phase 2 prices:** $0.02 per GB-month and $0.01 per GB downloaded.
-3. **Cloudana holds the object keys** (providers see ciphertext; Cloudana could decrypt and is the legal host), or
-   client-side encryption only.
-4. **A DMCA agent and an abuse contact** before phase 2 opens (counsel; the abuse@ alias from runbook step 7 helps).
+## Owner decisions (decided 2026-10-15)
+1. **The phased plan with an R2 copy until the network can hold data itself.** ✔ (not provider-only storage that waits
+   for 14 independent operators before anyone can store anything)
+2. **Phase 2 prices:** $0.02 per GB-month and $0.01 per GB downloaded. ✔
+3. **Cloudana holds the object keys** (providers see ciphertext; Cloudana could decrypt and is the legal host). ✔ S3
+   clients work unchanged; users who want zero-knowledge encrypt before upload (e.g. rclone crypt) — documented, not
+   enforced.
+4. **A DMCA agent and an abuse contact** before phase 2 opens. ✔ Owner: register a DMCA designated agent with the US
+   Copyright Office and set up abuse@ / dmca@ aliases (runbook step 7); a notice-and-action page ships with phase 2.
