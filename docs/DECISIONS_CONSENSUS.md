@@ -18,6 +18,16 @@ CLD is the unit of account and the only settlement asset, and USD is shown for d
 The free tier is a customer the treasury pays for, not new emission.
 
 ## Decisions
+> **Decided (2026-10-15, owner: "go with what you recommend"):** storage follows
+> [V4_STORAGE_SPEC.md](V4_STORAGE_SPEC.md) v2 — the **phased plan with an R2 copy** until ≥ 14 independent operators
+> can hold data themselves; phase-2 prices **$0.02 per GB-month and $0.01 per GB downloaded**; **Cloudana holds the
+> object keys** (providers see ciphertext; S3 clients work unchanged; users who want zero-knowledge encrypt before
+> upload, e.g. rclone crypt); a **DMCA designated agent and an abuse contact** exist before phase 2 opens.
+>
+> **Changed (2026-10-15):** hosting bills only time a probe saw working. Recovery from `unreachable` and a failed
+> "Report a problem" probe forgive the time since the last passing probe — no longer the whole partial hour, which let
+> an app that failed three probes before each hour run free.
+>
 > **Changed (2026-10-13, owner approved):** the subsidy (lane B) is split **pro rata** within each settlement
 > epoch: every verified job records ρF (ρ ≤ 0.04), and if the epoch's total exceeds its budget all entries are
 > scaled by the same factor when the epoch closes (it was first come, first served). The provider's 95 % stays paid

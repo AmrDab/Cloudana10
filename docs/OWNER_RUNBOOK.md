@@ -32,6 +32,7 @@ Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10
 | ☐ | 8. Relay secrets + a user-content domain (~$10/yr) | 20 min | PowerShell, Cloudflare login | "relay secrets done" + the domain |
 | ☐ | 9. Make the node image public | 2 min | GitHub login | "image public" |
 | ☐ | 10. Your workstation as node #1 | later | The workstation (no router changes) | "workstation ready" |
+| ☐ | 11. DMCA agent + dmca@ alias (~$6) | 20 min, before storage opens to customers | copyright.gov account, Microsoft 365 admin | "DMCA agent registered" |
 
 ---
 
@@ -413,6 +414,28 @@ endpoints** (customers' own inference images) also runs with `CLOUDANA_ANY_IMAGE
 command when you say the node is for endpoints.
 
 Home machines run **compute jobs and static websites only**. Container and GPU rentals stay off until a properly hardened datacenter node exists. That's a security decision, not a bug.
+
+---
+
+## Step 11: A DMCA agent and dmca@ (20 min, ~$6; before storage opens to customers)
+
+**Why:** storage phase 2 lets customers keep files on Cloudana. Cloudana holds the keys, so legally it is the host. To
+be protected from copyright claims over files customers upload, a US host must have a **designated agent** listed with
+the US Copyright Office and act on notices. You decided this on 2026-10-15; nothing opens until it's done. A lawyer
+should look at the notice-and-action page before phase 2 opens (Claude drafts it).
+
+**Do:**
+1. Go to **https://dmca.copyright.gov** and create an account (it's the official DMCA Designated Agent Directory).
+2. Register **Cloudana** as the service provider. Give the legal entity name and address you use for the company,
+   plus the alternate name `cloudana.io`.
+3. As the agent, give your name (or the company's role, e.g. "Copyright Agent"), a business address, a phone number,
+   and the email `dmca@cloudana.io`.
+4. Pay the $6 fee. The registration lasts 3 years; the site emails you before it expires.
+5. In Microsoft 365, add the alias `dmca` the same way as step 7.
+
+**You should see:** your entry in the public directory, and an email to `dmca@cloudana.io` landing in your inbox.
+
+✅ Tell Claude: **"DMCA agent registered"**.
 
 ---
 
