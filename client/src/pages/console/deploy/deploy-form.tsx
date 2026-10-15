@@ -1,10 +1,11 @@
 // Deploy form — static (upload a folder / paste HTML) or container (image, ports, env with secret toggle, size).
+import { cldAmount, ucldToUsd, usd, usdToCld, usePrices } from "@/lib/prices";
 import { useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FolderUp, KeyRound, Loader2, Lock, Plus, Rocket, Trash2, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, ApiError, cld } from "@/lib/cld";
+import { api, ApiError } from "@/lib/cld";
 import { STATIC_STARTER } from "@/lib/static-starter";
 import { Switch } from "@/components/ui/switch";
 import { btn, MonoLabel } from "@/components/console/primitives";
@@ -72,7 +73,8 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
     : env.some((r) => r.key && r.secret && !r.value) ? "Enter a value for every secret."
     : null;
   const err = nameErr || staticErr || portsErr || imageErr || envErr;
-  const price = priceEstimate(kind, SIZES[size]);
+  const { prices, usdPerCld } = usePrices();
+  const price = priceEstimate(prices, kind, SIZES[size]);
 
   async function pickFolder(list: FileList | null) {
     if (!list?.length) return;
@@ -112,7 +114,7 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
         body: { ...(template ? { templateId: template.id } : {}), name: name.trim(), kind, spec },
       });
       if (Object.keys(secrets).length) savePendingSecrets(r.id, secrets);
-      toast.success("Deployment queued", { description: `${name.trim()} · ${cld(r.priceUcldPerHour)} / h · the orchestrator places it on a capable node` });
+      toast.success("Deployment queued", { description: `${name.trim()} · ${usd(ucldToUsd(r.priceUcldPerHour, usdPerCld))}/h · the orchestrator places it on a capable node` });
       qc.invalidateQueries({ queryKey: ["cld", "deployments"] });
       qc.invalidateQueries({ queryKey: ["cld", "account"] });
       onDone(r.id);
@@ -247,8 +249,8 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
         <div>
           <MonoLabel>Price estimate</MonoLabel>
-          <div className="mt-1 font-mono text-[18px] tabular-nums text-text">≈ {cld(price)} <span className="text-[12px] text-faint">/ hour</span></div>
-          <p className="mt-0.5 text-[12px] text-faint">First hour held from your balance · live price set by the orchestrator.</p>
+          <div className="mt-1 font-mono text-[18px] tabular-nums text-text">≈ {usd(price)} <span className="text-[12px] text-faint">/ hour · {cldAmount(usdToCld(price, usdPerCld))}</span></div>
+          <p className="mt-0.5 text-[12px] text-faint">Priced in dollars, paid in CLD at ${usdPerCld.toFixed(2)} per CLD · first hour held from your balance.</p>
         </div>
         <button type="submit" className={cn(btn.primary, "min-w-[140px]")} disabled={busy || reading || (touched && !!err)}>
           {busy ? <Loader2 className="animate-spin" /> : session ? <Rocket /> : <Wallet />}

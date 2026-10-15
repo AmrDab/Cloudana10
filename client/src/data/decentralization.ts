@@ -25,7 +25,7 @@ export const COMPONENTS: ComponentStatus[] = [
   { name: "API / control plane", level: "centralized", detail: "Cloudflare Worker + D1 + KV today. Scheduled to leave Cloudflare by Phase 3." },
   { name: "Matchmaking", level: "centralized", detail: "An off-chain orchestrator picks the provider (ORCHESTRATOR_ROLE). Becomes optional in Phase 2." },
   { name: "Reward routing", level: "centralized", detail: "rewardProvider() is orchestrator-only today. Opens to any staked party in Phase 2." },
-  { name: "POUW verification", level: "centralized", detail: "Trust-based on testnet. Replaced by on-chain zkSNARK / challenge in Phase 2." },
+  { name: "POUW verification", level: "centralized", detail: "Re-executed and answer-checked by the orchestrator on testnet. An on-chain answer challenge (Freivalds) is planned after mainnet." },
   { name: "Templates & frontend hosting", level: "centralized", detail: "D1 + Cloudflare Pages. IPFS/ENS-hosted console lands in Phase 3." },
 ];
 
@@ -74,7 +74,7 @@ export const PHASES: Phase[] = [
     changes: [
       "libp2p network: DHT discovery + NAT traversal, no central coordinator.",
       "Any staked provider can claim a job directly on-chain — the orchestrator stops gating.",
-      "Trustless POUW (zkSNARK on-chain or optimistic + ChallengeManager).",
+      "Trustless PoUW: anyone can challenge a posted answer on-chain (Freivalds) against a bonded poster.",
       "API moves off Cloudflare-only (Cloudflare becomes an optional cache).",
     ],
     exit: "A workload matched & run with the orchestrator offline; ORCHESTRATOR_ROLE → multisig; 10+ community providers.",
@@ -124,6 +124,6 @@ export const PHASES: Phase[] = [
 export const COMMITMENTS: string[] = [
   "This page reflects verifiable facts (contract addresses, role holders, hosting origin) — not aspirations.",
   'We won\'t market Cloudana as "decentralized" before Phase 3 — only "progressively decentralizing".',
-  "Testnet POUW is trust-based until the zkSNARK ships, and is labeled as such.",
+  "Testnet PoUW is checked by the orchestrator until the on-chain challenge ships, and is labeled as such.",
   "Orchestrator & provider software are open source before Phase 2.",
 ];

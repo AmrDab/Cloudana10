@@ -15,7 +15,7 @@ Cloudana is a decentralized datacenter: a decentralized physical infrastructure 
 
 Cloudana's distinguishing bet is **Proof of Useful Work (PoUW)**: for matrix-heavy workloads, the cryptographic work that secures a provider's reward *is the user's computation itself*. The provider doesn't burn energy on a throwaway puzzle (Bitcoin) and isn't merely trusted to have run the job (most DePINs) — the proof and the product are the same matrix multiplication.
 
-**What v1.0 overclaimed, and this version corrects.** v1.0 described the system as having "no backend" and being "trustless" at testnet. That is not accurate today and we will not market it that way. The current testnet uses a **trusted orchestrator** that verifies PoUW certificates by re-running the computation and posts settlement batches to a contract on Base Sepolia. This is a normal, defensible starting point — it is how comparable networks launch — but it is **trust-minimized, orchestrator-coordinated**, not "completely decentralized." Full trustlessness arrives when on-chain verification replaces the orchestrator in the critical path (Section 7). We would rather state our trust model plainly than have it discovered.
+**What v1.0 overclaimed, and this version corrects.** v1.0 described the system as having "no backend" and being "trustless" at testnet. That is not accurate today and we will not market it that way. The current testnet uses a **trusted orchestrator** that verifies PoUW certificates by re-running the computation and posts settlement batches to a contract on Base Sepolia. This is a normal, defensible starting point — it is how comparable networks launch — but it is **trust-minimized, orchestrator-coordinated**, not "completely decentralized." Trustlessness needs an on-chain check in the critical path; the planned one is an on-chain Freivalds challenge against a bonded poster (Section 7). We would rather state our trust model plainly than have it discovered.
 
 ---
 
@@ -25,7 +25,7 @@ Cloudana's distinguishing bet is **Proof of Useful Work (PoUW)**: for matrix-hea
 
 **Wasted consensus energy.** Proof-of-Work chains spend enormous compute on puzzles with no use outside securing the chain. If the securing work were *also useful*, that energy produces value twice.
 
-**The DePIN verification problem.** Decentralized compute networks must answer "did the provider actually do the work?" Re-execution is expensive; pure trust is weak. PoUW answers it with mathematics for the workload class where it applies.
+**The DePIN verification problem.** Decentralized compute networks must answer "did the provider actually do the work?" Re-execution is expensive; pure trust is weak. For matrix jobs, Cloudana answers it today by binding the work to its assignment, re-executing it at the orchestrator and checking the answer with Freivalds; other services are probed.
 
 ---
 
@@ -33,18 +33,18 @@ Cloudana's distinguishing bet is **Proof of Useful Work (PoUW)**: for matrix-hea
 
 ### 3.1 Foundation
 
-Cloudana's PoUW is a direct implementation of Komargodski & Weinstein, *"Proofs of Useful Work from Arbitrary Matrix Multiplication"* (IACR ePrint 2025/685). The key property: the hardness comes from the **transcript of intermediate computation blocks**, not from the final output. The output of a matrix multiply can be shortcut with low-rank tricks; the full block-by-block transcript cannot. That is what makes the work both useful (it computes a real product) and unfakeable (you must actually do it).
+Cloudana's PoUW is a direct implementation of Komargodski & Weinstein, *"Proofs of Useful Work from Arbitrary Matrix Multiplication"* (IACR ePrint 2025/685). The key property: the hardness comes from the **transcript of intermediate computation blocks**, not from the final output. The output of a matrix multiply can be shortcut with low-rank tricks; the full block-by-block transcript cannot. That is what makes the work both useful (it computes a real product) and hard to skip (the transcript needs the full multiply). In Cloudana today only the orchestrator checks the transcript, by re-executing it; nobody else can check it more cheaply than by redoing the multiply.
 
 ### 3.2 The cuPOW Protocol (as implemented)
 
 For a real workload supplying matrices A and B:
 
-1. **Encode.** Derive low-rank noise E = Eₗ·Eᵣ and F = Fₗ·Fᵣ deterministically from a seed σ (the latest Base block hash). Form A′ = A+E, B′ = B+F.
+1. **Encode.** Derive low-rank noise E = Eₗ·Eᵣ and F = Fₗ·Fᵣ deterministically from a seed σ issued at assignment: a hash of the job, the assigned node, a nonce and the latest Base block hash. Form A′ = A+E, B′ = B+F.
 2. **Block multiply.** Compute A′·B′ in r×r blocks, hashing every intermediate block into a transcript. Block size r ≈ n^0.3.
 3. **Proof.** z = SHA-256(σ ‖ H(transcript) ‖ H(A) ‖ H(B)). A certificate is valid when z has the required leading-zero bits (difficulty).
 4. **Decode.** Recover the clean product C = A·B in O(n²·r) — far cheaper than the O(n³) multiply already performed. **C is the answer the user paid for.**
 
-The provider submits the certificate *and* the decoded result. The orchestrator verifies the certificate (and Freivalds-checks the result) and returns C to the user. One operation, two outputs: a verifiable proof and a useful product.
+The provider submits the certificate *and* the decoded result. The orchestrator Freivalds-checks the result, verifies the certificate by re-executing the transcript over the job's own matrices, and returns C to the user. One operation, two outputs: a verifiable proof and a useful product.
 
 ### 3.3 CLD is minted only for real, paid work
 
@@ -58,7 +58,7 @@ Not all compute is a matrix multiply, so PoUW is not the verification method for
 
 - **Tier 1 — Standard** (static hosting today; APIs, databases, CI later). Served through a Cloudana gateway and probed every minute for reachability and a content hash of the uploaded files; the orchestrator can stop a deployment. Paid by fees only — **no subsidy**.
 - **Tier 2 — Optimistic** (containers, ETL, transcoding, batch). Attested by probes and reputation today; fraud-proof windows later. Paid by fees only until a proof exists.
-- **Tier 3 — PoUW** (AI/ML, scientific simulation, matrix-heavy compute). Verified by PoUW certificates. This is the tier where proof and product coincide, and the only tier eligible for the subsidy lane.
+- **Tier 3 — PoUW** (matrix-multiplication jobs; the only proven work today). Re-executed by the orchestrator and answer-checked (Freivalds), with the transcript bound to its assignment by σ. This is the tier where proof and product coincide, and the only tier eligible for the subsidy lane.
 
 A user does not choose a tier manually. They describe what they need to run; the platform classifies the workload and routes it. The complexity is ours, not theirs. *(v2.0 described a bonded "challenger network" for Tiers 1–2; that design is superseded — see §6.4.)*
 
@@ -69,7 +69,7 @@ A user does not choose a tier manually. They describe what they need to run; the
 Cloudana's onboarding promise is **flash-and-go**: a provider installs once, and the node detects what it is.
 
 - **Auto-detection.** On startup the node fingerprints CPU, RAM, disk, and any NVIDIA GPUs (model + VRAM), classifies itself into a hardware tier (CPU-only, edge, storage, GPU-mid, GPU-high), and derives a stable device ID for one-claim-per-device anti-Sybil.
-- **No bidding.** Providers do not haggle and users never pick a provider. Capacity is self-reported via detection; the price is protocol-set from utilization (Section 6.2); the orchestrator assigns each job by a weighted random draw among the nodes that fit. A provider may set a floor price below which it won't take work; the orchestrator still sets the price.
+- **No bidding.** Providers do not haggle and users never pick a provider. Capacity is self-reported via detection; the price is protocol-set (Section 6.2); the orchestrator assigns each job by a weighted random draw among the nodes that fit. A provider may set a floor price below which it won't take work; the orchestrator still sets the price.
 - **No stake.** A misbehaving node is unbound and banned; the subsidy lane vests and can be clawed back before it does (§6.4).
 
 **On GPUs and clustering — honestly.** Cloudana does not tightly cluster GPUs across nodes (no NVLink-equivalent over the public internet; latency makes it impractical). Instead:
@@ -94,16 +94,16 @@ v2.0 replaced that with an 8%-per-year drip of "mining rewards" decaying to a 1.
 
 Only one event creates CLD: a verified, paid job.
 
-1. The user pays a fee **F** in CLD. It is held in escrow until the job verifies.
+1. The user is quoted a price in US dollars and pays a fee **F** in CLD at the rate on the quote. It is held in escrow until the job verifies.
 2. At settlement the **whole fee is burned**.
 3. For the verified job, the provider is **minted 95% of F**, the protocol treasury is **minted 3% of F**, and **2% of F is destroyed for good** (net burn).
-4. If the orchestrator's random draw chose that provider *and* the cluster gate passed, a **capped subsidy** (lane B) is minted on top.
+4. If the job is proven work, the orchestrator's random draw chose that provider *and* the cluster gate passed, a **capped subsidy** (lane B) is minted on top.
 
 Burn-then-mint rather than a plain transfer gives the contract one invariant to enforce: `minted ≤ fees burned × 98% + subsidy allowance`. The split is enforced on-chain at mainnet (treasury ≥ 3% of fees burned, provider + treasury ≤ 98%); on testnet it is applied in the ledger and checked by the settlement contract on every posted batch. The treasury share is a one-way-down knob.
 
-**Price.** Compute is priced in **nano-CLD per tera-MAC** (nCLD/TMAC) plus a small per-job base fee; hosting, containers and workstations are priced per hour. The price is set by a utilization controller — it moves at most ±2% per hour toward a 70% utilization target and holds when the network is idle. There is no price oracle: CLD is the unit of account and the only settlement asset, and USD is shown for display only. Users may add a ceiling, providers a floor; both are optional. The mainnet launch price is taken from the testnet median.
+**Price.** Prices are in US dollars. You pay in CLD at the rate on your quote. The rate enters in one place only: how many CLD a quote asks for. Testnet uses a fixed reference rate of $0.10 per CLD; after listing, the rate is a one-hour average of the public CLD/USDC pool. A quote, rate included, is locked for five minutes. Compute jobs are priced in **nano-dollars per tera-multiply-add** (about $2.02 per H100-hour of matrix work) plus a $0.0001 base fee; that price is set by a utilization controller — it moves at most ±2% per hour toward a 70% utilization target and holds when the network is idle. Hourly services have fixed dollar prices: static site $0.0014/h (≈ $1/month), vCPU $0.010/h, RAM $0.0012/GB-h, container disk and workstation volumes $0.0001/GB-h, and GPUs by tier — standard (under 40 GB) $0.30/h, large (40–80 GB, A100-class) $1.20/h, H100-class $2.00/h. Interruptible runs are half price. Settlement is in CLD: the ledger, the split and the settlement contract see only CLD, and there is no oracle in settlement. Testnet prices are shown in dollars for reference; test CLD has no value. Users may add a ceiling, providers a floor; both are optional. The mainnet launch compute price is taken from the testnet median.
 
-**Subsidy (lane B).** While the network bootstraps, a provider chosen by the random draw also receives `S = ρ·F` with ρ = 0.25 (0.5 only once ≥10 independent clusters exist and the largest holds ≤30% of capacity). Lane B is withheld when fewer than N_MIN independent clusters are online, and withheld from any single operator whose share of the epoch's eligible work exceeds S_CAP (testnet N_MIN 3 / S_CAP 0.5; mainnet 5 / 0.34). Hosting and other unproven services earn no subsidy. The total lane B minted in a year is capped by the **subsidy allowance**:
+**Subsidy (lane B).** While the network bootstraps, a provider chosen by the random draw for proven work (matrix jobs) also receives `S = ρ·F` with ρ ≤ 0.04. ρ is capped so that 0.95 + ρ < 1: paying yourself always returns less than you paid, even if you own every node. Lane B is withheld when fewer than N_MIN independent clusters are online, and withheld from any single operator whose share of the epoch's eligible work exceeds S_CAP (testnet N_MIN 3 / S_CAP 0.5; mainnet 5 / 0.34). If an epoch's lane-B entries add up to more than its budget, every entry is scaled by the same factor when the epoch closes (pro rata); the provider's 95% is paid in full. Hosting and other unproven services earn no subsidy. The budget is set in CLD, as a share of supply, not in dollars. The total lane B minted in a year is capped by the **subsidy allowance**:
 
 | Period | Annual allowance (illustrative on a 100M genesis) |
 |---|---|
@@ -118,7 +118,7 @@ Unused allowance is never minted. Lane B vests before it can be claimed (1 hour 
 
 **Supply dynamics.** Net supply change per year ≈ subsidy minted − 2% of fees. Supply grows mildly while the subsidy exceeds the net burn and shrinks once annual fees exceed 50× the subsidy actually minted. Where that crossover falls depends entirely on paid usage; the 20-year simulation at `/control/economics` shows scenarios, not a forecast.
 
-**Settlement.** Mint amounts are fixed when the job verifies. The orchestrator batches them into epochs (1 hour on testnet, 24 hours at mainnet) and posts one Merkle root per epoch; a guardian may veto within the window (1 h testnet, 24 h mainnet); after it, the fees are burned, the treasury is minted, and lane A becomes claimable. Batching is delivery, not the reward unit — nothing is "earned per epoch."
+**Settlement.** The provider's and treasury's amounts are fixed when the job verifies; lane B is fixed when its epoch closes. The orchestrator batches them into epochs (1 hour on testnet, 24 hours at mainnet) and posts one Merkle root per epoch; a guardian may veto within the window (1 h testnet, 24 h mainnet); after it, the fees are burned, the treasury is minted, and lane A becomes claimable. Batching is delivery, not the reward unit — nothing is "earned per epoch."
 
 ### 6.3 Genesis and allocation
 
@@ -139,7 +139,7 @@ Provider rewards are **not** an allocation: they are minted per verified job und
 
 ### 6.4 Superseded: staking, slashing and challengers
 
-v2.0 §6.4 and §7.1 described provider bonds, 50% slashing and a bonded challenger network. **That design is superseded and not built.** Providers post no stake. Honesty is enforced by: the orchestrator's re-execution of every transcript, Freivalds checks on every result, **planted tasks** with known answers mixed into verifier work, hash-checked hosting probes, and unbinding and banning of a misbehaving node. The **lane-B vesting period acts as the bond**: subsidy for a job later found fraudulent is voided by the guardian before it vests. After mainnet, an on-chain Freivalds challenge against a poster bond replaces the guardian for this role (see `DECENTRALIZATION_ROADMAP.md`). The legacy `StakingManager` and `ChallengeManager` contracts are abandoned.
+v2.0 §6.4 and §7.1 described provider bonds, 50% slashing and a bonded challenger network. **That design is superseded and not built.** Providers post no stake. Honesty is enforced by: the orchestrator's re-execution of every transcript, Freivalds checks on every result, hash-checked hosting probes, and unbinding and banning of a misbehaving node. Browser verifiers (with **planted tasks** that test the verifier) are a public re-check; their verdicts do not change outcomes. The **lane-B vesting period acts as the bond**: subsidy for a job later found fraudulent is voided by the guardian before it vests. After mainnet, an on-chain Freivalds challenge against a poster bond replaces the guardian for this role (see `DECENTRALIZATION_ROADMAP.md`). The legacy `StakingManager` and `ChallengeManager` contracts are abandoned.
 
 ---
 
@@ -147,16 +147,16 @@ v2.0 §6.4 and §7.1 described provider bonds, 50% slashing and a bonded challen
 
 ### 7.1 Testnet (today): trust-minimized, orchestrator-coordinated
 
-- The orchestrator verifies each PoUW certificate by re-running the block multiply and checking the transcript hash and difficulty, then Freivalds-checks the decoded result.
-- Replay is blocked by recording used `z` values in persistent orchestrator storage; a certificate spends once.
-- Browser verifiers re-check finished public jobs, with planted wrong answers to catch careless verifiers. Verifier credits are points, not CLD.
+- The orchestrator first Freivalds-checks the decoded result (entries are bounded, so the check is exact over the integers), then verifies the PoUW certificate by re-running the block multiply over the job's own matrices and checking the transcript hash.
+- Replay is blocked by σ: it is issued at assignment and bound to the job and the node, so a certificate cannot be precomputed, reused or copied.
+- Browser verifiers re-check finished public jobs, with planted wrong answers to catch careless verifiers. It is a public re-check: verdicts do not change any job's outcome. Verifier credits are points, not CLD.
 - Settlement is a Merkle root per epoch on Base Sepolia, posted by a keeper that runs isolated from the API, with a veto window and a guardian multisig.
 - Instructions sent to nodes are signed with a key that holds no funds; nodes ignore anything unsigned or stale.
 - **Honest limitation:** the orchestrator is trusted to verify correctly and a poster key submits batches. If that key is compromised, the guardian's veto and the on-chain mint invariants (§6.2, §7.3) bound the damage, but we do not call this trustless.
 
-### 7.2 Mainnet (target): zkSNARK verification
+### 7.2 After mainnet (target): on-chain Freivalds challenges
 
-Trustlessness arrives when certificate verification moves on-chain via a Groth16 zkSNARK (Circom + snarkjs): the provider submits a succinct proof, the contract verifies it in O(1), and the orchestrator leaves the critical path entirely. A, B remain private under the proof. This is the milestone — not the testnet — at which "decentralized verification" is an honest claim.
+The planned trustless path is an on-chain Freivalds challenge against a bonded poster: anyone can challenge a posted result, the contract runs a Freivalds check on the disputed job in n² steps, and the poster's bond is slashed if the result was wrong. It checks the answer users pay for, only on disputed jobs. The Groth16 proof over the transcript described in earlier versions is not being built and is not the plan; the circuit is a stub. Matrix inputs are public by default. This is the milestone — not the testnet — at which "decentralized verification" is an honest claim.
 
 ### 7.3 Bounded mint authority
 
@@ -168,8 +168,8 @@ The settlement contract is the token's **only minter**. It can mint only against
 
 - **Now — Testnet (Base Sepolia).** Verified matrix jobs and static hosting on home and datacenter nodes; per-job burn-and-mint with the 95/3/2 split; hourly epochs with veto; fresh token and settlement contract under a Safe; signed node instructions. Exit: 30 days of hourly epochs finalized, including a veto drill.
 - **Next — Incentivized testnet.** Two datacenter partners and at least 15 home nodes; the first public job; the free static tier behind the gateway; epoch leaves and draw seeds published so anyone can recompute roots and replay draws. Exit: ≥3 independent clusters with the largest ≤30% for 60 days; utilization held at 0.6–0.8 for 30 days; counsel engaged.
-- **Then — Trustless verification.** Groth16 circuits for PoUW, on-chain verifier, orchestrator removed from the critical path.
-- **Mainnet.** 100M genesis with on-chain vesting (§6.3); 24-hour epochs; fee split enforced on-chain; timelock; audits; liquidity pool ≥30× daily fees; capped free tier.
+- **Then — Mainnet.** 100M genesis with on-chain vesting (§6.3); 24-hour epochs; fee split enforced on-chain; timelock; audits; liquidity pool ≥30× daily fees; capped free tier.
+- **After mainnet — Trustless verification.** On-chain Freivalds challenges against a bonded poster, so a wrong posted result can be disputed without trusting the orchestrator.
 
 ---
 
@@ -188,7 +188,7 @@ Cloudana's edge is real for matrix-heavy compute, where proof and product coinci
 
 ## 10. Conclusion
 
-Cloudana turns the energy a chain would waste into computation a user actually wants, mints CLD only for work someone paid for and a proof confirmed, and onboards hardware by detection rather than configuration. We are shipping this as an honestly-labeled testnet — trust-minimized today, trustless when the math is on-chain — because the difference between those two claims is exactly the difference we intend to earn. Nothing about CLD is a promise of price or return.
+Cloudana turns the energy a chain would waste into computation a user actually wants, mints CLD only for work someone paid for and the network verified, and onboards hardware by detection rather than configuration. We are shipping this as an honestly-labeled testnet — trust-minimized today, trustless when the math is on-chain — because the difference between those two claims is exactly the difference we intend to earn. Nothing about CLD is a promise of price or return.
 
 ---
 

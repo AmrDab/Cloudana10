@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, ChevronDown, ChevronsUpDown, Coins, Cpu, Download, FlaskConical, Inbox, Loader2, MonitorPlay, Play, Rocket, ShieldCheck, Wallet, X } from "lucide-react";
+import { BrainCircuit, Check, ChevronDown, ChevronsUpDown, Coins, Cpu, Download, FlaskConical, Inbox, Loader2, MonitorPlay, Play, Rocket, ShieldCheck, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError, cld, int, jobPriceUcld } from "@/lib/cld";
 import { useNetwork } from "@/hooks/useNetwork";
@@ -20,17 +20,19 @@ import { errText, signInWithToast } from "@/components/console/actions";
 import { downloadJson, freivalds, loadInputs, randMatrix, saveInputs } from "@/components/console/matmul";
 import DeployTab from "@/pages/console/deploy";
 import WorkstationsTab from "@/pages/console/workstations";
+import EndpointsTab from "@/pages/console/endpoints";
+import { cldAmount, ucldToUsd, usd, usePrices } from "@/lib/prices";
 
 const SIZES = [16, 32, 64, 128] as const;
 
-type Tab = "compute" | "deploy" | "workstations";
-const TABS: Tab[] = ["compute", "deploy", "workstations"];
+type Tab = "compute" | "deploy" | "workstations" | "endpoints";
+const TABS: Tab[] = ["compute", "deploy", "workstations", "endpoints"];
 
 export default function RunPage() {
   const search = useSearch();
   const [, navigate] = useLocation();
   const q = new URLSearchParams(search).get("tab");
-  const tab: Tab = q === "deploy" || q === "workstations" ? q : "compute";
+  const tab: Tab = q === "deploy" || q === "workstations" || q === "endpoints" ? q : "compute";
   const setTab = (t: Tab) => navigate(t === "compute" ? "/run" : `/run?tab=${t}`, { replace: true });
 
   return (
@@ -43,14 +45,17 @@ export default function RunPage() {
             ? "Multiply two matrices on the network. The orchestrator assigns the hardware and sets the price; you get the answer with its proof."
             : tab === "workstations"
             ? "Rent a workstation — Jupyter, VS Code or a desktop — by describing what it needs. The orchestrator assigns a node that fits and sets the price."
+            : tab === "endpoints"
+            ? "Serve your own model from GPUs on the network. Bring the image; the orchestrator places the replicas, gives the endpoint an address, checks it every minute and bills by the replica-hour."
             : "Deploy a static site or a container. The orchestrator places it on a capable node, sets the price, and probes it every minute."
         }
       />
-      <div role="tablist" aria-label="What to run" className="mb-6 grid grid-cols-3 rounded-lg border border-line-2 bg-bg-2 p-1 sm:inline-flex">
+      <div role="tablist" aria-label="What to run" className="mb-6 grid grid-cols-2 rounded-lg border border-line-2 bg-bg-2 p-1 sm:inline-flex">
         {([
           ["compute", "Compute job", Cpu],
           ["deploy", "Deploy", Rocket],
           ["workstations", "Workstations", MonitorPlay],
+          ["endpoints", "Endpoints", BrainCircuit],
         ] as const).map(([id, label, Icon]) => (
           <button
             key={id}
@@ -79,7 +84,7 @@ export default function RunPage() {
         ))}
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {tab === "compute" ? <ComputeTab /> : tab === "deploy" ? <DeployTab /> : <WorkstationsTab />}
+        {tab === "compute" ? <ComputeTab /> : tab === "deploy" ? <DeployTab /> : tab === "workstations" ? <WorkstationsTab /> : <EndpointsTab />}
       </div>
     </>
   );
@@ -166,6 +171,7 @@ function NewJob({ className }: { className?: string }) {
   const [busy, setBusy] = useState(false);
 
   const est = net.data ? jobPriceUcld(n, net.data.priceNcldPerTmac, net.data.baseFeeUcld) : null;
+  const { usdPerCld } = usePrices();
   const maxUcld = max.trim() === "" ? null : Math.round(Number(max) * 1e6);
   const maxInvalid = maxUcld != null && (!Number.isFinite(maxUcld) || maxUcld <= 0);
   const overCeiling = maxUcld != null && est != null && !maxInvalid && est > maxUcld;
@@ -227,13 +233,16 @@ function NewJob({ className }: { className?: string }) {
           <div className="rounded-md border border-line bg-bg-2 p-4">
             <MonoLabel>Price estimate</MonoLabel>
             <div className="mt-2 h-8 font-mono text-[26px] leading-8 tabular-nums text-text">
-              {est == null ? <span className="text-faint">—</span> : <>≈ {cld(est)}</>}
+              {est == null ? <span className="text-faint">—</span> : <>≈ {usd(ucldToUsd(est, usdPerCld))}</>}
             </div>
+            {est != null && <div className="font-mono text-[13px] tabular-nums text-muted-foreground">≈ {cldAmount(est / 1e6)} at ${usdPerCld.toFixed(2)} per CLD</div>}
             <p className="mt-1 font-mono text-[12px] text-faint">
               {!net.data
                 ? net.offline
                   ? "api offline — price unknown"
                   : "reading price…"
+                : net.data.baseFeeUsd != null && net.data.priceNusdPerTmac != null
+                ? `${usd(net.data.baseFeeUsd)} per job + ${usd(net.data.priceNusdPerTmac / 1000)} per 10¹⁸ multiply-adds · set by the orchestrator`
                 : `${int(net.data.baseFeeUcld)} µCLD base + ${int(net.data.priceNcldPerTmac)} nCLD per tera multiply-adds · set by the orchestrator`}
             </p>
           </div>

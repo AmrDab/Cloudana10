@@ -1,4 +1,5 @@
 // Deploy tab — pure helpers shared by the browser, the detail sheet, the form and the deployments table.
+import { hourlyUsd, type PriceTable } from "@/lib/prices";
 import { useSyncExternalStore } from "react";
 import {
   Activity, Blocks, Box, Brain, Code2, Database, FileCode2, Gamepad2, Globe, HardDrive, MessageSquare, Server, Wrench,
@@ -38,7 +39,7 @@ export function categoryIcon(title: string): LucideIcon {
   return Box;
 }
 
-// ── Sizes & price (§3, contract defaults — the live values are protocol-set, so the UI says "estimate") ─────────
+// ── Sizes & price (dollars from GET /network `prices`, docs/PRICES_USD.md — the UI says "estimate") ─────────────
 export const SIZES = {
   S: { cpu: 500, memMb: 512, storageMb: 1024 },
   M: { cpu: 1000, memMb: 1024, storageMb: 5 * 1024 },
@@ -46,11 +47,9 @@ export const SIZES = {
 } as const;
 export type Size = keyof typeof SIZES;
 
-const PRICE_HOSTING = 50, PRICE_CPU = 200, PRICE_MEM_GB = 100, PRICE_STORAGE_GB = 20;
-export function priceEstimate(kind: Kind, r?: { cpu: number; memMb: number; storageMb: number }) {
-  if (kind === "static" || !r) return PRICE_HOSTING;
-  const p = (r.cpu / 1000) * PRICE_CPU + (r.memMb / 1024) * PRICE_MEM_GB + (r.storageMb / 1024) * PRICE_STORAGE_GB;
-  return Math.max(PRICE_HOSTING, Math.round(p));
+/** US dollars per hour (the API's formula, lib/prices.ts). */
+export function priceEstimate(prices: PriceTable, kind: Kind, r?: { cpu: number; memMb: number; storageMb: number }) {
+  return hourlyUsd(prices, kind === "static" ? "static" : "container", r);
 }
 
 // ── Container defaults from the template's SDL ──────────────────────────────────────────────────────────────
