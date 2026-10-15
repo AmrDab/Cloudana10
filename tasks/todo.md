@@ -385,7 +385,7 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [x] API: USD price env (hourly table, nano-USD/TMAC controller, base fee) × one reference rate; quotes carry {usd, rate, cld, expiresAt}; GPU tiers (shared/gpu-tier.ts) in classification, specs, placement and the agent; legacy class names mapped; agent 1.3.0 minimum
 - [x] Console: prices as "$X/h ≈ Y CLD" (Run, Deploy, Workstations, Endpoints, Overview, lab); live table from GET /network (lib/prices.ts). Provide floor stays in CLD (not used by placement yet)
 - [x] Homepage + litepaper + whitepaper §5–6 + console docs + catalog copy per the report's §5 and docs/POUW_REVIEW.md §6
-- [ ] Owner review on localhost, then publish both Pages projects
+- [x] Owner review on localhost, then publish both Pages projects — published 2026-10-14 (PR #30)
 
 ## V4 step 7 — console Endpoints tab (owner picked concept A via "go with what you recommend", 2026-10-13)
 - [x] Run → Endpoints: list (replicas, failure log tail, call-it, keys create/revoke, events, stop) + create form with live dollar price
@@ -409,3 +409,9 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [x] Spec v1 + independent review (17 findings); finding 5 (busy dodged hosting probes) fixed and deployed (PR #31: relay 3e6666fd, API 08e78ae3)
 - [x] Spec v2: three phases (network artifacts → buckets with an R2 copy → provider durability at ≥ 14 independent operators)
 - [ ] Owner: phased plan, phase-2 prices ($0.02/GB-month, $0.01/GB down), key custody, DMCA/abuse contacts
+
+## V4 step 6 — report a problem + epoch job list (2026-10-15)
+- [x] API (PR #34, live as API b0587e56): POST /v1/deployments/{id}/report (immediate probe through the relay; ≤ 5/account/day, claimed atomically); GET /v1/epochs/{n}/jobs (public; counts what the close posted)
+- [x] Billing rule after review: pay for time a probe saw working (deployments.last_ok_at). A failed report probe and recovery from unreachable forgive only the time since the last passing probe; closes "flap 3 probes before each hour = pay nothing" and "fail one check + report = ~59 min free"
+- [ ] Console button (PR #35): shown on localhost; publish on the owner's "publish"
+- [ ] Network check counters come with verified mode (step 4)
