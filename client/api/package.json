@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Cloudana API — edge Worker (auth, templates, payments, faucet, PoUW, IPFS pinning) and Node orchestrator (placement, provider builds, deploy, verification)",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "main": "src/index.ts",
   "scripts": {
     "dev": "tsx watch src/index.ts",

@@ -285,7 +285,7 @@ export async function uploadToIPFS(metadata: ProviderMetadata) {
 
 ## 📄 License
 
-MIT License - see LICENSE file for details
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Versions published before 2026-10-17 were released under the MIT License.
 
 ## 🔐 Security
 
