@@ -108,25 +108,23 @@ Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10
 - **Sign-in secret:** the old one existed while the leaked file was public, so we replace it. Everyone gets signed out of the console once.
 - **Storage key:** encrypts the copies of job data that provider nodes hold (storage phase 1), so providers only ever see scrambled bytes. Set it once; ask Claude before ever changing it.
 
-**Do** (in your PowerShell window from step 0; paste one line at a time):
+**Do** (in your PowerShell window from step 0, in the Cloudana10-site folder):
 ```powershell
-cd client\api
-node -e "process.stdout.write('0x'+require('crypto').randomBytes(32).toString('hex'))" | wr secret put INSTRUCTION_SIGNING_KEY
-node -e "process.stdout.write(require('crypto').randomBytes(48).toString('hex'))" | wr secret put JWT_SECRET
-node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | wr secret put STORAGE_KEK
-cd ..\..
+node scripts\set-api-secrets.mjs
 ```
-Each `node -e …` part makes a random value on your computer and hands it straight to Cloudflare. You never see it, so you can't leak it.
+It makes the three random values on your computer and hands each one straight to Cloudflare: nothing to type or
+paste, and nobody sees them, Claude included. (Piping into `wr` doesn't work in PowerShell — wrangler then asks you to
+type a value — so use the script.)
 
 Then open https://api.cloudana.io/v1/nodes/instruction-key in your browser.
 
 **You should see:**
-- After each `wr secret put` line: `✨ Success! Uploaded secret …`.
+- Three times: `✨ Success! Uploaded secret …`.
 - In the browser: `{"status":"success","address":"0x…"}`. That address is public.
 
 **If it goes wrong:**
-- The browser shows `not_configured`: wait 30 seconds and refresh. If it persists, re-run the first `node -e … INSTRUCTION_SIGNING_KEY` line.
-- `Need to pass in a value`: you ran `wr secret put` on its own. Run the whole line, including the `node -e … |` part.
+- The browser shows `not_configured`: wait 30 seconds and refresh. If it persists, run `node scripts\set-api-secrets.mjs INSTRUCTION_SIGNING_KEY`.
+- `Enter a secret value`: you ran `wr secret put` yourself. Press Ctrl+C and use the script instead.
 
 ✅ Tell Claude: **"instruction key address is 0x…"** (paste the address from the browser).
 
