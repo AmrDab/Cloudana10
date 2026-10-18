@@ -261,7 +261,7 @@ async function main() {
     if (bound && !wasBound && res.fleetId) {
       log(`Joined fleet ${res.fleetId} — earnings go to ${res.payout}`);
     } else if (!bound) {
-      const url = `${site}/app/provide.html?node=${account.address}&code=${res.bindCode}`;
+      const url = `${site}/control/provide?node=${account.address}&code=${res.bindCode}`;
       if (url === lastBindUrl) return; // print the link once, not on every re-announce
       lastBindUrl = url;
       const line = `Bind this node to your wallet: ${url}`;

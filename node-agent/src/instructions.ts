@@ -14,11 +14,10 @@
 import { keccak256, stringToBytes, verifyMessage } from "viem";
 
 /**
- * Address of the API's instruction key, pinned at build time. null until the owner generates
- * INSTRUCTION_SIGNING_KEY and bakes its address in here (GET /v1/nodes/instruction-key shows it);
- * until then CLOUDANA_INSTRUCTION_SIGNER must be set or the agent refuses to start.
+ * Address of the API's instruction key (GET /v1/nodes/instruction-key), pinned at build time; set 2026-10-18 when the
+ * owner generated INSTRUCTION_SIGNING_KEY. CLOUDANA_INSTRUCTION_SIGNER overrides it (e.g. a local test API).
  */
-export const DEFAULT_INSTRUCTION_SIGNER: string | null = null;
+export const DEFAULT_INSTRUCTION_SIGNER: string | null = "0x90ece35D6877658e9F3dAd7251b3b5654dd2a247";
 
 export const INSTRUCTION_WINDOW_MS = 60_000;
 
