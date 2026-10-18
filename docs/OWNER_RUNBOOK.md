@@ -366,8 +366,11 @@ it is deployed in step 5: run the script again then). Nothing to type or paste; 
 **Do — the domain:**
 1. **https://dash.cloudflare.com → Domain Registration → Register Domains**, search for a name such as `cloudana.run`,
    and buy it (about $10/year).
-2. It appears as a new site in your Cloudflare account automatically. Nothing else to configure: Claude points the
-   gateway at it.
+2. It appears as a new site in your Cloudflare account automatically.
+3. Add one DNS record so every `<id>.cloudana.run` reaches Cloudana (Claude's Cloudflare access can't edit DNS):
+   **cloudana.run → DNS → Records → Add record**: Type **AAAA**, Name **`*`**, IPv6 address **`100::`**,
+   Proxy status **Proxied** (orange cloud) → **Save**. (`100::` is a placeholder: Cloudflare answers every request
+   itself and hands it to the gateway, so no server sits behind it.)
 
 **You should see:** `✨ Success! Uploaded secret …` four times, and "cloudana-keeper: not deployed yet, skipped".
 

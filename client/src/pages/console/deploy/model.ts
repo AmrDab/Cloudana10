@@ -9,7 +9,7 @@ import type { Deployment, Template } from "@/components/console/data";
 
 export type Kind = "static" | "container";
 
-/** Public gateway address (https://{id}.sites.cloudana.io) from the API's `url`; `endpoint` stays the node origin. */
+/** Public gateway address (https://{id}.cloudana.run) from the API's `url`; `endpoint` stays the node origin. */
 export const publicUrl = (d: Deployment): string | null => (d as Deployment & { url?: string | null }).url ?? null;
 export const hostOf = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
