@@ -3,16 +3,17 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 workers_dev = false
 
-# Route: every *.sites.cloudana.io request goes to this Worker once DNS has a *proxied* wildcard record
-#   *.sites  AAAA  100::   (owner step, docs/OWNER_RUNBOOK.md) and the zone has a certificate covering *.sites.
+# Route: every *.cloudana.run request (the user-content domain, owned 2026-10-18) goes to this Worker. DNS needs one
+# *proxied* wildcard record:  *  AAAA  100::  (owner step 8, docs/OWNER_RUNBOOK.md). Cloudflare's free Universal SSL
+# certificate covers cloudana.run and *.cloudana.run (one level: every deployment id).
 # Top-level key: it must stay above the [vars] table or TOML reads it as a variable.
 routes = [
-  { pattern = "*.sites.cloudana.io/*", zone_name = "cloudana.io" }
+  { pattern = "*.cloudana.run/*", zone_name = "cloudana.run" }
 ]
 
 [vars]
 API_URL = "https://api.cloudana.io"
-SITES_DOMAIN = "sites.cloudana.io"
+SITES_DOMAIN = "cloudana.run"
 
 # Relayed deployments (docs/V4_RELAY_CONTRACT.md): each node's RelayNode in cloudana-relay (deploy that first).
 [[durable_objects.bindings]]
@@ -20,9 +21,8 @@ name = "RELAY"
 class_name = "RelayNode"
 script_name = "cloudana-relay"
 
-# Secret (same value as the API's): wrangler secret put INTERNAL_API_KEY
-# SITES_DOMAIN moves to the user-content domain (e.g. cloudana.run, one-level wildcard) once it exists
-# (docs/V4_REVIEW_RELAY.md §2); *.sites.cloudana.io would need a paid certificate.
+# Secret (same value as the API's): INTERNAL_API_KEY — set by scripts/set-relay-secrets.mjs (runbook step 8).
+# SITES_DOMAIN is a separate registrable domain, so tenant apps can't touch cloudana.io cookies (docs/V4_REVIEW_RELAY.md §2).
 
 # GPU endpoints (docs/V4_ENDPOINTS_CONTRACT.md): requests per endpoint key. The Workers rate-limiting binding
 # (period 10 or 60 s); namespace_id is any integer unique within this Worker.

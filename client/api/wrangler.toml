@@ -10,6 +10,8 @@ routes = [
 
 [vars]
 CHAIN_NETWORK = "baseSepolia"
+# Hosted sites, containers and GPU endpoints answer at https://<id>.cloudana.run (cloudana-gateway).
+SITES_DOMAIN = "cloudana.run"
 USD_PER_CLD = "0.1"
 # Public testnet: test credits (no value), once per wallet per day. Remove before CLD carries value.
 TESTNET_CREDITS = "true"
