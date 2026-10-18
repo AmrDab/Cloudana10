@@ -355,23 +355,13 @@ reach its sites and containers through it. Two things only you can do:
   means it can't touch your console's cookies or reputation. (This replaces the old `*.sites.cloudana.io` plan, which
   needed a $10/month certificate add-on.)
 
-**Do — secrets** (PowerShell, from the repo folder, after Step 0):
-1. Make one random value and copy it:
-   ```powershell
-   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-   ```
-2. Paste that same value into both prompts:
-   ```powershell
-   npx wrangler secret put RELAY_TICKET_SECRET --name cloudana-api
-   npx wrangler secret put RELAY_TICKET_SECRET --name cloudana-relay
-   ```
-3. The gateway needs the same internal key as the API and the keeper. If you don't have the current value, make a new
-   one with the command in 1. and set it on all three:
-   ```powershell
-   npx wrangler secret put INTERNAL_API_KEY --name cloudana-api
-   npx wrangler secret put INTERNAL_API_KEY --name cloudana-keeper
-   npx wrangler secret put INTERNAL_API_KEY --name cloudana-gateway
-   ```
+**Do — secrets** (PowerShell, in the Cloudana10-site folder, after Step 0):
+```powershell
+node scripts\set-relay-secrets.mjs
+```
+It makes the two random values on your computer and hands them straight to Cloudflare: the relay secret to
+`cloudana-api` and `cloudana-relay`, the internal key to `cloudana-api` and `cloudana-gateway` (the keeper gets it when
+it is deployed in step 5: run the script again then). Nothing to type or paste; nobody sees them.
 
 **Do — the domain:**
 1. **https://dash.cloudflare.com → Domain Registration → Register Domains**, search for a name such as `cloudana.run`,
@@ -379,7 +369,7 @@ reach its sites and containers through it. Two things only you can do:
 2. It appears as a new site in your Cloudflare account automatically. Nothing else to configure: Claude points the
    gateway at it.
 
-**You should see:** `npx wrangler secret list --name cloudana-relay` lists `RELAY_TICKET_SECRET`.
+**You should see:** `✨ Success! Uploaded secret …` four times, and "cloudana-keeper: not deployed yet, skipped".
 
 ✅ Tell Claude: **"relay secrets done"** and the domain you bought. Claude switches the gateway to it and tests a site
 end to end through a real node.
