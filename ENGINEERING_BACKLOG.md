@@ -10,7 +10,7 @@ in `PROGRESS.md`.
 | # | Gap | Blast radius / impact | Blocks | Effort | Certainty | Owner? |
 |---|---|---|---|---|---|---|
 | 1 | **No live settlement**: v2 token + settlement not deployed, keeper off, legacy token's minter is the leaked key | Every "minted"/"earned" number is an off-chain IOU; the one marketing claim that distinguishes Cloudana is unproven in production | Paid workloads, provider earnings, mainnet | S (script exists) | High | **Yes** (runbook 3–6) |
-| 2 | **Nothing is publicly reachable**: relay secret unset, gateway not on `cloudana.run`, no public node | Deploy flows end at a URL that does not resolve; hosting cannot be demonstrated or billed honestly | Public workloads, hosting, endpoints, storage copies | S | High | **Yes** (runbook 8–10) |
+| 2 | ~~Nothing is publicly reachable~~ — **closed 2026-10-18**: relay secrets set, gateway on `cloudana.run`, first public node (Azure) online | Deploy flows end at a URL that does not resolve; hosting cannot be demonstrated or billed honestly | Public workloads, hosting, endpoints, storage copies | S | High | **Yes** (runbook 8–10) |
 | 3 | **Control plane = one Worker + one D1 with ~12 statements per heartbeat** | Capacity ceiling in the low hundreds of nodes; cost grows linearly; one bad query locks everyone | Scale beyond a pilot | M | Medium (unmeasured) | No |
 | 4 | **No independent verification of the orchestrator**: leaves, seeds and σ stored but not published/signed; roadmap phase 1 unmet | "Progressively decentralizing" is a claim nobody can check; litmus FAIL | Mainnet, partner datacenters | M | High | No |
 | 5 | **Verification cost = work cost** (full transcript re-execution per matmul job, in the Worker) | Orchestrator CPU scales with every paid job; large n is unaffordable; blocks raising `MATMUL_N_MAX` | Compute product growth | M | High | No |
@@ -27,7 +27,8 @@ later. Each has acceptance criteria that a reviewer can check without talking to
 
 ### P0
 
-**B-1 · Deploy v2 contracts, keeper, relay secret, gateway domain, first node (owner; gaps 1, 2, 7).**
+**B-1 · Deploy v2 contracts and the keeper (owner; gap 1).** The relay secret, gateway domain and first node are done
+(2026-10-18); a container/GPU fleet node remains (gap 7).
 Acceptance: `shared/addresses.baseSepolia.json` has a `v2` section; `GET /v1/network.lastSettledEpochAt` is non-null
 within 2 h of the first job; `https://<id>.cloudana.run` serves a site deployed from the console through a node with
 no open ports; the keeper `/health` shows the settlement address and a funded poster; one veto drill (`veto` then a
