@@ -5,6 +5,8 @@ import { getEnv } from "../../config/env.js";
 import { ok } from "../../lib/http.js";
 import { epochOf, lastSettledEpochAt } from "../../services/ledger.service.js";
 import { getPriceQuote } from "../../services/pricing.service.js";
+import { signPublic } from "../../services/public-signing.service.js";
+import { SignatureSchema } from "./ledger.js";
 import { createRouter, json, responses } from "./_openapi.js";
 
 export const networkRouter = createRouter();
@@ -48,6 +50,7 @@ const networkRoute = createRoute({
         deploymentsRunning: int,
         gpusOnline: int.openapi({ description: "GPUs in manifests of online, bound nodes that advertise the gpu capability" }),
         workstationsRunning: int,
+        signature: SignatureSchema,
       }),
       "Network stats",
     ),
@@ -55,13 +58,14 @@ const networkRoute = createRoute({
 });
 
 const STATS_SQL = `SELECT
-  (SELECT COUNT(*) FROM nodes WHERE last_seen >= ?1) AS nodesOnline,
+  (SELECT COUNT(*) FROM nodes WHERE last_seen >= ?1 AND state <> 'suspended') AS nodesOnline,
   (SELECT COUNT(*) FROM nodes WHERE payout IS NOT NULL) AS nodesBound,
   (SELECT COUNT(*) FROM work_jobs WHERE status IN ('queued','assigned')) AS jobsQueued,
   (SELECT COUNT(*) FROM work_jobs WHERE status = 'done') AS jobsDone,
   (SELECT COUNT(*) FROM work_jobs WHERE status = 'done' AND cert_z IS NOT NULL) AS certificates,
   (SELECT COALESCE(SUM(amount_ucld), 0) FROM reward_entries WHERE lane IN ('A','B','treasury') AND status != 'clawed') AS mintedUcld,
-  (SELECT COALESCE(SUM(price_ucld), 0) FROM work_jobs WHERE status = 'done')
+  (SELECT COALESCE(SUM(price_ucld), 0) FROM work_jobs WHERE status = 'done'
+     AND EXISTS (SELECT 1 FROM reward_entries e WHERE e.job_id = work_jobs.id))
     + (SELECT COALESCE(SUM(fee_ucld), 0) FROM deployment_bills) AS burnedUcld,
   (SELECT COUNT(DISTINCT session) FROM verify_verdicts WHERE created_at >= ?2) AS verifiersToday,
   (SELECT COUNT(*) FROM deployments WHERE status = 'running') AS deploymentsRunning,
@@ -78,7 +82,7 @@ networkRouter.openapi(networkRoute, async (c) => {
     getPriceQuote(now),
     lastSettledEpochAt(),
   ]);
-  return ok(c, {
+  const stats = {
     nodesOnline: row?.nodesOnline ?? 0,
     nodesBound: row?.nodesBound ?? 0,
     jobsQueued: row?.jobsQueued ?? 0,
@@ -107,7 +111,9 @@ networkRouter.openapi(networkRoute, async (c) => {
     deploymentsRunning: row?.deploymentsRunning ?? 0,
     gpusOnline: row?.gpusOnline ?? 0,
     workstationsRunning: row?.workstationsRunning ?? 0,
-  });
+  };
+  // Signed so mirrors and dashboards can prove what the orchestrator claimed at signedAt.
+  return ok(c, { ...stats, signature: await signPublic(stats, now) });
 });
 
 const RECENT_LIMIT = 12;

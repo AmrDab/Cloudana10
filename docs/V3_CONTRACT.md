@@ -108,10 +108,16 @@ Orchestrator duties (run inside the heartbeat handler, no new process):
 
 ## 6. Sealed secrets (E2E)
 
-ECIES over secp256k1: ephemeral key → ECDH with node pubkey → HKDF-SHA256 (info `cloudana-sealed-env-v1`) →
-XChaCha20-Poly1305 (`@noble/ciphers`, `@noble/curves`, `@noble/hashes` — already in node_modules via viem).
-Payload `base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext)`. Shared implementation in
-`shared/sealed.ts` used by browser (`client/src/lib/sealed.ts` re-export) and agent. Unit test: round trip + tamper fails.
+ECIES over secp256k1: ephemeral key → ECDH with node pubkey → HKDF-SHA256 (info `cloudana-sealed-env-v2` ‖ 0x00 ‖ aad) →
+XChaCha20-Poly1305 with aad (`@noble/ciphers`, `@noble/curves`, `@noble/hashes` — already in node_modules via viem).
+Payload `base64(0x02 ‖ ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext)`, aad = `cloudana-deployment:<deployment id>`
+(`sealedEnvAad`). The agent opens a payload only under the aad of the deployment it is starting, so the API (or anyone
+who can write `deployments.sealed_env`) cannot move one deployment's secrets into another's container; the console
+checks that the public key the API returns derives to the assigned node's address before sealing. The API accepts
+only v2 payloads (`PATCH …/secrets` → 400 otherwise) and places a deployment that carries secrets only on agents
+≥ 1.5.0. v1 (`0x04`-prefixed, info `…-v1`, no aad; superseded 2026-10-19) is recognised and refused for deployments.
+Shared implementation in `shared/sealed.ts` used by browser (`client/src/lib/sealed.ts` re-export) and agent.
+Tests: `node-agent/src/sealed.selftest.ts` (26 checks), `client/api/tests/deployments.test.ts`.
 
 ## 7. Console (client/src)
 

@@ -276,6 +276,11 @@ describe("placement gating", () => {
       // IPv6: brackets are stripped in storage so endpoint hosts compare equal.
       const f = privateKeyToAccount(generatePrivateKey());
       expect((await fromIp(f, "[2001:DB8::10]", "2001:db8::10")).status).toBe(200);
+      // A hostname can never equal the announcing IP, so outside DEV_MODE no hostname is ever stored: every host the
+      // API later probes for a direct node is an IP literal it saw itself — nothing is resolved through DNS, so there
+      // is no rebinding surface (SECURITY_AUDIT O8 / backlog B-13).
+      const g = privateKeyToAccount(generatePrivateKey());
+      expect((await fromIp(g, "node.example.com", "203.0.113.78")).status).toBe(200);
       const types = async (n: PrivateKeyAccount) =>
         JSON.parse((await getD1().prepare("SELECT work_types FROM nodes WHERE address = ?").bind(n.address.toLowerCase()).first<{ work_types: string }>())!.work_types);
       expect(await types(a)).toEqual(["matmul"]);
@@ -284,11 +289,29 @@ describe("placement gating", () => {
       expect(await types(e)).toEqual(["matmul", "hosting"]);
       expect(await types(f)).toEqual(["matmul", "hosting"]);
       expect((await getD1().prepare("SELECT public_host FROM nodes WHERE address = ?").bind(f.address.toLowerCase()).first<{ public_host: string }>())!.public_host).toBe("2001:db8::10");
+      expect(await types(g)).toEqual(["matmul"]);
+      expect((await getD1().prepare("SELECT public_host FROM nodes WHERE address = ?").bind(g.address.toLowerCase()).first<{ public_host: string | null }>())!.public_host).toBeNull();
     } finally {
       process.env.DEV_MODE = "true";
       delete process.env.TRUST_PROXY;
       resetEnv();
     }
+  });
+
+  it("a direct node may only report endpoints on the host it announced — the API never fetches any other address", async () => {
+    const { node } = await boundNode(["matmul", "hosting"]);
+    const u = await user();
+    const id = await create(u.jwt, { kind: "static", spec: SITE });
+    await heartbeat(node);
+    expect((await row(id))!.status).toBe("assigned");
+    for (const endpoint of ["http://198.51.100.9:8080/", "http://node.example.com/", "http://127.0.0.2:8080/"]) {
+      const bad = await signed(node, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint });
+      expect(bad.status, endpoint).toBe(400);
+      expect((await bad.json()).error.message).toMatch(/announced public host/);
+    }
+    expect((await row(id))!.status).toBe("assigned");
+    expect((await signed(node, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint: "http://127.0.0.1:8080/" })).status).toBe(200);
+    expect(await row(id)).toMatchObject({ status: "running", endpoint: "http://127.0.0.1:8080/" });
   });
 
   it("per-node limits key on the VERIFIED address: unsigned requests naming a victim's X-Node do not consume its quota", async () => {
@@ -431,7 +454,7 @@ describe("rate limits and the duties cron", () => {
     const { node: alive } = await boundNode(["matmul"]);
     await heartbeat(alive);
     expect((await row(id))!.status).toBe("running"); // heartbeat did not touch other nodes' deployments
-    expect(await runDutiesCron()).toEqual({ requeued: 1, preempted: 0, assigned: 0 });
+    expect(await runDutiesCron()).toEqual({ requeued: 1, stuck: 0, preempted: 0, assigned: 0 });
     expect(await row(id)).toMatchObject({ status: "queued", node: null, status_reason: "node went offline" });
   });
 });

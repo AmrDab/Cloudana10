@@ -1,12 +1,14 @@
 /**
- * Node orchestrator entry point.
+ * Node runtime entry point: the same API as the Cloudflare Worker (app.ts), on plain Node with embedded SQLite.
  *
- * Runs the shared API (app.ts) plus the routers that need Node — SSH provider
- * builds, deployments, verification, orchestration, log streaming, status
- * polling — and the background loops that place and track workloads.
+ * What it is for: local development without Cloudflare, tests, and an independently operated orchestrator
+ * (DECENTRALIZATION_ROADMAP.md phase 2 — "the orchestrator becomes replaceable"). It mounts exactly the routers the
+ * Worker mounts and runs the same cron duties on a timer. The Akash/k3s/ssh2 orchestration that used to live only
+ * here was removed on 2026-10-19 (ENGINEERING_BASELINE.md §5): it was never deployed and nothing reached it.
  *
- * Storage: the same D1/KV-shaped interface the Worker uses, backed here by
- * embedded SQLite (lib/sqlite-d1.ts) so services behave identically on both.
+ * Storage: the D1/KV-shaped interface the Worker uses, backed by node:sqlite (lib/sqlite-d1.ts), so services behave
+ * identically on both runtimes. Relay and R2 are Cloudflare-only: relayed deployments are not probed and job
+ * artifacts stay in SQLite on this runtime.
  */
 import "dotenv/config";
 
@@ -16,21 +18,11 @@ import { getEnv } from "./config/env.js";
 import { initStorage, getD1 } from "./lib/storage.js";
 import { createSqliteD1, createSqliteKV } from "./lib/sqlite-d1.js";
 import { metricsMiddleware, serializeMetrics } from "./middleware/metrics.js";
-import { verifyRouter } from "./routes/v1/verify.js";
-import { buildProviderRouter } from "./routes/v1/build-provider.js";
-import { orchestrationRouter } from "./routes/v1/orchestration.js";
-import workloadStatusRouter from "./routes/v1/workload-status.js";
-import providerLogsRouter from "./routes/v1/provider-logs.js";
-import { deployRouter } from "./routes/v1/deploy.js";
-import { startOrchestratorLoop } from "./services/orchestrator-loop.service.js";
-import { startOrchestratorEventDriven } from "./services/orchestrator-event.service.js";
-import { startWorkloadStatusPolling } from "./services/workload-status-poller.service.js";
-import { initBuildProviderStore } from "./services/build-provider.service.js";
 import { log } from "./lib/logger.js";
 
 const L = log.api;
 
-// Fail fast on a misconfigured orchestrator instead of discovering it per request.
+// Fail fast on a misconfigured runtime instead of discovering it per request.
 const env = getEnv();
 
 // Storage must exist before any router runs — the Worker does this per request.
@@ -54,49 +46,45 @@ app.get("/metrics", (c) =>
   c.text(serializeMetrics(), 200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" }),
 );
 
-// Node-only routers.
-app.route("/v1", verifyRouter);
-app.route("/v1", buildProviderRouter);
-app.route("/v1", orchestrationRouter);
-app.route("/v1", workloadStatusRouter);
-app.route("/v1", providerLogsRouter);
-app.route("/v1", deployRouter);
-
-// Background loops.
-if (env.ORCHESTRATOR_EVENT_DRIVEN_ENABLED) {
-  startOrchestratorEventDriven();
-} else {
-  L.dim("Orchestrator event-driven placement disabled (ORCHESTRATOR_EVENT_DRIVEN_ENABLED=false)");
-}
-if (env.ORCHESTRATOR_POLL_ENABLED) {
-  startOrchestratorLoop();
-} else {
-  L.dim("Orchestrator poll fallback disabled (ORCHESTRATOR_POLL_ENABLED=true to enable)");
-}
-if (env.WORKLOAD_STATUS_POLLING_ENABLED) {
-  startWorkloadStatusPolling();
-  L.success("Workload status polling started");
-} else {
-  L.dim("Workload status polling disabled (WORKLOAD_STATUS_POLLING_ENABLED=false)");
-}
-
-async function main() {
-  await initBuildProviderStore();
-  serve({ fetch: app.fetch, port: env.PORT });
-  // Same jobs as the Worker cron (src/worker.ts scheduled()): duties every minute, price controller
-  // (self-limits to once an hour), Deposited watcher (inactive until SETTLEMENT_ADDRESS is set).
-  const cron = async () => {
+/**
+ * The Worker's cron (worker.ts scheduled(), every minute) on a timer: node duties (dead-node requeue, start
+ * timeouts, preemption, matmul assignment), the price controller and the deposit watcher. One failing duty never
+ * blocks the others; overlapping runs are skipped.
+ */
+let cronRunning = false;
+async function cronTick(): Promise<void> {
+  if (cronRunning) return;
+  cronRunning = true;
+  try {
     const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }] = await Promise.all([
       import("./services/deployment-duties.service.js"),
       import("./services/pricing.service.js"),
       import("./services/deposit-watcher.service.js"),
     ]);
-    for (const [name, run] of [["duties", () => runDutiesCron()], ["price", () => runPriceControllerCron()], ["deposits", () => runDepositWatcherCron()]] as const) {
-      await run().catch((err: unknown) => L.error(`[cron] ${name} failed:`, err));
+    const jobs: Array<[string, () => Promise<unknown>]> = [
+      ["duties", () => runDutiesCron()],
+      ["price", () => runPriceControllerCron()],
+      ["deposits", () => runDepositWatcherCron()],
+    ];
+    for (const [name, run] of jobs) {
+      try {
+        await run();
+      } catch (err) {
+        L.warn(`[cron] ${name} failed:`, err);
+      }
     }
-  };
-  setInterval(() => void cron(), 60_000);
-  L.success(`Orchestrator listening on :${env.PORT}`);
-  L.log(`Swagger UI: http://localhost:${env.PORT}/v1/swagger`);
+  } finally {
+    cronRunning = false;
+  }
 }
-main();
+if (env.NODE_CRON_ENABLED) {
+  setInterval(() => void cronTick(), 60_000).unref();
+  void cronTick();
+} else {
+  L.dim("Cron duties disabled (NODE_CRON_ENABLED=false)");
+}
+
+serve({ fetch: app.fetch, port: env.PORT }, (info) => {
+  L.success(`Cloudana API (node runtime) listening on http://localhost:${info.port}`);
+  L.dim(`OpenAPI: http://localhost:${info.port}/v1/swagger`);
+});

@@ -93,6 +93,9 @@ export type MyNode = {
   address: string;
   lastSeen: number | null;
   online: boolean;
+  /** active · draining (no new work, by the owner) · suspended (by Cloudana; only support lifts it). */
+  state: "active" | "draining" | "suspended";
+  stateReason: string | null;
   boundAt: number | null;
   manifest: { cpuThreads: number; ramGB: number; gpus: { name: string; vramGB: number }[]; os: string; benchmarkMmacPerSec?: number } | null;
   /** Verified weight (MMAC/s); manifest.benchmarkMmacPerSec is self-reported. */
@@ -218,6 +221,8 @@ export type Deployment = {
   kind: "static" | "container" | "endpoint";
   status: DeploymentStatus;
   statusReason: string | null;
+  /** True while the start waits for sealed secrets (re-queued to another node: they must be sealed again). Endpoints: while any replica waits. */
+  awaitingSecrets: boolean;
   node: string | null;
   endpoint: string | null;
   priceUcldPerHour: number;
@@ -355,6 +360,10 @@ export type Replica = {
   node: string | null;
   startedAt: number | null;
   probeOk: boolean | null;
+  /** True while this replica waits for its sealed secrets. */
+  awaitingSecrets: boolean;
+  /** Detail only, once a node with a key holds it: seal this replica's secrets to it. */
+  nodePubkey?: string;
   /** Detail only: the node's log tail from this replica's last failure. */
   logs?: string;
 };

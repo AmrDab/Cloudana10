@@ -6,6 +6,7 @@
  *   G1. re-queue live deployments of nodes silent for DEAD_NODE_FACTOR × NODE_ACTIVE_SECONDS
  *   G2. preempt the youngest interruptible workstation for on-demand work no online node can take
  *   G3. matmul job assignment (jobs.service runAssignment)
+ *   G4. take back deployments a live node never started within DEPLOY_START_TIMEOUT_*; fail after DEPLOY_START_ATTEMPTS
  *
  * Per-node duties run inside that node's heartbeat (runDeploymentDuties):
  *   N1. auto-stop this node's workstations past maxHours
@@ -24,13 +25,20 @@ import { normalizeAddress } from "../lib/eth.js";
 import { hold } from "./balance.service.js";
 import {
   HOUR_MS,
+  SEALED_V2_MIN_AGENT,
   addEvent,
   awaitingSecrets,
+  carriesSecrets,
   chargeHour,
   endDeployment,
   getDeploymentRow,
   type DeploymentRow,
 } from "./deployments.service.js";
+import { compareVersions } from "./instruction-signing.service.js";
+
+/** Whether a node's agent opens v2 (deployment-bound) sealed secrets; older agents never get a deployment that has any. */
+export const opensSealedV2 = (agentVersion: string | null | undefined): boolean =>
+  !!agentVersion && compareVersions(agentVersion, SEALED_V2_MIN_AGENT) >= 0;
 
 /** Capability of a node that runs images outside the curated list (agent: CLOUDANA_ANY_IMAGE=1). */
 export const ANY_IMAGE_CAPABILITY = "any-image";
@@ -140,6 +148,46 @@ export async function requeueDeadNodeDeployments(now = Date.now(), owner?: strin
   return requeueRows(rows.results ?? [], "node went offline", now);
 }
 
+/**
+ * G4. A deployment that was assigned (its "start" went out on heartbeats) but never reported running or failed within
+ * its start timeout is taken back from that node. Without this a node that keeps heartbeating without starting it
+ * (a wedged agent, a pull that never ends, an image the engine rejects silently) holds the deployment and the owner's
+ * first-hour hold for ever: dead-node re-queue (G1) only fires for silent nodes. It goes back to the queue with that
+ * node recorded as having refused it (assign() skips the node for it) and the node owed a "stop" should it start late;
+ * after DEPLOY_START_ATTEMPTS timeouts on as many nodes it fails and the hold is released. Rows still waiting for the
+ * owner's sealed secrets are not counted: no start was sent.
+ */
+export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
+  const env = getEnv();
+  const db = getD1();
+  const shortest = Math.min(env.DEPLOY_START_TIMEOUT_SECONDS, env.DEPLOY_START_TIMEOUT_STATIC_SECONDS) * 1000;
+  const rows = await db
+    .prepare("SELECT * FROM deployments WHERE status = 'assigned' AND node IS NOT NULL AND assigned_at IS NOT NULL AND assigned_at <= ?")
+    .bind(now - shortest)
+    .all<DeploymentRow>();
+  let n = 0;
+  for (const row of rows.results ?? []) {
+    const timeoutMs = (row.kind === "static" ? env.DEPLOY_START_TIMEOUT_STATIC_SECONDS : env.DEPLOY_START_TIMEOUT_SECONDS) * 1000;
+    if (row.assigned_at! > now - timeoutMs || awaitingSecrets(row)) continue;
+    const attempts = (row.start_attempts ?? 0) + 1;
+    const minutes = Math.round(timeoutMs / 60_000);
+    if (attempts >= env.DEPLOY_START_ATTEMPTS) {
+      // endDeployment leaves stop_acked_at NULL (the node may still start it late and must be told to stop) and
+      // releases the whole hold: nothing was served.
+      const ended = await endDeployment(row, "failed", `not started by ${attempts} nodes within ${minutes} min each`, { acked: false, level: "error", now });
+      if (ended) n++;
+      continue;
+    }
+    const r = await db
+      .prepare("UPDATE deployments SET start_attempts = ? WHERE id = ? AND status = 'assigned' AND node = ? AND COALESCE(start_attempts, 0) = ?")
+      .bind(attempts, row.id, row.node, attempts - 1)
+      .run();
+    if ((r.meta?.changes ?? 0) === 0) continue;
+    n += await requeueRows([row], `${nodeRefusalPrefix(row.node!)} did not start it within ${minutes} min`, now);
+  }
+  return n;
+}
+
 /** Re-queue everything live on `nodes` (they were unbound: fleet revoked or node evicted). */
 export async function requeueNodeDeployments(nodes: string[], reason: string, now = Date.now()): Promise<number> {
   if (nodes.length === 0) return 0;
@@ -234,6 +282,7 @@ async function assign(
   now: number,
   relayed: boolean,
   publicHost: boolean,
+  agentVersion: string | null,
 ): Promise<void> {
   const db = getD1();
   if (capabilities.includes("hosting")) {
@@ -272,6 +321,7 @@ async function assign(
     if (state.containers >= NODE_CAPACITY.container) break;
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
     if (q.workstation && !publicHost) continue; // workstations stay direct (WebSockets, SSH): a verified public host only
+    if (carriesSecrets(q) && !opensSealedV2(agentVersion)) continue; // its secrets are bound to the deployment; this agent cannot open them
     if (q.parent_id && !(await replicaFits(node, q, relayed, capabilities))) continue;
     if (fits(q, state) && (await claim(node, q, now, relayed))) addUsage(state, q, 1);
   }
@@ -309,18 +359,18 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .all<Queued>();
   if (!queued.results?.length) return 0;
   const nodes = await db
-    .prepare("SELECT address, work_types, manifest_json, public_host FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
+    .prepare("SELECT address, work_types, manifest_json, public_host, agent_version FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND state = 'active' AND last_seen >= ?")
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
-    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null }>();
-  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean };
+    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null; agent_version: string | null }>();
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean };
   const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
     if (!caps.includes("container")) continue;
-    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [], publicHost: !!n.public_host });
+    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [], publicHost: !!n.public_host, sealedV2: opensSealedV2(n.agent_version) });
   }
-  // Same rule as assign(): workstations only go to nodes with a verified public host.
-  const canTake = (q: Queued, s: Candidate) => !q.workstation || s.publicHost;
+  // Same rules as assign(): workstations only on a verified public host; secrets only on an agent that opens them.
+  const canTake = (q: Queued, s: Candidate) => (!q.workstation || s.publicHost) && (!carriesSecrets(q) || s.sealedV2);
   const live = await db.prepare(`SELECT * FROM deployments WHERE kind = 'container' AND status IN ${LIVE}`).all<DeploymentRow>();
   for (const r of live.results ?? []) {
     const s = r.node ? states.get(r.node) : undefined;
@@ -711,44 +761,116 @@ async function instructions(node: string): Promise<NodeInstruction[]> {
   return [...all.filter((i) => i.action !== "start"), ...all.filter((i) => i.action === "start")];
 }
 
-/** Everything a heartbeat does for hosting (per-node duties only). Unbound nodes get no new work but still receive stops. */
-export async function runDeploymentDuties(node: string, now = Date.now()): Promise<NodeInstruction[]> {
+/** The node columns the per-node duties read (a NodeRow has them; the heartbeat passes its own read in). */
+export interface DutiesNodeRow {
+  payout: string | null;
+  work_types: string | null;
+  manifest_json: string | null;
+  fleet_id?: string | null;
+  relay_at?: number | null;
+  public_host?: string | null;
+  agent_version?: string | null;
+  /** B-8: only an `active` node takes new work (null on old rows = active). */
+  state?: string | null;
+}
+
+/**
+ * What there is to do for one node, in one statement (B-5): every per-node duty below scans a table, and on an idle
+ * node every scan comes back empty. Counting first costs one round trip and lets the idle heartbeat skip the rest.
+ */
+export interface NodeActivity {
+  /** Live deployments (assigned / running / unreachable) on this node. */
+  live: number;
+  /** Running or unreachable workstations (auto-stop candidates). */
+  workstations: number;
+  /** Running rows with a full hour since last_billed_at. */
+  billable: number;
+  /** Running / unreachable rows whose probe is due. */
+  probeDue: number;
+  /** Queued static sites and queued container rows (any owner) — the only thing assign() could pick up. */
+  queuedStatic: number;
+  queuedContainer: number;
+  /** Instructions owed: assigned rows ("start") and stopped/failed rows the node has not confirmed ("stop"/"purge"). */
+  owed: number;
+  /** Stops owed for deployments taken from this node while it was offline. */
+  stale: number;
+  /** Unexpired matmul assignments for this node (jobs.service getActiveAssignment would return one). */
+  assignedJobs: number;
+}
+
+export async function nodeActivity(node: string, now = Date.now()): Promise<NodeActivity> {
+  const env = getEnv();
   const row = await getD1()
-    .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host FROM nodes WHERE address = ?")
-    .bind(node)
-    .first<{
-      payout: string | null;
-      work_types: string | null;
-      manifest_json: string | null;
-      fleet_id: string | null;
-      relay_at: number | null;
-      public_host: string | null;
-    }>();
+    .prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status IN ${LIVE}) AS live,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND workstation = 1 AND status IN ('running','unreachable') AND started_at IS NOT NULL) AS workstations,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status = 'running' AND last_billed_at IS NOT NULL AND last_billed_at <= ?2) AS billable,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status IN ('running','unreachable') AND (endpoint IS NOT NULL OR relayed = 1) AND (last_probe_at IS NULL OR last_probe_at <= ?3)) AS probeDue,
+        (SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND kind = 'static') AS queuedStatic,
+        (SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND kind = 'container' AND replicas = 0) AS queuedContainer,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND (status = 'assigned' OR (status IN ('stopped','failed') AND stop_acked_at IS NULL))) AS owed,
+        (SELECT COUNT(*) FROM deployment_stale_nodes WHERE node = ?1) AS stale,
+        (SELECT COUNT(*) FROM work_jobs WHERE node = ?1 AND status = 'assigned' AND expires_at >= ?4) AS assignedJobs`,
+    )
+    .bind(node, now - HOUR_MS, now - env.DEPLOY_PROBE_SECONDS * 1000, now)
+    .first<NodeActivity>();
+  return row ?? { live: 0, workstations: 0, billable: 0, probeDue: 0, queuedStatic: 0, queuedContainer: 0, owed: 0, stale: 0, assignedJobs: 0 };
+}
+
+/**
+ * Everything a heartbeat does for hosting (per-node duties only). Unbound nodes get no new work but still receive
+ * stops. `ctx.row` and `ctx.activity` let the heartbeat pass in what it already read; otherwise they are fetched here.
+ */
+export async function runDeploymentDuties(
+  node: string,
+  now = Date.now(),
+  ctx: { row?: DutiesNodeRow | null; activity?: NodeActivity } = {},
+): Promise<NodeInstruction[]> {
+  const row =
+    ctx.row !== undefined
+      ? ctx.row
+      : await getD1()
+          .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host, agent_version, state FROM nodes WHERE address = ?")
+          .bind(node)
+          .first<DutiesNodeRow>();
   if (!row) return [];
+  const act = ctx.activity ?? (await nodeActivity(node, now));
   const hw = JSON.parse(row.manifest_json ?? "{}") as NodeHardware;
   const caps = JSON.parse(row.work_types ?? "[]") as string[];
   // A relay node takes new hosting work only while its socket is up (fresh `relay: true` heartbeat); a legacy node
   // kept its hosting capabilities only with a verified public host (routes/v1/nodes.ts announce).
   const relayed = caps.includes("relay");
   const reachable = !relayed || (row.relay_at ?? 0) >= now - getEnv().RELAY_FRESH_SECONDS * 1000;
-  const steps: [string, () => Promise<unknown>][] = [
-    ["auto-stop", () => autoStop(node, now)],
-    ["assign", () => (row.payout && reachable ? assign(node, caps, hw, row.fleet_id, now, relayed, !!row.public_host) : Promise.resolve())],
-    ["probe", () => probe(node, now)],
-    ["bill", () => bill(node, now)],
+  const active = (row.state ?? "active") === "active";
+  const couldAssign =
+    !!row.payout && reachable && active && ((act.queuedStatic > 0 && caps.includes("hosting")) || (act.queuedContainer > 0 && caps.includes("container") && !!row.fleet_id));
+  const steps: [string, boolean, () => Promise<unknown>][] = [
+    ["auto-stop", act.workstations > 0, () => autoStop(node, now)],
+    ["assign", couldAssign, () => assign(node, caps, hw, row.fleet_id ?? null, now, relayed, !!row.public_host, row.agent_version ?? null)],
+    ["probe", act.probeDue > 0, () => probe(node, now)],
+    ["bill", act.billable > 0, () => bill(node, now)],
   ];
-  for (const [name, step] of steps) {
+  // Any step that ran may have changed what is owed (assign claims a start; auto-stop, a failed probe or an empty
+  // balance owe a stop): then the instructions are read regardless of the snapshot taken before.
+  let ran = false;
+  for (const [name, due, step] of steps) {
+    if (!due) continue;
+    ran = true;
     try {
       await step();
     } catch (err) {
       log.api.warn(`[deployments] ${name} on heartbeat failed:`, err);
     }
   }
+  if (!ran && act.owed === 0 && act.stale === 0) return [];
   return instructions(node);
 }
 
 export interface DutiesCronResult {
   requeued: number;
+  /** Assigned deployments taken back from a node that never started them (or failed after DEPLOY_START_ATTEMPTS). */
+  stuck: number;
   preempted: number;
   assigned: number;
 }
@@ -779,9 +901,10 @@ export async function runDutiesCron(env?: CronBindings, now = Date.now()): Promi
     if (changed) resetEnv();
     initStorage(env.DB, env.CLOUDANA_KV);
   }
-  const out: DutiesCronResult = { requeued: 0, preempted: 0, assigned: 0 };
+  const out: DutiesCronResult = { requeued: 0, stuck: 0, preempted: 0, assigned: 0 };
   const steps: [keyof DutiesCronResult, () => Promise<number>][] = [
     ["requeued", () => requeueDeadNodeDeployments(now)],
+    ["stuck", () => requeueStuckAssigned(now)],
     ["preempted", () => preemptForOnDemand(now)],
     ["assigned", () => runAssignment(now)],
   ];
@@ -872,7 +995,7 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
       const r = await db
         .prepare(
           "UPDATE deployments SET status = 'running', status_reason = NULL, endpoint = ?, ssh_endpoint = ?, web_token = ?, started_at = ?, " +
-            "last_billed_at = ?, probe_fail = 0 WHERE id = ? AND status = 'assigned'",
+            "last_billed_at = ?, probe_fail = 0, start_attempts = 0 WHERE id = ? AND status = 'assigned'",
         )
         .bind(report.endpoint ?? null, report.sshEndpoint ?? null, report.webToken ?? null, now, now, id)
         .run();

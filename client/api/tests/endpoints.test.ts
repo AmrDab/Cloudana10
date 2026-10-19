@@ -57,7 +57,7 @@ async function node(workTypes: string[], opts: { fleet?: boolean; gpus?: typeof 
     workTypes,
     pubkey: n.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.3.0",
+    agentVersion: "1.5.0",
   });
   expect(res.status).toBe(200);
   await getD1()
@@ -77,7 +77,7 @@ async function user(credits = 100_000) {
 
 /** Heartbeat with the relay socket up; returns the instructions. */
 async function beat(n: PrivateKeyAccount, relay = true) {
-  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.3.0" });
+  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.5.0" });
   expect(res.status).toBe(200);
   return (await res.json()).deployments as { id: string; action: string; kind: string; spec: any; relayed?: boolean; imageAllowed?: boolean }[];
 }
@@ -103,6 +103,7 @@ const replicas = async (id: string) =>
 const route = (id: string) => call(`/v1/deployments/${id}/route`, { headers: { "x-internal-key": INTERNAL_KEY } });
 const running = (n: PrivateKeyAccount, dep: string, extra: Record<string, unknown> = {}) =>
   signed(n, `/v1/nodes/deployments/${dep}/status`, { status: "running", ...extra });
+const byIdOf = (got: any) => new Map<string, any>(got.deployment.replicas.map((r: any) => [r.id, r]));
 
 /** A 2-replica endpoint placed on two relay GPU nodes and reported running on both. */
 async function liveEndpoint() {
@@ -415,17 +416,52 @@ describe("stop and secrets", () => {
     expect((await call(`/v1/admin/deployments/${id}/stop`, { method: "POST", headers: { "x-internal-key": INTERNAL_KEY } })).status).toBe(200);
   });
 
-  it("seals secrets per replica, never on the endpoint itself", async () => {
+  it("seals secrets per replica, each to its own node's key, never on the endpoint itself", async () => {
     const u = await user();
-    const id = (await (await create(u.jwt, { ...ENDPOINT, replicas: 1, expectsSecrets: true })).json()).id;
-    const [r1] = await replicas(id);
-    const sealed = Buffer.from("sealed").toString("base64");
-    const onParent = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed });
+    const id = (await (await create(u.jwt, { ...ENDPOINT, expectsSecrets: true })).json()).id;
+    const [r1, r2] = await replicas(id);
+    const sealed = (label: string) => Buffer.concat([Buffer.from([2, 4]), Buffer.alloc(64 + 24 + 16, 1), Buffer.from(label)]).toString("base64"); // v2-shaped (shared/sealed.ts)
+    const onParent = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed("x") });
     expect(onParent.status).toBe(400);
     expect((await onParent.json()).error.message).toMatch(/per replica/);
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${r1.id}/secrets`, { sealedEnv: sealed })).status).toBe(200);
+    // Before any node: the endpoint and both replicas wait for secrets; there is no key to seal to yet.
+    let got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment).toMatchObject({ awaitingSecrets: true, replicas: [{ id: r1.id, awaitingSecrets: true, node: null }, { id: r2.id, awaitingSecrets: true, node: null }] });
+    expect(got.deployment.replicas.every((r: any) => r.nodePubkey === undefined)).toBe(true);
+    // Two nodes take one replica each; neither is told to start until its replica is sealed.
     const a = await relayGpuNode();
-    expect(await beat(a)).toEqual([expect.objectContaining({ id: r1.id, action: "start", sealedEnv: sealed })]);
+    const b = await relayGpuNode();
+    expect(await beat(a)).toEqual([]);
+    expect(await beat(b)).toEqual([]);
+    got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    const byId: Record<string, any> = Object.fromEntries(got.deployment.replicas.map((r: any) => [r.id, r]));
+    const keyOf: Record<string, string> = { [addr(a)]: a.publicKey.slice(2), [addr(b)]: b.publicKey.slice(2) };
+    for (const r of [r1, r2]) {
+      expect(byId[r.id]).toMatchObject({ status: "assigned", awaitingSecrets: true });
+      expect(byId[r.id].nodePubkey).toBe(keyOf[byId[r.id].node]); // each replica carries its own node's key
+    }
+    expect(new Set(got.deployment.replicas.map((r: any) => r.nodePubkey)).size).toBe(2);
+    // The list says what waits, and never carries keys.
+    const listed = (await (await authed(u.jwt, "GET", "/v1/deployments")).json()).deployments.find((d: any) => d.id === id);
+    expect(listed.awaitingSecrets).toBe(true);
+    expect(listed.replicas.every((r: any) => r.nodePubkey === undefined && r.awaitingSecrets === true)).toBe(true);
+    // Seal the first replica: only its node gets a start, carrying that payload; the other still waits.
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${r1.id}/secrets`, { sealedEnv: sealed("one") })).status).toBe(200);
+    const n1 = byId[r1.id].node === addr(a) ? a : b;
+    const n2 = n1 === a ? b : a;
+    expect(await beat(n1)).toEqual([expect.objectContaining({ id: r1.id, action: "start", sealedEnv: sealed("one") })]);
+    expect(await beat(n2)).toEqual([]);
+    got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment.awaitingSecrets).toBe(true);
+    expect(byIdOf(got).get(r1.id).awaitingSecrets).toBe(false);
+    expect(byIdOf(got).get(r2.id).awaitingSecrets).toBe(true);
+    // Nobody else can seal a replica; the owner seals the second and its node starts it.
+    const other = await user();
+    expect((await authed(other.jwt, "PATCH", `/v1/deployments/${r2.id}/secrets`, { sealedEnv: sealed("two") })).status).toBe(404);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${r2.id}/secrets`, { sealedEnv: sealed("two") })).status).toBe(200);
+    expect(await beat(n2)).toEqual([expect.objectContaining({ id: r2.id, action: "start", sealedEnv: sealed("two") })]);
+    got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment.awaitingSecrets).toBe(false);
   });
 });
 

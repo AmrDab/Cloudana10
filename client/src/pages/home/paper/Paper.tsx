@@ -180,7 +180,8 @@ export function Paper() {
           <div id="network" className="pp-stats">
             <div><b>{value(data?.nodesOnline)}</b><span>nodes online</span></div>
             <div><b>{value(data?.jobsDone)}</b><span>jobs verified</span></div>
-            <div><b>{minted}</b><span>CLD minted · testnet</span></div>
+            {/* The ledger total is minted on-chain only once an epoch has been settled; until then say what it is. */}
+            <div><b>{minted}</b><span>{data?.lastSettledEpochAt ? "CLD minted · testnet" : "CLD earned · awaiting on-chain settlement"}</span></div>
             <p>{offline ? "Orchestrator offline. Numbers return when it does." : "Live from the orchestrator. Zero is zero."}</p>
           </div>
         </section>

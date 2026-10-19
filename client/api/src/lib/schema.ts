@@ -97,6 +97,11 @@ export const V1_TABLES = [
     id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL,
     created_at INTEGER NOT NULL, revoked_at INTEGER)`,
   `CREATE INDEX IF NOT EXISTS idx_endpoint_keys_dep ON endpoint_keys(deployment_id, created_at)`,
+  // Developer API keys (ENGINEERING_BACKLOG B-7): sha256 of the token, JSON scopes, optional expiry, revocation time.
+  `CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
+    scopes TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER, expires_at INTEGER, revoked_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner, created_at DESC)`,
   // Report a problem (docs/V4_VERIFIED_SERVICES.md §5): one row per report; ≤ REPORTS_PER_DAY per owner per UTC day.
   `CREATE TABLE IF NOT EXISTS deployment_reports (
     id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, owner TEXT NOT NULL, at INTEGER NOT NULL,
@@ -160,6 +165,10 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE work_jobs ADD COLUMN artifact TEXT",
   // Inconclusive probes in a row: the third counts as a failure (docs/V4_STORAGE_PHASE1_CONTRACT.md review #2).
   "ALTER TABLE deployments ADD COLUMN probe_inconclusive INTEGER NOT NULL DEFAULT 0",
+  // Start timeouts so far (deployment-duties G4): after DEPLOY_START_ATTEMPTS the deployment fails and its hold is released.
+  "ALTER TABLE deployments ADD COLUMN start_attempts INTEGER NOT NULL DEFAULT 0",
+  // The eligible set a job's draw ran over (sorted Candidate[] JSON), published at GET /v1/draws/{id} for replay.
+  "ALTER TABLE work_jobs ADD COLUMN eligible_json TEXT",
   // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
   "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN net_prefix TEXT",
@@ -171,6 +180,11 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE nodes ADD COLUMN storage_passed_days INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN storage_open_day INTEGER",
   "ALTER TABLE nodes ADD COLUMN storage_inconclusive INTEGER NOT NULL DEFAULT 0",
+  // Node state model (ENGINEERING_BACKLOG B-8): active | draining (owner: no new work) | suspended (admin: no work,
+  // live deployments re-queued, no relay ticket).
+  "ALTER TABLE nodes ADD COLUMN state TEXT NOT NULL DEFAULT 'active'",
+  "ALTER TABLE nodes ADD COLUMN state_reason TEXT",
+  "ALTER TABLE nodes ADD COLUMN state_at INTEGER",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

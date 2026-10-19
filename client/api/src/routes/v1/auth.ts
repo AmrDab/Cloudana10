@@ -4,12 +4,15 @@
  * GET  /v1/auth/nonce?address=0x…  — issue a single-use sign-in message
  * POST /v1/auth/login              — verify the signature over that message, return a JWT
  */
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import { verifyMessage } from "viem";
-import { consumeNonce, generateToken, issueNonce } from "../../middleware/auth.js";
+import { consumeNonce, generateToken, issueNonce, revokeToken } from "../../middleware/auth.js";
 import { normalizeAddress } from "../../lib/eth.js";
+import { fail, ok } from "../../lib/http.js";
+import { getEnv } from "../../config/env.js";
+import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
-export const authRouter = new OpenAPIHono();
+export const authRouter = createRouter();
 
 const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "Invalid Ethereum address");
 
@@ -63,7 +66,7 @@ authRouter.openapi(loginRoute, async (c) => {
   // The nonce is consumed before signature verification so a failed attempt
   // cannot be retried against the same message.
   if (!(await consumeNonce(address, message))) {
-    return c.json({ status: "error", message: "Unknown, expired or already-used sign-in message" }, 401);
+    return fail(c, "unauthorized", "Unknown, expired or already-used sign-in message");
   }
 
   let valid = false;
@@ -76,10 +79,30 @@ authRouter.openapi(loginRoute, async (c) => {
   } catch {
     valid = false;
   }
-  if (!valid) {
-    return c.json({ status: "error", message: "Invalid signature" }, 401);
-  }
+  if (!valid) return fail(c, "unauthorized", "Invalid signature");
 
   const token = await generateToken(address, "user");
-  return c.json({ token, expiresIn: 86400, address: normalizeAddress(address) }, 200);
+  return c.json({ token, expiresIn: getEnv().JWT_TTL_SECONDS, address: normalizeAddress(address) }, 200);
+});
+
+const logoutRoute = createRoute({
+  method: "post",
+  path: "/auth/logout",
+  tags: ["Auth"],
+  description:
+    "End this session token now: it is refused from then on (everywhere within about a minute). " +
+    "API keys are revoked with DELETE /v1/keys/{id}, not here.",
+  security: BEARER_AUTH,
+  responses: responses(
+    { 200: json(z.object({ status: z.literal("success"), revoked: z.boolean().openapi({ description: "false for a token minted before revocation existed; it still expires on time" }) }), "Session ended") },
+    401,
+    403,
+    429,
+  ),
+});
+
+authRouter.openapi(logoutRoute, async (c) => {
+  const payload = c.get("jwtPayload");
+  if (payload.auth === "key") return fail(c, "forbidden", "API keys are revoked with DELETE /v1/keys/{id}");
+  return ok(c, { revoked: await revokeToken(payload) });
 });

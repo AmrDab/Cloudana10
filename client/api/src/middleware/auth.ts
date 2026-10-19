@@ -1,6 +1,13 @@
 /**
- * JWT authentication middleware for Cloudana API.
- * Protects sensitive endpoints (build-provider, deploy, admin operations).
+ * Caller authentication for the user-facing API (ENGINEERING_BACKLOG B-7, SECURITY_AUDIT O3).
+ *
+ * Two bearer credentials share `Authorization: Bearer …`:
+ *  - a wallet session token: HS256 JWT, JWT_TTL_SECONDS long, with a random `jti`. Minted by POST /v1/auth/login,
+ *    ended by POST /v1/auth/logout (a KV revocation list keyed by jti, kept until the token would have expired).
+ *    Verification accepts JWT_SECRET and, during a rotation, JWT_SECRET_PREVIOUS, so a secret can change without
+ *    signing everyone out;
+ *  - a developer API key `cld_sk_…` (services/api-keys.service.ts): scoped, revocable, hashed at rest. It never
+ *    reaches key management, credits, payments or provider state (`scopeFor`).
  */
 import type { Context, Next } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -9,51 +16,86 @@ import { getKV } from "../lib/storage.js";
 import { normalizeAddress, type HexAddress } from "../lib/eth.js";
 import { getEnv } from "../config/env.js";
 import { fail } from "../lib/http.js";
+import { API_KEY_PREFIX, authenticateApiKey, scopeFor, type Scope } from "../services/api-keys.service.js";
 
 /** Hono `Variables` type for routers whose handlers read the verified caller. */
 export type AuthVariables = { jwtPayload: JWTPayload };
 
-function getJwtSecret(): string {
-  return getEnv().JWT_SECRET;
-}
-
 export interface JWTPayload {
-  sub: string;         // wallet address
+  sub: string;         // wallet address (for an API key: its owner)
   role: "user" | "provider" | "admin";
   iat: number;
   exp: number;
+  /** Session tokens: random id, the handle for revocation. */
+  jti?: string;
+  /** How the caller authenticated; absent on session tokens minted before this field existed. */
+  auth?: "wallet" | "key";
+  /** API keys: which one, and what it may do. */
+  keyId?: string;
+  scopes?: Scope[];
+}
+
+export type AuthFailure = { code: "unauthorized" | "forbidden"; message: string };
+
+/** Resolve a bearer credential to its caller, or the reason it is refused. `method`/`path` decide an API key's scope. */
+export async function resolveBearer(token: string, method: string, path: string): Promise<{ payload: JWTPayload } | { error: AuthFailure }> {
+  if (token.startsWith(API_KEY_PREFIX)) {
+    const caller = await authenticateApiKey(token);
+    if (!caller) return { error: { code: "unauthorized", message: "Unknown, expired or revoked API key" } };
+    const need = scopeFor(method, path);
+    if (!need) return { error: { code: "forbidden", message: "This endpoint needs a wallet session, not an API key" } };
+    if (!caller.scopes.includes(need)) return { error: { code: "forbidden", message: `This API key lacks the "${need}" scope` } };
+    return { payload: { sub: caller.owner, role: "user", iat: 0, exp: 0, auth: "key", keyId: caller.keyId, scopes: caller.scopes } };
+  }
+  const payload = await verifyBearer(token);
+  return payload ? { payload } : { error: { code: "unauthorized", message: "Invalid, expired or revoked token" } };
 }
 
 /**
- * Middleware: require a valid JWT Bearer token.
+ * Middleware: require a valid bearer credential (session token or API key with the route's scope).
  * Sets c.set("jwtPayload", payload) on success.
  */
-export const requireAuth = createMiddleware(async (c: Context, next: Next) => {
+export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(async (c, next) => {
   const authHeader = c.req.header("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return fail(c, "unauthorized", "Missing or invalid Authorization header");
   }
-
-  const payload = await verifyBearer(authHeader.slice(7));
-  if (!payload) return fail(c, "unauthorized", "Invalid or expired token");
-  c.set("jwtPayload", payload);
+  const r = await resolveBearer(authHeader.slice(7).trim(), c.req.method, c.req.path);
+  if ("error" in r) return fail(c, r.error.code, r.error.message);
+  c.set("jwtPayload", r.payload);
   return next();
 });
 
-/** Verified payload for a bearer token, or null. Used for optional-auth routes. */
+/** Verified payload for a session token, or null: bad signature, expired, or revoked. */
 export async function verifyBearer(token: string): Promise<JWTPayload | null> {
-  try {
-    return (await verify(token, getJwtSecret(), "HS256")) as unknown as JWTPayload;
-  } catch {
-    return null;
+  const env = getEnv();
+  let payload: JWTPayload | null = null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  // The previous secret only during its grace window, and only for tokens that expire inside it.
+  const until = env.JWT_SECRET_PREVIOUS_UNTIL;
+  const previous = env.JWT_SECRET_PREVIOUS && until && nowSec < until ? env.JWT_SECRET_PREVIOUS : undefined;
+  for (const secret of [env.JWT_SECRET, previous]) {
+    if (!secret) continue;
+    try {
+      const p = (await verify(token, secret, "HS256")) as unknown as JWTPayload;
+      if (secret === previous && !(typeof p.exp === "number" && p.exp <= until!)) continue;
+      payload = p;
+      break;
+    } catch {
+      /* not this secret: try the previous one */
+    }
   }
+  if (!payload || typeof payload.sub !== "string") return null;
+  if (payload.jti && (await isRevoked(payload.jti))) return null;
+  return payload;
 }
 
-/** The caller if a valid bearer token was sent, otherwise null — never rejects. */
+/** The caller if a valid bearer credential was sent, otherwise null — never rejects (a key needs the route's scope). */
 export async function optionalCaller(c: Context): Promise<JWTPayload | null> {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
-  return verifyBearer(authHeader.slice(7));
+  const r = await resolveBearer(authHeader.slice(7).trim(), c.req.method, c.req.path);
+  return "error" in r ? null : r.payload;
 }
 
 /**
@@ -70,9 +112,14 @@ export function requireRole(...roles: JWTPayload["role"][]) {
   });
 }
 
+function randomHex(bytes: number): string {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /**
- * Generate a JWT token for a wallet address.
- * Used by the auth/login endpoint after wallet signature verification.
+ * Mint a wallet session token (the auth/login endpoint, after wallet signature verification).
  */
 export async function generateToken(walletAddress: string, role: JWTPayload["role"] = "user"): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
@@ -80,9 +127,43 @@ export async function generateToken(walletAddress: string, role: JWTPayload["rol
     sub: walletAddress.toLowerCase(),
     role,
     iat: now,
-    exp: now + 24 * 60 * 60, // 24 hours
+    exp: now + getEnv().JWT_TTL_SECONDS,
+    jti: randomHex(16),
+    auth: "wallet",
   };
-  return sign(payload as unknown as Record<string, unknown>, getJwtSecret());
+  return sign(payload as unknown as Record<string, unknown>, getEnv().JWT_SECRET);
+}
+
+// ─── Session revocation (POST /v1/auth/logout) ──────────────────────────────
+// Keyed by jti in KV for the token's remaining lifetime; in memory when KV is not bound (unit tests). KV is
+// eventually consistent across colos (about a minute); in the colo that revoked, immediate.
+
+const revokedMemory = new Map<string, number>();
+const revokedKey = (jti: string) => `revoked:${jti}`;
+
+/** End a session token now. False when the token has no jti (minted before revocation existed). */
+export async function revokeToken(payload: Pick<JWTPayload, "jti" | "exp">): Promise<boolean> {
+  if (!payload.jti) return false;
+  const ttl = Math.max(60, payload.exp - Math.floor(Date.now() / 1000));
+  try {
+    await getKV().put(revokedKey(payload.jti), "1", { expirationTtl: ttl });
+  } catch {
+    revokedMemory.set(payload.jti, Date.now() + ttl * 1000);
+  }
+  return true;
+}
+
+async function isRevoked(jti: string): Promise<boolean> {
+  const until = revokedMemory.get(jti);
+  if (until !== undefined) {
+    if (until > Date.now()) return true;
+    revokedMemory.delete(jti);
+  }
+  try {
+    return (await getKV().get(revokedKey(jti))) !== null;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Sign-in nonces ──────────────────────────────────────────────────────────

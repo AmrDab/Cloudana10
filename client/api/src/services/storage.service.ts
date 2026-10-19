@@ -203,7 +203,7 @@ async function storageNodes(now: number): Promise<StorageNode[]> {
             "COALESCE((SELECT SUM(o.size + o.leaves * ?) FROM storage_copies c JOIN storage_objects o ON o.id = c.object_id " +
             "WHERE c.node = n.address AND c.state <> 'dropping'), 0) AS used, " +
             "(SELECT COUNT(*) FROM storage_copies c WHERE c.node = n.address AND c.state = 'pending') AS pending " +
-            "FROM nodes n WHERE n.storage_quota_mb > 0 AND n.payout IS NOT NULL AND n.relay_at >= ? AND n.last_seen >= ? " +
+            "FROM nodes n WHERE n.storage_quota_mb > 0 AND n.payout IS NOT NULL AND n.state = 'active' AND n.relay_at >= ? AND n.last_seen >= ? " +
             "AND COALESCE(n.storage_cooldown_until, 0) <= ? AND COALESCE(n.storage_backoff_until, 0) <= ?",
         )
         .bind(GCM_TAG_BYTES, now - env.RELAY_FRESH_SECONDS * 1000, now - env.NODE_ACTIVE_SECONDS * 1000, now, now)

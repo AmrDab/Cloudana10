@@ -27,6 +27,10 @@ import {
   listKeys,
   extendWorkstation,
   nodePubkey,
+  deploymentLogs,
+  LOGS_MIN_AGENT,
+  LOGS_TAIL_DEFAULT,
+  LOGS_TAIL_MAX,
   presentDeployments,
   publicRoute,
   replicasOf,
@@ -50,6 +54,10 @@ const ReplicaSchema = z.object({
   node: z.string().nullable(),
   startedAt: z.number().nullable(),
   probeOk: z.boolean().nullable(),
+  awaitingSecrets: z.boolean().openapi({ description: "True while this replica waits for PATCH /deployments/{replicaId}/secrets" }),
+  nodePubkey: z.string().optional().openapi({
+    description: "GET /deployments/{id} only, once a node with a key holds the replica: seal its secrets to this key (check it derives to `node` first)",
+  }),
   logs: z.string().optional().openapi({ description: "GET /deployments/{id} only: this replica's log tail from its last failure" }),
 });
 const DeploymentSchema = z.object({
@@ -59,6 +67,9 @@ const DeploymentSchema = z.object({
   kind: z.enum(["static", "container", "workstation", "endpoint"]),
   status: Status,
   statusReason: z.string().nullable(),
+  awaitingSecrets: z.boolean().openapi({
+    description: "True while the start waits for sealed secrets (re-queued to another node: they must be sealed again). Endpoints: while any replica waits",
+  }),
   node: z.string().nullable(),
   endpoint: z.string().nullable().openapi({ description: "The node's origin (owner detail); the public address is `url`" }),
   url: z.string().nullable().openapi({ description: "Public gateway URL https://{id}.{SITES_DOMAIN}; null for workstations" }),
@@ -158,15 +169,24 @@ const listRoute = createRoute({
   ),
 });
 
+/**
+ * Workstation access (connect: the web URL carries its token; webToken; the ssh command) is for the owner's wallet
+ * session only: a developer API key — even one scoped `read` for monitoring — must not be able to open a shell.
+ */
+function forCaller<T extends object>(auth: string | undefined, d: T): T {
+  // A relayed workstation's endpoint is its app path, token included: hidden with the rest.
+  return auth === "key" && "connect" in d ? { ...d, connect: {}, endpoint: null } : d;
+}
+
 /** Cheap per-owner dead-node check, so a deployment does not wait for some node's heartbeat to re-queue it. */
 async function requeueMine(owner: string): Promise<void> {
   await requeueDeadNodeDeployments(Date.now(), owner).catch((err) => log.api.warn("[deployments] dead-node requeue failed:", err));
 }
 
 deploymentsRouter.openapi(listRoute, async (c) => {
-  const owner = c.get("jwtPayload").sub;
+  const { sub: owner, auth } = c.get("jwtPayload");
   await requeueMine(owner);
-  return ok(c, { deployments: await listDeployments(owner) });
+  return ok(c, { deployments: (await listDeployments(owner)).map((d) => forCaller(auth, d)) });
 });
 
 const getRoute = createRoute({
@@ -201,7 +221,8 @@ deploymentsRouter.openapi(getRoute, async (c) => {
   const row = await getOwnedRow(owner, c.req.valid("param").id);
   if (!row) return fail(c, "not_found", "deployment not found");
   const pubkey = await nodePubkey(row.node);
-  const [deployment] = await presentDeployments([row], true);
+  const [presented] = await presentDeployments([row], true);
+  const deployment = forCaller(c.get("jwtPayload").auth, presented);
   const replicas = isEndpoint(row) ? (await replicasOf([row.id])).get(row.id) ?? [] : [];
   return ok(c, { deployment, events: await listEvents(row.id, 50, replicas), ...(pubkey && { nodePubkey: pubkey }) });
 });
@@ -447,4 +468,48 @@ const adminStopRoute = createRoute({
 deploymentsRouter.openapi(adminStopRoute, async (c) => {
   const r = await adminStop(c.req.valid("param").id);
   return r.ok ? ok(c, { deploymentStatus: "stopped" as const }) : fail(c, r.code, r.message);
+});
+
+// ── Logs (ENGINEERING_BACKLOG B-14) ─────────────────────────────────────────
+const logsRoute = createRoute({
+  method: "get",
+  path: "/deployments/{id}/logs",
+  tags: TAGS,
+  description:
+    `The container's last log lines (stdout + stderr), read live from its node through the relay when you ask — nothing is ` +
+    `stored. tail = 1…${LOGS_TAIL_MAX} lines (default ${LOGS_TAIL_DEFAULT}), at most 64 KiB. Containers, workstations and endpoint ` +
+    `replicas (per replica id). A deployment no longer on a node answers with the tail kept from its last failure, if any. ` +
+    `The node needs an agent ≥ ${LOGS_MIN_AGENT}. Rate-limited per deployment.`,
+  security: BEARER_AUTH,
+  request: { params: IdParam, query: z.object({ tail: z.coerce.number().int().min(1).max(LOGS_TAIL_MAX).default(LOGS_TAIL_DEFAULT) }) },
+  responses: responses(
+    {
+      200: json(
+        z.object({
+          status: z.literal("success"),
+          id: z.string(),
+          node: z.string().nullable(),
+          tail: z.number().int(),
+          source: z.enum(["node", "last_failure"]),
+          logs: z.string(),
+          truncated: z.boolean(),
+        }),
+        "Log tail",
+      ),
+    },
+    400,
+    401,
+    404,
+    409,
+    429,
+    502,
+    503,
+  ),
+});
+
+deploymentsRouter.openapi(logsRoute, async (c) => {
+  const r = await deploymentLogs(c.get("jwtPayload").sub, c.req.valid("param").id, c.req.valid("query").tail);
+  if (!r.ok) return fail(c, r.code, r.message);
+  const { ok: _ok, ...body } = r;
+  return ok(c, body);
 });

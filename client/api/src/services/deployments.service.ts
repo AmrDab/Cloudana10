@@ -11,6 +11,9 @@
  * POST /nodes/deployments/{id}/status {status:"stopped"} (heartbeats carry action "stop" until then).
  */
 import { getD1 } from "../lib/storage.js";
+import { getRelay } from "../lib/relay.js";
+import { readCapped } from "../lib/read-capped.js";
+import { compareVersions } from "./instruction-signing.service.js";
 import { createHash, randomBytes } from "node:crypto";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
@@ -82,6 +85,8 @@ export interface DeploymentRow {
   last_ok_at: number | null;
   /** Inconclusive probes in a row (the relay binding failed); INCONCLUSIVE_MAX of them count as a failure. */
   probe_inconclusive: number | null;
+  /** Start timeouts so far: assigned, start sent, never reported (deployment-duties G4). */
+  start_attempts: number | null;
 }
 
 export const isEndpoint = (r: Pick<DeploymentRow, "replicas">) => r.replicas > 0;
@@ -128,6 +133,10 @@ export interface ReplicaView {
   node: string | null;
   startedAt: number | null;
   probeOk: boolean | null;
+  /** True while the replica expects sealed secrets that have not arrived (PATCH /deployments/{replicaId}/secrets). */
+  awaitingSecrets: boolean;
+  /** Detail only, once a node with a key is assigned: seal this replica's secrets to it (it must derive to `node`). */
+  nodePubkey?: string;
   /** Detail only: the node's log tail from this replica's last failure. */
   logs?: string;
 }
@@ -146,6 +155,8 @@ export interface Deployment extends Partial<WorkstationView> {
   logs?: string;
   status: DeploymentStatus;
   statusReason: string | null;
+  /** True while a start waits for sealed secrets (an endpoint: while any replica does). */
+  awaitingSecrets: boolean;
   node: string | null;
   endpoint: string | null;
   /** Public gateway URL (https://{id}.{SITES_DOMAIN}); null for workstations. */
@@ -206,13 +217,15 @@ export function endpointStatus(parent: Pick<DeploymentRow, "status">, replicas: 
   return "stopped";
 }
 
-const replicaView = (r: DeploymentRow, detail: boolean): ReplicaView => ({
+const replicaView = (r: DeploymentRow, detail: boolean, pubkeys?: Map<string, string | null>): ReplicaView => ({
   id: r.id,
   status: r.status,
   statusReason: r.status_reason,
   node: r.node,
   startedAt: r.started_at,
   probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
+  awaitingSecrets: awaitingSecrets(r),
+  ...(detail && r.node && pubkeys?.get(r.node) && { nodePubkey: pubkeys.get(r.node)! }),
   ...(detail && r.last_logs && { logs: r.last_logs }),
 });
 
@@ -221,7 +234,14 @@ const replicaView = (r: DeploymentRow, detail: boolean): ReplicaView => ({
  * `replicas` = an endpoint's replica rows (presentDeployments loads them).
  * `detail` adds what the single-deployment view alone shows (connect.webToken, logs).
  */
-export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(), detail = false, replicas: DeploymentRow[] = []): Deployment {
+export function toDeployment(
+  r: DeploymentRow,
+  nodeGpus?: Gpu[],
+  now = Date.now(),
+  detail = false,
+  replicas: DeploymentRow[] = [],
+  pubkeys?: Map<string, string | null>,
+): Deployment {
   const spec = JSON.parse(r.spec_json);
   const endpoint = isEndpoint(r);
   return {
@@ -231,6 +251,7 @@ export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(
     kind: r.workstation ? "workstation" : endpoint ? "endpoint" : r.kind,
     status: endpoint ? endpointStatus(r, replicas) : r.status,
     statusReason: r.status_reason,
+    awaitingSecrets: endpoint ? replicas.some(awaitingSecrets) : awaitingSecrets(r),
     node: r.node,
     endpoint: r.endpoint,
     url: publicUrl(r),
@@ -244,7 +265,7 @@ export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(
     probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
     spec: redactSpec(r.kind, spec),
     ...(r.parent_id && { parentId: r.parent_id }),
-    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail)), auth: (spec as EndpointSpec).auth }),
+    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail, pubkeys)), auth: (spec as EndpointSpec).auth }),
     ...(detail && r.last_logs && { logs: r.last_logs }),
     ...(r.workstation ? workstationView(r, spec as WorkstationSpec, nodeGpus, now, detail) : {}),
   };
@@ -262,20 +283,29 @@ export async function replicasOf(parents: string[]): Promise<Map<string, Deploym
   return out;
 }
 
-/** toDeployment for many rows, loading the manifests of nodes that run workstations and the replicas of endpoints. */
+/**
+ * toDeployment for many rows, loading the replicas of endpoints and, in one statement, the manifests of nodes that run
+ * workstations plus (detail only) the keys of nodes that hold replicas — so the owner can seal each replica's secrets.
+ */
 export async function presentDeployments(rows: DeploymentRow[], detail = false): Promise<Deployment[]> {
-  const nodes = [...new Set(rows.filter((r) => r.workstation && r.node).map((r) => r.node!))];
-  const gpus = new Map<string, Gpu[]>();
-  if (nodes.length) {
-    const res = await getD1()
-      .prepare(`SELECT address, manifest_json FROM nodes WHERE address IN (${nodes.map(() => "?").join(",")})`)
-      .bind(...nodes)
-      .all<{ address: string; manifest_json: string | null }>();
-    for (const n of res.results ?? []) gpus.set(n.address, (JSON.parse(n.manifest_json ?? "{}").gpus ?? []) as Gpu[]);
-  }
   const replicas = await replicasOf(rows.filter(isEndpoint).map((r) => r.id));
+  const nodes = new Set(rows.filter((r) => r.workstation && r.node).map((r) => r.node!));
+  if (detail) for (const rs of replicas.values()) for (const r of rs) if (r.node) nodes.add(r.node);
+  const gpus = new Map<string, Gpu[]>();
+  const pubkeys = new Map<string, string | null>();
+  if (nodes.size) {
+    const list = [...nodes];
+    const res = await getD1()
+      .prepare(`SELECT address, manifest_json, pubkey FROM nodes WHERE address IN (${list.map(() => "?").join(",")})`)
+      .bind(...list)
+      .all<{ address: string; manifest_json: string | null; pubkey: string | null }>();
+    for (const n of res.results ?? []) {
+      gpus.set(n.address, (JSON.parse(n.manifest_json ?? "{}").gpus ?? []) as Gpu[]);
+      pubkeys.set(n.address, n.pubkey);
+    }
+  }
   const now = Date.now();
-  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail, replicas.get(r.id) ?? []));
+  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail, replicas.get(r.id) ?? [], pubkeys));
 }
 
 export async function addEvent(id: string, level: DeploymentEvent["level"], message: string, now = Date.now()): Promise<void> {
@@ -296,20 +326,59 @@ export async function getOwnedRow(owner: string, id: string): Promise<Deployment
 }
 
 /** Bound nodes seen within NODE_ACTIVE_SECONDS that advertise `capability`. */
-export async function capableNodesOnline(capability: string, now = Date.now()): Promise<number> {
-  const row = await getD1()
-    .prepare(
-      "SELECT COUNT(*) AS n FROM nodes, json_each(nodes.work_types) w " +
-        "WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?",
-    )
-    .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
+export async function capableNodesOnline(capability: string, now = Date.now(), minAgent?: string): Promise<number> {
+  const rows =
+    (
+      await getD1()
+        .prepare(
+          "SELECT nodes.agent_version AS v FROM nodes, json_each(nodes.work_types) w " +
+            "WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?",
+        )
+        .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability)
+        .all<{ v: string | null }>()
+    ).results ?? [];
+  return minAgent ? rows.filter((r) => !!r.v && compareVersions(r.v, minAgent) >= 0).length : rows.length;
+}
+
+/** The warning a new deployment gets when no online node could run it (a secret-carrying one needs a newer agent). */
+async function capableWarning(kind: string, spec: unknown, now: number): Promise<string | null> {
+  const cap = neededCapability(kind as never, spec as never);
+  if ((await capableNodesOnline(cap, now)) === 0) return "waiting for a capable node";
+  const secrets = (spec as { expectsSecrets?: boolean }).expectsSecrets === true;
+  if (secrets && (await capableNodesOnline(cap, now, SEALED_V2_MIN_AGENT)) === 0) {
+    return `waiting for a node running agent ${SEALED_V2_MIN_AGENT} or newer (sealed secrets need it)`;
+  }
+  return null;
 }
 
 /** A container whose start must wait for sealed secrets (V3 §6: they are sealed to the assigned node). */
 export function awaitingSecrets(r: Pick<DeploymentRow, "kind" | "spec_json" | "sealed_env">): boolean {
   return r.kind === "container" && !r.sealed_env && (JSON.parse(r.spec_json) as ContainerSpec).expectsSecrets === true;
+}
+
+/** A container that carries, or will carry, sealed secrets: it may only go to a node whose agent opens v2 payloads. */
+export function carriesSecrets(r: Pick<DeploymentRow, "kind" | "spec_json" | "sealed_env">): boolean {
+  return r.kind === "container" && (r.sealed_env !== null || (JSON.parse(r.spec_json) as ContainerSpec).expectsSecrets === true);
+}
+
+/**
+ * Sealed secrets v2 (shared/sealed.ts): bound to the deployment id, so the API cannot move one deployment's secrets
+ * into another's container. The first agent that opens them; older agents never receive a deployment with secrets.
+ */
+export const SEALED_V2_MIN_AGENT = "1.5.0";
+/** First byte of a v2 payload (shared/sealed.ts SEALED_V2_TAG; the API does not import the crypto). */
+const SEALED_V2_TAG = 0x02;
+const SEALED_V2_MIN_BYTES = 1 + 65 + 24 + 16;
+
+/** True when `sealedEnv` has the shape of a v2 payload: the v2 tag, then an uncompressed ephemeral key, nonce and tag. */
+export function isSealedV2(sealedEnv: string): boolean {
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(sealedEnv, "base64");
+  } catch {
+    return false;
+  }
+  return buf.length >= SEALED_V2_MIN_BYTES && buf[0] === SEALED_V2_TAG && buf[1] === 0x04;
 }
 
 export const capabilityFor = (kind: DeploymentKind) => (kind === "static" ? "hosting" : "container");
@@ -379,7 +448,8 @@ export async function createDeployment(input: {
     }
     await getD1().batch(rows);
     await addEvent(id, "info", `queued ${replicas} replica${replicas > 1 ? "s" : ""} at ${price} µCLD/replica-hour; first hour held`, now);
-    if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) await addEvent(id, "warn", "waiting for a capable node", now);
+    const waiting = await capableWarning(input.kind, checked.spec, now);
+    if (waiting) await addEvent(id, "warn", waiting, now);
     return { ok: true, id, ...quoted(replicas) };
   }
   await stmt
@@ -399,9 +469,8 @@ export async function createDeployment(input: {
       .catch((err) => log.api.warn("[deployments] probe columns not written (run HOSTING_MIGRATIONS):", err));
   }
   await addEvent(id, "info", `queued at ${price} µCLD/hour; first hour held`, now);
-  if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) {
-    await addEvent(id, "warn", "waiting for a capable node", now);
-  }
+  const waiting = await capableWarning(input.kind, checked.spec, now);
+  if (waiting) await addEvent(id, "warn", waiting, now);
   return { ok: true, id, ...quoted(1) };
 }
 
@@ -440,9 +509,18 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string)
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "sealed secrets are for containers only" };
   if (isEndpoint(row)) return { ok: false, code: "validation_failed", message: "seal secrets per replica (each is sealed to its node): PATCH /deployments/{replicaId}/secrets" };
+  if (!isSealedV2(sealedEnv)) {
+    return {
+      ok: false,
+      code: "validation_failed",
+      message: "sealedEnv must be a v2 payload bound to this deployment (shared/sealed.ts seal(pubkey, plaintext, sealedEnvAad(id))); reload the console and seal again",
+    };
+  }
   const r = await getD1()
-    .prepare("UPDATE deployments SET sealed_env = ? WHERE id = ? AND status IN ('queued','assigned')")
-    .bind(sealedEnv, id)
+    // Sealing restarts the start clock: the start-timeout duty measures from assigned_at, and a row that waited for
+    // its secrets must not be re-queued (sealed_env wiped) minutes after the owner finally sealed them.
+    .prepare("UPDATE deployments SET sealed_env = ?, assigned_at = CASE WHEN status = 'assigned' THEN ? ELSE assigned_at END WHERE id = ? AND status IN ('queued','assigned')")
+    .bind(sealedEnv, Date.now(), id)
     .run();
   if ((r.meta?.changes ?? 0) === 0) {
     return { ok: false, code: "conflict", message: `secrets can only change while queued or assigned (status is ${row.status})` };
@@ -472,7 +550,11 @@ export async function settleHold(row: DeploymentRow, now = Date.now()): Promise<
 /** Capture `fee` from the owner's hold and credit the node's payout wallet (lane A + treasury, no lane B). */
 export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now()): Promise<void> {
   const db = getD1();
-  await capture(row.owner, fee);
+  // No reward without a captured fee (as for jobs): a bill whose hold wasn't there mints nothing and burns nothing.
+  if (!(await capture(row.owner, fee))) {
+    log.api.warn(`[deployments] ${row.id}: hour of ${fee} µCLD not captured (hold missing) — no bill, no reward`);
+    return;
+  }
   const payout = await db.prepare("SELECT payout FROM nodes WHERE address = ?").bind(row.node).first<{ payout: string | null }>();
   const billId = crypto.randomUUID();
   await db
@@ -700,4 +782,77 @@ export async function adminStop(id: string): Promise<Update> {
     return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };
   }
   return { ok: true };
+}
+
+// ── Container logs through the relay (ENGINEERING_BACKLOG B-14) ─────────────
+export const LOGS_TAIL_DEFAULT = 200;
+export const LOGS_TAIL_MAX = 1000;
+/** Most the API hands back (the agent's ops server keeps the same cap). */
+export const LOGS_MAX_BYTES = 64 * 1024;
+const LOGS_TIMEOUT_MS = 10_000;
+/** Agents from this version serve the reserved relay dep "agent" (`GET /logs/{id}`, node-agent/src/ops.ts). */
+export const LOGS_MIN_AGENT = "1.6.0";
+
+export type LogsResult =
+  | { ok: true; id: string; node: string | null; tail: number; source: "node" | "last_failure"; logs: string; truncated: boolean }
+  | { ok: false; code: "not_found" | "validation_failed" | "conflict" | "not_configured" | "upstream_failed"; message: string };
+
+/**
+ * The owner's view of a container's last log lines, read live from its node through the relay (nothing is stored
+ * here). A deployment no longer on a node answers with the tail its last failure report kept, if any.
+ */
+export async function deploymentLogs(owner: string, id: string, tail = LOGS_TAIL_DEFAULT): Promise<LogsResult> {
+  const row = await getOwnedRow(owner, id);
+  if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
+  if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "logs are for containers, workstations and endpoint replicas; a static site has none" };
+  if (isEndpoint(row)) {
+    return { ok: false, code: "validation_failed", message: "ask a replica: GET /deployments/{replicaId}/logs (replica ids are in GET /deployments/{id}.replicas)" };
+  }
+  const onNode = !!row.node && (row.status === "assigned" || row.status === "running" || row.status === "unreachable");
+  if (!onNode) {
+    if (row.last_logs) return { ok: true, id: row.id, node: row.node, tail, source: "last_failure", logs: row.last_logs, truncated: false };
+    return { ok: false, code: "conflict", message: `no node runs it now (status ${row.status}) and no failure logs were kept` };
+  }
+  if (!row.relayed) return { ok: false, code: "conflict", message: "this deployment runs on a direct (public-IP) node; logs are served through the relay only" };
+  const relay = getRelay();
+  if (!relay) return { ok: false, code: "not_configured", message: "this API runs no relay" };
+  let res: Response;
+  try {
+    res = await relay(row.node!, "/proxy", {
+      method: "GET",
+      headers: { "x-relay-dep": "agent", "x-relay-class": "endpoint", "x-relay-path": `/logs/${row.id}?tail=${tail}`, "x-relay-probe": "1" },
+      signal: AbortSignal.timeout(LOGS_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const timeout = (err as Error)?.name === "TimeoutError";
+    return { ok: false, code: "upstream_failed", message: timeout ? "the node did not answer within 10 s" : `relay: ${(err as Error).message}` };
+  }
+  const relayError = res.headers.get("x-relay-error");
+  if (relayError) {
+    await res.body?.cancel().catch(() => undefined);
+    const why =
+      relayError === "not_serving" ? `the node's agent does not serve logs (agents from ${LOGS_MIN_AGENT} do)`
+      : relayError === "offline" ? "the node's relay socket is down"
+      : `relay: ${relayError}`;
+    return { ok: false, code: "upstream_failed", message: why };
+  }
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => undefined);
+    return { ok: false, code: "conflict", message: "the node no longer runs it" };
+  }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
+    return { ok: false, code: "upstream_failed", message: `the node answered ${res.status}` };
+  }
+  let text: string;
+  try {
+    // The node is untrusted: read at most a little over the cap, never its whole stream.
+    const bytes = await readCapped(res, LOGS_MAX_BYTES * 2);
+    text = bytes ? new TextDecoder().decode(bytes) : "";
+    if (!bytes) return { ok: false, code: "upstream_failed", message: "the node sent more than the logs cap" };
+  } catch {
+    return { ok: false, code: "upstream_failed", message: "the node broke off while sending logs" };
+  }
+  const over = text.length > LOGS_MAX_BYTES;
+  return { ok: true, id: row.id, node: row.node, tail, source: "node", logs: over ? text.slice(-LOGS_MAX_BYTES) : text, truncated: over || res.headers.get("x-cld-truncated") === "1" };
 }

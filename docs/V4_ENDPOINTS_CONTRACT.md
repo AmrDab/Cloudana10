@@ -70,8 +70,13 @@ sends `x-relay-dep: dep` to node `node`). Cached 30 s: a revoked key can work fo
   (`MAX_STREAMS_PER_DEP`). Custom limits later.
 - No admin key revoke (`POST /v1/admin/deployments/{id}/stop` covers abuse). `GET …/requests`, `POST …/report`: steps 4
   and 6.
-- Logs arrive only with a `failed` report (no live log streaming yet).
-- Sealed secrets are per replica (each is sealed to its node's key): `PATCH /deployments/{replicaId}/secrets`. Plain
-  `env` is the simple path and is what the deploy form will offer first.
+- Logs: a `failed` report carries the container's tail (kept on the row); `GET /v1/deployments/{replicaId}/logs?tail=N`
+  reads the last lines live from the node through the relay (reserved dep `agent`, agents ≥ 1.6.0;
+  docs/V4_RELAY_CONTRACT.md "Reserved deployment ids"). No streaming yet.
+- Sealed secrets are per replica (each is sealed to its node's key): `PATCH /deployments/{replicaId}/secrets`. The
+  detail view carries `awaitingSecrets` and, once a node with a key holds a replica, that replica's `nodePubkey`; the
+  console seals every environment value this way (`expectsSecrets`, no plain path: the values never reach the API).
+  Plain `env` stays in the API spec for clients that want it. A replica re-queued to another node has its payload
+  cleared and waits (`awaitingSecrets`) until the owner seals again.
 - One user-content domain for everything: `https://<id>.<SITES_DOMAIN>` (owner decision §8.2), not `*.run.cloudana.io`.
 - No WebSockets through the relay yet (step 2 limitation): streaming responses (SSE, chunked) work; socket-based UIs do not.

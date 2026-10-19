@@ -94,6 +94,8 @@ describe("GET /v1/nodes/mine", () => {
       address: nodeA,
       lastSeen: expect.any(Number),
       online: true,
+      state: "active",
+      stateReason: null,
       boundAt: 1,
       manifest: { cpuThreads: 8, ramGB: 16, gpus: [], os: "linux", benchmarkMmacPerSec: 123 },
       throughputMmacPerSec: 1,
@@ -110,5 +112,25 @@ describe("GET /v1/nodes/mine", () => {
   it("is empty for a wallet with no nodes", async () => {
     const res = await call("/v1/nodes/mine", { headers: { Authorization: `Bearer ${await generateToken(payer)}` } });
     expect(await res.json()).toEqual({ status: "success", nodes: [] });
+  });
+
+  it("DELETE /v1/nodes/mine/{address} lets the owner unbind a node; strangers get 404; earnings stay; a fresh bind code follows", async () => {
+    const mine = { headers: { Authorization: `Bearer ${await generateToken(provider)}` } };
+    expect((await call(`/v1/nodes/mine/${nodeB}`, { method: "DELETE" })).status).toBe(401);
+    expect((await call(`/v1/nodes/mine/${nodeB}`, { method: "DELETE", headers: { Authorization: `Bearer ${await generateToken(stranger)}` } })).status).toBe(404);
+    const res = await call(`/v1/nodes/mine/${nodeB}`, { ...mine, method: "DELETE" });
+    expect(await res.json()).toEqual({ status: "success", unbound: nodeB, requeued: 0 });
+    const { nodes } = await (await call("/v1/nodes/mine", mine)).json();
+    expect(nodes.map((n: { address: string }) => n.address)).toEqual([nodeA]);
+    expect(await getD1().prepare("SELECT payout, fleet_id, bound_at, bind_code FROM nodes WHERE address = ?").bind(nodeB).first()).toEqual({ payout: null, fleet_id: null, bound_at: null, bind_code: null });
+    // Already-recorded earnings are untouched (they belong to the wallet, not the node binding).
+    const ledger = await (await call(`/v1/ledger/${provider}`)).json();
+    expect(ledger.pending.A + ledger.settled.A).toBeGreaterThan(0);
+    // Idempotent from the owner's side: a second DELETE is 404 (nothing of theirs is bound any more).
+    expect((await call(`/v1/nodes/mine/${nodeB}`, { ...mine, method: "DELETE" })).status).toBe(404);
+    // The next announce issues a fresh bind code, so the operator can bind it to any wallet again.
+    const again = await announceNode(nodeB, { cpuThreads: 8, ramGB: 16, gpus: [], os: "linux" }, 123, ["matmul"]);
+    expect(again.payout).toBeNull();
+    expect(again.bind_code).toMatch(/^[0-9a-f]{16}$/);
   });
 });

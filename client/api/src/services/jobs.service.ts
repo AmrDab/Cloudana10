@@ -13,7 +13,7 @@ import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { capture, hold, release } from "./balance.service.js";
 import { getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
-import { recordJobRewards } from "./ledger.service.js";
+import { epochOf, recordJobRewards } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
 import { getWorkType } from "./work-types.js";
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
@@ -47,6 +47,8 @@ export interface WorkJobRow {
   attempts: number | null;
   /** Artifact-store key of the job's matrices once they left D1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §A). */
   artifact: string | null;
+  /** The eligible set the draw ran over, sorted by address (JSON Candidate[]), so anyone can replay the draw. */
+  eligible_json: string | null;
 }
 
 export interface JobMatrices {
@@ -278,7 +280,11 @@ export const MAX_JOB_ATTEMPTS = 3;
 
 const CLEAR_ASSIGNMENT =
   "status = 'queued', node = NULL, sigma = NULL, seed_source = NULL, draw_seed = NULL, " +
-  "eligible_hash = NULL, cluster_ok = NULL, assigned_at = NULL, expires_at = NULL";
+  "eligible_hash = NULL, eligible_json = NULL, cluster_ok = NULL, assigned_at = NULL, expires_at = NULL";
+
+/** The eligible set as it is stored and published: sorted by address, weights as drawn. */
+export const sortedCandidates = (candidates: Candidate[]): Candidate[] =>
+  [...candidates].sort(byAddress).map((c) => ({ address: c.address, payout: c.payout, weight: c.weight }));
 
 /** Expire stale assignments, then assign queued jobs (oldest first) to eligible nodes. Returns the number assigned. */
 export async function runAssignment(now = Date.now()): Promise<number> {
@@ -293,7 +299,7 @@ export async function runAssignment(now = Date.now()): Promise<number> {
 
   const nodes = await db
     .prepare(
-      "SELECT * FROM nodes WHERE payout IS NOT NULL AND last_seen >= ? " +
+      "SELECT * FROM nodes WHERE payout IS NOT NULL AND state = 'active' AND last_seen >= ? " +
         "AND address NOT IN (SELECT node FROM work_jobs WHERE status = 'assigned' AND node IS NOT NULL)",
     )
     .bind(now - env.NODE_ACTIVE_SECONDS * 1000)
@@ -320,11 +326,14 @@ export async function runAssignment(now = Date.now()): Promise<number> {
 
     const r = await db
       .prepare(
-        "UPDATE work_jobs SET status = 'assigned', node = ?, sigma = ?, seed_source = ?, draw_seed = ?, eligible_hash = ?, " +
+        "UPDATE work_jobs SET status = 'assigned', node = ?, sigma = ?, seed_source = ?, draw_seed = ?, eligible_hash = ?, eligible_json = ?, " +
           "cluster_ok = ?, assigned_at = ?, expires_at = ? WHERE id = ? AND status = 'queued' " +
           "AND NOT EXISTS (SELECT 1 FROM work_jobs WHERE node = ? AND status = 'assigned')",
       )
-      .bind(node, sigma, seedSource, drawSeed, eligibleHash(eligible), clusterOk, now, now + env.ASSIGNMENT_TTL_SECONDS * 1000, job.id, node)
+      .bind(
+        node, sigma, seedSource, drawSeed, eligibleHash(eligible), JSON.stringify(sortedCandidates(eligible)),
+        clusterOk, now, now + env.ASSIGNMENT_TTL_SECONDS * 1000, job.id, node,
+      )
       .run();
     pool.delete(node);
     if ((r.meta?.changes ?? 0) > 0) assigned++;
@@ -341,6 +350,64 @@ export interface Assignment {
   matrixB: number[];
   sigma: string;
   expiresAt: number;
+}
+
+/**
+ * The public draw record of a job (DECENTRALIZATION_ROADMAP.md phase 1 "publish the draw"): everything needed to
+ * replay the assignment without trusting the orchestrator — drawSeed = sha256(seedSource ‖ jobId), eligibleHash =
+ * sha256 of the sorted "address:weight" list, node = weightedDraw(drawSeed, eligible). No matrices, no owner.
+ * σ is published only once the job is done (it binds the transcript to the assignment while the job is live).
+ */
+export interface DrawRecord {
+  jobId: string;
+  status: WorkJobRow["status"];
+  node: string | null;
+  seedSource: string | null;
+  drawSeed: string | null;
+  eligibleHash: string | null;
+  eligible: Candidate[] | null;
+  clusterOk: boolean | null;
+  assignedAt: number | null;
+  completedAt: number | null;
+  sigma: string | null;
+  certZ: string | null;
+  /** seedSource is a chain block hash (not the "local:" fallback) and the eligible set was recorded. */
+  replayable: boolean;
+}
+
+export async function getDrawRecord(id: string): Promise<DrawRecord | null> {
+  const r = await getWorkJob(id);
+  if (!r) return null;
+  const eligible = r.eligible_json ? (JSON.parse(r.eligible_json) as Candidate[]) : null;
+  return {
+    jobId: r.id,
+    status: r.status,
+    node: r.node,
+    seedSource: r.seed_source,
+    drawSeed: r.draw_seed,
+    eligibleHash: r.eligible_hash,
+    eligible,
+    clusterOk: r.cluster_ok === null ? null : r.cluster_ok === 1,
+    assignedAt: r.assigned_at,
+    completedAt: r.completed_at,
+    sigma: r.status === "done" ? r.sigma : null,
+    certZ: r.cert_z,
+    // A job that failed for good gave its node up (node null): its draw can no longer be replayed against it.
+    replayable: r.status !== "failed" && !!eligible && !!r.seed_source && !r.seed_source.startsWith("local:"),
+  };
+}
+
+/** Pure replay of a draw record: what an outsider checks (scripts/verify/replay.ts uses it too). */
+export function replayDraw(d: Pick<DrawRecord, "jobId" | "node" | "seedSource" | "drawSeed" | "eligibleHash" | "eligible">): {
+  seedOk: boolean;
+  eligibleOk: boolean;
+  drawOk: boolean;
+  ok: boolean;
+} {
+  const seedOk = !!d.seedSource && !!d.drawSeed && sha256(d.seedSource + d.jobId) === d.drawSeed;
+  const eligibleOk = !!d.eligible && !!d.eligibleHash && eligibleHash(d.eligible) === d.eligibleHash;
+  const drawOk = seedOk && !!d.eligible && d.eligible.length > 0 && !!d.node && weightedDraw(d.drawSeed!, d.eligible) === d.node;
+  return { seedOk, eligibleOk, drawOk, ok: seedOk && eligibleOk && drawOk };
 }
 
 export async function getActiveAssignment(node: string, now = Date.now()): Promise<Assignment | null> {
@@ -410,17 +477,23 @@ export async function submitWork(
     .run();
   if ((done.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "job was already completed" };
 
-  if (!(await capture(job.owner, job.price_ucld))) {
-    L.error(`[work] capture of ${job.price_ucld} µCLD from ${job.owner} failed for job ${job.id} (hold missing)`);
+  // Invariant: nothing is minted for a fee that was not captured. The hold is taken at enqueue and released only when
+  // the job fails for good, so a missing hold is a bug or tampering — the verified result still goes to the owner (the
+  // node did the work), but no reward entries are written, so the epoch close neither mints for it nor burns its fee.
+  const captured = await capture(job.owner, job.price_ucld);
+  if (!captured) {
+    L.error(`[work] capture of ${job.price_ucld} µCLD from ${job.owner} failed for job ${job.id} (hold missing) — result accepted, no rewards recorded`);
   }
-  const rewards = await recordJobRewards({
-    jobId: job.id,
-    workType: job.work_type,
-    provider: nodeRow.payout,
-    feeUcld: job.price_ucld,
-    clusterOk: job.cluster_ok === 1,
-    now,
-  });
+  const rewards = captured
+    ? await recordJobRewards({
+        jobId: job.id,
+        workType: job.work_type,
+        provider: nodeRow.payout,
+        feeUcld: job.price_ucld,
+        clusterOk: job.cluster_ok === 1,
+        now,
+      })
+    : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now) };
   const units = wt.meter(jobInput);
   const seconds = (now - (job.assigned_at ?? now)) / 1000;
   await db

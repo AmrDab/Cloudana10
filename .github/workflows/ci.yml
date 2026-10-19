@@ -1,0 +1,90 @@
+name: CI
+
+# Quality gates for every package that ships (docs/TEST_EVIDENCE.md lists what each job proves).
+# The node agent (build-node-agent.yml) keeps its own workflow because it also builds and signs the image.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API (client/api) — type-check + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --legacy-peer-deps
+        working-directory: client/api
+      - run: npm run type-check
+        working-directory: client/api
+      - run: npm test
+        working-directory: client/api
+
+  workers:
+    name: ${{ matrix.pkg }} Worker — type-check + tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: [gateway, relay, keeper]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: ${{ matrix.pkg }}
+      - run: npx tsc --noEmit
+        working-directory: ${{ matrix.pkg }}
+      - run: npx vitest run
+        working-directory: ${{ matrix.pkg }}
+
+  contracts:
+    name: Contracts — compile + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: contract
+      - run: npx hardhat compile
+        working-directory: contract
+      - run: npx hardhat test
+        working-directory: contract
+
+  console:
+    name: Console + homepage — type-check, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --legacy-peer-deps
+      # The API's vitest runs the client unit tests (package.json test:client).
+      - run: npm ci --legacy-peer-deps
+        working-directory: client/api
+      - run: npm run check
+      - run: npm run test:client
+      - run: npm run build
+        env:
+          VITE_API_URL: https://api.cloudana.io
+      # A production bundle must never point at a developer's machine (tasks/lessons.md 2026-10-03).
+      - name: No localhost in the production bundle
+        run: |
+          if grep -rl "127.0.0.1:8790\|localhost:8790" dist/public/assets; then
+            echo "::error::production bundle references the local API"; exit 1
+          fi

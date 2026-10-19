@@ -2,7 +2,7 @@
   "name": "@cloudana/client-api",
   "version": "1.0.0",
   "type": "module",
-  "description": "Cloudana API — edge Worker (auth, templates, payments, faucet, PoUW, IPFS pinning) and Node orchestrator (placement, provider builds, deploy, verification)",
+  "description": "Cloudana API \u2014 one Hono app on two runtimes: the Cloudflare Worker (api.cloudana.io: D1, KV, R2, relay binding) and a Node runtime with embedded SQLite (local development, tests, independent operators)",
   "license": "Apache-2.0",
   "main": "src/index.ts",
   "scripts": {
@@ -12,33 +12,20 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "templates": "tsx scripts/seed-akash-templates-to-d1.ts",
-    "rpc": "tsx scripts/test-rpc-transport.ts",
-    "sdl-parse": "tsx scripts/test-sdl-parse.ts",
-    "build-manifest": "tsx scripts/build-manifest.ts"
+    "templates": "tsx scripts/seed-akash-templates-to-d1.ts"
   },
   "dependencies": {
-    "@akashnetwork/akashjs": "^0.11.1",
-    "@cosmjs/encoding": "^0.38.1",
-    "@cosmjs/math": "^0.38.1",
-    "@cosmjs/proto-signing": "^0.38.1",
-    "@cosmjs/stargate": "^0.38.1",
     "@hono/node-server": "^1.13.7",
     "@hono/swagger-ui": "0.4.1",
     "@hono/zod-openapi": "0.18.4",
-    "@types/ssh2": "^1.15.5",
     "dotenv": "^16.4.5",
     "hono": "^4.6.12",
-    "js-yaml": "^4.1.1",
-    "multiformats": "^13.4.2",
-    "ssh2": "^1.17.0",
     "stripe": "^20.4.1",
     "viem": "^2.45.1",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260525.1",
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.0",
     "tsx": "^4.20.5",
     "typescript": "^5.7.3",

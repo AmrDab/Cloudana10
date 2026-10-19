@@ -14,11 +14,11 @@ import { requireNode, type NodeVariables } from "../../middleware/node-auth.js";
 import { rateLimit, trustedClientIp, verifiedNodeKey } from "../../middleware/rate-limit.js";
 import type { AuthVariables } from "../../middleware/auth.js";
 import { EthAddressSchema } from "../../schemas/common.schema.js";
-import { announceNode, bindNode, bindNodeToFleet, getNode, listNodesForPayout, touchNode } from "../../services/nodes.service.js";
+import { NODE_STATES, announceNode, bindNode, bindNodeToFleet, getNode, listNodesForPayout, setOwnNodeDraining, touchNode, unbindOwnNode } from "../../services/nodes.service.js";
 import { fleetForToken } from "../../services/fleets.service.js";
 import { getActiveAssignment } from "../../services/jobs.service.js";
 import { workTypeIds } from "../../services/work-types.js";
-import { runDeploymentDuties } from "../../services/deployment-duties.service.js";
+import { nodeActivity, runDeploymentDuties } from "../../services/deployment-duties.service.js";
 import { endpointAllowed } from "../../services/deployment-spec.js";
 import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
 import { STORAGE_CAPABILITY, recordNodeNetwork, storageCapable, storageInstructions } from "../../services/storage.service.js";
@@ -227,6 +227,8 @@ const HeartbeatResponseSchema = z.object({
   minAgentVersion: z.string(),
   /** True when this node's agent is below minAgentVersion: it got no work (stops are still delivered). */
   upgradeRequired: z.boolean(),
+  /** Whether a wallet is bound; an agent that thought it was bound re-announces when this is false. */
+  bound: z.boolean().optional(),
 });
 
 const heartbeatRoute = createRoute({
@@ -244,33 +246,41 @@ const heartbeatRoute = createRoute({
 
 nodesRouter.openapi(heartbeatRoute, async (c) => {
   const node = c.get("node");
-  await touchNode(node);
+  const now = Date.now();
   const body = (c.get("nodeBody") ?? {}) as { agentVersion?: unknown; relay?: unknown };
-  // The agent's relay socket is open (and answered a ping recently): relayed placement may use this node.
-  if (body.relay === true) await getD1().prepare("UPDATE nodes SET relay_at = ? WHERE address = ?").bind(Date.now(), node).run();
+  const reported = typeof body.agentVersion === "string" && SEMVER.test(body.agentVersion) ? body.agentVersion : null;
+  // One write per beat: liveness, the relay socket being open (relayed placement may use this node), the agent version.
+  await touchNode(node, { relay: body.relay === true, agentVersion: reported, now });
   const row = await getNode(node);
   if (row) await recordNodeNetwork(node, trustedClientIp(c), cfAsn(c), row);
-  const version = typeof body.agentVersion === "string" && SEMVER.test(body.agentVersion) ? body.agentVersion : row?.agent_version ?? null;
-  if (row && version && version !== row.agent_version) {
-    await getD1().prepare("UPDATE nodes SET agent_version = ? WHERE address = ?").bind(version, node).run();
-  }
+  const version = reported ?? row?.agent_version ?? null;
   const allowed = agentVersionAllowed(version);
-  let deployments = await runDeploymentDuties(node).catch((err) => {
-    log.api.warn("[nodes] deployment duties on heartbeat failed:", err);
-    return [];
-  });
+  // One statement says what this node has to do; idle nodes skip every scan (deployment-duties B-5).
+  const activity = row
+    ? await nodeActivity(node, now).catch((err) => {
+        log.api.warn("[nodes] activity scan on heartbeat failed:", err);
+        return null;
+      })
+    : null;
+  let deployments = row && activity
+    ? await runDeploymentDuties(node, now, { row, activity }).catch((err) => {
+        log.api.warn("[nodes] deployment duties on heartbeat failed:", err);
+        return [];
+      })
+    : [];
   // Below the minimum version: no new work (stops and purges still go out so the node winds down cleanly).
   if (!allowed) deployments = deployments.filter((d) => d.action !== "start");
   // Storage-capable nodes get a third signed key; others keep the exact { assignment, deployments } body 1.3.x verifies.
   const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed).catch(() => null) : null;
   const instructions = {
-    assignment: allowed ? await getActiveAssignment(node) : null,
+    assignment: allowed && activity && activity.assignedJobs > 0 ? await getActiveAssignment(node) : null,
     deployments,
     ...(storage ? { storage } : {}),
   };
   const envelope = await signInstruction(node, instructions);
   if (!envelope) log.api.warn("[nodes] INSTRUCTION_SIGNING_KEY is not set — heartbeat instructions go out unsigned (agents ignore them)");
-  return ok(c, { ...instructions, ...(envelope ?? {}), minAgentVersion: minAgentVersion(), upgradeRequired: !allowed });
+  // `bound` (unsigned, informational): an agent unbound from the console re-announces and prints a fresh bind link.
+  return ok(c, { ...instructions, ...(envelope ?? {}), minAgentVersion: minAgentVersion(), upgradeRequired: !allowed, bound: !!row?.payout });
 });
 
 const ticketRoute = createRoute({
@@ -297,6 +307,7 @@ nodesRouter.openapi(ticketRoute, async (c) => {
   // the agent reads 404 as "this API has no relay" and would fall back to legacy mode.
   const row = await getNode(c.get("node"));
   if (!row?.payout) return fail(c, "forbidden", "announce and bind this node before opening the relay");
+  if (row.state === "suspended") return fail(c, "forbidden", "this node is suspended; contact support");
   const { ticket, expiresAt } = await issueTicket(env.RELAY_TICKET_SECRET, c.get("node"));
   return ok(c, { ticket, url: env.RELAY_URL, expiresAt });
 });
@@ -321,6 +332,8 @@ const MyNodeSchema = z.object({
   address: z.string(),
   lastSeen: z.number().nullable(),
   online: z.boolean(),
+  state: z.enum(NODE_STATES).openapi({ description: "active · draining (no new work; POST/DELETE /nodes/mine/{address}/drain) · suspended (by Cloudana)" }),
+  stateReason: z.string().nullable(),
   boundAt: z.number().nullable(),
   manifest: z
     .object({
@@ -353,3 +366,67 @@ const mineRoute = createRoute({
 });
 
 nodesRouter.openapi(mineRoute, async (c) => ok(c, { nodes: await listNodesForPayout(c.get("jwtPayload").sub) }));
+
+const unbindRoute = createRoute({
+  method: "delete",
+  path: "/nodes/mine/{address}",
+  tags: TAGS,
+  description:
+    "Let a node go: its payout binding (and fleet) is cleared, its live deployments are re-queued for other nodes, and " +
+    "it prints a fresh bind link on its next announce. Earnings already recorded stay with this wallet. 404 when no such " +
+    "node is bound to the caller.",
+  security: BEARER_AUTH,
+  request: { params: z.object({ address: EthAddressSchema }) },
+  responses: responses({ 200: json(z.object({ status: z.literal("success"), unbound: z.string(), requeued: z.number().int() }), "Unbound") }, 400, 401, 404),
+});
+
+nodesRouter.openapi(unbindRoute, async (c) => {
+  const address = c.req.valid("param").address;
+  const r = await unbindOwnNode(c.get("jwtPayload").sub, address);
+  if (!r.ok) return fail(c, r.code, r.message);
+  return ok(c, { unbound: address.toLowerCase(), requeued: r.requeued });
+});
+
+// ── Owner: drain / resume (ENGINEERING_BACKLOG B-8) ─────────────────────────
+const StateParams = z.object({ address: EthAddressSchema });
+const StateAnswer = json(z.object({ status: z.literal("success"), address: z.string(), state: z.enum(NODE_STATES) }), "State changed");
+
+const drainRoute = createRoute({
+  method: "post",
+  path: "/nodes/mine/{address}/drain",
+  tags: TAGS,
+  description:
+    "Drain a node you own: from now it takes no new jobs, deployments or storage copies; what it runs keeps running (and " +
+    "billing) until it ends. Resume with DELETE. 409 while Cloudana has the node suspended. Body may be {}.",
+  security: BEARER_AUTH,
+  request: {
+    params: StateParams,
+    body: { required: true, content: { "application/json": { schema: z.object({ reason: z.string().trim().max(200).optional() }) } } },
+  },
+  responses: responses({ 200: StateAnswer }, 400, 401, 404, 409),
+});
+
+nodesRouter.openapi(drainRoute, async (c) => {
+  const { address } = c.req.valid("param");
+  const { reason } = c.req.valid("json");
+  const r = await setOwnNodeDraining(c.get("jwtPayload").sub, address, true, reason?.trim() || null);
+  if (!r.ok) return fail(c, r.code, r.message);
+  return ok(c, { address: address.toLowerCase(), state: r.state });
+});
+
+const resumeRoute = createRoute({
+  method: "delete",
+  path: "/nodes/mine/{address}/drain",
+  tags: TAGS,
+  description: "Stop draining: the node takes work again on its next heartbeat. 409 while suspended.",
+  security: BEARER_AUTH,
+  request: { params: StateParams },
+  responses: responses({ 200: StateAnswer }, 400, 401, 404, 409),
+});
+
+nodesRouter.openapi(resumeRoute, async (c) => {
+  const { address } = c.req.valid("param");
+  const r = await setOwnNodeDraining(c.get("jwtPayload").sub, address, false, null);
+  if (!r.ok) return fail(c, r.code, r.message);
+  return ok(c, { address: address.toLowerCase(), state: r.state });
+});

@@ -48,3 +48,13 @@ describe("applySecurity", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("applySecurity · developer keys and sessions (B-7)", () => {
+  it("gates /v1/keys and /v1/auth/logout behind auth", async () => {
+    const app = buildApp();
+    app.get("/v1/keys", (c) => c.json({ ok: true }));
+    app.post("/v1/auth/logout", (c) => c.json({ ok: true }));
+    expect((await app.request("/v1/keys")).status).toBe(401);
+    expect((await app.request("/v1/auth/logout", { method: "POST" })).status).toBe(401);
+  });
+});

@@ -12,6 +12,8 @@ type Props = {
   providers: ClientProviderList[];
   initialZoom?: number;
   initialCoordinates?: [number, number];
+  /** Extra classes for the container (callers size it, e.g. a fixed height). */
+  className?: string;
 };
 
 interface PointData {
@@ -34,6 +36,7 @@ export function ProviderGlobe({
   providers,
   initialZoom = 1,
   initialCoordinates,
+  className,
 }: Props) {
   const globeRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -119,7 +122,7 @@ export function ProviderGlobe({
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-full min-h-[480px]"
+      className={`relative h-full w-full min-h-[480px]${className ? ` ${className}` : ""}`}
       onMouseMove={handleMouseMove}
     >
       <Globe
@@ -153,9 +156,8 @@ export function ProviderGlobe({
         ringPropagationSpeed={2}
         ringRepeatPeriod={1400}
         ringAltitude={0.015}
-        // === Rotation ===
-        autoRotate={!isDetailView}
-        autoRotateSpeed={0.3}
+        // === Rotation === (not in react-globe.gl's prop types; passed through as before)
+        {...({ autoRotate: !isDetailView, autoRotateSpeed: 0.3 } as Record<string, unknown>)}
       />
 
       {/* Tooltip overlay */}

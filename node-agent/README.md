@@ -168,11 +168,22 @@ then the network's probes fail and the deployment shows as unreachable.
 
 **Sealed secrets.** Secret env vars are encrypted in the browser to this
 node's public key (ECIES over secp256k1 → HKDF-SHA256 → XChaCha20-Poly1305,
-`shared/sealed.ts`) before they leave the user's machine. The API stores and
-forwards only ciphertext; only this node's private key (`.data/<name>.json`)
-can open it, and any tampering makes decryption fail. They are decrypted in
-memory just before `docker run` — note they are then visible to anyone with
-Docker access on this machine (e.g. `docker inspect`).
+`shared/sealed.ts`) before they leave the user's machine, and bound to the
+deployment they belong to (the deployment id is the AEAD associated data,
+format v2). The API stores and forwards only ciphertext; only this node's
+private key (`.data/<name>.json`) can open it, only for the deployment it was
+sealed for, and any tampering or a payload moved to another deployment makes
+decryption fail. Agents from 1.5.0 refuse the old unbound (v1) payloads. They
+are decrypted in memory just before `docker run` — note they are then visible
+to anyone with Docker access on this machine (e.g. `docker inspect`).
+
+## Logs (agents ≥ 1.6.0)
+
+The owner's console (or `GET /v1/deployments/{id}/logs`) can ask for a container's last lines. The request reaches
+the agent through its relay socket as the reserved deployment id `agent` (`src/ops.ts`, a loopback-only server the
+relay client forwards to, like storage checks) and is answered from `docker logs --tail N` for a deployment this
+agent runs; anything else is 404. Nothing is written to disk and nothing is sent unasked. Direct (public-IP) nodes
+have no relay socket and therefore serve no logs.
 
 ## GPU workstations
 

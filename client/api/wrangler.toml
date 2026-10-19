@@ -25,6 +25,10 @@ SUBSIDY_RHO = "0.04"
 EPOCH_SUBSIDY_BUDGET_UCLD = "7300000"
 CLUSTER_N_MIN = "3"
 CLUSTER_S_CAP = "0.5"
+# Assignment seed source (jobs.service fetchSeedSource): the latest Base Sepolia block hash, so every draw is
+# replayable by anyone from seed_source + job id (DECENTRALIZATION_ROADMAP.md phase 1). Unset, the seed falls back to
+# "local:<ms>" and the draw cannot be checked by third parties. Public RPC; no key.
+CHAIN_RPC_URL = "https://sepolia.base.org"
 
 [[d1_databases]]
 binding = "DB"

@@ -1,6 +1,8 @@
 /**
- * Provider nodes: identity (own key), payout binding, liveness.
- * A node earns only once a payout wallet is bound; assignment skips unbound nodes.
+ * Provider nodes: identity (own key), payout binding, liveness, administrative state.
+ * A node earns only once a payout wallet is bound; assignment skips unbound nodes and nodes that are not `active`
+ * (ENGINEERING_BACKLOG B-8): `draining` is the owner's "no new work, finish what runs"; `suspended` is Cloudana's
+ * "no work at all, live deployments re-queued, no relay ticket", and only an admin lifts it.
  */
 import { verifyMessage } from "viem";
 import { getD1 } from "../lib/storage.js";
@@ -26,9 +28,18 @@ export interface NodeRow {
   /** /24 or /48 and ASN last seen (storage copy placement; docs/V4_STORAGE_PHASE1_CONTRACT.md). */
   net_prefix?: string | null;
   asn?: number | null;
+  /** Last heartbeat that reported an open relay socket (docs/V4_RELAY_CONTRACT.md). */
+  relay_at?: number | null;
+  /** Administrative state (B-8); null on rows older than the column = active. */
+  state?: NodeState | null;
+  state_reason?: string | null;
+  state_at?: number | null;
   bound_at: number | null;
   last_seen: number | null;
 }
+
+export const NODE_STATES = ["active", "draining", "suspended"] as const;
+export type NodeState = (typeof NODE_STATES)[number];
 
 /** Extra announce fields (agents ≥ 1.1.0). */
 export interface AnnounceExtras {
@@ -185,6 +196,8 @@ export interface MyNode {
   address: string;
   lastSeen: number | null;
   online: boolean;
+  state: NodeState;
+  stateReason: string | null;
   boundAt: number | null;
   manifest: (NodeManifest & { benchmarkMmacPerSec?: number }) | null;
   throughputMmacPerSec: number;
@@ -218,6 +231,8 @@ export async function listNodesForPayout(payout: string, now = Date.now()): Prom
     address: r.address,
     lastSeen: r.last_seen,
     online: (r.last_seen ?? 0) >= cutoff,
+    state: r.state ?? "active",
+    stateReason: r.state_reason ?? null,
     boundAt: r.bound_at,
     manifest: r.manifest_json ? (JSON.parse(r.manifest_json) as MyNode["manifest"]) : null,
     throughputMmacPerSec: r.throughput_mmac_s,
@@ -230,8 +245,72 @@ export async function listNodesForPayout(payout: string, now = Date.now()): Prom
   }));
 }
 
-export async function touchNode(address: string): Promise<void> {
-  await getD1().prepare("UPDATE nodes SET last_seen = ? WHERE address = ?").bind(Date.now(), normalizeAddress(address)).run();
+/**
+ * One heartbeat write: last_seen always; relay_at when the agent reports its relay socket open; agent_version when the
+ * heartbeat carries one (a changed value is simply overwritten). One statement instead of three per beat (B-5).
+ */
+export async function touchNode(address: string, opts: { relay?: boolean; agentVersion?: string | null; now?: number } = {}): Promise<void> {
+  const now = opts.now ?? Date.now();
+  await getD1()
+    .prepare("UPDATE nodes SET last_seen = ?, relay_at = COALESCE(?, relay_at), agent_version = COALESCE(?, agent_version) WHERE address = ?")
+    .bind(now, opts.relay ? now : null, opts.agentVersion ?? null, normalizeAddress(address))
+    .run();
+}
+
+export type UnbindResult = { ok: true; requeued: number } | { ok: false; code: "not_found"; message: string };
+
+/**
+ * The payout wallet lets a node go (B-10): payout, fleet and binding cleared, its live deployments re-queued for
+ * other nodes, a fresh bind code on its next announce. Pending earnings stay with the wallet that earned them. A
+ * node bound to another wallet (or unknown) is reported as not found, like every other cross-tenant read.
+ */
+export async function unbindOwnNode(payout: string, address: string, now = Date.now()): Promise<UnbindResult> {
+  const nodeKey = normalizeAddress(address);
+  const r = await getD1()
+    .prepare("UPDATE nodes SET payout = NULL, fleet_id = NULL, bound_at = NULL, bind_code = NULL WHERE address = ? AND payout = ?")
+    .bind(nodeKey, normalizeAddress(payout))
+    .run();
+  if ((r.meta?.changes ?? 0) === 0) return { ok: false, code: "not_found", message: "no such node is bound to this wallet" };
+  const { requeueNodeDeployments } = await import("./deployment-duties.service.js");
+  const requeued = await requeueNodeDeployments([nodeKey], "node unbound by its owner", now);
+  return { ok: true, requeued };
+}
+
+export type StateResult = { ok: true; state: NodeState; requeued: number } | { ok: false; code: "not_found" | "conflict"; message: string };
+
+/**
+ * The owner drains a node (B-8): no new jobs, deployments or storage copies; what runs keeps running and billing
+ * until it ends. Resume puts it back to active. A suspension is Cloudana's and is not the owner's to lift.
+ */
+export async function setOwnNodeDraining(payout: string, address: string, draining: boolean, reason: string | null, now = Date.now()): Promise<StateResult> {
+  const nodeKey = normalizeAddress(address);
+  const db = getD1();
+  const row = await db.prepare("SELECT state FROM nodes WHERE address = ? AND payout = ?").bind(nodeKey, normalizeAddress(payout)).first<{ state: NodeState | null }>();
+  if (!row) return { ok: false, code: "not_found", message: "no such node is bound to this wallet" };
+  if (row.state === "suspended") return { ok: false, code: "conflict", message: "this node is suspended by Cloudana; contact support" };
+  const state: NodeState = draining ? "draining" : "active";
+  await db.prepare("UPDATE nodes SET state = ?, state_reason = ?, state_at = ? WHERE address = ?").bind(state, draining ? reason : null, now, nodeKey).run();
+  return { ok: true, state, requeued: 0 };
+}
+
+/**
+ * Admin: suspend (no new work, live deployments re-queued now — the node is owed a stop for each — and no relay
+ * ticket; heartbeats still answer so the node learns to stop) or lift the suspension.
+ */
+export async function setNodeSuspended(address: string, suspended: boolean, reason: string | null, now = Date.now()): Promise<StateResult> {
+  const nodeKey = normalizeAddress(address);
+  const state: NodeState = suspended ? "suspended" : "active";
+  const r = await getD1()
+    .prepare("UPDATE nodes SET state = ?, state_reason = ?, state_at = ? WHERE address = ?")
+    .bind(state, suspended ? reason : null, now, nodeKey)
+    .run();
+  if ((r.meta?.changes ?? 0) === 0) return { ok: false, code: "not_found", message: "unknown node" };
+  let requeued = 0;
+  if (suspended) {
+    const { requeueNodeDeployments } = await import("./deployment-duties.service.js");
+    requeued = await requeueNodeDeployments([nodeKey], `node suspended${reason ? `: ${reason}` : ""}`, now);
+  }
+  return { ok: true, state, requeued };
 }
 
 /** EMA weight for a new throughput sample. */

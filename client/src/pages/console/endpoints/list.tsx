@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { BrainCircuit, ChevronDown, Loader2, Square, Wallet, X } from "lucide-react";
+import { BrainCircuit, ChevronDown, KeyRound, Loader2, Lock, Square, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ago, api } from "@/lib/cld";
 import { perHour, tierOf, GPU_TIER_LABEL, ucldToUsd, usePrices } from "@/lib/prices";
@@ -12,14 +12,17 @@ import {
   AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  btn, Bone, CodeBlock, CopyButton, Empty, Hash, MonoLabel, Panel, PanelHeader, RelTime, Unavailable, Updated, freshRow, useDelayed, useFreshIds, useNow,
+  btn, Bone, CodeBlock, CopyButton, Empty, Hash, MonoLabel, Panel, PanelHeader, Pill, RelTime, Unavailable, Updated, freshRow, useDelayed, useFreshIds, useNow,
 } from "@/components/console/primitives";
 import {
   isEndpoint, isTerminal, isUnavailable, useDeployments, useEndpoint, useSession, type Endpoint, type Replica,
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { DeployChip } from "@/pages/console/deploy/deployments";
+import { autoSeal, clearPendingSecrets, getSealState, pendingSecrets, savePendingSecrets, setSealState, useSealVersion } from "@/pages/console/deploy/model";
+import { sealSecretsTo, SecretsForm } from "@/pages/console/deploy/secrets";
 import { ReportProblem } from "@/components/console/report-problem";
+import { LogsPanel } from "@/components/console/logs";
 import { EndpointKeys } from "./keys";
 
 export function specLine(e: Endpoint) {
@@ -60,6 +63,7 @@ export function Endpoints({ focusId }: { focusId: string | null }) {
   const [open, setOpen] = useState<string | null>(null);
   const fresh = useFreshIds(eps.map((e) => e.id));
   const bone = useDelayed(q.isLoading);
+  useSealVersion();
 
   useEffect(() => {
     if (focusId) setOpen(focusId);
@@ -82,6 +86,7 @@ export function Endpoints({ focusId }: { focusId: string | null }) {
 
   return (
     <Panel id="endpoints" className="scroll-mt-6 overflow-hidden" aria-labelledby="ep-h">
+      {eps.filter((e) => autoSeal.has(e.id)).map((e) => <EndpointSealer key={e.id} id={e.id} />)}
       <PanelHeader title={<span id="ep-h">Your endpoints</span>} kicker="Endpoints" right={session && <Updated at={q.dataUpdatedAt || null} offline={q.isError} />} />
       {!session ? (
         <Empty icon={Wallet} title="Sign in to serve your model and see your endpoints." action={<button type="button" className={btn.primary} onClick={() => signInWithToast()}><Wallet /> Sign in</button>} />
@@ -228,6 +233,7 @@ function Detail({ e }: { e: Endpoint }) {
           </div>
         </div>
         <div className="flex min-w-0 flex-col gap-3">
+          <EndpointSecrets d={d} />
           <EndpointKeys e={d} />
           <dl className="grid grid-cols-[96px_1fr] gap-x-3 gap-y-1.5 rounded-md border border-line bg-panel p-3 font-mono text-[12px]">
             <dt className="text-faint">Address</dt><dd className="min-w-0 truncate text-chain" title={url}>{url || "—"}</dd>
@@ -249,15 +255,120 @@ function Detail({ e }: { e: Endpoint }) {
 
 function ReplicaRow({ r, n }: { r: Replica; n: number }) {
   const now = useNow(5000);
+  useSealVersion();
+  const seal = getSealState(r.id);
+  const [showLogs, setShowLogs] = useState(false);
+  const onNode = !!r.node && !isTerminal(r.status);
   return (
-    <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-      <span className="flex items-center gap-2"><DeployChip status={r.status} /><span className="font-mono text-[12px] text-faint">#{n}</span></span>
-      <span className="font-mono text-[12px] text-muted-foreground">
-        {r.node ? <>node <Hash value={r.node} className="text-[12px]" /></> : "no node yet"}
-        {r.probeOk != null && <> · <span className={r.probeOk ? "text-ok" : "text-burn"}>{r.probeOk ? "healthy" : "probe failed"}</span></>}
-        {r.startedAt && r.status === "running" && <> · up {ago(r.startedAt, now).replace(" ago", "")}</>}
-      </span>
+    <li className="px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2"><DeployChip status={r.status} /><span className="font-mono text-[12px] text-faint">#{n}</span></span>
+        <span className="flex items-center gap-2 font-mono text-[12px] text-muted-foreground">
+          <span>
+            {r.node ? <>node <Hash value={r.node} className="text-[12px]" /></> : "no node yet"}
+            {r.probeOk != null && <> · <span className={r.probeOk ? "text-ok" : "text-burn"}>{r.probeOk ? "healthy" : "probe failed"}</span></>}
+            {r.startedAt && r.status === "running" && <> · up {ago(r.startedAt, now).replace(" ago", "")}</>}
+            {r.awaitingSecrets && !isTerminal(r.status) && (
+              <> · <span className={seal?.phase === "error" ? "text-burn" : "text-work"}>{seal?.phase === "sealing" ? "sealing secrets" : seal?.phase === "error" ? "secrets not sealed" : "waiting for secrets"}</span></>
+            )}
+          </span>
+          {(onNode || r.logs) && (
+            <button type="button" className={cn(btn.quiet, btn.sm, "-mr-2")} onClick={() => setShowLogs((v) => !v)} aria-expanded={showLogs} aria-label={`${showLogs ? "Hide" : "Show"} logs of replica ${n}`}>
+              {showLogs ? "Hide logs" : "Logs"}
+            </button>
+          )}
+        </span>
+      </div>
+      {showLogs && <LogsPanel id={r.id} name={`replica ${n}`} className="mt-2" compact />}
     </li>
+  );
+}
+
+// ── Secrets: sealed per replica, to each replica's node ─────────────────────
+/** Replicas whose secrets can be sealed right now: a node with a key holds them and they have not started. */
+const sealable = (e: Endpoint) => e.replicas.filter((r) => r.awaitingSecrets && !!r.nodePubkey && !!r.node && (r.status === "queued" || r.status === "assigned"));
+
+/** Polls one endpoint and seals its pending secrets to each replica's node as nodes are assigned. Renders nothing. */
+function EndpointSealer({ id }: { id: string }) {
+  const q = useEndpoint(id, 2_000);
+  const qc = useQueryClient();
+  const attempted = useRef(new Set<string>());
+  const dep = q.data?.deployment;
+  useEffect(() => {
+    if (!dep) return;
+    const secrets = pendingSecrets(id);
+    if (!secrets) return;
+    if (isTerminal(dep.status)) {
+      clearPendingSecrets(id);
+      setSealState(id, { phase: "error", message: `The endpoint is ${dep.status}; secrets can only be sealed before its replicas start.` });
+      return;
+    }
+    if (!dep.awaitingSecrets) {
+      // Every replica has its secrets: forget the plaintext.
+      clearPendingSecrets(id);
+      setSealState(id, { phase: "sealed" });
+      return;
+    }
+    if (!getSealState(id)) setSealState(id, { phase: "waiting" });
+    for (const r of sealable(dep)) {
+      if (attempted.current.has(r.id)) continue;
+      attempted.current.add(r.id);
+      void sealSecretsTo(r, secrets).then((ok) => {
+        if (ok) void qc.invalidateQueries({ queryKey: ["cld", "deployment", id] });
+      });
+    }
+  }, [id, dep, qc]);
+  return null;
+}
+
+function EndpointSecrets({ d }: { d: Endpoint }) {
+  useSealVersion();
+  const s = getSealState(d.id);
+  const pending = !!pendingSecrets(d.id);
+  const waiting = d.replicas.filter((r) => r.awaitingSecrets && !isTerminal(r.status));
+  const sealing = d.replicas.some((r) => getSealState(r.id)?.phase === "sealing");
+  const errors = d.replicas.map((r, i) => ({ n: i + 1, e: getSealState(r.id) })).filter((x) => x.e?.phase === "error" && d.replicas[x.n - 1].awaitingSecrets);
+  // Replicas wait for secrets this tab does not hold: never had them, or a replica moved to another node and the API
+  // cleared the payload sealed to the old one.
+  const reenter = !isTerminal(d.status) && waiting.length > 0 && !pending && !sealing;
+  if (!pending && !reenter && s?.phase !== "sealed" && errors.length === 0) return null;
+  const retry = () => {
+    const secrets = pendingSecrets(d.id);
+    if (!secrets) return;
+    for (const r of sealable(d)) if (getSealState(r.id)?.phase !== "sealing") void sealSecretsTo(r, secrets);
+  };
+  return (
+    <div className="rounded-md border border-line bg-panel p-3">
+      <MonoLabel>Secrets</MonoLabel>
+      <div className="mt-2" aria-live="polite">
+        {sealing ? (
+          <Pill tone="work"><Loader2 className="size-3 animate-spin" aria-hidden /> Sealing to the replicas' nodes</Pill>
+        ) : waiting.length === 0 ? (
+          <Pill tone="ok"><Lock className="size-3" aria-hidden /> Sealed on every replica</Pill>
+        ) : errors.length ? (
+          <Pill tone="burn">Not sealed on {errors.length} {errors.length === 1 ? "replica" : "replicas"}</Pill>
+        ) : (
+          <Pill tone="muted"><KeyRound className="size-3" aria-hidden /> {waiting.length} of {d.replicas.length} {pending ? "wait for a node" : "need secrets"}</Pill>
+        )}
+      </div>
+      {errors.map((x) => <p key={x.n} className="mt-2 text-[12px] leading-4 text-burn">#{x.n}: {x.e!.message}</p>)}
+      {pending && errors.length > 0 && (
+        <button type="button" className={cn(btn.ghost, btn.sm, "mt-3 w-full")} onClick={retry}><Lock /> Seal again</button>
+      )}
+      {pending && errors.length === 0 && (
+        <p className="mt-1.5 text-[12px] leading-4 text-faint">Encrypted in this browser to each replica's node as nodes are assigned; the API never sees the values. Kept in this tab only until every replica is sealed.</p>
+      )}
+      {reenter && (
+        <>
+          <p className="mt-2 text-[12px] leading-4 text-muted-foreground">
+            {s?.phase === "sealed"
+              ? "A replica moved to another node; the secrets sealed to the old one were cleared. Enter them again to seal them to the new node."
+              : "Replicas are waiting for secrets this tab does not have. Enter them; they are sealed in this browser to each replica's node."}
+          </p>
+          <SecretsForm onSave={(secrets) => savePendingSecrets(d.id, secrets)} />
+        </>
+      )}
+    </div>
   );
 }
 

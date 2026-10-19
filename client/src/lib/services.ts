@@ -60,9 +60,9 @@ export const CATALOG: Service[] = [
     proof: "Responses probed for content hash and latency.", subsidy: false },
 
   // Hosting & delivery
-  // Live since 2026-10-01: a site deployed from the console was served by a node and probed ok on the local stack.
-  { id: "hosting", group: "hosting", name: "Static hosting", line: "Sites served by nodes, probed every minute.", icon: Globe, status: "live",
-    proof: "Reachability probed by the orchestrator every minute; browser witnesses planned.", subsidy: false },
+  // Live: the gateway serves https://<id>.cloudana.run (2026-10-18) and a public node (Azure, relay) serves sites.
+  { id: "hosting", group: "hosting", name: "Static hosting", line: "Sites served by nodes through the relay, content-hash probed every minute.", icon: Globe, status: "live",
+    proof: "Content-hash probed by the orchestrator every minute through the relay; served at https://<id>.cloudana.run.", subsidy: false },
   { id: "cdn", interest: "hosting", group: "hosting", name: "CDN & edge cache", line: "Cached copies close to every reader.", icon: Network, status: "planned",
     proof: "Random probes from many residential verifiers check hash and latency.", subsidy: false },
   { id: "dns", interest: "hosting", group: "hosting", name: "DNS", line: "Authoritative answers from many nodes.", icon: Waypoints, status: "planned",

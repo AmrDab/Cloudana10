@@ -63,6 +63,8 @@ const app = buildApp<Bindings>({
  */
 async function scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext): Promise<void> {
   initStorage(env.DB, env.CLOUDANA_KV);
+  // New columns land on the first request after a deploy; a cron tick before it must not hit "no such column".
+  await (await import("./lib/schema.js")).ensureSchema().catch(() => undefined);
   setRelay(env.RELAY ? relayFromBinding(env.RELAY) : null);
   setArtifactStore(env.ARTIFACTS ? r2Artifacts(env.ARTIFACTS) : null);
   const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }, { moveJobArtifacts }, { runStorageCron }] = await Promise.all([

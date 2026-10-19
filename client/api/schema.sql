@@ -123,7 +123,10 @@ CREATE TABLE IF NOT EXISTS nodes (
   net_prefix TEXT, asn INTEGER,               -- /24 or /48 and ASN seen at announce / heartbeat (copy placement)
   storage_next_check_at INTEGER, storage_cooldown_until INTEGER, storage_backoff_until INTEGER,
   storage_strikes INTEGER NOT NULL DEFAULT 0, storage_passed_days INTEGER NOT NULL DEFAULT 0,
-  storage_open_day INTEGER, storage_inconclusive INTEGER NOT NULL DEFAULT 0
+  storage_open_day INTEGER, storage_inconclusive INTEGER NOT NULL DEFAULT 0,
+  -- Node state model (ENGINEERING_BACKLOG B-8): active | draining (owner: no new work) | suspended (admin: no work,
+  -- live deployments re-queued, no relay ticket)
+  state TEXT NOT NULL DEFAULT 'active', state_reason TEXT, state_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS work_jobs (
@@ -133,7 +136,8 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   assigned_at INTEGER, expires_at INTEGER, result_json TEXT, cert_z TEXT,
   created_at INTEGER, completed_at INTEGER,
   attempts INTEGER NOT NULL DEFAULT 0, -- verification failures; 3 → failed, hold released
-  artifact TEXT  -- R2 key once a finished job's matrices moved out of D1 (a_json/b_json/result_json then NULL)
+  artifact TEXT, -- R2 key once a finished job's matrices moved out of D1 (a_json/b_json/result_json then NULL)
+  eligible_json TEXT -- the eligible set the draw ran over (sorted Candidate[]), published for replay at /v1/draws/{id}
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_status ON work_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_work_jobs_owner ON work_jobs(owner, created_at DESC);
@@ -215,7 +219,8 @@ CREATE TABLE IF NOT EXISTS deployments (
   replicas INTEGER NOT NULL DEFAULT 0,     -- > 0 = a GPU endpoint (parent row; never on a node; docs/V4_ENDPOINTS_CONTRACT.md)
   last_logs TEXT,                          -- the node's `docker logs` tail from its last failed report
   last_ok_at INTEGER,                      -- last passing probe: an outage from here on is not charged
-  probe_inconclusive INTEGER NOT NULL DEFAULT 0 -- inconclusive probes in a row; the third counts as a failure
+  probe_inconclusive INTEGER NOT NULL DEFAULT 0, -- inconclusive probes in a row; the third counts as a failure
+  start_attempts INTEGER NOT NULL DEFAULT 0 -- start timeouts so far (assigned, never reported); DEPLOY_START_ATTEMPTS of them fail it
 );
 CREATE INDEX IF NOT EXISTS idx_deployments_owner ON deployments(owner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deployments_node ON deployments(node, status);
@@ -254,6 +259,12 @@ CREATE TABLE IF NOT EXISTS endpoint_keys (
   created_at INTEGER NOT NULL, revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_endpoint_keys_dep ON endpoint_keys(deployment_id, created_at);
+-- Developer API keys (ENGINEERING_BACKLOG B-7): sha256 of the token, JSON scopes, optional expiry, revocation time.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
+  scopes TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER, expires_at INTEGER, revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner, created_at DESC);
 -- Report a problem (docs/V4_VERIFIED_SERVICES.md §5): one row per report; ≤ 5 per owner per UTC day.
 CREATE TABLE IF NOT EXISTS deployment_reports (
   id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, owner TEXT NOT NULL, at INTEGER NOT NULL,
