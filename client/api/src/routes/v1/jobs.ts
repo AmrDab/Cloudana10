@@ -6,7 +6,7 @@
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
-import { enqueueWorkJob, getWorkJob, jobMatrices, listWorkJobs, toSummary } from "../../services/jobs.service.js";
+import { enqueueWorkJob, getDrawRecord, getWorkJob, jobMatrices, listWorkJobs, replayDraw, toSummary } from "../../services/jobs.service.js";
 import { MATMUL_N_MAX, MATMUL_N_MIN } from "../../services/work-types.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 
@@ -107,6 +107,55 @@ const getJobRoute = createRoute({
     401,
     404,
   ),
+});
+
+// ── GET /v1/draws/{id} — public ─────────────────────────────────────────────
+const CandidateSchema = z.object({ address: z.string(), payout: z.string(), weight: z.number() });
+const drawRoute = createRoute({
+  method: "get",
+  path: "/draws/{id}",
+  tags: TAGS,
+  description:
+    "Public draw record of a job, enough to replay its assignment without trusting the orchestrator: drawSeed = " +
+    "sha256(seedSource ‖ jobId); eligibleHash = sha256 of the sorted \"address:weight\" list; node = the weighted draw of " +
+    "drawSeed over `eligible` (cumulative weights, sorted by address). `replay` is the API's own re-check; outsiders run " +
+    "client/api/scripts/verify/replay.ts. No matrices or owner data; sigma only once the job is done.",
+  request: { params: z.object({ id: z.string().min(1).max(64) }) },
+  responses: responses(
+    {
+      200: json(
+        z.object({
+          status: z.literal("success"),
+          draw: z.object({
+            jobId: z.string(),
+            jobStatus: z.string(),
+            node: z.string().nullable(),
+            seedSource: z.string().nullable().openapi({ description: "Base block hash, or local:<ms> when the chain was unreachable (then not replayable)" }),
+            drawSeed: z.string().nullable(),
+            eligibleHash: z.string().nullable(),
+            eligible: z.array(CandidateSchema).nullable(),
+            clusterOk: z.boolean().nullable(),
+            assignedAt: z.number().nullable(),
+            completedAt: z.number().nullable(),
+            sigma: z.string().nullable(),
+            certZ: z.string().nullable(),
+            replayable: z.boolean(),
+            replay: z.object({ seedOk: z.boolean(), eligibleOk: z.boolean(), drawOk: z.boolean(), ok: z.boolean() }).nullable(),
+          }),
+        }),
+        "Draw record",
+      ),
+    },
+    404,
+    429,
+  ),
+});
+
+jobsRouter.openapi(drawRoute, async (c) => {
+  const d = await getDrawRecord(c.req.valid("param").id);
+  if (!d) return fail(c, "not_found", "job not found");
+  const { status: jobStatus, ...rest } = d;
+  return ok(c, { draw: { ...rest, jobStatus, replay: d.eligible ? replayDraw(d) : null } });
 });
 
 jobsRouter.openapi(getJobRoute, async (c) => {

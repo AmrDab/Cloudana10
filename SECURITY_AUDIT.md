@@ -63,12 +63,15 @@ counted. New column `start_attempts`.
 **Tests.** `deployments.test.ts` "start timeout" (two cases: three timeouts → failed, hold back; secrets-waiting rows
 and the container timeout).
 
-### F4 — Assignment seeds were not replayable in production — Medium (transparency) — FIXED (`61daf87`)
+### F4 — Assignment seeds were not replayable in production — Medium (transparency) — FIXED (`61daf87`, commit 9)
 
 The Worker had no `CHAIN_RPC_URL`, so `fetchSeedSource` fell back to `local:<ms>` and no third party could replay a
-draw from `seed_source` + job id, contradicting roadmap phase 1. `wrangler.toml` now sets the public Base Sepolia RPC.
-Residual: the orchestrator still *chooses when* to run the draw (and thus which block hash); replay proves the draw
-was honest given the seed, not that the seed was not selected. Pull-based assignment (roadmap phase 2) closes that.
+draw from `seed_source` + job id, contradicting roadmap phase 1. `wrangler.toml` now sets the public Base Sepolia RPC,
+and commit 9 publishes the draw record with its eligible set (`GET /v1/draws/{id}`), the epoch payload with its
+leaves (`GET /v1/epochs/{n}`, signed) and signs `/v1/network`; `scripts/verify/replay.ts` checks all of it from
+public data. Residual: the orchestrator still *chooses when* to run the draw (and thus which block hash); replay
+proves the draw was honest given the seed, not that the seed was not selected. Pull-based assignment (roadmap phase
+2, B-17) closes that.
 
 ### F5 — Local Wrangler state committed — Low — FIXED (`61daf87`)
 
@@ -108,7 +111,7 @@ Clients branching on `error.code` would treat an auth failure as a parse failure
 | O3 | High | JWT: HS256, 24 h, no revocation, one secret for both runtimes | Design | Short-lived access token + rotating refresh, `kid` for secret rotation, server-side revocation list in KV; scope claims for API keys |
 | O4 | High (scale) | ~12 D1 statements per heartbeat per node; single-writer D1 | Architecture | Batch the per-node duties into one `db.batch`, skip duties for nodes with nothing live, move `relay_at`/`last_seen` to KV with a 15 s write coalescing; measure before and after (B-5) |
 | O5 | Medium | Agent nonce LRU is in-memory: an instruction captured and replayed within 60 s of an agent restart is accepted | Window is 60 s and requires a captured signed instruction | Persist the last nonces to `.data`, or include the agent's boot id in the signed body (API echoes it) |
-| O6 | Medium | `submitWork` records provider rewards even if the fee capture fails (hold missing) | Practically unreachable today (hold taken at enqueue, released only on give-up) | Make capture and reward one conditional step; skip rewards and log when capture fails (B-11) |
+| ~~O6~~ | Medium | `submitWork` recorded provider rewards even if the fee capture failed (hold missing) | **Fixed** (PROGRESS.md commit 9): capture first; on failure the verified result is still delivered but no reward entries are written, so the epoch close neither mints for the job nor burns its fee. Test: `v1-submit.test.ts` "no reward without a captured fee" | — |
 | O7 | Medium | Rate limits are KV-backed and eventually consistent (an abuse stop, not a quota) | Documented | Durable Object or the Workers rate-limit binding (already used by the gateway) for the write buckets |
 | O8 | Medium | Direct (legacy) nodes: hostnames not resolved before probing (DNS rebinding to private ranges) | Direct mode is legacy; relayed mode never fetches operator URLs | Resolve + check + pin the IP, or retire direct mode once the relay is live (B-13) |
 | O9 | Medium | Testnet credits keyed per wallet/IP/ASN — cheap Sybil for free credits | Testnet only, no value | Remove before value (decided) |

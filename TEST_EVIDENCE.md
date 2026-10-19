@@ -9,7 +9,7 @@ Cloudflare or chain credentials, and no outbound access to `cloudana.io`, `*.wor
 | Package | Command | Result | Notes |
 |---|---|---|---|
 | client/api | `npm run type-check` | clean | |
-| client/api | `npm test` (vitest) | **35 files, 334 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2) |
+| client/api | `npm test` (vitest) | **36 files, 340 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee) |
 | gateway | `npx tsc --noEmit && npx vitest run` | clean; **28 passed** | |
 | relay | same | clean; **14 passed** | includes workerd e2e (`test/workerd.e2e.ts`) |
 | keeper | same | clean; **28 passed** | tree vector fixture + run state machine |
@@ -45,6 +45,34 @@ unreachable` unit test), 14 (storage object survives node failure — phase 1 un
 
 The Node runtime also answered `/health` (`sqlite: connected`), `/v1/network` and `/v1/doc` (200) after the legacy
 removal, and its cron tick ran duties, the price controller (hold when idle) and the deposit watcher (inactive).
+
+### 2b. Independent replay from public data
+
+After the e2e, `client/api/scripts/verify/replay.ts --api http://127.0.0.1:7076 --job <id> --epoch <n>` against the
+same runtime (started with an `INSTRUCTION_SIGNING_KEY`), using only `GET /v1/network`, `/v1/nodes/instruction-key`,
+`/v1/draws/{id}`, `/v1/epochs/{n}` and `/v1/epochs/{n}/jobs`:
+
+```
+ok   network: signature verifies over the published body
+ok   network: signed by the published instruction key 0x54cd…1916
+ok   eligible set published
+ok   drawSeed = sha256(seedSource ‖ jobId)
+ok   eligibleHash = sha256 of the sorted "address:weight" list
+ok   node = weighted draw of drawSeed over the eligible set
+FAIL seedSource is the local fallback — the orchestrator could have chosen it   "local:1792382142955"
+ok   record's own `replayable` flag agrees
+ok   Merkle root recomputed from the leaves = 0x0a7f…047c
+ok   lane totals equal the sum of the leaves
+ok   treasury ≥ 3 % of fees · lane A + treasury ≤ 98 % of fees
+ok   the public job list's fees (1001) add up to feesBurned
+ok   per-provider lanes in the job list equal the leaves
+ok   epoch: signature verifies over the published body · signed by the published instruction key
+REPLAY FAILED (1 check)
+```
+
+The one failure is the honest one: this sandbox has no chain, so the seed is the flagged `local:` fallback and a third
+party cannot check where it came from. In production `CHAIN_RPC_URL` (set in this pass) makes the seed a Base block
+hash that anyone can confirm with `eth_getBlockByHash`; the script then passes fully.
 
 ## 3. Security regression tests added in this pass
 

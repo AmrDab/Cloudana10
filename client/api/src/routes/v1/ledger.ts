@@ -2,7 +2,9 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok } from "../../lib/http.js";
 import { EthAddressSchema } from "../../schemas/common.schema.js";
-import { epochJobs, ledgerSummary } from "../../services/ledger.service.js";
+import { epochJobs, getEpochPayload, ledgerSummary } from "../../services/ledger.service.js";
+import { signPublic } from "../../services/public-signing.service.js";
+import { fail } from "../../lib/http.js";
 import { createRouter, json, responses } from "./_openapi.js";
 
 export const ledgerRouter = createRouter();
@@ -41,6 +43,57 @@ const ledgerRoute = createRoute({
 ledgerRouter.openapi(ledgerRoute, async (c) => {
   const address = c.req.valid("param").address.toLowerCase();
   return ok(c, { address, ...(await ledgerSummary(address)) });
+});
+
+// ── GET /v1/epochs/{id} — public, signed ────────────────────────────────────
+export const SignatureSchema = z
+  .object({ signer: z.string(), signedAt: z.number(), sig: z.string() })
+  .nullable()
+  .openapi({
+    description:
+      "personal_sign(keccak256(canonicalJSON({ domain: \"cloudana-public-v1\", signedAt, body }))) by the instruction key " +
+      "(GET /v1/nodes/instruction-key); body = the object this field sits in, without `status` and `signature`. null when the API has no key.",
+  });
+
+const epochRoute = createRoute({
+  method: "get",
+  path: "/epochs/{id}",
+  tags: ["Ledger"],
+  description:
+    "A closed, posted or settled epoch exactly as the keeper posts it: Merkle leaves (account, lane A, lane B in µCLD), " +
+    "root (OZ double-hash of keccak256(abi.encode(epoch, account, laneA×1e12, laneB×1e12))), fees burned, lane totals and " +
+    "the treasury amount — enough to recompute the root and compare it with the one on-chain. 404 while the epoch is open.",
+  request: { params: z.object({ id: z.coerce.number().int().min(0) }) },
+  responses: responses(
+    {
+      200: json(
+        z.object({
+          status: z.literal("success"),
+          epoch: z.number().int(),
+          root: z.string(),
+          feesBurnedUcld: z.number().int(),
+          totalLaneAUcld: z.number().int(),
+          totalLaneBUcld: z.number().int(),
+          treasuryUcld: z.number().int(),
+          leaves: z.array(z.object({ account: z.string(), laneAUcld: z.number().int(), laneBUcld: z.number().int() })),
+          epochStatus: z.string(),
+          signature: SignatureSchema,
+        }),
+        "Epoch payload",
+      ),
+    },
+    400,
+    404,
+    429,
+  ),
+});
+
+ledgerRouter.openapi(epochRoute, async (c) => {
+  const p = await getEpochPayload(c.req.valid("param").id);
+  if (!p) return fail(c, "not_found", "epoch is open or unknown");
+  const { status: epochStatus, ...body } = p;
+  const signed = { ...body, epochStatus };
+  return ok(c, { ...signed, signature: await signPublic(signed) });
 });
 
 // ── GET /v1/epochs/{id}/jobs — public ─────────────────────────────────────

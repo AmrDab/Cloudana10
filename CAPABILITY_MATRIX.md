@@ -79,7 +79,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | CLDTokenV2 + CloudanaSettlementV2 (post/veto/finalize/claim/claw, invariants, mint ceiling) | 2 | — | 224 Hardhat tests (offline solc) | **owner deploy (B-1)** |
 | Keeper (close → post → finalize → claim, stateless, root re-verified) | 2 | — | keeper 28 tests | settlement address + poster key |
 | Deposit watcher (`Deposited` events → credits, 10 confirmations) | 2 | — | `deposit-watcher` tests | settlement address |
-| Public settlement data (leaves, draws, signed network stats) | 5 | — | `GET /v1/epochs/{n}/jobs` exists; leaves/seeds not published or signed | B-2 |
+| Public settlement data: epochs with leaves + root (signed), draw records with the eligible set, signed network stats, replay script | 2 | — | `public-replay` tests; `scripts/verify/replay.ts` run in `TEST_EVIDENCE.md` §2b | `CHAIN_RPC_URL` deployed so seeds are block hashes; individual draws unsigned (B-17 makes them pull-based) |
 | Card payments | 6 (off by decision) | — | 503 unless `STRIPE_ENABLED` | — |
 
 ## Developer experience

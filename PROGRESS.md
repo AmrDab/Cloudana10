@@ -75,11 +75,32 @@ current API) and extended. Result: **E2E PASSED (43 checks)** on the Node runtim
 this file; `docs/SHIP_CHECKLIST.md` domain, `docs/DECISIONS_CONSENSUS.md` header, the agent DaemonSet tag (1.5.0),
 the `CURRENT_AGENT_VERSION` comment.
 
+### 9 · publish and sign what the orchestrator decides; no reward without a captured fee (B-2, B-11)
+- **Problem.** Draw seeds, eligible sets and epoch leaves were stored but not published; `/v1/network` was unsigned;
+  a verified job whose fee capture failed still earned rewards (mint without burn).
+- **Files.** `client/api/src/services/jobs.service.ts` (`eligible_json` stored at assignment, `getDrawRecord`,
+  `replayDraw`, capture-then-reward), `services/public-signing.service.ts` (new: `cloudana-public-v1` domain,
+  `signPublic`/`verifyPublic`), `services/ledger.service.ts` (`getEpochPayload`), `routes/v1/jobs.ts`
+  (`GET /v1/draws/{id}`, public), `routes/v1/ledger.ts` (`GET /v1/epochs/{id}`, signed), `routes/v1/network.ts`
+  (signed), `middleware/security.ts` (rate limit), `lib/schema.ts` + `schema.sql` (`work_jobs.eligible_json`),
+  `scripts/verify/replay.ts` (new), `tests/public-replay.test.ts` (new, 5 cases), `tests/v1-submit.test.ts` (+1).
+- **Why this shape.** Reuses the instruction key (already pinned by every agent and published at
+  `/v1/nodes/instruction-key`) under a separate signing domain, so no new key or trust anchor; the draw record carries
+  the eligible set itself, not only its hash, because a hash cannot be replayed; σ is published only once the job is
+  done. The ledger change makes "no mint without a burned fee" an invariant of the code rather than of the call order.
+- **Tests / results.** API 340/340 (36 files). Replay script against the Node runtime: every check passes except
+  the one that must fail without a chain — the seed is the flagged `local:` fallback, which the script reports as
+  "the orchestrator could have chosen it". With `CHAIN_RPC_URL` deployed (commit 4) the seed is a Base block hash.
+- **Remaining risk.** The orchestrator still chooses *when* to draw (which block hash); individual draw records are
+  not signed (the epoch and network payloads are); the keeper's rebuilt root, not the published one, is what reaches
+  the chain — they are the same leaves, and the keeper refuses a mismatch.
+- **Deployment.** Additive column via `ensureSchema()`; two new public routes rate-limited at 60/min per IP; API deploy.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **334** |
+| client/api vitest | 330 | **340** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | 8 pass (sealed now 26 checks) |
 | contracts | 224 (offline solc) | 224 |
@@ -93,7 +114,7 @@ the `CURRENT_AGENT_VERSION` comment.
 | 1 | No live settlement | **Owner** (runbook 3–6). Engineering side ready: contracts tested, keeper tested, deposit watcher inactive until `SETTLEMENT_ADDRESS`. |
 | 2 | Nothing publicly reachable | **Owner** (runbook 8–10). Gateway/relay tested; hosting labelled early access until then. |
 | 3 | D1 heartbeat cost | Open (B-5), documented with the statement count. |
-| 4 | Orchestrator not independently checkable | Partly: seeds now replayable (`CHAIN_RPC_URL`); public epoch job lists verified by the e2e; publishing leaves/draws signed is B-2. |
+| 4 | Orchestrator not independently checkable | Largely closed for phase 1: draws published with their eligible set (`GET /v1/draws/{id}`), epochs published with leaves and a signature (`GET /v1/epochs/{n}`), `/v1/network` signed, `scripts/verify/replay.ts` checks all of it from public data; seeds are block hashes once `CHAIN_RPC_URL` deploys. Left: signing individual draws, pull-based assignment (B-17). |
 | 5 | Verification cost = work cost | Open (B-6). |
 | 6 | Auth without revocation/scopes | Open (B-7). |
 | 7 | No fleet/GPU node | **Owner** (runbook 10). |
@@ -117,9 +138,9 @@ the `CURRENT_AGENT_VERSION` comment.
 
 ## Next priorities (engineering, no owner input needed)
 
-B-2 publish and sign epochs and draws → B-5 measure and cut heartbeat cost → B-11 ledger invariant → B-12 per-replica
-sealing in the console → B-7 API keys and token lifecycle → B-13 retire direct mode / resolve-and-pin → B-14 container
-logs through the relay → B-15 custom domains.
+B-5 measure and cut heartbeat cost → B-12 per-replica sealing in the console → B-7 API keys and token lifecycle →
+B-13 retire direct mode / resolve-and-pin → B-14 container logs through the relay → B-15 custom domains → B-8 node
+state model and draining.
 
 ## Not done, and why
 

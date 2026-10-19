@@ -5,6 +5,8 @@ import { getEnv } from "../../config/env.js";
 import { ok } from "../../lib/http.js";
 import { epochOf, lastSettledEpochAt } from "../../services/ledger.service.js";
 import { getPriceQuote } from "../../services/pricing.service.js";
+import { signPublic } from "../../services/public-signing.service.js";
+import { SignatureSchema } from "./ledger.js";
 import { createRouter, json, responses } from "./_openapi.js";
 
 export const networkRouter = createRouter();
@@ -48,6 +50,7 @@ const networkRoute = createRoute({
         deploymentsRunning: int,
         gpusOnline: int.openapi({ description: "GPUs in manifests of online, bound nodes that advertise the gpu capability" }),
         workstationsRunning: int,
+        signature: SignatureSchema,
       }),
       "Network stats",
     ),
@@ -78,7 +81,7 @@ networkRouter.openapi(networkRoute, async (c) => {
     getPriceQuote(now),
     lastSettledEpochAt(),
   ]);
-  return ok(c, {
+  const stats = {
     nodesOnline: row?.nodesOnline ?? 0,
     nodesBound: row?.nodesBound ?? 0,
     jobsQueued: row?.jobsQueued ?? 0,
@@ -107,7 +110,9 @@ networkRouter.openapi(networkRoute, async (c) => {
     deploymentsRunning: row?.deploymentsRunning ?? 0,
     gpusOnline: row?.gpusOnline ?? 0,
     workstationsRunning: row?.workstationsRunning ?? 0,
-  });
+  };
+  // Signed so mirrors and dashboards can prove what the orchestrator claimed at signedAt.
+  return ok(c, { ...stats, signature: await signPublic(stats, now) });
 });
 
 const RECENT_LIMIT = 12;

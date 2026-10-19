@@ -162,6 +162,8 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE deployments ADD COLUMN probe_inconclusive INTEGER NOT NULL DEFAULT 0",
   // Start timeouts so far (deployment-duties G4): after DEPLOY_START_ATTEMPTS the deployment fails and its hold is released.
   "ALTER TABLE deployments ADD COLUMN start_attempts INTEGER NOT NULL DEFAULT 0",
+  // The eligible set a job's draw ran over (sorted Candidate[] JSON), published at GET /v1/draws/{id} for replay.
+  "ALTER TABLE work_jobs ADD COLUMN eligible_json TEXT",
   // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
   "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN net_prefix TEXT",

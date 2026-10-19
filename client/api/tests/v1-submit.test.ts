@@ -2,6 +2,7 @@ import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { solveAssignedJob } from "../../../pouw/src/index.js";
+import { getD1 } from "../src/lib/storage.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
 import { announceNode, bindNode, bindingMessage, getNode, touchNode } from "../src/services/nodes.service.js";
 import { enqueueWorkJob, getActiveAssignment, getWorkJob, runAssignment, submitWork, type Assignment } from "../src/services/jobs.service.js";
@@ -120,5 +121,24 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
 
     const again = await submitWork(nodeAddr, { jobId, certificate, result });
     expect(again).toMatchObject({ ok: false, code: "conflict" });
+  });
+});
+
+describe("no reward without a captured fee", () => {
+  it("accepts a verified result whose fee hold has gone missing, but records no reward entries for it", async () => {
+    const q = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
+    if (!q.ok) throw new Error(q.message);
+    const a = await assignment();
+    expect(a.jobId).toBe(q.jobId);
+    // A lost hold (bug or tampering): nothing is held for the owner any more.
+    await getD1().prepare("UPDATE balances SET held_ucld = 0 WHERE address = ?").bind(user).run();
+    const { certificate, result } = solveAssignedJob(a.sigma, A, B, n, nodeAddr, "dev");
+    const r = await submitWork(nodeAddr, { jobId: q.jobId, certificate, result });
+    // The owner still gets the verified result; nobody is paid, so nothing will be minted or burned for this job.
+    expect(r).toMatchObject({ ok: true, units: 4096, earned: { laneAUcld: 0, laneBUcld: 0 } });
+    expect((await getWorkJob(q.jobId))!.status).toBe("done");
+    const entries = await getD1().prepare("SELECT COUNT(*) AS c FROM reward_entries WHERE job_id = ?").bind(q.jobId).first<{ c: number }>();
+    expect(entries!.c).toBe(0);
+    expect((await ledgerSummary(payout.address)).pending).toEqual({ A: 949, B: 40, treasury: 0 }); // unchanged
   });
 });

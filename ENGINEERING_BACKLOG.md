@@ -33,12 +33,11 @@ within 2 h of the first job; `https://<id>.cloudana.run` serves a site deployed 
 no open ports; the keeper `/health` shows the settlement address and a funded poster; one veto drill (`veto` then a
 corrected re-post) completed. Engineering's half: `DEPLOYMENT_RUNBOOK.md` steps are followed in order.
 
-**B-2 · Publish and sign what the orchestrator decides (gap 4).** Public `GET /v1/epochs/{n}` with leaves,
-`fees_burned`, treasury and root (the keeper's payload, read-only); public `GET /v1/jobs/{id}/draw` with
-`seed_source`, `draw_seed`, `eligible_hash`, σ and the eligible list hash; sign `/v1/network`, epoch payloads and draw
-records with a published key (reuse the instruction key or a second funds-less key, address in `/v1/network`).
-Acceptance: a script in `scripts/verify/` recomputes an epoch root and replays a draw from public data only and
-matches; the keeper refuses a root that differs from the published leaves (it already does for its own rebuild).
+**B-2 · Publish and sign what the orchestrator decides (gap 4).** **Done in this pass** (PROGRESS.md commit 9):
+public `GET /v1/epochs/{n}` (leaves, totals, root, signed), public `GET /v1/draws/{id}` (seed, eligible set, draw,
+σ once done), signed `/v1/network`, and `client/api/scripts/verify/replay.ts`, which recomputes the root and replays
+the draw from public data (`TEST_EVIDENCE.md` §2b). Left open: signing individual draw records, and the seed's
+origin is checkable only where `CHAIN_RPC_URL` is set (it is, in `wrangler.toml`, pending deploy).
 
 **B-3 · Delete or rewrite `/control/legacy` (gap 8; owner decision on what survives).** Acceptance: no reachable route
 uses "marketplace", "bid", "pick a provider", "per epoch" vocabulary (`tasks/lessons.md` 2026-10-01); `ConsoleApp`
@@ -80,9 +79,8 @@ fleet name next to the node address.
 **B-10 · Home-node unbind and re-bind.** `DELETE /v1/nodes/mine/{address}` clears payout (live work re-queued, pending
 earnings stay with the old payout). Acceptance: tested; the agent prints a fresh bind link after.
 
-**B-11 · Ledger invariant: no reward without a captured fee.** In `submitWork`, make capture and reward one step;
-when capture fails, complete the job, record no rewards, log and count. Acceptance: a test that empties the hold
-before submit shows no `reward_entries` row and `fees_burned` unchanged.
+**B-11 · Ledger invariant: no reward without a captured fee.** **Done in this pass** (PROGRESS.md commit 9): capture
+first, rewards only when it succeeded; test "no reward without a captured fee" in `v1-submit.test.ts`.
 
 **B-12 · Endpoint replicas: seal secrets per replica in the console.** The API requires per-replica sealing; the
 console only seals parent deployments. Acceptance: an endpoint created with `expectsSecrets` starts from the console
