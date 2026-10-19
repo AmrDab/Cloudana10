@@ -38,3 +38,4 @@ client/.env.production.local
 
 # Wrangler local state (Miniflare SQLite, bundles) — never commit
 .wrangler/
+.smoke/

@@ -49,7 +49,9 @@ npx wrangler dev --port 8790 --local
 | `npm run test:watch` | `vitest` watch mode |
 | `npm run templates` | Fetch the template gallery sources and generate the D1 seed SQL |
 
-End-to-end scripts (not run by CI): `scripts/dev/e2e-auth.mjs` (nonce → sign → login) and `scripts/dev/e2e-v1.ts`
+End-to-end scripts (not run by CI): `scripts/dev/e2e-auth.mjs` (nonce → sign → login), `scripts/dev/fake-node.ts` +
+`scripts/dev/browser-smoke.ts` (the console in headless Chromium against this runtime and two fake nodes —
+`TEST_EVIDENCE.md` §4b) and `scripts/dev/e2e-v1.ts`
 (credits → job → assignment → signed submit → ledger → epoch close) against a local `wrangler dev --local`.
 
 ## API surface

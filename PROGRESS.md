@@ -132,7 +132,8 @@ the `CURRENT_AGENT_VERSION` comment.
   keys, checks list vs detail exposure and a cross-owner 404; container tests assert the flag through assignment,
   sealing and re-queue); gateway 28, keeper 28; console tsc, 3 tests, build clean; e2e re-run on the new hono: 43
   checks.
-- **Residual.** Not run in a browser. Re-entry needs a human: an endpoint whose replica moves while no tab is open
+- **Residual.** Container sealing was later exercised in a browser (commit 15); the endpoint replica panel was
+  not. Re-entry needs a human: an endpoint whose replica moves while no tab is open
   waits, visibly, until the owner returns; a server-side re-encryption would defeat the design (B-9 fleet pinning
   and B-24 confidential tier are the real answers).
 
@@ -153,7 +154,7 @@ the `CURRENT_AGENT_VERSION` comment.
   allow and deny route by route, revoke/expire/garbage, 20-key cap, logout; `auth.test.ts`: jti, revocation,
   rotation, key without storage → 401; `security.test.ts`: gates). Console tsc, 3 tests and build clean.
 - **Residual.** No refresh token: the session is 24 h by configuration, now revocable. No per-key rate limit or
-  audit trail beyond `lastUsedAt`. Not browser-tested.
+  audit trail beyond `lastUsedAt`. Browser-tested in commit 15 (mint, use within scope, refuse, revoke).
 
 ### 13 · node state model and draining (B-8); direct-mode host rule verified and pinned (B-13)
 - **States.** `nodes.state` = `active` (default) · `draining` (owner: no new jobs, deployments or storage copies;
@@ -174,7 +175,8 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Tests / results.** API 354 → **357** (`node-state.test.ts` ×2, `node-security.test.ts` +1); console tsc, 3
   tests, build clean.
 - **Residual.** Matmul assignments on a node being suspended expire by `ASSIGNMENT_TTL_SECONDS` rather than being
-  clawed at once. No audit log of state changes beyond `state_at`/`state_reason`. Not browser-tested.
+  clawed at once. No audit log of state changes beyond `state_at`/`state_reason`. Drain/resume browser-tested in
+  commit 15.
 
 ### 14 · container logs through the relay (B-14); agent 1.6.0
 - **Why.** Images users bring cannot be debugged without their output; until now a container's logs existed only in a
@@ -192,7 +194,23 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Tests / results.** API 357 → **362** (`deployment-logs.test.ts` ×5); agent type-check clean, ops selftest
   20/20, relay e2e 27 checks; console tsc, 3 tests, build clean.
 - **Residual.** No streaming (`follow`); the agent must be upgraded to 1.6.0 on the node for live logs (older agents
-  answer `not_serving`, which the API names). Not browser-tested.
+  answer `not_serving`, which the API names). The panel's direct-node message is browser-tested (commit 15); the
+  live path needs a relay node.
+
+### 15 · the console in a real browser against the local stack
+- **Why.** Every console change in this pass carried "not browser-tested". Chromium and a burner-signer build exist
+  here, so the claim could be replaced by evidence.
+- **What.** `client/api/scripts/dev/fake-node.ts` (a node without Docker: announces, binds by link or fleet token,
+  heartbeats, serves static files, stubs containers, opens sealed secrets with its key and checks they are bound to
+  the deployment) and `scripts/dev/browser-smoke.ts` (starts the API and the console preview, two fake nodes, then
+  drives headless Chromium: sign in, credits, bind by the printed link, fleet join by token, static site from pasted
+  HTML served and content-probed, PostgreSQL container with a secret sealed in the browser and opened by the node
+  for that deployment only, the logs panel's direct-node message, API key mint/use/revoke from Docs, drain/resume
+  from Provide, sign-out revoking the token at the API).
+- **Result.** **29/29 checks** (`TEST_EVIDENCE.md` §4b), zero uncaught page errors. Nothing in the product needed
+  fixing to pass; two script assumptions did.
+- **Residual.** Endpoints, workstations, the relay logs path and a real wallet extension are not covered. The run is
+  not in CI (it needs a browser and ~3 minutes); the command is in `TEST_EVIDENCE.md` §5.
 
 ## Evidence summary
 
@@ -204,6 +222,7 @@ the `CURRENT_AGENT_VERSION` comment.
 | contracts | 224 (offline solc) | 224 |
 | repo-root tsc | 2 errors | **clean** |
 | e2e work pipeline | script did not run | **43 checks pass** |
+| console in a browser (local stack) | not opened | **29 checks pass** (headless Chromium, two fake nodes) |
 
 ## The ten gaps, where they stand
 
@@ -244,7 +263,9 @@ Hardhat-toolchain majors (SECURITY_AUDIT §3b).
 
 - No production verification: the sandbox cannot reach `cloudana.io`, the Workers or the chain. Every "verified"
   in these documents is code + tests + the local runtime.
-- No load test, no container escape test, no browser pass of the console (`TEST_EVIDENCE.md` §4).
+- No load test, no container escape test. The browser pass covers the console's main flows on the local stack
+  (sites, containers with secrets, keys, nodes) but not endpoints, workstations or a wallet extension
+  (`TEST_EVIDENCE.md` §4, §4b).
 - `/control/legacy` (19 k lines) left in place: removing it changes what users can reach, which the owner asked to
   decide (`tasks/lessons.md` 2026-09-28).
 - No pull request opened: not requested.

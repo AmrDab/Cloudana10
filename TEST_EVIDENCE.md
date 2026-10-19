@@ -124,12 +124,60 @@ The remaining five: one node update (liveness + relay flag + version in one stat
 "activity" statement that counts what there is to do, and the two-statement nonce batch (sweep + insert, one round
 trip). At 1,000 nodes on 15 s beats that is ≈ 270 round trips/s instead of ≈ 800; the write path is still one D1.
 
-## 4. Load, fault injection, container isolation, browser
+## 4. Load, fault injection, container isolation
 
 Not run. No load test exists in the repository; the D1 cost model in `ENGINEERING_BASELINE.md` §8 is from code
-reading, and the per-heartbeat count above is a unit measurement, not a load measurement. Fault injection is limited to the unit tests above (dead node, stuck start, probe failures, relay socket loss
-in the relay selftests). Container isolation is asserted by the agent's security selftest against a fake Docker
-(argument-level), not by running a container. The console was built but not opened in a browser in this pass.
+reading, and the per-heartbeat count above is a unit measurement, not a load measurement. Fault injection is limited
+to the unit tests above (dead node, stuck start, probe failures, relay socket loss in the relay selftests). Container
+isolation is asserted by the agent's security selftest against a fake Docker (argument-level), not by running a
+container.
+
+### 4b. The console in a real browser, on the local stack
+
+`client/api/scripts/dev/browser-smoke.ts` drives the built console (burner signer, `VITE_DEV_BURNER=true`) in
+headless Chromium 141 against the Node API runtime and two fake nodes (`scripts/dev/fake-node.ts`: no Docker, no
+GPU; they announce, heartbeat, serve static files on loopback, stub containers, and open sealed secrets with their
+own key). What it proves is the console ↔ API ↔ node contract as a user sees it, not the real agent (its selftests
+cover that). Result: **29/29 checks**:
+
+```
+ok   API and console preview are up
+ok   fake node A announced unbound with a bind code (0x925dbe7a…)
+ok   signed in: session JWT for 0x5ccda91d…
+ok   the session token works against the API
+ok   two clicks on "Get test credits" → balance 20000000 µCLD
+ok   home node bound by its link (payout = this wallet, no fleet)
+ok   home node heartbeats and shows online
+ok   fleet created, token shown once
+ok   fleet node bound on announce: payout = fleet owner, no bind link
+ok   static site created from the form
+ok   placed on home node A and reported running at http://127.0.0.1:43379
+ok   the node serves the pasted HTML byte for byte
+ok   the orchestrator's content-hash probe passed against the node
+ok   the Deploy tab shows the site running
+ok   the PostgreSQL template asks for 1 secret value(s)
+ok   the console sealed the secrets once node B was assigned (row: smoke-db Sealed Container · early access running 0x8c67…f986 8be2d944-baca-4cd5-)
+ok   node B opened the env for this deployment: keys POSTGRES_PASSWORD
+ok   the same payload is refused for another deployment id and without an id (bound sealing)
+ok   container running on the fleet node, no longer awaiting secrets
+ok   no secret value is visible through the API
+ok   the Logs panel names why a direct node has no live logs
+ok   a cld_sk_ key was minted and shown once
+ok   the key reads jobs (read scope)
+ok   the key cannot list keys (wallet session only)
+ok   revoked from the console → refused by the API
+ok   node 0x925dbe7a… is draining after one click
+ok   resume puts it back to active
+ok   the session token is revoked at the API on sign-out
+ok   no uncaught page errors (0)
+```
+
+Two things worth reading twice: the secrets never left the browser in the clear (the API row carries no value;
+node B opened the payload for that deployment id and was refused for another id and for an unbound open), and the
+sign-out actually revoked the token at the API. Browser console noise: 131 errors, all `ERR_TUNNEL_CONNECTION_FAILED`
+from hosts this sandbox blocks (AppKit analytics, web fonts) plus the expected 409 from the logs request on a direct
+node; zero uncaught page errors. Screenshots and logs are written to `SMOKE_OUT`. Not covered: endpoints and
+workstations (they need GPU/relay nodes), the relay path for logs, a real wallet extension, mobile widths.
 
 ## 5. How to reproduce
 
@@ -148,4 +196,9 @@ JWT_SECRET=$(head -c 48 /dev/urandom | base64) DEV_MODE=true CLUSTER_N_MIN=1 EPO
   node --import tsx src/index.ts &
 sleep 8
 API=http://127.0.0.1:8790 INTERNAL_API_KEY=local-internal-key-0123456789 EPOCH_SECONDS=10 npx tsx scripts/dev/e2e-v1.ts
+
+# the console in headless Chromium (4b): needs playwright-core and a Chromium (Playwright's own install is fine)
+VITE_DEV_BURNER=true VITE_API_URL=http://127.0.0.1:8790 npm run build
+(cd client/api && PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core CHROMIUM=/path/to/chrome SMOKE_OUT=/tmp/smoke \
+  npx tsx scripts/dev/browser-smoke.ts)
 ```

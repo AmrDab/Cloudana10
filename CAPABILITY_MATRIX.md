@@ -29,7 +29,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | Containers (curated images) on fleet nodes, hardened | 3 | probed | API tests `deployments`, `workstations`; agent security selftest 94 checks; **no fleet node exists** | a datacenter/owner node with xfs pquota + Docker ≥ 28 |
 | GPU workstations (Jupyter / code-server / desktop), direct mode | 3 | probed · GPU reported by node | `workstations` tests; needs public-IP node (relay has no WebSockets) | a GPU node; relay WebSocket tunnelling |
 | GPU endpoints (bring your own model server), replicas, keys, per-replica sealed secrets from the console | 3 | probed (health) | `endpoints` tests; gateway tests | a GPU fleet node |
-| Container logs on demand (`GET /deployments/{id}/logs`: live through the relay, failure tail otherwise, per-deployment limit) | 2 | — | `deployment-logs` tests; agent ops selftest (20 checks) and relay e2e logs case; console panel not browser-tested | relay secret + a node on agent ≥ 1.6.0 |
+| Container logs on demand (`GET /deployments/{id}/logs`: live through the relay, failure tail otherwise, per-deployment limit) | 2 | — | `deployment-logs` tests; agent ops selftest (20 checks) and relay e2e logs case; console panel browser-tested on the direct-node error path (TEST_EVIDENCE §4b) | relay secret + a node on agent ≥ 1.6.0 |
 | Verified inference (teacher-forced checks) | 5 | — | `docs/V4_VERIFIED_SERVICES.md` §4 | reference node, calibration |
 | Edge functions | 5 | — | catalog entry only | — |
 
@@ -63,12 +63,12 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | Wallet sign-in (EIP-191 over a single-use nonce), session JWT 24 h with logout revocation and secret rotation | 2 | — | `auth`, `api-keys` tests, e2e |
 | Tenant isolation at the API (owner-scoped rows, 404 for others) | 2 | — | `deployments` "another owner's deployment is 404", e2e |
 | Node request authentication (signature + nonce + window) | 2 | — | `node-auth`, `node-security` tests, e2e replay refused |
-| Node state model: owner drain/resume, admin suspend (live deployments re-queued, no relay ticket), every placement path skips non-active nodes | 2 | — | `node-state` tests; console Provide actions not browser-tested |
+| Node state model: owner drain/resume, admin suspend (live deployments re-queued, no relay ticket), every placement path skips non-active nodes | 2 | — | `node-state` tests; console Provide drain/resume browser-tested (TEST_EVIDENCE §4b) |
 | Signed node instructions with pinned signer | 2 | — | `node-security` tests, agent selftest |
-| Sealed secrets bound to deployment, node key verified in the browser | 2 | — | agent sealed selftest 26 checks; API tests (this pass) |
+| Sealed secrets bound to deployment, node key verified in the browser | 2 | — | agent sealed selftest 26 checks; API tests; browser pass: sealed in Chromium, opened by the node for that deployment only (TEST_EVIDENCE §4b) |
 | Container hardening (cap-drop, no-new-privileges, pids/mem/disk caps, egress DROP, non-root, NVIDIA env) | 2 | — | agent security selftest; **no kernel-level test** |
 | Endpoint keys (`cld_ek_`), per-key rate limit at the gateway | 2 | — | gateway tests |
-| User API keys (`cld_sk_`: scopes read/jobs/deployments, hashed, expiring, revocable; console Docs → API) | 2 | — | `api-keys` tests (18 route→scope cases, allow/deny on real routes); panel not browser-tested |
+| User API keys (`cld_sk_`: scopes read/jobs/deployments, hashed, expiring, revocable; console Docs → API) | 2 | — | `api-keys` tests (18 route→scope cases, allow/deny on real routes); panel browser-tested: mint, use, revoke (TEST_EVIDENCE §4b) |
 | Zero-trust access, confidential VMs, TEE | 5 | — | — |
 
 ## Economics and settlement
@@ -89,7 +89,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | Capability | Class | Evidence |
 |---|---|---|
 | OpenAPI generated from the routes (`/v1/doc`, `/v1/swagger`), one response envelope, stable error codes | 2 | Node runtime probe in this pass |
-| Console: Run (jobs), Deploy (sites, containers), Workstations, Endpoints, Provide, Verify, Earnings, Economics, Docs | 3 | builds; verified in a browser on the local stack by earlier sessions (`tasks/todo.md`); not re-verified in a browser in this pass |
+| Console: Run (jobs), Deploy (sites, containers), Workstations, Endpoints, Provide, Verify, Earnings, Economics, Docs | 3 | builds; re-verified in headless Chromium on the local stack in this pass: 29 checks across Run, Deploy, Provide and Docs (TEST_EVIDENCE §4b); Workstations and Endpoints tabs not exercised |
 | `/control/legacy/*` marketplace-era pages | 6 | B-3 |
 | SDK / CLI | 5 | B-22 |
 | Pagination and filtering on list endpoints | 3 | `epochs/{n}/jobs` paginates; `GET /jobs`, `GET /deployments` take a limit only |
