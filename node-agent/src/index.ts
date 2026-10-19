@@ -10,6 +10,8 @@ import { publicKeyOf } from "../../shared/sealed.ts";
 import { dockerAvailable, anyImageOptIn } from "./container.ts";
 import { hardeningSelfCheck } from "./hardening.ts";
 import { STORAGE_CAPABILITY, StorageRole, storageQuotaGb, type StorageOp } from "./storage.ts";
+import { OPS_DEP, OpsServer } from "./ops.ts";
+import { dockerLogs } from "./container.ts";
 import { detectPublicIp } from "./public-ip.ts";
 import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from "./deployments.ts";
 import { workTypes as capabilities } from "./workstation.ts";
@@ -307,12 +309,18 @@ async function main() {
     log(`storage: holding up to ${storageGb} GB of encrypted copies (${(storage.used() / 1024 ** 3).toFixed(2)} GB now)`);
   }
 
+  // The owner's live log requests arrive through the relay as dep "agent" (ops.ts): read from Docker when asked,
+  // only for deployments this agent runs, never stored.
+  const ops = new OpsServer({ logs: dockerLogs, serves: (id) => deployments.knows(id) });
+  await ops.start();
+
   // Serves this node's deployments through the relay socket; re-announces on a mode change (relay.ts).
   const relay: RelayClient = new RelayClient({
     request: (path, body) => request(account, "POST", path, body),
     announce,
-    // dep "storage" is a check of the copies this node holds (served in-process); everything else is a deployment.
-    target: (id) => (id === "storage" ? storage?.target() ?? null : deployments.localTarget(id)),
+    // dep "storage" is a check of the copies this node holds, dep "agent" the agent's own surface (both served
+    // in-process); everything else is a deployment.
+    target: (id) => (id === "storage" ? storage?.target() ?? null : id === OPS_DEP ? ops.target() : deployments.localTarget(id)),
     log,
   });
 

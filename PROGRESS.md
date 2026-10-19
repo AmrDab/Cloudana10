@@ -176,13 +176,31 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Residual.** Matmul assignments on a node being suspended expire by `ASSIGNMENT_TTL_SECONDS` rather than being
   clawed at once. No audit log of state changes beyond `state_at`/`state_reason`. Not browser-tested.
 
+### 14 · container logs through the relay (B-14); agent 1.6.0
+- **Why.** Images users bring cannot be debugged without their output; until now a container's logs existed only in a
+  `failed` report.
+- **Agent 1.6.0.** `src/ops.ts`: a loopback-only server the relay client forwards the reserved dep `agent` to (the
+  way `storage` already works); `GET /logs/<id>?tail=N` answers from `docker logs` for deployments this agent runs
+  (or is starting), 404 otherwise, ≤ 64 KiB, nothing stored. `dockerLogs` takes a tail and a cap. 20-check ops
+  selftest; the relay e2e selftest now carries a logs case (27 checks).
+- **API.** `GET /v1/deployments/{id}/logs?tail=1…1000` (owner; containers, workstations, replicas by id; endpoints
+  point at their replicas): live through the relay with `x-relay-probe: 1`; a deployment no longer on a node answers
+  the failure tail it kept or 409; direct nodes 409; no relay 503; socket down / old agent / node errors 502 with
+  the reason; 20/min per deployment on top of the per-IP read bucket.
+- **Console.** Logs panel in the container detail and under each endpoint replica (fetch on demand, refresh, source
+  and truncation shown).
+- **Tests / results.** API 357 → **362** (`deployment-logs.test.ts` ×5); agent type-check clean, ops selftest
+  20/20, relay e2e 27 checks; console tsc, 3 tests, build clean.
+- **Residual.** No streaming (`follow`); the agent must be upgraded to 1.6.0 on the node for live logs (older agents
+  answer `not_serving`, which the API names). Not browser-tested.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **357** |
+| client/api vitest | 330 | **362** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
-| node-agent selftests | 8 pass | 8 pass (sealed now 26 checks) |
+| node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
 | repo-root tsc | 2 errors | **clean** |
 | e2e work pipeline | script did not run | **43 checks pass** |
@@ -218,9 +236,9 @@ the `CURRENT_AGENT_VERSION` comment.
 
 ## Next priorities (engineering, no owner input needed)
 
-B-14 container logs through the relay → B-15 custom domains (needs the owner's Cloudflare for SaaS setup) → B-5
-follow-up (liveness off D1, 30 s beats) once a real load test exists → wallet-stack and Hardhat-toolchain majors
-(SECURITY_AUDIT §3b).
+B-15 custom domains (needs the owner's Cloudflare for SaaS setup) → B-6 verification cost (Freivalds-only with
+sampled re-execution) → B-5 follow-up (liveness off D1, 30 s beats) once a real load test exists → wallet-stack and
+Hardhat-toolchain majors (SECURITY_AUDIT §3b).
 
 ## Not done, and why
 

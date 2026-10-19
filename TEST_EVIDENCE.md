@@ -9,11 +9,11 @@ Cloudflare or chain credentials, and no outbound access to `cloudana.io`, `*.wor
 | Package | Command | Result | Notes |
 |---|---|---|---|
 | client/api | `npm run type-check` | clean | |
-| client/api | `npm test` (vitest) | **39 files, 357 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind), +7 `api-keys.test.ts`, +3 `auth.test.ts`, +1 `security.test.ts` (API keys, logout, rotation), +2 `node-state.test.ts`, +1 `node-security.test.ts` (node states; direct-mode host rule) |
+| client/api | `npm test` (vitest) | **40 files, 362 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind), +7 `api-keys.test.ts`, +3 `auth.test.ts`, +1 `security.test.ts` (API keys, logout, rotation), +2 `node-state.test.ts`, +1 `node-security.test.ts` (node states; direct-mode host rule), +5 `deployment-logs.test.ts` (logs through the relay) |
 | gateway | `npx tsc --noEmit && npx vitest run` | clean; **28 passed** | |
 | relay | same | clean; **14 passed** | includes workerd e2e (`test/workerd.e2e.ts`) |
 | keeper | same | clean; **28 passed** | tree vector fixture + run state machine |
-| node-agent | `npm run type-check && npm run selftest` | clean; **8 selftests pass**: signing; sealed (26 checks); hosting; workstation (89); security (94); relay (69); relay e2e (24, real hub ↔ real agent ↔ real app); storage | 1.5.0 |
+| node-agent | `npm run type-check && npm run selftest` | clean; **9 selftests pass**: signing; sealed (26 checks); hosting; workstation (89); security (94); relay (69); relay e2e (27, real hub ↔ real agent ↔ real app, incl. logs via dep `agent`); ops (20); storage | 1.6.0 |
 | contract | `npx hardhat test` | **224 passing** | compiled with solcjs 0.8.20 from npm through a Hardhat subtask override because the solc binary list is unreachable here; CI uses the normal download |
 | repo root | `npm run check` (tsc) | clean | was 2 errors at baseline |
 | repo root | `npm run test:client` | 3 passed | |
@@ -103,6 +103,11 @@ hash that anyone can confirm with `eth_getBlockByHash`; the script then passes f
   403, it leaves `nodesOnline`, its owner's drain/resume are 409; the admin lifts it and the ticket works again.
 - `client/api/tests/node-security.test.ts` (O8 / B-13): outside DEV_MODE a hostname `publicHost` stores no host and
   strips hosting; a direct node reporting an endpoint on any host but its announced one is refused (three hosts).
+- `client/api/tests/deployment-logs.test.ts` (B-14): the relay is asked as dep `agent` with the exact path and probe
+  flag and the text comes back; tail bounds never reach the node; truncation flagged; owner-only, containers and
+  replicas only (site 400, endpoint 400 pointing at replicas); failure tail after the node is gone, 409 when none;
+  direct node 409, no relay 503, socket down / old agent / 404 / 502 / timeout each named; 21st request in a minute
+  on one deployment → 429.
 
 ## 3b. Heartbeat D1 cost (backlog B-5), measured
 

@@ -177,6 +177,14 @@ decryption fail. Agents from 1.5.0 refuse the old unbound (v1) payloads. They
 are decrypted in memory just before `docker run` — note they are then visible
 to anyone with Docker access on this machine (e.g. `docker inspect`).
 
+## Logs (agents ≥ 1.6.0)
+
+The owner's console (or `GET /v1/deployments/{id}/logs`) can ask for a container's last lines. The request reaches
+the agent through its relay socket as the reserved deployment id `agent` (`src/ops.ts`, a loopback-only server the
+relay client forwards to, like storage checks) and is answered from `docker logs --tail N` for a deployment this
+agent runs; anything else is 404. Nothing is written to disk and nothing is sent unasked. Direct (public-IP) nodes
+have no relay socket and therefore serve no logs.
+
 ## GPU workstations
 
 Nodes announce `gpu` when Docker answers **and** `nvidia-smi

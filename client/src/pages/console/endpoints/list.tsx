@@ -22,6 +22,7 @@ import { DeployChip } from "@/pages/console/deploy/deployments";
 import { autoSeal, clearPendingSecrets, getSealState, pendingSecrets, savePendingSecrets, setSealState, useSealVersion } from "@/pages/console/deploy/model";
 import { sealSecretsTo, SecretsForm } from "@/pages/console/deploy/secrets";
 import { ReportProblem } from "@/components/console/report-problem";
+import { LogsPanel } from "@/components/console/logs";
 import { EndpointKeys } from "./keys";
 
 export function specLine(e: Endpoint) {
@@ -256,17 +257,29 @@ function ReplicaRow({ r, n }: { r: Replica; n: number }) {
   const now = useNow(5000);
   useSealVersion();
   const seal = getSealState(r.id);
+  const [showLogs, setShowLogs] = useState(false);
+  const onNode = !!r.node && !isTerminal(r.status);
   return (
-    <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-      <span className="flex items-center gap-2"><DeployChip status={r.status} /><span className="font-mono text-[12px] text-faint">#{n}</span></span>
-      <span className="font-mono text-[12px] text-muted-foreground">
-        {r.node ? <>node <Hash value={r.node} className="text-[12px]" /></> : "no node yet"}
-        {r.probeOk != null && <> · <span className={r.probeOk ? "text-ok" : "text-burn"}>{r.probeOk ? "healthy" : "probe failed"}</span></>}
-        {r.startedAt && r.status === "running" && <> · up {ago(r.startedAt, now).replace(" ago", "")}</>}
-        {r.awaitingSecrets && !isTerminal(r.status) && (
-          <> · <span className={seal?.phase === "error" ? "text-burn" : "text-work"}>{seal?.phase === "sealing" ? "sealing secrets" : seal?.phase === "error" ? "secrets not sealed" : "waiting for secrets"}</span></>
-        )}
-      </span>
+    <li className="px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2"><DeployChip status={r.status} /><span className="font-mono text-[12px] text-faint">#{n}</span></span>
+        <span className="flex items-center gap-2 font-mono text-[12px] text-muted-foreground">
+          <span>
+            {r.node ? <>node <Hash value={r.node} className="text-[12px]" /></> : "no node yet"}
+            {r.probeOk != null && <> · <span className={r.probeOk ? "text-ok" : "text-burn"}>{r.probeOk ? "healthy" : "probe failed"}</span></>}
+            {r.startedAt && r.status === "running" && <> · up {ago(r.startedAt, now).replace(" ago", "")}</>}
+            {r.awaitingSecrets && !isTerminal(r.status) && (
+              <> · <span className={seal?.phase === "error" ? "text-burn" : "text-work"}>{seal?.phase === "sealing" ? "sealing secrets" : seal?.phase === "error" ? "secrets not sealed" : "waiting for secrets"}</span></>
+            )}
+          </span>
+          {(onNode || r.logs) && (
+            <button type="button" className={cn(btn.quiet, btn.sm, "-mr-2")} onClick={() => setShowLogs((v) => !v)} aria-expanded={showLogs} aria-label={`${showLogs ? "Hide" : "Show"} logs of replica ${n}`}>
+              {showLogs ? "Hide logs" : "Logs"}
+            </button>
+          )}
+        </span>
+      </div>
+      {showLogs && <LogsPanel id={r.id} name={`replica ${n}`} className="mt-2" compact />}
     </li>
   );
 }

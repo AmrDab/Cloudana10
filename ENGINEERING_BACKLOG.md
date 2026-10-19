@@ -102,9 +102,13 @@ endpoints must use it), so there is no DNS to rebind — the first acceptance br
 operator-chosen host". SECURITY_AUDIT O8 updated. The product half, retiring direct mode, stays with the owner
 (decision 3).
 
-**B-14 · Deployment logs and events for running containers.** `GET /v1/deployments/{id}/logs?tail=200` served through
-the relay (`docs/V4_REVIEW_RELAY.md` §6). Acceptance: the console shows live logs for a running container; the
-endpoint is rate-limited per deployment.
+**B-14 · Deployment logs and events for running containers.** **Done in this pass** (PROGRESS.md commit 14):
+`GET /v1/deployments/{id}/logs?tail=N` reads the tail live from the node through the relay (reserved dep `agent`,
+agent ≥ 1.6.0 `ops.ts`), answers the kept failure tail once a deployment left its node, names every failure mode
+(direct node, no relay, socket down, old agent, node answer), and is rate-limited per deployment (20/min) on top of
+the per-IP bucket; the console has a Logs panel on containers and endpoint replicas. Acceptance met in
+`deployment-logs.test.ts` + the agent's ops selftest and relay e2e case; the console panel is not browser-tested.
+Not built: streaming/follow and an events feed beyond `deployment_events`.
 
 **B-15 · Custom domains for static sites (Cloudflare for SaaS or CNAME + DCV).** Ownership verification by TXT,
 certificate issuance through the gateway zone, `Host` → deployment mapping in D1 cached at the gateway. Acceptance: a

@@ -70,7 +70,9 @@ sends `x-relay-dep: dep` to node `node`). Cached 30 s: a revoked key can work fo
   (`MAX_STREAMS_PER_DEP`). Custom limits later.
 - No admin key revoke (`POST /v1/admin/deployments/{id}/stop` covers abuse). `GET …/requests`, `POST …/report`: steps 4
   and 6.
-- Logs arrive only with a `failed` report (no live log streaming yet).
+- Logs: a `failed` report carries the container's tail (kept on the row); `GET /v1/deployments/{replicaId}/logs?tail=N`
+  reads the last lines live from the node through the relay (reserved dep `agent`, agents ≥ 1.6.0;
+  docs/V4_RELAY_CONTRACT.md "Reserved deployment ids"). No streaming yet.
 - Sealed secrets are per replica (each is sealed to its node's key): `PATCH /deployments/{replicaId}/secrets`. The
   detail view carries `awaitingSecrets` and, once a node with a key holds a replica, that replica's `nodePubkey`; the
   console seals every environment value this way (`expectsSecrets`, no plain path: the values never reach the API).

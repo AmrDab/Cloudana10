@@ -3,6 +3,7 @@
 // Proves both halves speak the same protocol: streaming both ways, the 512 KiB window, SSE, cancel, not_serving,
 // forwarded host. Needs neither Docker, Cloudflare nor a network.
 import http from "node:http";
+import { OpsServer } from "./ops.ts";
 import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
@@ -89,11 +90,14 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => hub?.onClose());
 });
 
+// The agent's own surface (ops.ts), reached as the reserved dep "agent" (docs/V4_RELAY_CONTRACT.md).
+let opsPort = 0;
+
 // ── The agent's relay client, pointed at the hub by its ticket ────────────────────────────────────────────
 const client = new RelayClient({
   request: async () => ({ status: "success", ticket: "t-123", url: `ws://127.0.0.1:${relayPort}/connect`, expiresAt: Date.now() + 60_000 }),
   announce: async () => {},
-  target: (dep) => (dep === "dep-1" ? { port: appPort, kind: "container" } : null),
+  target: (dep) => (dep === "dep-1" ? { port: appPort, kind: "container" } : dep === "agent" && opsPort ? { port: opsPort, kind: "container" } : null),
   log: () => {},
 });
 await client.start();
@@ -128,6 +132,20 @@ const proxy = (path: string, init: { method?: string; body?: Uint8Array; headers
   check((await res.text()) === "hello from the node", "GET body");
   check(lastForwardedHost === "abc.cloudana.run", "x-forwarded-host reached the app");
   check(lastHost === `127.0.0.1:${appPort}`, `the app saw its local host, not the visitor's (${lastHost})`);
+}
+
+// 1b. Owner logs: hub → socket → agent's ops server (dep "agent"), never the app; unknown deployments are 404.
+{
+  const ops = new OpsServer({ logs: async (id, tail) => `${id}: last ${tail} lines\n`, serves: (id) => id === "dep-1" });
+  await ops.start();
+  opsPort = ops.target()!.port;
+  const res = await proxy("/logs/dep-1?tail=7", { dep: "agent" });
+  check(res.status === 200, `logs through the relay: status ${res.status}`);
+  check((await res.text()) === "dep-1: last 7 lines\n", "logs body came from the ops server, with the tail");
+  const miss = await proxy("/logs/dep-2", { dep: "agent" });
+  check(miss.status === 404, `logs of a deployment this node does not run → 404 (${miss.status})`);
+  ops.stop();
+  opsPort = 0;
 }
 
 // 2. 2 MiB up, 3 MiB down: both directions cross the 512 KiB window and still arrive intact.

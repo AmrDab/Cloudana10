@@ -11,6 +11,7 @@
  * POST /nodes/deployments/{id}/status {status:"stopped"} (heartbeats carry action "stop" until then).
  */
 import { getD1 } from "../lib/storage.js";
+import { getRelay } from "../lib/relay.js";
 import { createHash, randomBytes } from "node:crypto";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
@@ -759,4 +760,69 @@ export async function adminStop(id: string): Promise<Update> {
     return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };
   }
   return { ok: true };
+}
+
+// ── Container logs through the relay (ENGINEERING_BACKLOG B-14) ─────────────
+export const LOGS_TAIL_DEFAULT = 200;
+export const LOGS_TAIL_MAX = 1000;
+/** Most the API hands back (the agent's ops server keeps the same cap). */
+export const LOGS_MAX_BYTES = 64 * 1024;
+const LOGS_TIMEOUT_MS = 10_000;
+/** Agents from this version serve the reserved relay dep "agent" (`GET /logs/{id}`, node-agent/src/ops.ts). */
+export const LOGS_MIN_AGENT = "1.6.0";
+
+export type LogsResult =
+  | { ok: true; id: string; node: string | null; tail: number; source: "node" | "last_failure"; logs: string; truncated: boolean }
+  | { ok: false; code: "not_found" | "validation_failed" | "conflict" | "not_configured" | "upstream_failed"; message: string };
+
+/**
+ * The owner's view of a container's last log lines, read live from its node through the relay (nothing is stored
+ * here). A deployment no longer on a node answers with the tail its last failure report kept, if any.
+ */
+export async function deploymentLogs(owner: string, id: string, tail = LOGS_TAIL_DEFAULT): Promise<LogsResult> {
+  const row = await getOwnedRow(owner, id);
+  if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
+  if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "logs are for containers, workstations and endpoint replicas; a static site has none" };
+  if (isEndpoint(row)) {
+    return { ok: false, code: "validation_failed", message: "ask a replica: GET /deployments/{replicaId}/logs (replica ids are in GET /deployments/{id}.replicas)" };
+  }
+  const onNode = !!row.node && (row.status === "assigned" || row.status === "running" || row.status === "unreachable");
+  if (!onNode) {
+    if (row.last_logs) return { ok: true, id: row.id, node: row.node, tail, source: "last_failure", logs: row.last_logs, truncated: false };
+    return { ok: false, code: "conflict", message: `no node runs it now (status ${row.status}) and no failure logs were kept` };
+  }
+  if (!row.relayed) return { ok: false, code: "conflict", message: "this deployment runs on a direct (public-IP) node; logs are served through the relay only" };
+  const relay = getRelay();
+  if (!relay) return { ok: false, code: "not_configured", message: "this API runs no relay" };
+  let res: Response;
+  try {
+    res = await relay(row.node!, "/proxy", {
+      method: "GET",
+      headers: { "x-relay-dep": "agent", "x-relay-class": "endpoint", "x-relay-path": `/logs/${row.id}?tail=${tail}`, "x-relay-probe": "1" },
+      signal: AbortSignal.timeout(LOGS_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const timeout = (err as Error)?.name === "TimeoutError";
+    return { ok: false, code: "upstream_failed", message: timeout ? "the node did not answer within 10 s" : `relay: ${(err as Error).message}` };
+  }
+  const relayError = res.headers.get("x-relay-error");
+  if (relayError) {
+    await res.body?.cancel().catch(() => undefined);
+    const why =
+      relayError === "not_serving" ? `the node's agent does not serve logs (agents from ${LOGS_MIN_AGENT} do)`
+      : relayError === "offline" ? "the node's relay socket is down"
+      : `relay: ${relayError}`;
+    return { ok: false, code: "upstream_failed", message: why };
+  }
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => undefined);
+    return { ok: false, code: "conflict", message: "the node no longer runs it" };
+  }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
+    return { ok: false, code: "upstream_failed", message: `the node answered ${res.status}` };
+  }
+  const text = await res.text();
+  const over = text.length > LOGS_MAX_BYTES;
+  return { ok: true, id: row.id, node: row.node, tail, source: "node", logs: over ? text.slice(-LOGS_MAX_BYTES) : text, truncated: over || res.headers.get("x-cld-truncated") === "1" };
 }

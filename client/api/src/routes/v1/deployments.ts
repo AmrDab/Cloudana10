@@ -27,6 +27,10 @@ import {
   listKeys,
   extendWorkstation,
   nodePubkey,
+  deploymentLogs,
+  LOGS_MIN_AGENT,
+  LOGS_TAIL_DEFAULT,
+  LOGS_TAIL_MAX,
   presentDeployments,
   publicRoute,
   replicasOf,
@@ -454,4 +458,48 @@ const adminStopRoute = createRoute({
 deploymentsRouter.openapi(adminStopRoute, async (c) => {
   const r = await adminStop(c.req.valid("param").id);
   return r.ok ? ok(c, { deploymentStatus: "stopped" as const }) : fail(c, r.code, r.message);
+});
+
+// ── Logs (ENGINEERING_BACKLOG B-14) ─────────────────────────────────────────
+const logsRoute = createRoute({
+  method: "get",
+  path: "/deployments/{id}/logs",
+  tags: TAGS,
+  description:
+    `The container's last log lines (stdout + stderr), read live from its node through the relay when you ask — nothing is ` +
+    `stored. tail = 1…${LOGS_TAIL_MAX} lines (default ${LOGS_TAIL_DEFAULT}), at most 64 KiB. Containers, workstations and endpoint ` +
+    `replicas (per replica id). A deployment no longer on a node answers with the tail kept from its last failure, if any. ` +
+    `The node needs an agent ≥ ${LOGS_MIN_AGENT}. Rate-limited per deployment.`,
+  security: BEARER_AUTH,
+  request: { params: IdParam, query: z.object({ tail: z.coerce.number().int().min(1).max(LOGS_TAIL_MAX).default(LOGS_TAIL_DEFAULT) }) },
+  responses: responses(
+    {
+      200: json(
+        z.object({
+          status: z.literal("success"),
+          id: z.string(),
+          node: z.string().nullable(),
+          tail: z.number().int(),
+          source: z.enum(["node", "last_failure"]),
+          logs: z.string(),
+          truncated: z.boolean(),
+        }),
+        "Log tail",
+      ),
+    },
+    400,
+    401,
+    404,
+    409,
+    429,
+    502,
+    503,
+  ),
+});
+
+deploymentsRouter.openapi(logsRoute, async (c) => {
+  const r = await deploymentLogs(c.get("jwtPayload").sub, c.req.valid("param").id, c.req.valid("query").tail);
+  if (!r.ok) return fail(c, r.code, r.message);
+  const { ok: _ok, ...body } = r;
+  return ok(c, body);
 });

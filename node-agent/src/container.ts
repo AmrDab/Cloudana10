@@ -214,13 +214,16 @@ export async function dockerGpuDevices(id: string): Promise<number[] | null> {
 /** Most the owner sees of a failed container's output (the API caps `logs` at 16 KB). */
 export const LOGS_MAX_CHARS = 8192;
 
-/** The last lines of `docker logs` (stdout + stderr), at most LOGS_MAX_CHARS; "" when Docker cannot say. */
-export function dockerLogs(id: string): Promise<string> {
+/**
+ * The last `tail` lines of `docker logs` (stdout + stderr), at most `maxChars`; "" when Docker cannot say. Failure
+ * reports use the defaults; the owner's live log requests (ops.ts, through the relay) ask for more.
+ */
+export function dockerLogs(id: string, tail = 100, maxChars = LOGS_MAX_CHARS): Promise<string> {
   return new Promise((resolve) => {
-    execFile("docker", ["logs", "--tail", "100", containerName(id)], { timeout: 10_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile("docker", ["logs", "--tail", String(tail), containerName(id)], { timeout: 10_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err && !stdout && !stderr) return resolve("");
       const text = `${stdout ?? ""}${stderr ?? ""}`;
-      resolve(text.length > LOGS_MAX_CHARS ? text.slice(-LOGS_MAX_CHARS) : text);
+      resolve(text.length > maxChars ? text.slice(-maxChars) : text);
     });
   });
 }

@@ -18,6 +18,7 @@ import {
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { ReportProblem } from "@/components/console/report-problem";
+import { LogsPanel } from "@/components/console/logs";
 import { KindPill } from "./templates";
 import { autoSeal, clearPendingSecrets, getSealState, hostOf, pendingSecrets, publicUrl, savePendingSecrets, setSealState, useSealVersion } from "./model";
 import { sealSecretsTo, SecretsForm } from "./secrets";
@@ -308,6 +309,7 @@ function Detail({ d }: { d: Deployment }) {
               </ol>
             )}
           </div>
+          {d.kind === "container" && <LogsPanel id={d.id} name={d.name} className="mt-5" />}
         </div>
         <div className="flex flex-col gap-3">
           <dl className="grid grid-cols-[96px_1fr] gap-x-3 gap-y-1.5 font-mono text-[12px]">

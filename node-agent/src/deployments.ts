@@ -171,6 +171,11 @@ export class DeploymentManager {
     return r && r.port !== null ? { port: r.port, kind: r.kind } : null;
   }
 
+  /** Whether this agent runs, or is starting, the deployment (the ops server answers logs only for these). */
+  knows(id: string): boolean {
+    return this.records.has(id) || this.busy.has(id);
+  }
+
   private save() {
     writeFileSync(this.file, JSON.stringify([...this.records.values()], null, 2));
   }

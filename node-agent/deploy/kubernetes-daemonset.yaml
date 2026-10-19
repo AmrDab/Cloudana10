@@ -72,7 +72,7 @@ spec:
           #   cosign verify <image> --certificate-oidc-issuer https://token.actions.githubusercontent.com \
           #     --certificate-identity https://github.com/AmrDab/Cloudana10/.github/workflows/build-node-agent.yml@refs/heads/main).
           # Pin the exact release you rolled out — never :latest.
-          image: ghcr.io/amrdab/cloudana-node-agent:1.5.0
+          image: ghcr.io/amrdab/cloudana-node-agent:1.6.0
           envFrom:
             - configMapRef: { name: cloudana-node-agent }
           env:

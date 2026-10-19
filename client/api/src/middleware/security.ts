@@ -46,6 +46,8 @@ export function applySecurity(app: AnyHono): void {
     isPublicRoute(c) ? routeRead(c, next) : c.req.method === "GET" ? deployRead(c, next) : deployWrite(c, next);
   app.use("/v1/deployments", deployLimit);
   app.use("/v1/deployments/*", deployLimit);
+  // Live logs reach the node through the relay: a bucket per deployment on top of the per-IP read bucket.
+  app.on("GET", "/v1/deployments/:id/logs", rateLimit({ bucket: "deployments-logs", limit: 20, windowSec: 60, keyBy: (c) => c.req.path }));
   // ── v1 work pipeline ──────────────────────────────────────────────────────
   // Users (JWT).
   app.use("/v1/account", requireAuth);

@@ -68,3 +68,18 @@ Node → hub: `res {s, status, h}`, then binary body frames, then `end` (or `err
   502/503/504 with `x-relay-error: offline|not_serving|busy|timeout|upstream|too_large`.
 - `POST https://relay/kick` (binding only, header `x-relay-node`): closes the node's socket (unbind / ban).
 - `GET https://relay/status` (binding only, header `x-relay-node`): `{ connected, since }`.
+
+## Reserved deployment ids (served by the agent itself)
+
+Two `dep` values in a `req` frame are not deployments; the agent's relay client answers them in-process, on loopback
+servers the hub cannot tell from an app:
+
+| dep | Served by | What | Who may ask |
+|---|---|---|---|
+| `storage` | `node-agent/src/storage.ts` | leaf proofs for storage checks (docs/V4_STORAGE_PHASE1_CONTRACT.md) | the API (checks) |
+| `agent` | `node-agent/src/ops.ts` (agents ≥ 1.6.0) | `GET /logs/<deploymentId>?tail=N` → text/plain, the last N (1…1000, default 200) lines of `docker logs`, ≤ 64 KiB, 404 for anything this node does not run | the API (`GET /v1/deployments/{id}/logs`, owner-authenticated, rate-limited per deployment) |
+
+Only the API and the gateway hold the `RelayNode` binding, and the gateway sets `x-relay-dep` from the API's route
+lookup (a real deployment id) after stripping every `x-relay-*` header a visitor sent — a visitor cannot address
+either reserved id. Both ride on the probe slots (`x-relay-probe: 1`), so visitor load never starves them. Nothing is
+stored on the relay or the API: a logs answer is read from Docker when asked and forgotten.
