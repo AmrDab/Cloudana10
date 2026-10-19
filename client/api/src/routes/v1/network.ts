@@ -64,7 +64,8 @@ const STATS_SQL = `SELECT
   (SELECT COUNT(*) FROM work_jobs WHERE status = 'done') AS jobsDone,
   (SELECT COUNT(*) FROM work_jobs WHERE status = 'done' AND cert_z IS NOT NULL) AS certificates,
   (SELECT COALESCE(SUM(amount_ucld), 0) FROM reward_entries WHERE lane IN ('A','B','treasury') AND status != 'clawed') AS mintedUcld,
-  (SELECT COALESCE(SUM(price_ucld), 0) FROM work_jobs WHERE status = 'done')
+  (SELECT COALESCE(SUM(price_ucld), 0) FROM work_jobs WHERE status = 'done'
+     AND EXISTS (SELECT 1 FROM reward_entries e WHERE e.job_id = work_jobs.id))
     + (SELECT COALESCE(SUM(fee_ucld), 0) FROM deployment_bills) AS burnedUcld,
   (SELECT COUNT(DISTINCT session) FROM verify_verdicts WHERE created_at >= ?2) AS verifiersToday,
   (SELECT COUNT(*) FROM deployments WHERE status = 'running') AS deploymentsRunning,

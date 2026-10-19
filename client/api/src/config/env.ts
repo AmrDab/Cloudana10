@@ -33,6 +33,9 @@ export const envSchema = z.object({
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
   /** Set during a secret rotation: tokens signed with it keep verifying until they expire. */
   JWT_SECRET_PREVIOUS: z.string().min(1).optional(),
+  // Unix seconds after which JWT_SECRET_PREVIOUS is ignored (set it to rotation time + JWT_TTL_SECONDS). Without it the
+  // previous secret is not accepted at all: a leaked old secret must not mint sessions indefinitely.
+  JWT_SECRET_PREVIOUS_UNTIL: z.coerce.number().int().positive().optional(),
   /** Wallet session lifetime (POST /v1/auth/logout ends one earlier). */
   JWT_TTL_SECONDS: int(86_400),
   /** How long an isolate trusts an API-key lookup; a revocation elsewhere lands within this. */

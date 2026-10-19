@@ -367,6 +367,12 @@ async function main() {
     await sleep(HEARTBEAT_MS);
     try {
       const res = await request(account, "POST", "/v1/nodes/heartbeat", { agentVersion: VERSION, relay: relay.connected() });
+      // Unbound from the console while running: announce again to get (and print) a fresh bind link.
+      if (res.bound === false && bound) {
+        bound = false;
+        log("this node was unbound from its wallet — re-announcing for a new bind link");
+        await announce(relay.mode() === "relay");
+      }
       if (res.upgradeRequired && !upgradeWarned) {
         upgradeWarned = true;
         log(`⚠ this agent (${VERSION}) is below the network minimum ${res.minAgentVersion}: no work until it is upgraded`);

@@ -85,6 +85,8 @@ export function applySecurity(app: AnyHono): void {
   app.on("GET", "/v1/waitlist/*", rateLimit({ bucket: "waitlist-read", limit: 60, windowSec: 60 }));
   // Public activity feed for the site.
   app.on("GET", "/v1/network/recent", rateLimit({ bucket: "network-read", limit: 60, windowSec: 60 }));
+  // The stats answer is signed on every request: keep scripts from turning it into a signing oracle / CPU sink.
+  app.on("GET", "/v1/network", rateLimit({ bucket: "network-stats", limit: 120, windowSec: 60 }));
   // Public per-epoch payloads and job lists (up to 500 rows a page), and public draw records.
   app.on("GET", "/v1/epochs/*", rateLimit({ bucket: "epochs-read", limit: 60, windowSec: 60 }));
   app.on("GET", "/v1/draws/*", rateLimit({ bucket: "draws-read", limit: 60, windowSec: 60 }));

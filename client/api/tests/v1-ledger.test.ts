@@ -1,6 +1,6 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
-import { epochOf, epochJobs, recordJobRewards, splitFee, closeEpochs, ledgerSummary, TREASURY_ACCOUNT } from "../src/services/ledger.service.js";
+import { epochOf, epochJobs, getEpochPayload, recordJobRewards, splitFee, closeEpochs, ledgerSummary, TREASURY_ACCOUNT } from "../src/services/ledger.service.js";
 import { epochRoot } from "../src/services/epoch-merkle.js";
 import { getD1 } from "../src/lib/storage.js";
 
@@ -83,6 +83,11 @@ describe("ledger entries + epoch close (SQLite)", () => {
     // A job that commits into the epoch after it closed is not in its root (it moves on at the next close): not listed.
     await recordJobRewards({ jobId: "j3", workType: "matmul", provider, feeUcld: 1000, clusterOk: true, now: t0 + 5 });
     expect((await epochJobs(1000)).jobs.map((j) => j.jobId)).toEqual(["j1", "j2"]);
+    // A vetoed epoch publishes nothing (its root and fees were cleared; it closes again).
+    expect(await getEpochPayload(1000)).toMatchObject({ epoch: 1000, status: "closed" });
+    await getD1().prepare("UPDATE epochs SET status = 'vetoed' WHERE id = 1000").run();
+    expect(await getEpochPayload(1000)).toBeNull();
+    await getD1().prepare("UPDATE epochs SET status = 'closed' WHERE id = 1000").run();
   });
 });
 
