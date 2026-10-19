@@ -1,314 +1,97 @@
-# Cloudana DePIN MVP
+# Cloudana
 
-A decentralized physical infrastructure network (DePIN) for compute resource sharing, built on Base Sepolia.
+A decentralized datacenter: home PCs and racks joined under one orchestrator that assigns every job by a weighted
+random draw, prices work from utilization, checks the result and settles in CLD on Base. Users never pick a provider;
+providers never bid. Only verified, paid work mints CLD.
 
-## 🎯 Architecture
+**Status: Base Sepolia testnet, orchestrator-coordinated.** What works, what is early access and what is only planned
+is in [`CAPABILITY_MATRIX.md`](CAPABILITY_MATRIX.md); the trust model and how it shrinks is in
+[`DECENTRALIZATION_ROADMAP.md`](DECENTRALIZATION_ROADMAP.md). Nothing about CLD is a promise of price or return.
 
-This is a **trust-minimized DePIN application**:
-- ✅ **On-chain settlement** - Epoch Merkle roots post to CloudanaSettlement on Base Sepolia: fees burned, CLD minted per verified job (95% provider / 3% treasury / 2% net burn), guardian veto window
-- ✅ **Orchestrator-coordinated (testnet)** - An open-source orchestrator verifies PoUW certificates and coordinates workloads; mainnet replaces its attestation with zkSNARK verification (see `circuits/`)
-- ✅ **Decentralized storage** - IPFS for metadata
-- ✅ **Honest about the trust model** - see `DECENTRALIZATION_ROADMAP.md` for what is decentralized today vs. planned
+## What a developer can do
 
-## 🏗️ Tech Stack
+| Product | How | Checked by |
+|---|---|---|
+| Matrix compute (PoUW) | `POST /v1/jobs` — priced in USD, settled in CLD, assigned to a node by the draw | Transcript re-executed + Freivalds answer check (**proven**) |
+| Static hosting | `POST /v1/deployments` kind `static` → `https://<id>.cloudana.run` once the gateway is live | Content-hash probe every minute (**probed**) |
+| Containers, GPU workstations, GPU endpoints | kind `container` / `workstation` / `endpoint` on fleet nodes; secrets sealed in the browser to the node, bound to the deployment | Health probe through the relay (**probed**) |
+| Provide | one command installs the node agent; bind a wallet; earn per verified job and per probed hour | Signed heartbeat instructions; hardened containers on opted-in nodes |
 
-### Frontend
-- **React** + **TypeScript** + **Vite**
-- **Wagmi** + **Viem** - Ethereum interactions
-- **Reown AppKit** - Wallet connection
-- **TailwindCSS** - Styling
-- **Shadcn/ui** - UI components
+OpenAPI: `GET /v1/doc` on the API; Swagger UI at `/v1/swagger`. Every response uses one envelope
+(`{ status: "success", … }` / `{ status: "error", error: { code, message } }`).
 
-### Smart Contracts
-- **Solidity 0.8.20**
-- **OpenZeppelin** - Security & standards
-- **Hardhat** - Development & deployment
+## Repository
 
-### Storage
-- **On-chain**: Owner, pubKeyHash, IPFS CID, bond, status
-- **IPFS**: Full node metadata (hardware specs, location, etc.)
+```
+client/api/     API — one Hono app on two runtimes: Cloudflare Worker (api.cloudana.io; D1, KV, R2, relay binding,
+                cron) and a Node runtime with embedded SQLite (local dev, tests, independent operators)
+client/src/     Homepage (/) and console (/control) — React + Vite, one build, Cloudflare Pages
+node-agent/     Provider agent: signed instructions, matmul solver, static hosting, hardened Docker containers,
+                GPU workstations/endpoints, relay client, storage copies. Image: ghcr.io/amrdab/cloudana-node-agent
+gateway/        Worker serving user content at *.cloudana.run through each node's relay socket
+relay/          Worker + one Durable Object per node: nodes connect outbound; no open ports at home
+keeper/         Worker (cron) that posts hourly epochs to the settlement contract and pays claims
+contract/       CLDTokenV2 + CloudanaSettlementV2 (Hardhat, OpenZeppelin); legacy contracts kept for history
+pouw/           cuPOW transcript solver/verifier and Freivalds check (Komargodski–Weinstein matmul PoUW)
+shared/         Types shared by browser, API and agent: sealed secrets, relay protocol, tickets, storage proofs
+docs/           Decisions, specs, reviews, owner runbook (docs/archive: superseded designs)
+```
 
-## 🚀 Quick Start
+## Engineering documents
 
-### Prerequisites
-- Node.js 18+
-- MetaMask or compatible wallet
-- Base Sepolia testnet ETH
+| Document | What it answers |
+|---|---|
+| [`ENGINEERING_BASELINE.md`](ENGINEERING_BASELINE.md) | What was verified to run, test baseline, reachability inventory, drift (2026-10-19) |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Control plane, data plane, edge, provider, trust and settlement |
+| [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) | Findings with proof, patch, test and residual risk |
+| [`CAPABILITY_MATRIX.md`](CAPABILITY_MATRIX.md) | Every capability and its verified maturity — the registry the site and console follow |
+| [`ENGINEERING_BACKLOG.md`](ENGINEERING_BACKLOG.md) | Ranked gaps with acceptance criteria |
+| [`TEST_EVIDENCE.md`](TEST_EVIDENCE.md) | Commands, results, scenarios and environment limits |
+| [`DEPLOYMENT_RUNBOOK.md`](DEPLOYMENT_RUNBOOK.md) | Deploy, configure, migrate, back up, roll back |
+| [`PROGRESS.md`](PROGRESS.md) | What changed, evidence, blockers, next priorities |
+| [`docs/OWNER_RUNBOOK.md`](docs/OWNER_RUNBOOK.md) | The owner-only steps (keys, Safe, contracts, secrets, domain, first node) |
 
-### For Users (Deploy Workloads)
+## Run it locally
 
 ```bash
-# Install dependencies and start frontend
-npm install
-npm run dev
+npm install                      # console + homepage
+cd client/api && npm install     # API
+npm run dev                      # Node runtime on :7002 (needs JWT_SECRET; see client/api/.env.example)
+cd ../.. && npm run dev          # Vite on :7003 — console at /control
 ```
 
-Visit `http://localhost:5002` to:
-- Register workloads
-- Browse providers
-- Monitor deployments
+The whole stack (local chain, contracts, Worker API, keeper, one node agent) comes up with `bash scripts/dev/up.sh`
+(needs a `client/api/.dev.vars`; see `DEPLOYMENT_RUNBOOK.md`). End to end:
+`API=http://127.0.0.1:8790 INTERNAL_API_KEY=… npx tsx client/api/scripts/dev/e2e-v1.ts`.
 
-### For Orchestrators (Event-Driven Placement)
+## Tests
 
 ```bash
-# Start orchestrator API (listens to blockchain events)
-cd client/api
-npm install
-npm run dev
-
-# Requires ORCHESTRATOR_PRIVATE_KEY in .env
+cd client/api && npm run type-check && npm test       # API (vitest, in-memory SQLite behind the D1 interface)
+cd gateway && npx tsc --noEmit && npx vitest run      # same for relay/ and keeper/
+cd node-agent && npm run type-check && npm run selftest
+cd contract && npx hardhat test
+npm run check && npm run test:client && npm run build # console
 ```
 
-The orchestrator automatically:
-- Monitors WorkloadRegistry events
-- Matches workloads to providers
-- Deploys to provider nodes
-- Records placement on-chain
+CI runs all of these (`.github/workflows/ci.yml`, `build-node-agent.yml`).
 
-### For Providers (Run Infrastructure)
+## Economics in one paragraph
 
-```bash
-# Install and run provider node
-cd provider-node-server
-npm install
-npm run dev
+Prices are quoted in US dollars and settled in CLD (testnet reference $0.10/CLD). A job's fee is held when queued and
+captured when the result verifies. At settlement the fee is burned and 95 % is minted to the provider, 3 % to the
+treasury, 2 % is destroyed; a small capped subsidy (ρ ≤ 0.04) goes to providers in genuinely independent clusters.
+Hourly epochs post one Merkle root to `CloudanaSettlementV2`, which enforces the split on every post. No staking, no
+bonds, no bidding. Details: `docs/DECISIONS_CONSENSUS.md`, `docs/TOKENOMICS_USD_PRICING.md`.
 
-# Requires kubectl access to Kubernetes cluster
-# See provider-node-server/README.md for production deployment
-```
+## Security
 
-Provider nodes:
-- Accept deployment requests
-- Execute workloads on K8s
-- Report status
-- Provide hardware specs
+Report to `abuse@cloudana.io`. Model, findings and residual risks: [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md). The API
+Worker holds no chain key; node instructions are signed by a funds-less key the agent pins; tenant secrets are sealed
+in the browser to the node and bound to their deployment; containers run capability-dropped on an egress-filtered
+bridge. Testnet contracts are unaudited and testnet CLD has no value.
 
-**Architecture:** Providers run **outside** K8s clusters for security isolation.
+## License
 
-### Smart Contract Deployment
-
-```bash
-cd contract
-npm install
-npx hardhat compile
-npx hardhat run scripts/deploy.ts --network baseSepolia
-```
-
-After deployment, contracts are auto-registered in `shared/addresses.baseSepolia.json`.
-
-## 📁 Project Structure
-
-```
-cloudana-mvp/
-├── client/                      # Frontend application + Orchestrator API
-│   ├── src/                     # Frontend (React + Vite)
-│   │   ├── components/          # UI components
-│   │   ├── hooks/               # Custom hooks
-│   │   ├── lib/                 # Utilities & contract hooks
-│   │   ├── pages/               # Page components
-│   │   └── context/             # React context
-│   └── api/                     # Orchestrator backend (Hono + Node.js)
-│       ├── src/services/        # Placement, SDL parsing, K8s building
-│       └── src/routes/          # Orchestration API endpoints
-├── provider-node-server/        # Provider node (runs per provider)
-│   ├── src/
-│   │   ├── index.ts             # Workload execution server
-│   │   └── k8s-client.ts        # Kubernetes client wrapper
-│   └── README.md                # Provider deployment guide
-├── contract/                    # Smart contracts (Solidity)
-│   ├── contracts/               # WorkloadRegistry, ProviderRegistry, etc.
-│   ├── scripts/                 # Deployment scripts
-│   └── test/                    # Contract tests
-├── shared/                      # Shared types & ABIs
-│   ├── abi/                     # Contract ABIs (auto-generated)
-│   ├── addresses.*.json         # Deployed contract addresses
-│   └── contracts.ts             # Contract address exports
-└── DEPIN_MIGRATION.md          # Migration documentation
-```
-
-### Architecture Components
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                 Blockchain (Base Sepolia)               │
-│  • WorkloadRegistry  • ProviderRegistry  • Rewards     │
-└────────────────────┬────────────────────────────────────┘
-                     │ Events, state, transactions
-      ┌──────────────┴─────────────────┐
-      │                                │
-      ↓                                ↓
-┌──────────────────┐          ┌─────────────────────────┐
-│   Orchestrator   │          │  Provider Node          │
-│   (client/api)   │          │  (per provider)         │
-│                  │          │                         │
-│ • Event listener │──HTTP───>│ • Workload execution   │
-│ • Placement algo │ /deploy  │ • K8s management       │
-│ • SDL parsing    │          │ • Status reporting     │
-└──────────────────┘          └──────────┬──────────────┘
-                                         │ kubectl/K8s API
-                                         ↓
-                              ┌────────────────────────┐
-                              │  Kubernetes Cluster(s) │
-                              │  • Tenant workloads    │
-                              │  • Isolated namespaces │
-                              └────────────────────────┘
-```
-
-**Key design principle:** Provider nodes run **outside** Kubernetes for security isolation,
-similar to Akash's architecture. See [Provider Node README](./provider-node-server/README.md).
-
-## 🔑 Key Features
-
-### Provider Registration
-1. Fill in node details (hardware specs, location, etc.)
-2. Upload metadata to IPFS
-3. Approve CLD token bond (1000 CLD)
-4. Register on-chain with pubKeyHash + IPFS CID
-5. Start earning from compute jobs
-
-### Contract Interaction
-- Rewards settle on-chain in hourly testnet epochs (no staking; planted tasks and lane-B vesting act as the bond)
-- Real-time blockchain events
-- PoUW certificates verified by the orchestrator on testnet; zkSNARK on-chain verification is the mainnet milestone
-- Transparent on-chain data
-
-### IPFS Metadata Storage
-- Detailed hardware specifications
-- Location information
-- Provider description
-- Immutable and verifiable
-
-## 💰 Tokenomics
-
-### CLD Token
-- **Initial Supply**: 1,000,000 CLD
-- **Distribution**: 80% Treasury, 20% Team
-
-### Provider Bond
-- **Amount**: 1000 CLD per node
-- **Fee Split**: 80% Treasury, 20% Team
-- **Max Nodes**: 10 per wallet
-
-## 🔗 Smart Contracts
-
-### CLDToken
-ERC-20 token with minting and burning capabilities.
-
-### ProviderRegistry
-Minimal on-chain registry storing:
-- Owner address
-- Public key hash (node ID)
-- IPFS CID (metadata pointer)
-- Bond amount
-- Status (Registered/Active/Inactive)
-
-### JobEscrow
-Escrow system for job payments with:
-- Job creation and deposits
-- Usage reporting (EIP-712 signatures)
-- Provider earnings tracking
-- User refund management
-
-## 🌐 Network
-
-- **Chain**: Base Sepolia Testnet
-- **Chain ID**: 84532
-- **RPC**: https://sepolia.base.org
-- **Explorer**: https://sepolia.basescan.org
-
-## 📝 Environment Variables
-
-```env
-# Required
-VITE_WALLET_CONNECT_PROJECT_ID=your_project_id
-
-# Optional (for production IPFS)
-VITE_PINATA_JWT=your_pinata_jwt
-VITE_PINATA_GATEWAY=your_gateway_url
-```
-
-## 🧪 Testing
-
-```bash
-# Frontend type checking
-npm run check
-
-# Smart contract tests
-cd contract
-npx hardhat test
-```
-
-## 📚 Documentation
-
-- [Provider Architecture](./PROVIDER_ARCHITECTURE.md) - **Why providers run outside K8s (recommended reading)**
-- [Provider Node Deployment](./provider-node-server/README.md) - Production deployment guide
-- [Orchestrator Design](./ORCHESTRATOR_CONTRACT_ADDRESS_DESIGN.md) - Contract address architecture
-- [DePIN Migration Guide](./DEPIN_MIGRATION.md) - Complete migration documentation
-
-## 🛠️ Development
-
-### Adding New Features
-1. Update smart contracts if needed
-2. Deploy and update ABIs
-3. Create/update contract hooks in `client/src/lib/contracts.ts`
-4. Build UI components
-5. Test end-to-end
-
-### IPFS Integration
-Current implementation uses mock IPFS. For production:
-
-```typescript
-// Install Pinata SDK
-npm install pinata-web3
-
-// Update client/src/lib/api.ts
-import { PinataSDK } from "pinata-web3";
-
-const pinata = new PinataSDK({
-  pinataJwt: process.env.VITE_PINATA_JWT,
-  pinataGateway: process.env.VITE_PINATA_GATEWAY,
-});
-
-export async function uploadToIPFS(metadata: ProviderMetadata) {
-  const upload = await pinata.upload.json(metadata);
-  return upload.IpfsHash;
-}
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## 📄 License
-
-Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Versions published before 2026-10-17 were released under the MIT License.
-
-## 🔐 Security
-
-- Smart contracts use OpenZeppelin libraries
-- EIP-712 signatures for usage reports
-- Access control for privileged functions
-- Reentrancy guards on financial functions
-
-## 🚨 Important Notes
-
-- This is a testnet MVP - not audited for production
-- Use testnet tokens only
-- Smart contracts are upgradeable (UUPS pattern available)
-- IPFS integration is currently mocked for development
-
-## 📞 Support
-
-For issues and questions:
-- Open a GitHub issue
-- Check existing documentation
-- Review smart contract comments
-
----
-
-**Built with ❤️ for the DePIN ecosystem**
-
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Versions published before 2026-10-17 were released
+under the MIT License.
