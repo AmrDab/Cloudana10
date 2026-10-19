@@ -9,7 +9,7 @@ Cloudflare or chain credentials, and no outbound access to `cloudana.io`, `*.wor
 | Package | Command | Result | Notes |
 |---|---|---|---|
 | client/api | `npm run type-check` | clean | |
-| client/api | `npm test` (vitest) | **36 files, 340 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee) |
+| client/api | `npm test` (vitest) | **37 files, 343 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind) |
 | gateway | `npx tsc --noEmit && npx vitest run` | clean; **28 passed** | |
 | relay | same | clean; **14 passed** | includes workerd e2e (`test/workerd.e2e.ts`) |
 | keeper | same | clean; **28 passed** | tree vector fixture + run state machine |
@@ -84,10 +84,25 @@ hash that anyone can confirm with `eth_getBlockByHash`; the script then passes f
   10 min (static) / 60 min (container), skips the node, owes it a stop, fails after three nodes and frees the hold;
   rows waiting for sealed secrets are not counted.
 
+## 3b. Heartbeat D1 cost (backlog B-5), measured
+
+`client/api/tests/heartbeat-cost.test.ts` wraps the test database in a counting proxy and pins the number of
+statements one `POST /v1/nodes/heartbeat` executes. Measured in this pass, same test, before and after the change:
+
+| Heartbeat | Before | After |
+|---|---|---|
+| idle bound node (nothing live, nothing queued) | 13 statements / 12 round trips | **5 / 4** |
+| node with one running site, probe due | 15 / 14 | 10 / 9 |
+| node with one running site, steady (probe not due) | 13 / 12 | **5 / 4** |
+
+The remaining five: one node update (liveness + relay flag + version in one statement), one node read, one
+"activity" statement that counts what there is to do, and the two-statement nonce batch (sweep + insert, one round
+trip). At 1,000 nodes on 15 s beats that is ≈ 270 round trips/s instead of ≈ 800; the write path is still one D1.
+
 ## 4. Load, fault injection, container isolation, browser
 
 Not run. No load test exists in the repository; the D1 cost model in `ENGINEERING_BASELINE.md` §8 is from code
-reading. Fault injection is limited to the unit tests above (dead node, stuck start, probe failures, relay socket loss
+reading, and the per-heartbeat count above is a unit measurement, not a load measurement. Fault injection is limited to the unit tests above (dead node, stuck start, probe failures, relay socket loss
 in the relay selftests). Container isolation is asserted by the agent's security selftest against a fake Docker
 (argument-level), not by running a container. The console was built but not opened in a browser in this pass.
 

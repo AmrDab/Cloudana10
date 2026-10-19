@@ -26,6 +26,8 @@ export interface NodeRow {
   /** /24 or /48 and ASN last seen (storage copy placement; docs/V4_STORAGE_PHASE1_CONTRACT.md). */
   net_prefix?: string | null;
   asn?: number | null;
+  /** Last heartbeat that reported an open relay socket (docs/V4_RELAY_CONTRACT.md). */
+  relay_at?: number | null;
   bound_at: number | null;
   last_seen: number | null;
 }
@@ -230,8 +232,35 @@ export async function listNodesForPayout(payout: string, now = Date.now()): Prom
   }));
 }
 
-export async function touchNode(address: string): Promise<void> {
-  await getD1().prepare("UPDATE nodes SET last_seen = ? WHERE address = ?").bind(Date.now(), normalizeAddress(address)).run();
+/**
+ * One heartbeat write: last_seen always; relay_at when the agent reports its relay socket open; agent_version when the
+ * heartbeat carries one (a changed value is simply overwritten). One statement instead of three per beat (B-5).
+ */
+export async function touchNode(address: string, opts: { relay?: boolean; agentVersion?: string | null; now?: number } = {}): Promise<void> {
+  const now = opts.now ?? Date.now();
+  await getD1()
+    .prepare("UPDATE nodes SET last_seen = ?, relay_at = COALESCE(?, relay_at), agent_version = COALESCE(?, agent_version) WHERE address = ?")
+    .bind(now, opts.relay ? now : null, opts.agentVersion ?? null, normalizeAddress(address))
+    .run();
+}
+
+export type UnbindResult = { ok: true; requeued: number } | { ok: false; code: "not_found"; message: string };
+
+/**
+ * The payout wallet lets a node go (B-10): payout, fleet and binding cleared, its live deployments re-queued for
+ * other nodes, a fresh bind code on its next announce. Pending earnings stay with the wallet that earned them. A
+ * node bound to another wallet (or unknown) is reported as not found, like every other cross-tenant read.
+ */
+export async function unbindOwnNode(payout: string, address: string, now = Date.now()): Promise<UnbindResult> {
+  const nodeKey = normalizeAddress(address);
+  const r = await getD1()
+    .prepare("UPDATE nodes SET payout = NULL, fleet_id = NULL, bound_at = NULL, bind_code = NULL WHERE address = ? AND payout = ?")
+    .bind(nodeKey, normalizeAddress(payout))
+    .run();
+  if ((r.meta?.changes ?? 0) === 0) return { ok: false, code: "not_found", message: "no such node is bound to this wallet" };
+  const { requeueNodeDeployments } = await import("./deployment-duties.service.js");
+  const requeued = await requeueNodeDeployments([nodeKey], "node unbound by its owner", now);
+  return { ok: true, requeued };
 }
 
 /** EMA weight for a new throughput sample. */

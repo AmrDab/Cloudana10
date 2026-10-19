@@ -14,11 +14,11 @@ import { requireNode, type NodeVariables } from "../../middleware/node-auth.js";
 import { rateLimit, trustedClientIp, verifiedNodeKey } from "../../middleware/rate-limit.js";
 import type { AuthVariables } from "../../middleware/auth.js";
 import { EthAddressSchema } from "../../schemas/common.schema.js";
-import { announceNode, bindNode, bindNodeToFleet, getNode, listNodesForPayout, touchNode } from "../../services/nodes.service.js";
+import { announceNode, bindNode, bindNodeToFleet, getNode, listNodesForPayout, touchNode, unbindOwnNode } from "../../services/nodes.service.js";
 import { fleetForToken } from "../../services/fleets.service.js";
 import { getActiveAssignment } from "../../services/jobs.service.js";
 import { workTypeIds } from "../../services/work-types.js";
-import { runDeploymentDuties } from "../../services/deployment-duties.service.js";
+import { nodeActivity, runDeploymentDuties } from "../../services/deployment-duties.service.js";
 import { endpointAllowed } from "../../services/deployment-spec.js";
 import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
 import { STORAGE_CAPABILITY, recordNodeNetwork, storageCapable, storageInstructions } from "../../services/storage.service.js";
@@ -244,27 +244,29 @@ const heartbeatRoute = createRoute({
 
 nodesRouter.openapi(heartbeatRoute, async (c) => {
   const node = c.get("node");
-  await touchNode(node);
+  const now = Date.now();
   const body = (c.get("nodeBody") ?? {}) as { agentVersion?: unknown; relay?: unknown };
-  // The agent's relay socket is open (and answered a ping recently): relayed placement may use this node.
-  if (body.relay === true) await getD1().prepare("UPDATE nodes SET relay_at = ? WHERE address = ?").bind(Date.now(), node).run();
+  const reported = typeof body.agentVersion === "string" && SEMVER.test(body.agentVersion) ? body.agentVersion : null;
+  // One write per beat: liveness, the relay socket being open (relayed placement may use this node), the agent version.
+  await touchNode(node, { relay: body.relay === true, agentVersion: reported, now });
   const row = await getNode(node);
   if (row) await recordNodeNetwork(node, trustedClientIp(c), cfAsn(c), row);
-  const version = typeof body.agentVersion === "string" && SEMVER.test(body.agentVersion) ? body.agentVersion : row?.agent_version ?? null;
-  if (row && version && version !== row.agent_version) {
-    await getD1().prepare("UPDATE nodes SET agent_version = ? WHERE address = ?").bind(version, node).run();
-  }
+  const version = reported ?? row?.agent_version ?? null;
   const allowed = agentVersionAllowed(version);
-  let deployments = await runDeploymentDuties(node).catch((err) => {
-    log.api.warn("[nodes] deployment duties on heartbeat failed:", err);
-    return [];
-  });
+  // One statement says what this node has to do; idle nodes skip every scan (deployment-duties B-5).
+  const activity = row ? await nodeActivity(node, now) : null;
+  let deployments = row && activity
+    ? await runDeploymentDuties(node, now, { row, activity }).catch((err) => {
+        log.api.warn("[nodes] deployment duties on heartbeat failed:", err);
+        return [];
+      })
+    : [];
   // Below the minimum version: no new work (stops and purges still go out so the node winds down cleanly).
   if (!allowed) deployments = deployments.filter((d) => d.action !== "start");
   // Storage-capable nodes get a third signed key; others keep the exact { assignment, deployments } body 1.3.x verifies.
   const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed).catch(() => null) : null;
   const instructions = {
-    assignment: allowed ? await getActiveAssignment(node) : null,
+    assignment: allowed && activity && activity.assignedJobs > 0 ? await getActiveAssignment(node) : null,
     deployments,
     ...(storage ? { storage } : {}),
   };
@@ -353,3 +355,23 @@ const mineRoute = createRoute({
 });
 
 nodesRouter.openapi(mineRoute, async (c) => ok(c, { nodes: await listNodesForPayout(c.get("jwtPayload").sub) }));
+
+const unbindRoute = createRoute({
+  method: "delete",
+  path: "/nodes/mine/{address}",
+  tags: TAGS,
+  description:
+    "Let a node go: its payout binding (and fleet) is cleared, its live deployments are re-queued for other nodes, and " +
+    "it prints a fresh bind link on its next announce. Earnings already recorded stay with this wallet. 404 when no such " +
+    "node is bound to the caller.",
+  security: BEARER_AUTH,
+  request: { params: z.object({ address: EthAddressSchema }) },
+  responses: responses({ 200: json(z.object({ status: z.literal("success"), unbound: z.string(), requeued: z.number().int() }), "Unbound") }, 400, 401, 404),
+});
+
+nodesRouter.openapi(unbindRoute, async (c) => {
+  const address = c.req.valid("param").address;
+  const r = await unbindOwnNode(c.get("jwtPayload").sub, address);
+  if (!r.ok) return fail(c, r.code, r.message);
+  return ok(c, { unbound: address.toLowerCase(), requeued: r.requeued });
+});

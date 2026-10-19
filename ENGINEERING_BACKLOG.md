@@ -50,11 +50,12 @@ unit test that fails when a service is "live" in the list but not in the matrix)
 
 ### P1
 
-**B-5 · Measure and cut the heartbeat's D1 cost (gap 3).** Baseline a 50-node simulation against `wrangler dev
---local` (statements per minute via a counting D1 wrapper); batch per-node duties into one `db.batch`; skip the
-assign/probe/bill scans for nodes with no live deployments (cheap `EXISTS` first); coalesce `last_seen`/`relay_at`
-into one write; consider 30 s heartbeats. Acceptance: ≤ 4 statements per idle heartbeat, ≤ 8 with live deployments,
-measured and recorded in `TEST_EVIDENCE.md`; no behaviour change in the 334 tests.
+**B-5 · Measure and cut the heartbeat's D1 cost (gap 3).** **First half done** (PROGRESS.md commit 10): measured
+with a counting D1 wrapper (idle 13 → 5 statements, steady busy 13 → 5, probing beat 15 → 10; pinned by
+`tests/heartbeat-cost.test.ts`). Left: a multi-node load run against `wrangler dev --local` recorded in
+`TEST_EVIDENCE.md`; liveness/relay flags off D1 (KV or a Durable Object) and 30 s beats if the owner accepts the
+slower dead-node detection. Acceptance for the rest: 50 simulated nodes for 10 minutes without D1 errors, statements
+per minute recorded.
 
 **B-6 · Verification cost (gap 5).** Freivalds on every job (n²), full transcript re-execution on a random 1-in-k
 with the job's earnings delayed until the check and clawed on failure (`docs/POUW_REVIEW.md` §7). Acceptance:
@@ -76,8 +77,8 @@ fleet the owner selected by id, never a node); assignment honours it; the consol
 sealed. Acceptance: a pinned deployment is never assigned outside the fleet (test), and the sealing UI shows the
 fleet name next to the node address.
 
-**B-10 · Home-node unbind and re-bind.** `DELETE /v1/nodes/mine/{address}` clears payout (live work re-queued, pending
-earnings stay with the old payout). Acceptance: tested; the agent prints a fresh bind link after.
+**B-10 · Home-node unbind and re-bind.** **Done in this pass** (PROGRESS.md commit 10): `DELETE /v1/nodes/mine/{address}`;
+test in `v1-network-nodes.test.ts`. The agent already prints a fresh bind link when its announce comes back unbound.
 
 **B-11 · Ledger invariant: no reward without a captured fee.** **Done in this pass** (PROGRESS.md commit 9): capture
 first, rewards only when it succeeded; test "no reward without a captured fee" in `v1-submit.test.ts`.

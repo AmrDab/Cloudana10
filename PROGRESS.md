@@ -96,11 +96,26 @@ the `CURRENT_AGENT_VERSION` comment.
   the chain — they are the same leaves, and the keeper refuses a mismatch.
 - **Deployment.** Additive column via `ensureSchema()`; two new public routes rate-limited at 60/min per IP; API deploy.
 
+### 10 · heartbeat cost measured and cut (B-5); home-node unbind (B-10)
+- **Measured first.** `tests/heartbeat-cost.test.ts` counts D1 statements per heartbeat through a proxy: idle 13 / 12
+  round trips, busy 15 / 14 (TEST_EVIDENCE.md §3b).
+- **Change.** `touchNode` writes liveness, the relay flag and the agent version in one statement; the heartbeat
+  passes its node row into the duties instead of re-reading it; a single `nodeActivity` statement counts what there is
+  to do (live rows, workstations, billable hours, due probes, queued sites/containers, owed stops, stale stops, unexpired
+  matmul assignments) and the auto-stop / assign / probe / bill scans and the instruction and assignment reads run
+  only when it says so. After: idle **5 / 4**, steady busy **5 / 4**, probing beat 10 / 9. The budgets are pinned in
+  the test; raising them is a deliberate act.
+- **Unbind.** `DELETE /v1/nodes/mine/{address}` (JWT): clears payout/fleet/binding, re-queues the node's live
+  deployments, 404 for anyone else's node; earnings stay with the wallet; the next announce issues a fresh bind code.
+- **Tests / results.** API 343/343 (+1 unbind, +2 cost); behaviour suites unchanged.
+- **Residual.** Still one D1 for everything; the nonce batch is two statements by design (sweep + atomic insert).
+  Next step for scale is a KV/DO-backed liveness store and 30 s beats (owner decision on the agent cadence).
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **340** |
+| client/api vitest | 330 | **343** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | 8 pass (sealed now 26 checks) |
 | contracts | 224 (offline solc) | 224 |
@@ -113,7 +128,7 @@ the `CURRENT_AGENT_VERSION` comment.
 |---|---|---|
 | 1 | No live settlement | **Owner** (runbook 3–6). Engineering side ready: contracts tested, keeper tested, deposit watcher inactive until `SETTLEMENT_ADDRESS`. |
 | 2 | Nothing publicly reachable | **Owner** (runbook 8–10). Gateway/relay tested; hosting labelled early access until then. |
-| 3 | D1 heartbeat cost | Open (B-5), documented with the statement count. |
+| 3 | D1 heartbeat cost | Measured and cut 13 → 5 statements per idle/steady beat (commit 10, pinned by a test); the architecture limit (one D1) remains. |
 | 4 | Orchestrator not independently checkable | Largely closed for phase 1: draws published with their eligible set (`GET /v1/draws/{id}`), epochs published with leaves and a signature (`GET /v1/epochs/{n}`), `/v1/network` signed, `scripts/verify/replay.ts` checks all of it from public data; seeds are block hashes once `CHAIN_RPC_URL` deploys. Left: signing individual draws, pull-based assignment (B-17). |
 | 5 | Verification cost = work cost | Open (B-6). |
 | 6 | Auth without revocation/scopes | Open (B-7). |
@@ -138,9 +153,9 @@ the `CURRENT_AGENT_VERSION` comment.
 
 ## Next priorities (engineering, no owner input needed)
 
-B-5 measure and cut heartbeat cost → B-12 per-replica sealing in the console → B-7 API keys and token lifecycle →
-B-13 retire direct mode / resolve-and-pin → B-14 container logs through the relay → B-15 custom domains → B-8 node
-state model and draining.
+B-12 per-replica sealing in the console → B-7 API keys and token lifecycle → B-13 retire direct mode /
+resolve-and-pin → B-14 container logs through the relay → B-15 custom domains → B-8 node state model and draining →
+B-5 follow-up (liveness off D1, 30 s beats) once a real load test exists.
 
 ## Not done, and why
 

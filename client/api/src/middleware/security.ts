@@ -61,6 +61,7 @@ export function applySecurity(app: AnyHono): void {
   app.on("POST", "/v1/nodes/bind", rateLimit({ bucket: "nodes-bind", limit: 10, windowSec: 60 }));
   // Providers: the caller's own nodes and datacenter fleet tokens.
   app.use("/v1/nodes/mine", requireAuth);
+  app.use("/v1/nodes/mine/*", requireAuth);
   app.use("/v1/fleets", requireAuth);
   app.use("/v1/fleets/*", requireAuth);
   app.on("POST", "/v1/fleets", rateLimit({ bucket: "fleets-create", limit: 10, windowSec: 3600 }));

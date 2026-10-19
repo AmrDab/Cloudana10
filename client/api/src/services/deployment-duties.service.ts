@@ -761,40 +761,106 @@ async function instructions(node: string): Promise<NodeInstruction[]> {
   return [...all.filter((i) => i.action !== "start"), ...all.filter((i) => i.action === "start")];
 }
 
-/** Everything a heartbeat does for hosting (per-node duties only). Unbound nodes get no new work but still receive stops. */
-export async function runDeploymentDuties(node: string, now = Date.now()): Promise<NodeInstruction[]> {
+/** The node columns the per-node duties read (a NodeRow has them; the heartbeat passes its own read in). */
+export interface DutiesNodeRow {
+  payout: string | null;
+  work_types: string | null;
+  manifest_json: string | null;
+  fleet_id?: string | null;
+  relay_at?: number | null;
+  public_host?: string | null;
+  agent_version?: string | null;
+}
+
+/**
+ * What there is to do for one node, in one statement (B-5): every per-node duty below scans a table, and on an idle
+ * node every scan comes back empty. Counting first costs one round trip and lets the idle heartbeat skip the rest.
+ */
+export interface NodeActivity {
+  /** Live deployments (assigned / running / unreachable) on this node. */
+  live: number;
+  /** Running or unreachable workstations (auto-stop candidates). */
+  workstations: number;
+  /** Running rows with a full hour since last_billed_at. */
+  billable: number;
+  /** Running / unreachable rows whose probe is due. */
+  probeDue: number;
+  /** Queued static sites and queued container rows (any owner) — the only thing assign() could pick up. */
+  queuedStatic: number;
+  queuedContainer: number;
+  /** Instructions owed: assigned rows ("start") and stopped/failed rows the node has not confirmed ("stop"/"purge"). */
+  owed: number;
+  /** Stops owed for deployments taken from this node while it was offline. */
+  stale: number;
+  /** Unexpired matmul assignments for this node (jobs.service getActiveAssignment would return one). */
+  assignedJobs: number;
+}
+
+export async function nodeActivity(node: string, now = Date.now()): Promise<NodeActivity> {
+  const env = getEnv();
   const row = await getD1()
-    .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host, agent_version FROM nodes WHERE address = ?")
-    .bind(node)
-    .first<{
-      payout: string | null;
-      work_types: string | null;
-      manifest_json: string | null;
-      fleet_id: string | null;
-      relay_at: number | null;
-      public_host: string | null;
-      agent_version: string | null;
-    }>();
+    .prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status IN ${LIVE}) AS live,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND workstation = 1 AND status IN ('running','unreachable') AND started_at IS NOT NULL) AS workstations,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status = 'running' AND last_billed_at IS NOT NULL AND last_billed_at <= ?2) AS billable,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status IN ('running','unreachable') AND (endpoint IS NOT NULL OR relayed = 1) AND (last_probe_at IS NULL OR last_probe_at <= ?3)) AS probeDue,
+        (SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND kind = 'static') AS queuedStatic,
+        (SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND kind = 'container' AND replicas = 0) AS queuedContainer,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND (status = 'assigned' OR (status IN ('stopped','failed') AND stop_acked_at IS NULL))) AS owed,
+        (SELECT COUNT(*) FROM deployment_stale_nodes WHERE node = ?1) AS stale,
+        (SELECT COUNT(*) FROM work_jobs WHERE node = ?1 AND status = 'assigned' AND expires_at >= ?4) AS assignedJobs`,
+    )
+    .bind(node, now - HOUR_MS, now - env.DEPLOY_PROBE_SECONDS * 1000, now)
+    .first<NodeActivity>();
+  return row ?? { live: 0, workstations: 0, billable: 0, probeDue: 0, queuedStatic: 0, queuedContainer: 0, owed: 0, stale: 0, assignedJobs: 0 };
+}
+
+/**
+ * Everything a heartbeat does for hosting (per-node duties only). Unbound nodes get no new work but still receive
+ * stops. `ctx.row` and `ctx.activity` let the heartbeat pass in what it already read; otherwise they are fetched here.
+ */
+export async function runDeploymentDuties(
+  node: string,
+  now = Date.now(),
+  ctx: { row?: DutiesNodeRow | null; activity?: NodeActivity } = {},
+): Promise<NodeInstruction[]> {
+  const row =
+    ctx.row !== undefined
+      ? ctx.row
+      : await getD1()
+          .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host, agent_version FROM nodes WHERE address = ?")
+          .bind(node)
+          .first<DutiesNodeRow>();
   if (!row) return [];
+  const act = ctx.activity ?? (await nodeActivity(node, now));
   const hw = JSON.parse(row.manifest_json ?? "{}") as NodeHardware;
   const caps = JSON.parse(row.work_types ?? "[]") as string[];
   // A relay node takes new hosting work only while its socket is up (fresh `relay: true` heartbeat); a legacy node
   // kept its hosting capabilities only with a verified public host (routes/v1/nodes.ts announce).
   const relayed = caps.includes("relay");
   const reachable = !relayed || (row.relay_at ?? 0) >= now - getEnv().RELAY_FRESH_SECONDS * 1000;
-  const steps: [string, () => Promise<unknown>][] = [
-    ["auto-stop", () => autoStop(node, now)],
-    ["assign", () => (row.payout && reachable ? assign(node, caps, hw, row.fleet_id, now, relayed, !!row.public_host, row.agent_version) : Promise.resolve())],
-    ["probe", () => probe(node, now)],
-    ["bill", () => bill(node, now)],
+  const couldAssign =
+    !!row.payout && reachable && ((act.queuedStatic > 0 && caps.includes("hosting")) || (act.queuedContainer > 0 && caps.includes("container") && !!row.fleet_id));
+  const steps: [string, boolean, () => Promise<unknown>][] = [
+    ["auto-stop", act.workstations > 0, () => autoStop(node, now)],
+    ["assign", couldAssign, () => assign(node, caps, hw, row.fleet_id ?? null, now, relayed, !!row.public_host, row.agent_version ?? null)],
+    ["probe", act.probeDue > 0, () => probe(node, now)],
+    ["bill", act.billable > 0, () => bill(node, now)],
   ];
-  for (const [name, step] of steps) {
+  // Any step that ran may have changed what is owed (assign claims a start; auto-stop, a failed probe or an empty
+  // balance owe a stop): then the instructions are read regardless of the snapshot taken before.
+  let ran = false;
+  for (const [name, due, step] of steps) {
+    if (!due) continue;
+    ran = true;
     try {
       await step();
     } catch (err) {
       log.api.warn(`[deployments] ${name} on heartbeat failed:`, err);
     }
   }
+  if (!ran && act.owed === 0 && act.stale === 0) return [];
   return instructions(node);
 }
 
