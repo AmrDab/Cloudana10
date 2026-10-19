@@ -29,15 +29,7 @@ export function applySecurity(app: AnyHono): void {
   app.use("/v1/ipfs/*", rateLimit({ bucket: "ipfs", limit: 30, windowSec: 60 }));
   app.use("/v1/ipfs/*", requireAuth);
 
-  // Orchestrator-only surfaces (mounted on Node; harmless to declare on both).
   // Default-deny: every path a router exposes is listed here, not just the prefix.
-  app.use("/v1/build-provider", requireAuth);
-  app.use("/v1/build-provider/*", requireAuth);
-  app.use("/v1/build-provider-status/*", requireAuth);
-  app.use("/v1/update-provider-attributes", requireAuth);
-  app.use("/v1/orchestration/*", requireAuth);
-  app.use("/v1/deploy", requireAuth);
-  app.use("/v1/deploy/*", requireAuth);
   app.use("/v1/deployments", requireAuth);
   // GET /v1/deployments/:id/route skips JWT: the hosting gateway authenticates with X-Internal-Key (route-level).
   const isPublicRoute = (c: Context) => c.req.method === "GET" && /^\/v1\/deployments\/[^/]+\/route$/.test(c.req.path);
@@ -53,13 +45,6 @@ export function applySecurity(app: AnyHono): void {
     isPublicRoute(c) ? routeRead(c, next) : c.req.method === "GET" ? deployRead(c, next) : deployWrite(c, next);
   app.use("/v1/deployments", deployLimit);
   app.use("/v1/deployments/*", deployLimit);
-  // Node-only provider verification router (routes/v1/verify.ts). Listed per
-  // path so the public browser-verifier feed (/v1/verify/task, /verdict) stays open.
-  app.use("/v1/verify/control-machine", requireAuth);
-  app.use("/v1/verify/control-and-worker", requireAuth);
-  app.use("/v1/verify/open-ports", requireAuth);
-  app.use("/v1/verify/dns", requireAuth);
-
   // ── v1 work pipeline ──────────────────────────────────────────────────────
   // Users (JWT).
   app.use("/v1/account", requireAuth);

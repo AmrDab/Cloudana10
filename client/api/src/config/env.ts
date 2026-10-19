@@ -33,32 +33,15 @@ export const envSchema = z.object({
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
   INTERNAL_API_KEY: z.string().min(16).optional(),
 
-  // ── Chain ────────────────────────────────────────────────────────────────
+  // ── Chain (read-only; the API Worker holds no chain key) ──────────────────
   CHAIN_NETWORK: z.enum(["baseSepolia", "base"]).default("baseSepolia"),
   CHAIN_ID: z.coerce.number().int().optional(),
+  /** Generic read-only RPC fallback (config/contracts.ts getRpcUrl); CHAIN_RPC_URL below takes precedence. */
   RPC_URL: z.string().url().optional(),
-  ORCHESTRATOR_CHAIN_RPC_URL: z.string().url().optional(),
-  ORCHESTRATOR_CHAIN_WSS_URL: z.string().optional(),
-  ORCHESTRATOR_RPC_TRANSPORT: z.enum(["http", "websocket"]).default("http"),
-  ORCHESTRATOR_WEBSOCKET_RETRY_COUNT: int(3),
-  ORCHESTRATOR_WEBSOCKET_RETRY_DELAY: int(3000),
-  ORCHESTRATOR_PRIVATE_KEY: hex32.optional(),
 
-  // ── Contracts (addresses default from shared/addresses.*.json in config/contracts.ts) ──
-  REWARD_CONTRACT_ADDRESS: address.optional(),
-  CLD_TOKEN_ADDRESS: address.optional(),
-  CLD_TREASURY_ADDRESS: address.optional(),
-
-  // ── Orchestrator loops ───────────────────────────────────────────────────
-  ORCHESTRATOR_EVENT_DRIVEN_ENABLED: flag(true),
-  ORCHESTRATOR_EVENT_DEBOUNCE_MS: int(2000),
-  ORCHESTRATOR_POLL_ENABLED: flag(false),
-  ORCHESTRATOR_POLL_INTERVAL_MS: int(60_000),
-  ORCHESTRATOR_DEPLOY_TIMEOUT_MS: int(15_000),
-  ORCHESTRATOR_TERMINATE_TIMEOUT_MS: int(15_000),
-  WORKLOAD_STATUS_POLLING_ENABLED: flag(true),
-  WORKLOAD_STATUS_POLL_INTERVAL_MS: int(15_000),
-  WORKLOAD_STATUS_CACHE_TTL_MS: int(60_000),
+  // ── Node runtime (src/index.ts) ──────────────────────────────────────────
+  /** Run the Worker's cron duties on a 60 s timer (dead-node requeue, start timeouts, assignment, price, deposits). */
+  NODE_CRON_ENABLED: flag(true),
 
   // ── v1 work pipeline (docs/BUILD_SPEC_V1.md) ────────────────────────────
   /** Enables POST /v1/dev/credits. Never set in production. */
@@ -149,31 +132,6 @@ export const envSchema = z.object({
   PINATA_JWT: z.string().optional(),
   PINATA_GATEWAY: z.string().url().default("https://gateway.pinata.cloud/ipfs/"),
   IPFS_GATEWAY: z.string().url().default("https://gateway.pinata.cloud"),
-
-  // ── Akash bridge ─────────────────────────────────────────────────────────
-  AKASH_BRIDGE_ENABLED: flag(false),
-  AKASH_MNEMONIC: z.string().optional(),
-  AKASH_RPC_URL: z.string().url().default("https://rpc.akashnet.net:443"),
-  AKASH_REST_URL: z.string().url().default("https://api.akashnet.net"),
-  AKASH_LCD_URL: z.string().url().default("https://rest.cosmos.directory/akash"),
-  AKASH_CHAIN_ID: z.string().default("akashnet-2"),
-  AKASH_NETWORK: z.string().optional(),
-  AKASH_GAS_PRICE: z.string().default("0.025uakt"),
-  AKASH_DEPOSIT_UAKT: z.string().default("500000"),
-  AKASH_BID_TIMEOUT_MS: int(120_000),
-  AKASH_NODE_STATUS_CHECK: z.string().default(""),
-  AKASH_VERSION: z.string().default("v1.0.0"),
-
-  // ── Provider build toolchain ─────────────────────────────────────────────
-  HELM_VERSION: z.string().optional(),
-  INGRESS_NGINX_VERSION: z.string().default("4.11.3"),
-  PROVIDER_SERVICES_VERSION: z.string().default("v0.10.1"),
-  PROVIDER_PRICE_SCRIPT_URL: z
-    .string()
-    .url()
-    .default(
-      "https://raw.githubusercontent.com/akash-network/helm-charts/main/charts/akash-provider/scripts/price_script_generic.sh"
-    ),
 });
 
 export type Env = z.infer<typeof envSchema>;

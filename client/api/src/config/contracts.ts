@@ -1,9 +1,10 @@
 /**
- * Contract addresses and chain config for orchestrator backend.
+ * Contract addresses and chain config.
  *
- * Supports two modes:
- *   1. Inlined data (Cloudflare Workers) — imports from lib/addresses-data.ts
- *   2. Filesystem fallback (Node.js) — reads shared/addresses.{network}.json
+ * Addresses come inlined (lib/addresses-data.ts, generated from shared/addresses.*.json) so the Worker needs no
+ * filesystem. Every address currently listed is a legacy contract under a compromised key and is read-only
+ * (routes/v1/pouw.ts shows historical certificates); the v2 token and settlement are not deployed yet
+ * (docs/OWNER_RUNBOOK.md step 4). The API Worker holds no chain key.
  */
 import { addresses as inlinedAddresses } from "../lib/addresses-data.js";
 import { log } from "../lib/logger.js";
@@ -12,7 +13,6 @@ import { getEnv } from "./env.js";
 const L = log.config;
 
 function loadAddresses(): Record<string, string> {
-  // Use inlined addresses (works in Workers and Node.js)
   const data = inlinedAddresses;
   if (!data.contracts) {
     throw new Error("Invalid inlined addresses data — missing contracts field.");
@@ -24,31 +24,12 @@ function loadAddresses(): Record<string, string> {
 // Doesn't touch process.env, so this stays eager.
 export const contractAddresses = loadAddresses();
 
-// Everything below is sourced from getEnv(), which must not run at import
-// time (the Worker bridges env into process.env per request) — so these are
-// functions, not top-level consts, and callers invoke them per use.
+// Sourced from getEnv(), which must not run at import time (the Worker bridges env into process.env per request).
 export function getChainId(): number {
   return getEnv().CHAIN_ID ?? 84532;
 }
 
+/** Read-only RPC: the assignment-seed / deposit-watcher URL first, then the generic one, then the public endpoint. */
 export function getRpcUrl(): string {
-  return getEnv().ORCHESTRATOR_CHAIN_RPC_URL ?? getEnv().RPC_URL ?? "https://sepolia.base.org";
-}
-
-// RPC Transport Configuration
-export type RpcTransportMode = 'http' | 'websocket' | 'hybrid';
-export function getRpcTransportMode(): RpcTransportMode {
-  return getEnv().ORCHESTRATOR_RPC_TRANSPORT as RpcTransportMode;
-}
-
-export function getWssUrl(): string {
-  return getEnv().ORCHESTRATOR_CHAIN_WSS_URL ?? "";
-}
-
-export function getWebsocketRetryCount(): number {
-  return getEnv().ORCHESTRATOR_WEBSOCKET_RETRY_COUNT;
-}
-
-export function getWebsocketRetryDelay(): number {
-  return getEnv().ORCHESTRATOR_WEBSOCKET_RETRY_DELAY;
+  return getEnv().CHAIN_RPC_URL ?? getEnv().RPC_URL ?? "https://sepolia.base.org";
 }
