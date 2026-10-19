@@ -496,6 +496,69 @@ describe("dead-node requeue", () => {
   });
 });
 
+describe("start timeout", () => {
+  const MIN = 60_000;
+
+  it("takes back a site a live node never started: re-queued, the node skipped and owed a stop; the 3rd timeout fails it and frees the hold", async () => {
+    const u = await user(1000);
+    const { node: a } = await boundNode(["matmul", "hosting"]);
+    const id = (await (await create(u.jwt)).json()).id as string;
+    await heartbeat(a);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: a.address.toLowerCase(), start_attempts: 0 });
+    // A static site gets 10 minutes; nothing happens before that. (assigned_at is moved into the past rather than the
+    // clock forward: a future `now` would make every node look dead and trip G1 instead.)
+    await shift(id, "assigned_at", 9 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
+    expect((await row(id))!.status).toBe("assigned");
+
+    await shift(id, "assigned_at", 2 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
+    const back = (await row(id))!;
+    expect(back).toMatchObject({ status: "queued", node: null, assigned_at: null, start_attempts: 1, held_ucld: 50 });
+    expect(back.status_reason).toBe(`refused by node ${a.address.toLowerCase()}: did not start it within 10 min`);
+    expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 950, heldUcld: 50 });
+    // The node is still up: it is told to stop whatever it may have started late, and does not get it back.
+    expect((await heartbeat(a)).deployments).toEqual([{ id, action: "stop", kind: "static", spec: null }]);
+    expect((await row(id))!.status).toBe("queued");
+    await signed(a, `/v1/nodes/deployments/${id}/status`, { status: "stopped" });
+
+    // Another node takes it, and also never starts it.
+    const { node: b } = await boundNode(["matmul", "hosting"]);
+    expect((await heartbeat(b)).deployments).toEqual([expect.objectContaining({ id, action: "start" })]);
+    await shift(id, "assigned_at", 11 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
+    expect(await row(id)).toMatchObject({ status: "queued", node: null, start_attempts: 2 });
+
+    // The third node's timeout fails it: hold released, that node owed a stop, the owner sees why.
+    const { node: c } = await boundNode(["matmul", "hosting"]);
+    await heartbeat(c);
+    await shift(id, "assigned_at", 11 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
+    expect(await row(id)).toMatchObject({ status: "failed", status_reason: "not started by 3 nodes within 10 min each", held_ucld: 0, stop_acked_at: null });
+    expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 1000, heldUcld: 0 });
+    expect((await heartbeat(c)).deployments).toEqual([{ id, action: "stop", kind: "static", spec: null }]);
+    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment).toMatchObject({ status: "failed", statusReason: "not started by 3 nodes within 10 min each" });
+    expect(got.events[0].message).toBe("failed: not started by 3 nodes within 10 min each");
+  });
+
+  it("does not count a container that is only waiting for the owner's sealed secrets, and gives containers an hour", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const waiting = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    const started = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
+    await heartbeat(node);
+    expect(await row(waiting)).toMatchObject({ status: "assigned" });
+    expect(await row(started)).toMatchObject({ status: "assigned" });
+    for (const id of [waiting, started]) await shift(id, "assigned_at", 59 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
+    for (const id of [waiting, started]) await shift(id, "assigned_at", 2 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
+    expect(await row(waiting)).toMatchObject({ status: "assigned", start_attempts: 0 });
+    expect(await row(started)).toMatchObject({ status: "queued", start_attempts: 1 });
+  });
+});
+
 describe("probe endpoint policy", () => {
   it("allows loopback only in DEV_MODE", () => {
     expect(endpointAllowed("http://127.0.0.1:42000", true)).toBe(true);

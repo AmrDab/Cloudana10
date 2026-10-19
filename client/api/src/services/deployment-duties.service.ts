@@ -6,6 +6,7 @@
  *   G1. re-queue live deployments of nodes silent for DEAD_NODE_FACTOR × NODE_ACTIVE_SECONDS
  *   G2. preempt the youngest interruptible workstation for on-demand work no online node can take
  *   G3. matmul job assignment (jobs.service runAssignment)
+ *   G4. take back deployments a live node never started within DEPLOY_START_TIMEOUT_*; fail after DEPLOY_START_ATTEMPTS
  *
  * Per-node duties run inside that node's heartbeat (runDeploymentDuties):
  *   N1. auto-stop this node's workstations past maxHours
@@ -145,6 +146,46 @@ export async function requeueDeadNodeDeployments(now = Date.now(), owner?: strin
     .bind(...(owner ? [cutoff, normalizeAddress(owner)] : [cutoff]))
     .all<DeploymentRow>();
   return requeueRows(rows.results ?? [], "node went offline", now);
+}
+
+/**
+ * G4. A deployment that was assigned (its "start" went out on heartbeats) but never reported running or failed within
+ * its start timeout is taken back from that node. Without this a node that keeps heartbeating without starting it
+ * (a wedged agent, a pull that never ends, an image the engine rejects silently) holds the deployment and the owner's
+ * first-hour hold for ever: dead-node re-queue (G1) only fires for silent nodes. It goes back to the queue with that
+ * node recorded as having refused it (assign() skips the node for it) and the node owed a "stop" should it start late;
+ * after DEPLOY_START_ATTEMPTS timeouts on as many nodes it fails and the hold is released. Rows still waiting for the
+ * owner's sealed secrets are not counted: no start was sent.
+ */
+export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
+  const env = getEnv();
+  const db = getD1();
+  const shortest = Math.min(env.DEPLOY_START_TIMEOUT_SECONDS, env.DEPLOY_START_TIMEOUT_STATIC_SECONDS) * 1000;
+  const rows = await db
+    .prepare("SELECT * FROM deployments WHERE status = 'assigned' AND node IS NOT NULL AND assigned_at IS NOT NULL AND assigned_at <= ?")
+    .bind(now - shortest)
+    .all<DeploymentRow>();
+  let n = 0;
+  for (const row of rows.results ?? []) {
+    const timeoutMs = (row.kind === "static" ? env.DEPLOY_START_TIMEOUT_STATIC_SECONDS : env.DEPLOY_START_TIMEOUT_SECONDS) * 1000;
+    if (row.assigned_at! > now - timeoutMs || awaitingSecrets(row)) continue;
+    const attempts = (row.start_attempts ?? 0) + 1;
+    const minutes = Math.round(timeoutMs / 60_000);
+    if (attempts >= env.DEPLOY_START_ATTEMPTS) {
+      // endDeployment leaves stop_acked_at NULL (the node may still start it late and must be told to stop) and
+      // releases the whole hold: nothing was served.
+      const ended = await endDeployment(row, "failed", `not started by ${attempts} nodes within ${minutes} min each`, { acked: false, level: "error", now });
+      if (ended) n++;
+      continue;
+    }
+    const r = await db
+      .prepare("UPDATE deployments SET start_attempts = ? WHERE id = ? AND status = 'assigned' AND node = ? AND COALESCE(start_attempts, 0) = ?")
+      .bind(attempts, row.id, row.node, attempts - 1)
+      .run();
+    if ((r.meta?.changes ?? 0) === 0) continue;
+    n += await requeueRows([row], `${nodeRefusalPrefix(row.node!)} did not start it within ${minutes} min`, now);
+  }
+  return n;
 }
 
 /** Re-queue everything live on `nodes` (they were unbound: fleet revoked or node evicted). */
@@ -759,6 +800,8 @@ export async function runDeploymentDuties(node: string, now = Date.now()): Promi
 
 export interface DutiesCronResult {
   requeued: number;
+  /** Assigned deployments taken back from a node that never started them (or failed after DEPLOY_START_ATTEMPTS). */
+  stuck: number;
   preempted: number;
   assigned: number;
 }
@@ -789,9 +832,10 @@ export async function runDutiesCron(env?: CronBindings, now = Date.now()): Promi
     if (changed) resetEnv();
     initStorage(env.DB, env.CLOUDANA_KV);
   }
-  const out: DutiesCronResult = { requeued: 0, preempted: 0, assigned: 0 };
+  const out: DutiesCronResult = { requeued: 0, stuck: 0, preempted: 0, assigned: 0 };
   const steps: [keyof DutiesCronResult, () => Promise<number>][] = [
     ["requeued", () => requeueDeadNodeDeployments(now)],
+    ["stuck", () => requeueStuckAssigned(now)],
     ["preempted", () => preemptForOnDemand(now)],
     ["assigned", () => runAssignment(now)],
   ];

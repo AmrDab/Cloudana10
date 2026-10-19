@@ -82,6 +82,8 @@ export interface DeploymentRow {
   last_ok_at: number | null;
   /** Inconclusive probes in a row (the relay binding failed); INCONCLUSIVE_MAX of them count as a failure. */
   probe_inconclusive: number | null;
+  /** Start timeouts so far: assigned, start sent, never reported (deployment-duties G4). */
+  start_attempts: number | null;
 }
 
 export const isEndpoint = (r: Pick<DeploymentRow, "replicas">) => r.replicas > 0;

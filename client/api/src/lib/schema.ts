@@ -160,6 +160,8 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE work_jobs ADD COLUMN artifact TEXT",
   // Inconclusive probes in a row: the third counts as a failure (docs/V4_STORAGE_PHASE1_CONTRACT.md review #2).
   "ALTER TABLE deployments ADD COLUMN probe_inconclusive INTEGER NOT NULL DEFAULT 0",
+  // Start timeouts so far (deployment-duties G4): after DEPLOY_START_ATTEMPTS the deployment fails and its hold is released.
+  "ALTER TABLE deployments ADD COLUMN start_attempts INTEGER NOT NULL DEFAULT 0",
   // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
   "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN net_prefix TEXT",

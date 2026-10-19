@@ -130,6 +130,15 @@ export const envSchema = z.object({
   DEPLOY_PROBE_SECONDS: int(60),
   /** Consecutive failed probes before a deployment is marked unreachable (billing pauses). */
   DEPLOY_PROBE_FAILS: int(3),
+  /**
+   * Seconds a container, workstation or endpoint replica may stay `assigned` (start sent, no running/failed report)
+   * before it is taken back from that node and re-queued; covers a long image pull plus the health grace.
+   */
+  DEPLOY_START_TIMEOUT_SECONDS: int(3600),
+  /** The same for static sites, which start in seconds. */
+  DEPLOY_START_TIMEOUT_STATIC_SECONDS: int(600),
+  /** Start timeouts (each on a different node) before a deployment is failed and its hold released. */
+  DEPLOY_START_ATTEMPTS: int(3),
 
   // ── Payments ─────────────────────────────────────────────────────────────
   STRIPE_SECRET_KEY: z.string().optional(),
