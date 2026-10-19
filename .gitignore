@@ -35,3 +35,6 @@ shared/addresses.local.json
 client/.env.production.local
 
 .backups/
+
+# Wrangler local state (Miniflare SQLite, bundles) — never commit
+.wrangler/

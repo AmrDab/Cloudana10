@@ -431,7 +431,7 @@ describe("rate limits and the duties cron", () => {
     const { node: alive } = await boundNode(["matmul"]);
     await heartbeat(alive);
     expect((await row(id))!.status).toBe("running"); // heartbeat did not touch other nodes' deployments
-    expect(await runDutiesCron()).toEqual({ requeued: 1, preempted: 0, assigned: 0 });
+    expect(await runDutiesCron()).toEqual({ requeued: 1, stuck: 0, preempted: 0, assigned: 0 });
     expect(await row(id)).toMatchObject({ status: "queued", node: null, status_reason: "node went offline" });
   });
 });

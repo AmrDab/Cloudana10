@@ -8,6 +8,7 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { verifyMessage } from "viem";
 import { consumeNonce, generateToken, issueNonce } from "../../middleware/auth.js";
 import { normalizeAddress } from "../../lib/eth.js";
+import { fail } from "../../lib/http.js";
 
 export const authRouter = new OpenAPIHono();
 
@@ -63,7 +64,7 @@ authRouter.openapi(loginRoute, async (c) => {
   // The nonce is consumed before signature verification so a failed attempt
   // cannot be retried against the same message.
   if (!(await consumeNonce(address, message))) {
-    return c.json({ status: "error", message: "Unknown, expired or already-used sign-in message" }, 401);
+    return fail(c, "unauthorized", "Unknown, expired or already-used sign-in message");
   }
 
   let valid = false;
@@ -76,9 +77,7 @@ authRouter.openapi(loginRoute, async (c) => {
   } catch {
     valid = false;
   }
-  if (!valid) {
-    return c.json({ status: "error", message: "Invalid signature" }, 401);
-  }
+  if (!valid) return fail(c, "unauthorized", "Invalid signature");
 
   const token = await generateToken(address, "user");
   return c.json({ token, expiresIn: 86400, address: normalizeAddress(address) }, 200);
