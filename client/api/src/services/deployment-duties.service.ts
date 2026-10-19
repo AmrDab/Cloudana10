@@ -995,7 +995,7 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
       const r = await db
         .prepare(
           "UPDATE deployments SET status = 'running', status_reason = NULL, endpoint = ?, ssh_endpoint = ?, web_token = ?, started_at = ?, " +
-            "last_billed_at = ?, probe_fail = 0 WHERE id = ? AND status = 'assigned'",
+            "last_billed_at = ?, probe_fail = 0, start_attempts = 0 WHERE id = ? AND status = 'assigned'",
         )
         .bind(report.endpoint ?? null, report.sshEndpoint ?? null, report.webToken ?? null, now, now, id)
         .run();

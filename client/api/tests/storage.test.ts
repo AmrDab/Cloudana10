@@ -200,7 +200,11 @@ describe("placement and instructions", () => {
     expect((await recoverMessageAddress({ message: { raw: digest }, signature: hb.sig })).toLowerCase()).toBe(privateKeyToAccount(SIGNER).address.toLowerCase());
     const plain = privateKeyToAccount(generatePrivateKey());
     await signed(plain, "POST", "/v1/nodes/announce", { manifest: { cpuThreads: 4, ramGB: 8, gpus: [], os: "linux" }, benchmarkMmacPerSec: 10, workTypes: ["matmul"], agentVersion: "1.3.0" });
-    expect("storage" in (await beat(plain))).toBe(false);
+    const plainBeat = await beat(plain);
+    expect("storage" in plainBeat).toBe(false);
+    // `bound` (unsigned): an agent unbound from the console re-announces for a fresh bind link.
+    expect(plainBeat.bound).toBe(false);
+    expect(hb.bound).toBe(true);
 
     // Only the assigned node may download, only while pending, at most 3 times.
     const other = [a, b, c, d].find((n) => !holders.includes(addr(n)))!;

@@ -227,6 +227,8 @@ const HeartbeatResponseSchema = z.object({
   minAgentVersion: z.string(),
   /** True when this node's agent is below minAgentVersion: it got no work (stops are still delivered). */
   upgradeRequired: z.boolean(),
+  /** Whether a wallet is bound; an agent that thought it was bound re-announces when this is false. */
+  bound: z.boolean().optional(),
 });
 
 const heartbeatRoute = createRoute({
@@ -254,7 +256,12 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
   const version = reported ?? row?.agent_version ?? null;
   const allowed = agentVersionAllowed(version);
   // One statement says what this node has to do; idle nodes skip every scan (deployment-duties B-5).
-  const activity = row ? await nodeActivity(node, now) : null;
+  const activity = row
+    ? await nodeActivity(node, now).catch((err) => {
+        log.api.warn("[nodes] activity scan on heartbeat failed:", err);
+        return null;
+      })
+    : null;
   let deployments = row && activity
     ? await runDeploymentDuties(node, now, { row, activity }).catch((err) => {
         log.api.warn("[nodes] deployment duties on heartbeat failed:", err);
@@ -272,7 +279,8 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
   };
   const envelope = await signInstruction(node, instructions);
   if (!envelope) log.api.warn("[nodes] INSTRUCTION_SIGNING_KEY is not set — heartbeat instructions go out unsigned (agents ignore them)");
-  return ok(c, { ...instructions, ...(envelope ?? {}), minAgentVersion: minAgentVersion(), upgradeRequired: !allowed });
+  // `bound` (unsigned, informational): an agent unbound from the console re-announces and prints a fresh bind link.
+  return ok(c, { ...instructions, ...(envelope ?? {}), minAgentVersion: minAgentVersion(), upgradeRequired: !allowed, bound: !!row?.payout });
 });
 
 const ticketRoute = createRoute({

@@ -127,14 +127,14 @@ Home / single machine (Docker ≥ 28 for containers; compute + hosting need only
 ```bash
 docker run -d --name cloudana-node --restart unless-stopped --network host \
   -v cloudana-node-data:/app/dist/node-agent/.data \
-  ghcr.io/amrdab/cloudana-node-agent:1.5.0
+  ghcr.io/amrdab/cloudana-node-agent:1.6.0
 docker logs -f cloudana-node     # prints the bind link once; open it, connect the payout wallet, sign
 ```
 
 Fleet (datacenter): `node-agent/deploy/kubernetes-daemonset.yaml` with secret `cloudana-fleet` /
 `CLOUDANA_FLEET_TOKEN` from `POST /v1/fleets`; containers additionally need `CLOUDANA_ALLOW_CONTAINERS=1`, root +
 `NET_ADMIN`, the docker socket, and Docker's data root on xfs with `pquota` (or btrfs/zfs). Verify an image before
-running it: `cosign verify ghcr.io/amrdab/cloudana-node-agent:1.5.0 --certificate-identity
+running it: `cosign verify ghcr.io/amrdab/cloudana-node-agent:1.6.0 --certificate-identity
 https://github.com/AmrDab/Cloudana10/.github/workflows/build-node-agent.yml@refs/heads/main
 --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 

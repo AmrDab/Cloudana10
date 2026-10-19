@@ -60,10 +60,9 @@ export const CATALOG: Service[] = [
     proof: "Responses probed for content hash and latency.", subsidy: false },
 
   // Hosting & delivery
-  // Works end to end on the local stack (site → node → content-hash probe). "live" only once a public node serves
-  // sites through the gateway at https://<id>.cloudana.run (CAPABILITY_MATRIX.md): until then it is early access.
-  { id: "hosting", group: "hosting", name: "Static hosting", line: "Sites served by nodes through the relay, content-hash probed every minute.", icon: Globe, status: "early",
-    proof: "Content-hash probed by the orchestrator every minute through the relay; public URLs open when the gateway domain is live.", subsidy: false },
+  // Live: the gateway serves https://<id>.cloudana.run (2026-10-18) and a public node (Azure, relay) serves sites.
+  { id: "hosting", group: "hosting", name: "Static hosting", line: "Sites served by nodes through the relay, content-hash probed every minute.", icon: Globe, status: "live",
+    proof: "Content-hash probed by the orchestrator every minute through the relay; served at https://<id>.cloudana.run.", subsidy: false },
   { id: "cdn", interest: "hosting", group: "hosting", name: "CDN & edge cache", line: "Cached copies close to every reader.", icon: Network, status: "planned",
     proof: "Random probes from many residential verifiers check hash and latency.", subsidy: false },
   { id: "dns", interest: "hosting", group: "hosting", name: "DNS", line: "Authoritative answers from many nodes.", icon: Waypoints, status: "planned",

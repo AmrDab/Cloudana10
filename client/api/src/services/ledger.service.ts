@@ -441,7 +441,8 @@ export async function epochJobs(
 /** One closed/posted/settled epoch with its leaves (public: GET /v1/epochs/{id}); null while open or unknown. */
 export async function getEpochPayload(id: number): Promise<EpochPayload | null> {
   const row = await getD1().prepare("SELECT * FROM epochs WHERE id = ?").bind(id).first<EpochRow>();
-  return row ? toPayload(row) : null;
+  // Vetoed: its root and fees were cleared and it will close again — nothing to publish (epochJobs treats it as open).
+  return row && row.status !== "vetoed" ? toPayload(row) : null;
 }
 
 /** Epochs by status, oldest first — lets a stateless keeper re-read what it has to post or finalize. */

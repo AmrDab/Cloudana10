@@ -169,15 +169,24 @@ const listRoute = createRoute({
   ),
 });
 
+/**
+ * Workstation access (connect: the web URL carries its token; webToken; the ssh command) is for the owner's wallet
+ * session only: a developer API key — even one scoped `read` for monitoring — must not be able to open a shell.
+ */
+function forCaller<T extends object>(auth: string | undefined, d: T): T {
+  // A relayed workstation's endpoint is its app path, token included: hidden with the rest.
+  return auth === "key" && "connect" in d ? { ...d, connect: {}, endpoint: null } : d;
+}
+
 /** Cheap per-owner dead-node check, so a deployment does not wait for some node's heartbeat to re-queue it. */
 async function requeueMine(owner: string): Promise<void> {
   await requeueDeadNodeDeployments(Date.now(), owner).catch((err) => log.api.warn("[deployments] dead-node requeue failed:", err));
 }
 
 deploymentsRouter.openapi(listRoute, async (c) => {
-  const owner = c.get("jwtPayload").sub;
+  const { sub: owner, auth } = c.get("jwtPayload");
   await requeueMine(owner);
-  return ok(c, { deployments: await listDeployments(owner) });
+  return ok(c, { deployments: (await listDeployments(owner)).map((d) => forCaller(auth, d)) });
 });
 
 const getRoute = createRoute({
@@ -212,7 +221,8 @@ deploymentsRouter.openapi(getRoute, async (c) => {
   const row = await getOwnedRow(owner, c.req.valid("param").id);
   if (!row) return fail(c, "not_found", "deployment not found");
   const pubkey = await nodePubkey(row.node);
-  const [deployment] = await presentDeployments([row], true);
+  const [presented] = await presentDeployments([row], true);
+  const deployment = forCaller(c.get("jwtPayload").auth, presented);
   const replicas = isEndpoint(row) ? (await replicasOf([row.id])).get(row.id) ?? [] : [];
   return ok(c, { deployment, events: await listEvents(row.id, 50, replicas), ...(pubkey && { nodePubkey: pubkey }) });
 });

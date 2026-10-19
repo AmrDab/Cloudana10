@@ -229,12 +229,12 @@ the `CURRENT_AGENT_VERSION` comment.
 | # | Gap | State |
 |---|---|---|
 | 1 | No live settlement | **Owner** (runbook 3–6). Engineering side ready: contracts tested, keeper tested, deposit watcher inactive until `SETTLEMENT_ADDRESS`. |
-| 2 | Nothing publicly reachable | **Owner** (runbook 8–10). Gateway/relay tested; hosting labelled early access until then. |
+| 2 | Nothing publicly reachable | **Closed 2026-10-18.** Relay secrets set, gateway live at `https://<id>.cloudana.run`, first node (Azure, agent 1.4.1, relay) online; hosting is live. |
 | 3 | D1 heartbeat cost | Measured and cut 13 → 5 statements per idle/steady beat (commit 10, pinned by a test); the architecture limit (one D1) remains. |
 | 4 | Orchestrator not independently checkable | Largely closed for phase 1: draws published with their eligible set (`GET /v1/draws/{id}`), epochs published with leaves and a signature (`GET /v1/epochs/{n}`), `/v1/network` signed, `scripts/verify/replay.ts` checks all of it from public data; seeds are block hashes once `CHAIN_RPC_URL` deploys. Left: signing individual draws, pull-based assignment (B-17). |
 | 5 | Verification cost = work cost | Open (B-6). |
 | 6 | Auth without revocation/scopes | Closed for the API (commit 12): scoped API keys, logout revocation, secret rotation; a refresh-token flow is a product choice left open. |
-| 7 | No fleet/GPU node | **Owner** (runbook 10). |
+| 7 | No fleet/GPU node | A first public node is live (Azure VM, compute + hosting + storage over the relay, no GPU). A container/GPU fleet node is still the owner's (runbook 10). |
 | 8 | Legacy UI reachable | Reduced (68 orphan files gone); `/control/legacy` needs the owner's call (B-3). |
 | 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified, now per replica from the console; endpoint env no longer sent in the clear); fleet pinning is B-9. |
 | 10 | Docs drift | README, API README, checklist domain, decisions header, archive README fixed; capability registry created. |
@@ -244,12 +244,14 @@ the `CURRENT_AGENT_VERSION` comment.
 1. **Contracts v2 on Base Sepolia** — Safe 2-of-3, Deployer and Poster wallets with test ETH, run
    `contract/scripts/v2/deploy.ts` (runbook step 4). Then engineering wires `SETTLEMENT_ADDRESS` into the API and
    keeper and runs the veto drill.
-2. **Worker secrets** — `node scripts/set-api-secrets.mjs` (done for the instruction key per the agent's pinned
-   address; `STORAGE_KEK` status unknown from here) and `node scripts/set-relay-secrets.mjs` (`RELAY_TICKET_SECRET`,
-   `INTERNAL_API_KEY` on api/relay/gateway). Without the relay secret no node is reachable.
-3. **User-content domain** — `cloudana.run` with the proxied wildcard record, then the gateway deploy.
-4. **First node** — the owner's workstation (compute + hosting), later a Docker ≥ 28 / xfs-pquota machine for
-   containers and GPU work.
+2. ~~Worker secrets~~ — **done 2026-10-18**: `INSTRUCTION_SIGNING_KEY`, `JWT_SECRET`, `STORAGE_KEK` on cloudana-api;
+   `RELAY_TICKET_SECRET` on api + relay; `INTERNAL_API_KEY` on api + gateway. **Do not re-run
+   `scripts/set-api-secrets.mjs`**: it generates all three again, which would cut off every node pinned to the current
+   signer, sign everyone out and make stored storage copies unverifiable. Re-run `scripts/set-relay-secrets.mjs` only
+   once the keeper is deployed (it then rotates `INTERNAL_API_KEY` on api, gateway and keeper together).
+3. ~~User-content domain~~ — **done 2026-10-18**: `cloudana.run`, proxied wildcard record, gateway deployed.
+4. ~~First node~~ — **done 2026-10-18**: Azure VM (compute, hosting and storage over the relay). Still to come: a
+   Docker ≥ 28 / xfs-pquota machine for containers and GPU work.
 5. **Decisions** — `/control/legacy` survivors; fleet pinning semantics; retire direct-node mode; weekly vs per-epoch
    lane-B pool (before the contract deploy).
 

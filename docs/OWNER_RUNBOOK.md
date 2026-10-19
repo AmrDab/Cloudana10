@@ -23,7 +23,7 @@ Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10
 |---|---|---|---|---|
 | ☐ | 0. Set up PowerShell | 5 min | — | — |
 | ☐ | 1. Kill the old Alchemy key | 5 min | Alchemy login | "Alchemy done" |
-| ☐ | 2. Three API secrets | 5 min | PowerShell | the `0x…` address from the link |
+| ✔ | 2. Three API secrets (done 2026-10-18) | 5 min | PowerShell | the `0x…` address from the link |
 | ☐ | 3. MetaMask, 5 accounts, test ETH, Safe | 30 min | Browser | Safe + Poster addresses |
 | ☐ | 4. Deploy the contracts | 10 min | Deployer key | "contracts deployed" |
 | ☐ | 5. Turn on the keeper | 10 min | Poster key | "keeper deployed" |
@@ -101,7 +101,12 @@ Work top to bottom. Steps 1–6 make testnet *operational*; 7–9 are polish; 10
 
 ---
 
-## Step 2: Three secrets for the API (5 min)
+## Step 2: Three secrets for the API (5 min) — done 2026-10-18
+
+> **Done; don't repeat it.** The script now leaves secrets that are already set alone. Replacing one on purpose
+> (`--rotate NAME`) has consequences: a new `INSTRUCTION_SIGNING_KEY` cuts off every node pinned to the current signer
+> (they need a new agent build), a new `JWT_SECRET` signs everyone out, and a new `STORAGE_KEK` makes stored copies
+> unverifiable. Ask Claude first.
 
 **Why:**
 - **Instruction key:** a signature key the API uses to sign orders it sends to nodes, so nodes can tell real orders from fake ones. It is *not* a wallet and holds no money.
@@ -123,7 +128,7 @@ Then open https://api.cloudana.io/v1/nodes/instruction-key in your browser.
 - In the browser: `{"status":"success","address":"0x…"}`. That address is public.
 
 **If it goes wrong:**
-- The browser shows `not_configured`: wait 30 seconds and refresh. If it persists, run `node scripts\set-api-secrets.mjs INSTRUCTION_SIGNING_KEY`.
+- The browser shows `not_configured`: wait 30 seconds and refresh. If it persists, tell Claude (don't re-run the script with `--rotate`).
 - `Enter a secret value`: you ran `wr secret put` yourself. Press Ctrl+C and use the script instead.
 
 ✅ Tell Claude: **"instruction key address is 0x…"** (paste the address from the browser).

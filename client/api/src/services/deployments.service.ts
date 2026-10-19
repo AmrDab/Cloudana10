@@ -12,6 +12,8 @@
  */
 import { getD1 } from "../lib/storage.js";
 import { getRelay } from "../lib/relay.js";
+import { readCapped } from "../lib/read-capped.js";
+import { compareVersions } from "./instruction-signing.service.js";
 import { createHash, randomBytes } from "node:crypto";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
@@ -324,15 +326,29 @@ export async function getOwnedRow(owner: string, id: string): Promise<Deployment
 }
 
 /** Bound nodes seen within NODE_ACTIVE_SECONDS that advertise `capability`. */
-export async function capableNodesOnline(capability: string, now = Date.now()): Promise<number> {
-  const row = await getD1()
-    .prepare(
-      "SELECT COUNT(*) AS n FROM nodes, json_each(nodes.work_types) w " +
-        "WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?",
-    )
-    .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
+export async function capableNodesOnline(capability: string, now = Date.now(), minAgent?: string): Promise<number> {
+  const rows =
+    (
+      await getD1()
+        .prepare(
+          "SELECT nodes.agent_version AS v FROM nodes, json_each(nodes.work_types) w " +
+            "WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?",
+        )
+        .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability)
+        .all<{ v: string | null }>()
+    ).results ?? [];
+  return minAgent ? rows.filter((r) => !!r.v && compareVersions(r.v, minAgent) >= 0).length : rows.length;
+}
+
+/** The warning a new deployment gets when no online node could run it (a secret-carrying one needs a newer agent). */
+async function capableWarning(kind: string, spec: unknown, now: number): Promise<string | null> {
+  const cap = neededCapability(kind as never, spec as never);
+  if ((await capableNodesOnline(cap, now)) === 0) return "waiting for a capable node";
+  const secrets = (spec as { expectsSecrets?: boolean }).expectsSecrets === true;
+  if (secrets && (await capableNodesOnline(cap, now, SEALED_V2_MIN_AGENT)) === 0) {
+    return `waiting for a node running agent ${SEALED_V2_MIN_AGENT} or newer (sealed secrets need it)`;
+  }
+  return null;
 }
 
 /** A container whose start must wait for sealed secrets (V3 §6: they are sealed to the assigned node). */
@@ -432,7 +448,8 @@ export async function createDeployment(input: {
     }
     await getD1().batch(rows);
     await addEvent(id, "info", `queued ${replicas} replica${replicas > 1 ? "s" : ""} at ${price} µCLD/replica-hour; first hour held`, now);
-    if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) await addEvent(id, "warn", "waiting for a capable node", now);
+    const waiting = await capableWarning(input.kind, checked.spec, now);
+    if (waiting) await addEvent(id, "warn", waiting, now);
     return { ok: true, id, ...quoted(replicas) };
   }
   await stmt
@@ -452,9 +469,8 @@ export async function createDeployment(input: {
       .catch((err) => log.api.warn("[deployments] probe columns not written (run HOSTING_MIGRATIONS):", err));
   }
   await addEvent(id, "info", `queued at ${price} µCLD/hour; first hour held`, now);
-  if ((await capableNodesOnline(neededCapability(input.kind, checked.spec), now)) === 0) {
-    await addEvent(id, "warn", "waiting for a capable node", now);
-  }
+  const waiting = await capableWarning(input.kind, checked.spec, now);
+  if (waiting) await addEvent(id, "warn", waiting, now);
   return { ok: true, id, ...quoted(1) };
 }
 
@@ -501,8 +517,10 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string)
     };
   }
   const r = await getD1()
-    .prepare("UPDATE deployments SET sealed_env = ? WHERE id = ? AND status IN ('queued','assigned')")
-    .bind(sealedEnv, id)
+    // Sealing restarts the start clock: the start-timeout duty measures from assigned_at, and a row that waited for
+    // its secrets must not be re-queued (sealed_env wiped) minutes after the owner finally sealed them.
+    .prepare("UPDATE deployments SET sealed_env = ?, assigned_at = CASE WHEN status = 'assigned' THEN ? ELSE assigned_at END WHERE id = ? AND status IN ('queued','assigned')")
+    .bind(sealedEnv, Date.now(), id)
     .run();
   if ((r.meta?.changes ?? 0) === 0) {
     return { ok: false, code: "conflict", message: `secrets can only change while queued or assigned (status is ${row.status})` };
@@ -532,7 +550,11 @@ export async function settleHold(row: DeploymentRow, now = Date.now()): Promise<
 /** Capture `fee` from the owner's hold and credit the node's payout wallet (lane A + treasury, no lane B). */
 export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now()): Promise<void> {
   const db = getD1();
-  await capture(row.owner, fee);
+  // No reward without a captured fee (as for jobs): a bill whose hold wasn't there mints nothing and burns nothing.
+  if (!(await capture(row.owner, fee))) {
+    log.api.warn(`[deployments] ${row.id}: hour of ${fee} µCLD not captured (hold missing) — no bill, no reward`);
+    return;
+  }
   const payout = await db.prepare("SELECT payout FROM nodes WHERE address = ?").bind(row.node).first<{ payout: string | null }>();
   const billId = crypto.randomUUID();
   await db
@@ -822,7 +844,15 @@ export async function deploymentLogs(owner: string, id: string, tail = LOGS_TAIL
     await res.body?.cancel().catch(() => undefined);
     return { ok: false, code: "upstream_failed", message: `the node answered ${res.status}` };
   }
-  const text = await res.text();
+  let text: string;
+  try {
+    // The node is untrusted: read at most a little over the cap, never its whole stream.
+    const bytes = await readCapped(res, LOGS_MAX_BYTES * 2);
+    text = bytes ? new TextDecoder().decode(bytes) : "";
+    if (!bytes) return { ok: false, code: "upstream_failed", message: "the node sent more than the logs cap" };
+  } catch {
+    return { ok: false, code: "upstream_failed", message: "the node broke off while sending logs" };
+  }
   const over = text.length > LOGS_MAX_BYTES;
   return { ok: true, id: row.id, node: row.node, tail, source: "node", logs: over ? text.slice(-LOGS_MAX_BYTES) : text, truncated: over || res.headers.get("x-cld-truncated") === "1" };
 }

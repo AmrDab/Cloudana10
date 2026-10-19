@@ -57,7 +57,8 @@ async function checkSignature(label: string, json: Record<string, unknown>, sign
     return;
   }
   check(await verifyPublic(signedBody(json), signature), `${label}: signature verifies over the published body`, signature);
-  check(signer === null || signature.signer.toLowerCase() === signer, `${label}: signed by the published instruction key ${signer ?? "(unknown)"}`, signature.signer);
+  // No pin, no proof: if the published key can't be fetched, a self-chosen signer must not pass.
+  check(signer !== null && signature.signer.toLowerCase() === signer, `${label}: signed by the published instruction key ${signer ?? "(could not be fetched)"}`, signature.signer);
 }
 
 async function replayJob(id: string) {

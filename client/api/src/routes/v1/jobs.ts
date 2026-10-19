@@ -155,7 +155,7 @@ jobsRouter.openapi(drawRoute, async (c) => {
   const d = await getDrawRecord(c.req.valid("param").id);
   if (!d) return fail(c, "not_found", "job not found");
   const { status: jobStatus, ...rest } = d;
-  return ok(c, { draw: { ...rest, jobStatus, replay: d.eligible ? replayDraw(d) : null } });
+  return ok(c, { draw: { ...rest, jobStatus, replay: d.eligible && jobStatus !== "failed" ? replayDraw(d) : null } });
 });
 
 jobsRouter.openapi(getJobRoute, async (c) => {
