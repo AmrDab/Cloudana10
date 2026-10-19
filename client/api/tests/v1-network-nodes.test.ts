@@ -94,6 +94,8 @@ describe("GET /v1/nodes/mine", () => {
       address: nodeA,
       lastSeen: expect.any(Number),
       online: true,
+      state: "active",
+      stateReason: null,
       boundAt: 1,
       manifest: { cpuThreads: 8, ramGB: 16, gpus: [], os: "linux", benchmarkMmacPerSec: 123 },
       throughputMmacPerSec: 1,

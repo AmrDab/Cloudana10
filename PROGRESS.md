@@ -155,11 +155,32 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Residual.** No refresh token: the session is 24 h by configuration, now revocable. No per-key rate limit or
   audit trail beyond `lastUsedAt`. Not browser-tested.
 
+### 13 · node state model and draining (B-8); direct-mode host rule verified and pinned (B-13)
+- **States.** `nodes.state` = `active` (default) · `draining` (owner: no new jobs, deployments or storage copies;
+  what runs keeps running and billing) · `suspended` (Cloudana: live deployments re-queued now with the reason, the
+  node is owed a stop for each, no relay ticket, no work; heartbeats still answer so it learns to stop; the owner
+  cannot lift it). `degraded`/`unreachable` stay derived from probes and `last_seen`, not stored.
+- **API.** `POST`/`DELETE /v1/nodes/mine/{address}/drain` (session; 404 for others' nodes, 409 while suspended);
+  `POST`/`DELETE /v1/admin/nodes/{address}/suspend` (internal key, reason required); `GET /v1/nodes/mine` carries
+  `state` and `stateReason`; the matmul draw, heartbeat assignment, pre-emption candidates and storage copy
+  placement require `state = 'active'`; `/v1/network.nodesOnline` excludes suspended nodes.
+- **Console.** Provide → node card: state pill, Drain / Resume, Unbind (confirm dialog).
+- **B-13.** Read the direct-mode path end to end: outside DEV_MODE a public host is stored only when it equals the
+  IP the announce came from (an IP literal the API observed; private ranges refused by `endpointAllowed`), and a
+  status report may name endpoints only on that host. The API therefore never resolves a hostname for a direct node
+  and there is nothing to rebind. Pinned by two tests in `node-security.test.ts` (a hostname announce stores no
+  host and no hosting capability; endpoints on any other host → 400). SECURITY_AUDIT O8 closed by construction;
+  retiring direct mode remains the owner's decision.
+- **Tests / results.** API 354 → **357** (`node-state.test.ts` ×2, `node-security.test.ts` +1); console tsc, 3
+  tests, build clean.
+- **Residual.** Matmul assignments on a node being suspended expire by `ASSIGNMENT_TTL_SECONDS` rather than being
+  clawed at once. No audit log of state changes beyond `state_at`/`state_reason`. Not browser-tested.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **354** |
+| client/api vitest | 330 | **357** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | 8 pass (sealed now 26 checks) |
 | contracts | 224 (offline solc) | 224 |
@@ -197,9 +218,9 @@ the `CURRENT_AGENT_VERSION` comment.
 
 ## Next priorities (engineering, no owner input needed)
 
-B-13 retire direct mode / resolve-and-pin → B-14 container logs through the relay → B-15 custom domains → B-8 node
-state model and draining → B-5 follow-up (liveness off D1, 30 s beats) once a real load test exists → wallet-stack
-and Hardhat-toolchain majors (SECURITY_AUDIT §3b).
+B-14 container logs through the relay → B-15 custom domains (needs the owner's Cloudflare for SaaS setup) → B-5
+follow-up (liveness off D1, 30 s beats) once a real load test exists → wallet-stack and Hardhat-toolchain majors
+(SECURITY_AUDIT §3b).
 
 ## Not done, and why
 

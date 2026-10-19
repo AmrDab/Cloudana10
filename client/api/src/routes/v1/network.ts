@@ -58,7 +58,7 @@ const networkRoute = createRoute({
 });
 
 const STATS_SQL = `SELECT
-  (SELECT COUNT(*) FROM nodes WHERE last_seen >= ?1) AS nodesOnline,
+  (SELECT COUNT(*) FROM nodes WHERE last_seen >= ?1 AND state <> 'suspended') AS nodesOnline,
   (SELECT COUNT(*) FROM nodes WHERE payout IS NOT NULL) AS nodesBound,
   (SELECT COUNT(*) FROM work_jobs WHERE status IN ('queued','assigned')) AS jobsQueued,
   (SELECT COUNT(*) FROM work_jobs WHERE status = 'done') AS jobsDone,

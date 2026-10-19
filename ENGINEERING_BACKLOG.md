@@ -70,10 +70,14 @@ sign-out. A revoked key is refused at once in the revoking isolate and within 30
 Deviations from the sketch: no `kid` header (verification tries both secrets) and no refresh token (24 h session,
 `JWT_TTL_SECONDS`, now revocable). Left: per-key rate limits; an audit trail of key use beyond `lastUsedAt`.
 
-**B-8 · Node state model and draining.** States `online | degraded | draining | unreachable | suspended | banned`
-on `nodes`; `POST /v1/nodes/mine/{address}/drain` (no new work, finish or hand off live deployments); admin ban/unban
-(`docs/V4_REVIEW_CLOUD.md` (a)). Acceptance: a draining node receives no new assignments in tests; a banned node's
-tickets are refused and its live deployments re-queued.
+**B-8 · Node state model and draining.** **Done in this pass** (PROGRESS.md commit 13): `nodes.state` = active |
+draining | suspended; `POST`/`DELETE /v1/nodes/mine/{address}/drain` (owner), `POST`/`DELETE
+/v1/admin/nodes/{address}/suspend` (internal key; re-queues live deployments, refuses relay tickets); the matmul
+draw, heartbeat assignment, pre-emption candidates and storage placement skip anything not active;
+`/v1/network.nodesOnline` excludes suspended nodes; console Provide shows the state with Drain / Resume / Unbind.
+Acceptance met in `node-state.test.ts`. Not built: `degraded`/`unreachable` as stored states (they stay derived from
+probes and `last_seen`); a ban that also refuses announce (a suspension survives unbind and rebind, which has the
+same effect).
 
 **B-9 · Fleet pinning for sensitive deployments (gap 9).** `spec.placement.fleetId` (owner's own fleet or a partner
 fleet the owner selected by id, never a node); assignment honours it; the console shows it before secrets are
@@ -92,8 +96,11 @@ environment values no longer sent in the clear, re-enter form after a re-queue. 
 (two nodes, two keys); not yet exercised in a browser.
 
 **B-13 · Retire direct (public-IP) nodes once the relay is live, or resolve-and-pin before probing them.**
-Acceptance: either no code path fetches an operator-supplied URL, or every such fetch resolves the host, refuses
-private answers and connects to the resolved address.
+**Engineering half closed** (PROGRESS.md commit 13): verified by reading and pinned by tests that, outside DEV_MODE,
+no hostname is ever stored or probed for a direct node (the public host must equal the announcing IP; reported
+endpoints must use it), so there is no DNS to rebind — the first acceptance branch holds as "no code path fetches an
+operator-chosen host". SECURITY_AUDIT O8 updated. The product half, retiring direct mode, stays with the owner
+(decision 3).
 
 **B-14 · Deployment logs and events for running containers.** `GET /v1/deployments/{id}/logs?tail=200` served through
 the relay (`docs/V4_REVIEW_RELAY.md` §6). Acceptance: the console shows live logs for a running container; the

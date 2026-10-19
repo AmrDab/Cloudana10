@@ -14,7 +14,7 @@ import { requireNode, type NodeVariables } from "../../middleware/node-auth.js";
 import { rateLimit, trustedClientIp, verifiedNodeKey } from "../../middleware/rate-limit.js";
 import type { AuthVariables } from "../../middleware/auth.js";
 import { EthAddressSchema } from "../../schemas/common.schema.js";
-import { announceNode, bindNode, bindNodeToFleet, getNode, listNodesForPayout, touchNode, unbindOwnNode } from "../../services/nodes.service.js";
+import { NODE_STATES, announceNode, bindNode, bindNodeToFleet, getNode, listNodesForPayout, setOwnNodeDraining, touchNode, unbindOwnNode } from "../../services/nodes.service.js";
 import { fleetForToken } from "../../services/fleets.service.js";
 import { getActiveAssignment } from "../../services/jobs.service.js";
 import { workTypeIds } from "../../services/work-types.js";
@@ -299,6 +299,7 @@ nodesRouter.openapi(ticketRoute, async (c) => {
   // the agent reads 404 as "this API has no relay" and would fall back to legacy mode.
   const row = await getNode(c.get("node"));
   if (!row?.payout) return fail(c, "forbidden", "announce and bind this node before opening the relay");
+  if (row.state === "suspended") return fail(c, "forbidden", "this node is suspended; contact support");
   const { ticket, expiresAt } = await issueTicket(env.RELAY_TICKET_SECRET, c.get("node"));
   return ok(c, { ticket, url: env.RELAY_URL, expiresAt });
 });
@@ -323,6 +324,8 @@ const MyNodeSchema = z.object({
   address: z.string(),
   lastSeen: z.number().nullable(),
   online: z.boolean(),
+  state: z.enum(NODE_STATES).openapi({ description: "active · draining (no new work; POST/DELETE /nodes/mine/{address}/drain) · suspended (by Cloudana)" }),
+  stateReason: z.string().nullable(),
   boundAt: z.number().nullable(),
   manifest: z
     .object({
@@ -374,4 +377,48 @@ nodesRouter.openapi(unbindRoute, async (c) => {
   const r = await unbindOwnNode(c.get("jwtPayload").sub, address);
   if (!r.ok) return fail(c, r.code, r.message);
   return ok(c, { unbound: address.toLowerCase(), requeued: r.requeued });
+});
+
+// ── Owner: drain / resume (ENGINEERING_BACKLOG B-8) ─────────────────────────
+const StateParams = z.object({ address: EthAddressSchema });
+const StateAnswer = json(z.object({ status: z.literal("success"), address: z.string(), state: z.enum(NODE_STATES) }), "State changed");
+
+const drainRoute = createRoute({
+  method: "post",
+  path: "/nodes/mine/{address}/drain",
+  tags: TAGS,
+  description:
+    "Drain a node you own: from now it takes no new jobs, deployments or storage copies; what it runs keeps running (and " +
+    "billing) until it ends. Resume with DELETE. 409 while Cloudana has the node suspended. Body may be {}.",
+  security: BEARER_AUTH,
+  request: {
+    params: StateParams,
+    body: { required: true, content: { "application/json": { schema: z.object({ reason: z.string().trim().max(200).optional() }) } } },
+  },
+  responses: responses({ 200: StateAnswer }, 400, 401, 404, 409),
+});
+
+nodesRouter.openapi(drainRoute, async (c) => {
+  const { address } = c.req.valid("param");
+  const { reason } = c.req.valid("json");
+  const r = await setOwnNodeDraining(c.get("jwtPayload").sub, address, true, reason?.trim() || null);
+  if (!r.ok) return fail(c, r.code, r.message);
+  return ok(c, { address: address.toLowerCase(), state: r.state });
+});
+
+const resumeRoute = createRoute({
+  method: "delete",
+  path: "/nodes/mine/{address}/drain",
+  tags: TAGS,
+  description: "Stop draining: the node takes work again on its next heartbeat. 409 while suspended.",
+  security: BEARER_AUTH,
+  request: { params: StateParams },
+  responses: responses({ 200: StateAnswer }, 400, 401, 404, 409),
+});
+
+nodesRouter.openapi(resumeRoute, async (c) => {
+  const { address } = c.req.valid("param");
+  const r = await setOwnNodeDraining(c.get("jwtPayload").sub, address, false, null);
+  if (!r.ok) return fail(c, r.code, r.message);
+  return ok(c, { address: address.toLowerCase(), state: r.state });
 });

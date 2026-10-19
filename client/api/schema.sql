@@ -123,7 +123,10 @@ CREATE TABLE IF NOT EXISTS nodes (
   net_prefix TEXT, asn INTEGER,               -- /24 or /48 and ASN seen at announce / heartbeat (copy placement)
   storage_next_check_at INTEGER, storage_cooldown_until INTEGER, storage_backoff_until INTEGER,
   storage_strikes INTEGER NOT NULL DEFAULT 0, storage_passed_days INTEGER NOT NULL DEFAULT 0,
-  storage_open_day INTEGER, storage_inconclusive INTEGER NOT NULL DEFAULT 0
+  storage_open_day INTEGER, storage_inconclusive INTEGER NOT NULL DEFAULT 0,
+  -- Node state model (ENGINEERING_BACKLOG B-8): active | draining (owner: no new work) | suspended (admin: no work,
+  -- live deployments re-queued, no relay ticket)
+  state TEXT NOT NULL DEFAULT 'active', state_reason TEXT, state_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS work_jobs (

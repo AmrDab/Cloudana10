@@ -93,6 +93,9 @@ export type MyNode = {
   address: string;
   lastSeen: number | null;
   online: boolean;
+  /** active · draining (no new work, by the owner) · suspended (by Cloudana; only support lifts it). */
+  state: "active" | "draining" | "suspended";
+  stateReason: string | null;
   boundAt: number | null;
   manifest: { cpuThreads: number; ramGB: number; gpus: { name: string; vramGB: number }[]; os: string; benchmarkMmacPerSec?: number } | null;
   /** Verified weight (MMAC/s); manifest.benchmarkMmacPerSec is self-reported. */

@@ -62,6 +62,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | Wallet sign-in (EIP-191 over a single-use nonce), session JWT 24 h with logout revocation and secret rotation | 2 | — | `auth`, `api-keys` tests, e2e |
 | Tenant isolation at the API (owner-scoped rows, 404 for others) | 2 | — | `deployments` "another owner's deployment is 404", e2e |
 | Node request authentication (signature + nonce + window) | 2 | — | `node-auth`, `node-security` tests, e2e replay refused |
+| Node state model: owner drain/resume, admin suspend (live deployments re-queued, no relay ticket), every placement path skips non-active nodes | 2 | — | `node-state` tests; console Provide actions not browser-tested |
 | Signed node instructions with pinned signer | 2 | — | `node-security` tests, agent selftest |
 | Sealed secrets bound to deployment, node key verified in the browser | 2 | — | agent sealed selftest 26 checks; API tests (this pass) |
 | Container hardening (cap-drop, no-new-privileges, pids/mem/disk caps, egress DROP, non-root, NVIDIA env) | 2 | — | agent security selftest; **no kernel-level test** |

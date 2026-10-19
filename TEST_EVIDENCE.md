@@ -9,7 +9,7 @@ Cloudflare or chain credentials, and no outbound access to `cloudana.io`, `*.wor
 | Package | Command | Result | Notes |
 |---|---|---|---|
 | client/api | `npm run type-check` | clean | |
-| client/api | `npm test` (vitest) | **38 files, 354 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind), +7 `api-keys.test.ts`, +3 `auth.test.ts`, +1 `security.test.ts` (API keys, logout, rotation) |
+| client/api | `npm test` (vitest) | **39 files, 357 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind), +7 `api-keys.test.ts`, +3 `auth.test.ts`, +1 `security.test.ts` (API keys, logout, rotation), +2 `node-state.test.ts`, +1 `node-security.test.ts` (node states; direct-mode host rule) |
 | gateway | `npx tsc --noEmit && npx vitest run` | clean; **28 passed** | |
 | relay | same | clean; **14 passed** | includes workerd e2e (`test/workerd.e2e.ts`) |
 | keeper | same | clean; **28 passed** | tree vector fixture + run state machine |
@@ -97,6 +97,12 @@ hash that anyone can confirm with `eth_getBlockByHash`; the script then passes f
   cannot read; revocation refuses the next request; expiry through the cache; garbage and flipped tokens; another
   account's revoke is 404; the 21st key is 409; logout ends a session and leaves the wallet's other sessions alone;
   tokens signed with `JWT_SECRET_PREVIOUS` verify, others do not.
+- `client/api/tests/node-state.test.ts` (B-8): a drained node starts no new site and is skipped by the matmul draw
+  while its running site stays; resume starts the waiting site and the draw finds it; strangers get 404, no session
+  401; a suspended node's running site is re-queued with the reason, the node is told to stop it, its relay ticket is
+  403, it leaves `nodesOnline`, its owner's drain/resume are 409; the admin lifts it and the ticket works again.
+- `client/api/tests/node-security.test.ts` (O8 / B-13): outside DEV_MODE a hostname `publicHost` stores no host and
+  strips hosting; a direct node reporting an endpoint on any host but its announced one is refused (three hosts).
 
 ## 3b. Heartbeat D1 cost (backlog B-5), measured
 

@@ -180,6 +180,11 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE nodes ADD COLUMN storage_passed_days INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN storage_open_day INTEGER",
   "ALTER TABLE nodes ADD COLUMN storage_inconclusive INTEGER NOT NULL DEFAULT 0",
+  // Node state model (ENGINEERING_BACKLOG B-8): active | draining (owner: no new work) | suspended (admin: no work,
+  // live deployments re-queued, no relay ticket).
+  "ALTER TABLE nodes ADD COLUMN state TEXT NOT NULL DEFAULT 'active'",
+  "ALTER TABLE nodes ADD COLUMN state_reason TEXT",
+  "ALTER TABLE nodes ADD COLUMN state_at INTEGER",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

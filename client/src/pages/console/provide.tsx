@@ -5,8 +5,12 @@ import { useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  AlertTriangle, Building2, Check, Container, Cpu, Globe, HardDrive, KeyRound, Link2, Loader2, Server, ShieldCheck, Wallet,
+  AlertTriangle, Building2, Check, Container, Cpu, Globe, HardDrive, KeyRound, Link2, Loader2, Pause, Play, Server, ShieldCheck, Unlink, Wallet,
 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { api, cld, int, short, signWithSessionWallet, throughputEarningsUcld } from "@/lib/cld";
 import { useNetwork } from "@/hooks/useNetwork";
@@ -344,6 +348,8 @@ function NodeCard({ n, fresh }: { n: MyNode; fresh: boolean }) {
         />
         <Hash value={n.address} />
         {n.fleetId && <Pill tone="chain">fleet</Pill>}
+        {n.state === "draining" && <Pill tone="work"><Pause className="size-3" aria-hidden /> draining</Pill>}
+        {n.state === "suspended" && <Pill tone="burn">suspended</Pill>}
         <span className="ml-auto text-[12px] text-faint">
           {n.online ? "seen" : "last seen"} <RelTime ms={n.lastSeen} className="text-[12px]" />
         </span>
@@ -398,7 +404,89 @@ function NodeCard({ n, fresh }: { n: MyNode; fresh: boolean }) {
           <dd className="mt-0.5 tabular-nums text-ok">{cld(n.earnedUcld)}</dd>
         </div>
       </dl>
+      <NodeActions n={n} />
     </article>
+  );
+}
+
+/** Drain / resume (no new work; what runs keeps running) and unbind. A suspension is Cloudana's and is only shown. */
+function NodeActions({ n }: { n: MyNode }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState<string | null>(null);
+  async function run(label: string, fn: () => Promise<unknown>, done: string, detail?: string) {
+    setBusy(label);
+    try {
+      await fn();
+      toast.success(done, { description: detail });
+      void qc.invalidateQueries({ queryKey: ["cld", "nodes-mine"] });
+      void qc.invalidateQueries({ queryKey: ["cld", "deployments"] });
+    } catch (e) {
+      toast.error(`Couldn't ${label.toLowerCase()} the node`, { description: errText(e) });
+    } finally {
+      setBusy(null);
+    }
+  }
+  if (n.state === "suspended") {
+    return (
+      <p className="mt-3 text-[12px] leading-4 text-burn">
+        Suspended by Cloudana{n.stateReason ? `: ${n.stateReason}` : ""}. It is given no work until support lifts it; its deployments moved to other nodes.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+      {n.state === "draining" ? (
+        <button
+          type="button"
+          className={cn(btn.ghost, btn.sm)}
+          disabled={!!busy}
+          onClick={() => run("Resume", () => api(`/nodes/mine/${n.address}/drain`, { method: "DELETE", auth: true }), "Node takes work again")}
+        >
+          {busy === "Resume" ? <Loader2 className="animate-spin" /> : <Play />} Resume
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={cn(btn.ghost, btn.sm)}
+          disabled={!!busy}
+          onClick={() =>
+            run(
+              "Drain",
+              () => api(`/nodes/mine/${n.address}/drain`, { method: "POST", auth: true, body: { reason: "drained from the console" } }),
+              "Draining",
+              "No new work; what runs keeps running and billing until it ends.",
+            )
+          }
+        >
+          {busy === "Drain" ? <Loader2 className="animate-spin" /> : <Pause />} Drain
+        </button>
+      )}
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <button type="button" className={cn(btn.quiet, btn.sm, "text-burn")} disabled={!!busy}>
+            <Unlink /> Unbind
+          </button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unbind node {short(n.address)}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its live deployments move to other nodes and it stops earning for this wallet. Earnings already recorded stay yours. The agent prints a fresh bind link on its next announce.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-burn text-bg hover:bg-burn/90"
+              onClick={() => run("Unbind", () => api(`/nodes/mine/${n.address}`, { method: "DELETE", auth: true }), "Node unbound", "It prints a fresh bind link on its next announce.")}
+            >
+              Unbind
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {n.state === "draining" && n.stateReason && <span className="font-mono text-[12px] text-faint">{n.stateReason}</span>}
+    </div>
   );
 }
 

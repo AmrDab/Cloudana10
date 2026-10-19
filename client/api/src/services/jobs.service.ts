@@ -299,7 +299,7 @@ export async function runAssignment(now = Date.now()): Promise<number> {
 
   const nodes = await db
     .prepare(
-      "SELECT * FROM nodes WHERE payout IS NOT NULL AND last_seen >= ? " +
+      "SELECT * FROM nodes WHERE payout IS NOT NULL AND state = 'active' AND last_seen >= ? " +
         "AND address NOT IN (SELECT node FROM work_jobs WHERE status = 'assigned' AND node IS NOT NULL)",
     )
     .bind(now - env.NODE_ACTIVE_SECONDS * 1000)

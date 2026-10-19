@@ -359,7 +359,7 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .all<Queued>();
   if (!queued.results?.length) return 0;
   const nodes = await db
-    .prepare("SELECT address, work_types, manifest_json, public_host, agent_version FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
+    .prepare("SELECT address, work_types, manifest_json, public_host, agent_version FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND state = 'active' AND last_seen >= ?")
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
     .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null; agent_version: string | null }>();
   type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean };
@@ -770,6 +770,8 @@ export interface DutiesNodeRow {
   relay_at?: number | null;
   public_host?: string | null;
   agent_version?: string | null;
+  /** B-8: only an `active` node takes new work (null on old rows = active). */
+  state?: string | null;
 }
 
 /**
@@ -829,7 +831,7 @@ export async function runDeploymentDuties(
     ctx.row !== undefined
       ? ctx.row
       : await getD1()
-          .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host, agent_version FROM nodes WHERE address = ?")
+          .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host, agent_version, state FROM nodes WHERE address = ?")
           .bind(node)
           .first<DutiesNodeRow>();
   if (!row) return [];
@@ -840,8 +842,9 @@ export async function runDeploymentDuties(
   // kept its hosting capabilities only with a verified public host (routes/v1/nodes.ts announce).
   const relayed = caps.includes("relay");
   const reachable = !relayed || (row.relay_at ?? 0) >= now - getEnv().RELAY_FRESH_SECONDS * 1000;
+  const active = (row.state ?? "active") === "active";
   const couldAssign =
-    !!row.payout && reachable && ((act.queuedStatic > 0 && caps.includes("hosting")) || (act.queuedContainer > 0 && caps.includes("container") && !!row.fleet_id));
+    !!row.payout && reachable && active && ((act.queuedStatic > 0 && caps.includes("hosting")) || (act.queuedContainer > 0 && caps.includes("container") && !!row.fleet_id));
   const steps: [string, boolean, () => Promise<unknown>][] = [
     ["auto-stop", act.workstations > 0, () => autoStop(node, now)],
     ["assign", couldAssign, () => assign(node, caps, hw, row.fleet_id ?? null, now, relayed, !!row.public_host, row.agent_version ?? null)],
