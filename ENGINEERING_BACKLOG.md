@@ -62,10 +62,13 @@ with the job's earnings delayed until the check and clawed on failure (`docs/POU
 orchestrator CPU per job drops ≥ 10× at n = 256 in a benchmark; a planted wrong transcript is caught within k jobs in
 a property test; claw path covered.
 
-**B-7 · Developer auth and API keys (gap 6).** `POST /v1/keys` for user API keys (`cld_sk_…`, sha256 stored,
-scopes `jobs`, `deployments`, `read`), short-lived JWT for the console with refresh, revocation list, `kid` in the
-JWT header for secret rotation. Acceptance: a revoked key is refused within 30 s on both runtimes; OpenAPI documents
-the scheme; the console uses the same endpoints.
+**B-7 · Developer auth and API keys (gap 6).** **Done in this pass** (PROGRESS.md commit 12; SECURITY_AUDIT F8):
+`POST`/`GET /v1/keys`, `DELETE /v1/keys/{id}` (`cld_sk_…`, sha256 stored, scopes `read`/`jobs`/`deployments`, optional
+expiry, ≤ 20 live), `POST /v1/auth/logout` with a KV revocation list, `JWT_SECRET_PREVIOUS` rotation, the OpenAPI
+security scheme describes both credentials, the console mints keys under Docs → API and revokes its session on
+sign-out. A revoked key is refused at once in the revoking isolate and within 30 s elsewhere, on both runtimes.
+Deviations from the sketch: no `kid` header (verification tries both secrets) and no refresh token (24 h session,
+`JWT_TTL_SECONDS`, now revocable). Left: per-key rate limits; an audit trail of key use beyond `lastUsedAt`.
 
 **B-8 · Node state model and draining.** States `online | degraded | draining | unreachable | suspended | banned`
 on `nodes`; `POST /v1/nodes/mine/{address}/drain` (no new work, finish or hand off live deployments); admin ban/unban

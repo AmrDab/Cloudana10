@@ -75,7 +75,14 @@ function setSession(s: Session | null) {
   listeners.forEach((l) => l());
 }
 
-export const signOut = () => setSession(null);
+/** Drop the session here and end the token at the API (best effort: the token is useless to us either way). */
+export function signOut() {
+  const s = getSession();
+  setSession(null);
+  if (s?.token) {
+    fetch(`${API}/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${s.token}` }, keepalive: true }).catch(() => undefined);
+  }
+}
 export function subscribeSession(l: () => void) {
   listeners.add(l);
   return () => listeners.delete(l);

@@ -59,14 +59,14 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 
 | Capability | Class | Proof | Evidence |
 |---|---|---|---|
-| Wallet sign-in (EIP-191 over a single-use nonce), JWT 24 h | 2 | — | `auth` tests, e2e |
+| Wallet sign-in (EIP-191 over a single-use nonce), session JWT 24 h with logout revocation and secret rotation | 2 | — | `auth`, `api-keys` tests, e2e |
 | Tenant isolation at the API (owner-scoped rows, 404 for others) | 2 | — | `deployments` "another owner's deployment is 404", e2e |
 | Node request authentication (signature + nonce + window) | 2 | — | `node-auth`, `node-security` tests, e2e replay refused |
 | Signed node instructions with pinned signer | 2 | — | `node-security` tests, agent selftest |
 | Sealed secrets bound to deployment, node key verified in the browser | 2 | — | agent sealed selftest 26 checks; API tests (this pass) |
 | Container hardening (cap-drop, no-new-privileges, pids/mem/disk caps, egress DROP, non-root, NVIDIA env) | 2 | — | agent security selftest; **no kernel-level test** |
 | Endpoint keys (`cld_ek_`), per-key rate limit at the gateway | 2 | — | gateway tests |
-| User API keys with scopes, token revocation | 5 | — | B-7 |
+| User API keys (`cld_sk_`: scopes read/jobs/deployments, hashed, expiring, revocable; console Docs → API) | 2 | — | `api-keys` tests (18 route→scope cases, allow/deny on real routes); panel not browser-tested |
 | Zero-trust access, confidential VMs, TEE | 5 | — | — |
 
 ## Economics and settlement

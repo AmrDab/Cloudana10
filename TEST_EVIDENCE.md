@@ -9,7 +9,7 @@ Cloudflare or chain credentials, and no outbound access to `cloudana.io`, `*.wor
 | Package | Command | Result | Notes |
 |---|---|---|---|
 | client/api | `npm run type-check` | clean | |
-| client/api | `npm test` (vitest) | **37 files, 343 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind) |
+| client/api | `npm test` (vitest) | **38 files, 354 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind), +7 `api-keys.test.ts`, +3 `auth.test.ts`, +1 `security.test.ts` (API keys, logout, rotation) |
 | gateway | `npx tsc --noEmit && npx vitest run` | clean; **28 passed** | |
 | relay | same | clean; **14 passed** | includes workerd e2e (`test/workerd.e2e.ts`) |
 | keeper | same | clean; **28 passed** | tree vector fixture + run state machine |
@@ -91,6 +91,12 @@ hash that anyone can confirm with `eth_getBlockByHash`; the script then passes f
   with `expectsSecrets` on two relay nodes; neither node is told to start until its replica is sealed; the detail
   carries each replica's own node key (two distinct keys) and the list carries none; sealing one replica starts only
   its node; another owner gets 404; the endpoint stops waiting once both are sealed (SECURITY_AUDIT F7).
+- `client/api/tests/api-keys.test.ts`, `auth.test.ts`, `security.test.ts` (SECURITY_AUDIT F8): 18 route→scope
+  cases; a `read` key reads jobs and the account but is refused on a job write with the missing scope named, and on
+  keys, logout, payments, fleets and node routes with "wallet session"; a `jobs` key queues work for its owner and
+  cannot read; revocation refuses the next request; expiry through the cache; garbage and flipped tokens; another
+  account's revoke is 404; the 21st key is 409; logout ends a session and leaves the wallet's other sessions alone;
+  tokens signed with `JWT_SECRET_PREVIOUS` verify, others do not.
 
 ## 3b. Heartbeat D1 cost (backlog B-5), measured
 

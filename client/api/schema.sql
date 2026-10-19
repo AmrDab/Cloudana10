@@ -256,6 +256,12 @@ CREATE TABLE IF NOT EXISTS endpoint_keys (
   created_at INTEGER NOT NULL, revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_endpoint_keys_dep ON endpoint_keys(deployment_id, created_at);
+-- Developer API keys (ENGINEERING_BACKLOG B-7): sha256 of the token, JSON scopes, optional expiry, revocation time.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
+  scopes TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER, expires_at INTEGER, revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner, created_at DESC);
 -- Report a problem (docs/V4_VERIFIED_SERVICES.md §5): one row per report; ≤ 5 per owner per UTC day.
 CREATE TABLE IF NOT EXISTS deployment_reports (
   id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, owner TEXT NOT NULL, at INTEGER NOT NULL,

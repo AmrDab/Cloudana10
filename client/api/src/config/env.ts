@@ -31,6 +31,12 @@ export const envSchema = z.object({
 
   // ── Auth / internal ──────────────────────────────────────────────────────
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
+  /** Set during a secret rotation: tokens signed with it keep verifying until they expire. */
+  JWT_SECRET_PREVIOUS: z.string().min(1).optional(),
+  /** Wallet session lifetime (POST /v1/auth/logout ends one earlier). */
+  JWT_TTL_SECONDS: int(86_400),
+  /** How long an isolate trusts an API-key lookup; a revocation elsewhere lands within this. */
+  API_KEY_CACHE_SECONDS: int(30),
   INTERNAL_API_KEY: z.string().min(16).optional(),
 
   // ── Chain (read-only; the API Worker holds no chain key) ──────────────────

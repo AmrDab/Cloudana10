@@ -136,11 +136,30 @@ the `CURRENT_AGENT_VERSION` comment.
   waits, visibly, until the owner returns; a server-side re-encryption would defeat the design (B-9 fleet pinning
   and B-24 confidential tier are the real answers).
 
+### 12 · developer API keys, session logout, secret rotation (B-7)
+- **Gap 6.** A session token was the whole account for 24 h with nothing to revoke it, and programs had no credential
+  of their own.
+- **API.** `cld_sk_…` keys: `POST /v1/keys` (name, scopes `read`/`jobs`/`deployments`, optional expiry; ≤ 20 live;
+  token shown once, sha256 stored), `GET /v1/keys`, `DELETE /v1/keys/{id}`. `requireAuth` accepts a key wherever it
+  accepts a session and maps the request to the scope it needs (`scopeFor`: GET → read, `/v1/jobs` writes → jobs,
+  `/v1/deployments` and `/v1/ipfs` writes → deployments); keys, sessions, payments, credits, fleets and node routes
+  are wallet-only (403 with the reason). Lookups are cached 30 s per isolate (`API_KEY_CACHE_SECONDS`), `lastUsedAt`
+  written at most once a minute. Session tokens carry a `jti`; `POST /v1/auth/logout` revokes (KV list for the
+  remaining life; memory when KV is unbound). `JWT_SECRET_PREVIOUS` rotates the secret without signing anyone out;
+  `JWT_TTL_SECONDS` sets the lifetime. The OpenAPI security scheme describes both credentials.
+- **Console.** Docs → API: keys panel (create with scopes, copy once, list with last use, revoke); sign-out calls
+  logout.
+- **Tests / results.** API 343 → **354** (`api-keys.test.ts`: 18 route→scope cases, mint/list/hash/limit, per-scope
+  allow and deny route by route, revoke/expire/garbage, 20-key cap, logout; `auth.test.ts`: jti, revocation,
+  rotation, key without storage → 401; `security.test.ts`: gates). Console tsc, 3 tests and build clean.
+- **Residual.** No refresh token: the session is 24 h by configuration, now revocable. No per-key rate limit or
+  audit trail beyond `lastUsedAt`. Not browser-tested.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **343** |
+| client/api vitest | 330 | **354** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | 8 pass (sealed now 26 checks) |
 | contracts | 224 (offline solc) | 224 |
@@ -156,7 +175,7 @@ the `CURRENT_AGENT_VERSION` comment.
 | 3 | D1 heartbeat cost | Measured and cut 13 → 5 statements per idle/steady beat (commit 10, pinned by a test); the architecture limit (one D1) remains. |
 | 4 | Orchestrator not independently checkable | Largely closed for phase 1: draws published with their eligible set (`GET /v1/draws/{id}`), epochs published with leaves and a signature (`GET /v1/epochs/{n}`), `/v1/network` signed, `scripts/verify/replay.ts` checks all of it from public data; seeds are block hashes once `CHAIN_RPC_URL` deploys. Left: signing individual draws, pull-based assignment (B-17). |
 | 5 | Verification cost = work cost | Open (B-6). |
-| 6 | Auth without revocation/scopes | Open (B-7). |
+| 6 | Auth without revocation/scopes | Closed for the API (commit 12): scoped API keys, logout revocation, secret rotation; a refresh-token flow is a product choice left open. |
 | 7 | No fleet/GPU node | **Owner** (runbook 10). |
 | 8 | Legacy UI reachable | Reduced (68 orphan files gone); `/control/legacy` needs the owner's call (B-3). |
 | 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified, now per replica from the console; endpoint env no longer sent in the clear); fleet pinning is B-9. |
@@ -178,9 +197,9 @@ the `CURRENT_AGENT_VERSION` comment.
 
 ## Next priorities (engineering, no owner input needed)
 
-B-7 API keys and token lifecycle → B-13 retire direct mode / resolve-and-pin → B-14 container logs through the
-relay → B-15 custom domains → B-8 node state model and draining → B-5 follow-up (liveness off D1, 30 s beats) once a
-real load test exists → wallet-stack and Hardhat-toolchain majors (SECURITY_AUDIT §3b).
+B-13 retire direct mode / resolve-and-pin → B-14 container logs through the relay → B-15 custom domains → B-8 node
+state model and draining → B-5 follow-up (liveness off D1, 30 s beats) once a real load test exists → wallet-stack
+and Hardhat-toolchain majors (SECURITY_AUDIT §3b).
 
 ## Not done, and why
 

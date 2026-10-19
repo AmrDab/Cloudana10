@@ -6,8 +6,11 @@ import {
   generateToken,
   issueNonce,
   consumeNonce,
+  revokeToken,
+  verifyBearer,
   type AuthVariables,
 } from "../src/middleware/auth.js";
+import { resetEnv } from "../src/config/env.js";
 
 beforeAll(() => {
   process.env.JWT_SECRET = "test-secret";
@@ -86,5 +89,45 @@ describe("issueNonce / consumeNonce", () => {
     const other = "0xABCDEF0000000000000000000000000000000006";
     const issued = await issueNonce(address);
     expect(await consumeNonce(other, issued.message)).toBe(false);
+  });
+});
+
+describe("session lifecycle (B-7)", () => {
+  it("tokens carry a jti and the configured lifetime; a revoked one is refused at once", async () => {
+    const token = await generateToken("0xABCDEF0000000000000000000000000000000002");
+    const payload = (await verifyBearer(token))!;
+    expect(payload.jti).toMatch(/^[0-9a-f]{32}$/);
+    expect(payload.auth).toBe("wallet");
+    expect(payload.exp - payload.iat).toBe(86_400);
+    const app = buildApp();
+    expect((await app.request("/protected", { headers: { Authorization: `Bearer ${token}` } })).status).toBe(200);
+    expect(await revokeToken(payload)).toBe(true);
+    expect((await app.request("/protected", { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
+    // A token minted before jti existed cannot be revoked, only expire.
+    expect(await revokeToken({ exp: payload.exp })).toBe(false);
+  });
+
+  it("accepts tokens signed with JWT_SECRET_PREVIOUS during a rotation, and nothing else", async () => {
+    process.env.JWT_SECRET_PREVIOUS = "the-secret-before-rotation";
+    resetEnv();
+    try {
+      const claims = { sub: "0xabc", role: "user", iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 };
+      const old = await sign(claims, "the-secret-before-rotation");
+      const current = await sign(claims, "test-secret");
+      const wrong = await sign(claims, "some-other-secret");
+      const app = buildApp();
+      expect((await app.request("/protected", { headers: { Authorization: `Bearer ${old}` } })).status).toBe(200);
+      expect((await app.request("/protected", { headers: { Authorization: `Bearer ${current}` } })).status).toBe(200);
+      expect((await app.request("/protected", { headers: { Authorization: `Bearer ${wrong}` } })).status).toBe(401);
+    } finally {
+      delete process.env.JWT_SECRET_PREVIOUS;
+      resetEnv();
+    }
+  });
+
+  it("an API key against an app without storage is refused, not an error", async () => {
+    const app = buildApp();
+    const res = await app.request("/protected", { headers: { Authorization: "Bearer cld_sk_" + "a".repeat(32) } });
+    expect(res.status).toBe(401);
   });
 });

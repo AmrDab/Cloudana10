@@ -44,7 +44,8 @@ Variables live in each `wrangler.toml` `[vars]`. The API's: `CHAIN_NETWORK`, `SI
 `SITES_DOMAIN`, the `KEY_LIMIT` rate-limit binding. `DEV_MODE` must never be set in production; `STRIPE_ENABLED`
 stays unset.
 
-Rotation: `JWT_SECRET` (signs everyone out; set it on the API only), `INTERNAL_API_KEY` (set on api, keeper, gateway
+Rotation: `JWT_SECRET` (API only; set the old value as `JWT_SECRET_PREVIOUS` first, then the new `JWT_SECRET` — nobody
+is signed out — and remove the previous after 24 h), `INTERNAL_API_KEY` (set on api, keeper, gateway
 in one go; the script does), `RELAY_TICKET_SECRET` (api + relay; nodes reconnect with fresh tickets within a minute),
 `INSTRUCTION_SIGNING_KEY` (**agents pin the address**: bump `DEFAULT_INSTRUCTION_SIGNER`, release an agent, then
 rotate; or operators set `CLOUDANA_INSTRUCTION_SIGNER`), `STORAGE_KEK` (never rotate without re-encrypting copies;

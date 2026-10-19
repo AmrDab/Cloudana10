@@ -101,6 +101,26 @@ API's `awaitingSecrets`, never from the tab's memory, with a re-enter form. Test
 per replica, each to its own node's key" (two nodes, two keys, list vs detail exposure, cross-owner 404),
 `deployments.test.ts` (flag through assignment, sealing and re-queue).
 
+### F8 — Sessions could not be revoked; programs had no credential but the wallet's own token — High — FIXED (commit 12)
+
+Open finding O3. A session token was a 24 h HS256 JWT with nothing to revoke it: a leaked token was the account for
+a day, and rotating `JWT_SECRET` signed everyone out. Scripts, CI and SDKs had no credential but that same token.
+
+Fix (`middleware/auth.ts`, `services/api-keys.service.ts`, `routes/v1/keys.ts`): session tokens carry a `jti`;
+`POST /v1/auth/logout` puts it on a KV revocation list for the token's remaining life and every later use is refused
+(the console calls it on sign-out; in memory when KV is unbound). Verification accepts `JWT_SECRET` and
+`JWT_SECRET_PREVIOUS`, so a rotation no longer signs everyone out: set the old secret as previous, the new one as
+current, drop the previous after `JWT_TTL_SECONDS`. Developer API keys `cld_sk_…` are minted by the wallet session
+(`POST /v1/keys`), shown once, stored as sha256, scoped (`read`, `jobs`, `deployments`), optionally expiring, revoked
+by `DELETE /v1/keys/{id}` (at once in the isolate that revoked, within `API_KEY_CACHE_SECONDS` = 30 s elsewhere). A
+key never reaches key management, sessions, payments, credits, fleets or node routes (`scopeFor`, tested route by
+route). Not built: a short-lived access token with refresh — with revocation in place the 24 h lifetime is a product
+choice (`JWT_TTL_SECONDS`), not a hole; no `kid` header either, verification simply tries both secrets.
+
+Tests: `api-keys.test.ts` (18 route→scope cases; mint/list/hash; per-scope allow and deny on real routes; revoke,
+expiry, garbage, cross-owner 404; the 20-key cap; logout), `auth.test.ts` (jti, revocation, rotation, a key against
+an app without storage → 401), `security.test.ts` (gates).
+
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
 | Review item (C.5) | State in code | Where |
@@ -126,7 +146,7 @@ per replica, each to its own node's key" (two nodes, two keys, list vs detail ex
 |---|---|---|---|---|
 | O1 | Critical (launch-blocking, owner) | Legacy CLDToken minter/admin is the leaked key; v2 contracts not deployed; keeper not running | Needs the owner's Safe, poster key and deploy (runbook steps 3–6) | Run `contract/scripts/v2/deploy.ts`; keep legacy addresses listed as compromised; never reuse 0xF292… |
 | O2 | High | A compromised API can route a deployment with secrets to a node it controls | Inherent to orchestrator-chosen placement | Fleet pinning for sensitive deployments (owner chooses a fleet, not a node); TEE tier later |
-| O3 | High | JWT: HS256, 24 h, no revocation, one secret for both runtimes | Design | Short-lived access token + rotating refresh, `kid` for secret rotation, server-side revocation list in KV; scope claims for API keys |
+| O3 | ~~High~~ fixed | JWT: HS256, 24 h, no revocation, one secret for both runtimes | **Fixed in commit 12 (F8)**: logout revocation list, `JWT_SECRET_PREVIOUS` rotation, scoped API keys | Left as a product choice: a shorter `JWT_TTL_SECONDS` with a refresh flow |
 | O4 | High (scale) | ~12 D1 statements per heartbeat per node; single-writer D1 | Architecture | Batch the per-node duties into one `db.batch`, skip duties for nodes with nothing live, move `relay_at`/`last_seen` to KV with a 15 s write coalescing; measure before and after (B-5) |
 | O5 | Medium | Agent nonce LRU is in-memory: an instruction captured and replayed within 60 s of an agent restart is accepted | Window is 60 s and requires a captured signed instruction | Persist the last nonces to `.data`, or include the agent's boot id in the signed body (API echoes it) |
 | ~~O6~~ | Medium | `submitWork` recorded provider rewards even if the fee capture failed (hold missing) | **Fixed** (PROGRESS.md commit 9): capture first; on failure the verified result is still delivered but no reward entries are written, so the epoch close neither mints for the job nor burns its fee. Test: `v1-submit.test.ts` "no reward without a captured fee" | — |

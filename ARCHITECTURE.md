@@ -9,7 +9,7 @@ trust each part carries, and points at the code. Status per capability: `CAPABIL
 
 ```
                     cloudana.io (homepage)  app.cloudana.io/control (console)      SDK / curl
-                                    │  JWT (wallet sign-in)                         │
+                                    │  wallet session JWT · scoped API key cld_sk_  │
                                     ▼                                               ▼
  ┌──────────────────────────────── cloudana-api (Cloudflare Worker) ────────────────────────────────┐
  │ app.ts: auth · jobs/work · nodes · deployments · fleets · ledger · admin-epochs · network · …   │

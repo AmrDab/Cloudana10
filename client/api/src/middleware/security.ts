@@ -15,6 +15,7 @@ type AnyHono = Hono<any, any, any>;
 export function applySecurity(app: AnyHono): void {
   // Sign-in: cheap to call, so cap tightly per IP.
   app.use("/v1/auth/*", rateLimit({ bucket: "auth", limit: 20, windowSec: 60 }));
+  app.use("/v1/auth/logout", requireAuth);
 
   // Money and minting.
   app.use("/v1/payments/*", rateLimit({ bucket: "payments", limit: 60, windowSec: 60 }));
@@ -51,6 +52,10 @@ export function applySecurity(app: AnyHono): void {
   app.use("/v1/jobs", requireAuth);
   app.use("/v1/jobs/*", requireAuth);
   app.use("/v1/dev/credits", requireAuth);
+  // Developer API keys: wallet session only (a key cannot mint or revoke keys — auth.ts scopeFor).
+  app.use("/v1/keys", requireAuth);
+  app.use("/v1/keys/*", requireAuth);
+  app.on("POST", "/v1/keys", rateLimit({ bucket: "keys-create", limit: 20, windowSec: 3600 }));
   app.on("POST", "/v1/jobs", rateLimit({ bucket: "jobs-create", limit: 30, windowSec: 60 }));
   // Nodes heartbeat every 15 s and re-announce while unbound; submit re-executes the transcript (CPU-heavy).
   // Before the signature check only a per-IP layer applies, sized for a datacenter NAT (hundreds of nodes behind

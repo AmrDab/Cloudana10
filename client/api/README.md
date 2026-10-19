@@ -67,7 +67,7 @@ Error codes and HTTP status (`src/lib/http.ts`): `bad_request` (400), `validatio
 (401), `forbidden` (403), `not_found` (404), `conflict` (409), `rate_limited` (429), `payload_too_large` (413),
 `unprocessable` (422), `upstream_failed` (502), `not_configured` (503), `internal` (500).
 
-Routers (all mounted on both runtimes): `auth`, `account`, `dev` (test credits), `jobs` + `work` (matrix jobs:
+Routers (all mounted on both runtimes): `auth`, `account`, `keys` (developer API keys), `dev` (test credits), `jobs` + `work` (matrix jobs:
 enqueue, assignment, node-signed submit), `nodes` (announce, bind, heartbeat with signed instructions, relay ticket),
 `nodes-deployments` (status reports), `nodes-storage` (provider copies), `deployments` (static sites, containers,
 workstations, GPU endpoints; gateway route; admin stop), `fleets`, `ledger`, `admin-epochs` (keeper), `network`
@@ -78,7 +78,7 @@ workstations, GPU endpoints; gateway route; admin stop), `fleets`, `ledger`, `ad
 
 | Caller | Credential | Where checked |
 |---|---|---|
-| User (console, SDK) | JWT from `GET /v1/auth/nonce` → wallet signature → `POST /v1/auth/login`; `Authorization: Bearer` | `middleware/auth.ts`, `middleware/security.ts` |
+| User (console, SDK, CI) | A wallet session token (`GET /v1/auth/nonce` → wallet signature → `POST /v1/auth/login`; ended by `POST /v1/auth/logout`) or a scoped API key `cld_sk_…` (`POST /v1/keys`: `read`, `jobs`, `deployments`; never key, session, payment, credit, fleet or node routes); both as `Authorization: Bearer` | `middleware/auth.ts`, `services/api-keys.service.ts`, `middleware/security.ts` |
 | Node agent | `X-Node`, `X-Node-Timestamp` (±60 s), `X-Nonce` (single use, 120 s), `X-Node-Signature` over `"<METHOD> <path> <ts> <sha256(body)> <nonce>"` | `middleware/node-auth.ts` |
 | Keeper / gateway / admin | `X-Internal-Key` = `INTERNAL_API_KEY` | `routes/v1/admin-epochs.ts` `requireInternalKey` |
 
@@ -96,7 +96,9 @@ an abuse stop, not a precise quota), in-memory on Node. The buckets and limits a
 every invalid variable. `.env.example` lists every key with its default or a placeholder. Worker vars come from
 `wrangler.toml`; Worker secrets are set with `wrangler secret put <NAME>` (`JWT_SECRET`, `INTERNAL_API_KEY`,
 `INSTRUCTION_SIGNING_KEY`, `RELAY_TICKET_SECRET`, `STORAGE_KEK`, `PINATA_JWT`; `scripts/set-api-secrets.mjs` and
-`scripts/set-relay-secrets.mjs` generate and upload them). The Worker holds **no chain key**.
+`scripts/set-relay-secrets.mjs` generate and upload them). The Worker holds **no chain key**. `JWT_SECRET_PREVIOUS`
+is set only during a rotation (sessions signed with it keep verifying until `JWT_TTL_SECONDS`, default 24 h, has
+passed), then removed.
 
 ## CI
 

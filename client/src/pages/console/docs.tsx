@@ -6,6 +6,7 @@ import { API_ROOT } from "@/lib/cld";
 import { CATALOG, STATUS_LABEL } from "@/lib/services";
 import { StatusChip } from "@/components/cld/status-chip";
 import { CodeBlock, MonoLabel, PageHeader, Panel } from "@/components/console/primitives";
+import { ApiKeys } from "./api-keys";
 
 const TOC = [
   ["how", "How it works"],
@@ -188,9 +189,17 @@ export default function DocsPage() {
 
           <Doc id="api" title="API">
             <p>Everything in the console is a public, documented API.</p>
+            <p>
+              Two credentials, both sent as <code className="font-mono text-[13px]">Authorization: Bearer</code>: the console's
+              wallet session (24 hours, ended when you sign out) and <b>API keys</b> for scripts, CI and SDKs — scoped to
+              <code className="font-mono text-[13px]"> read</code>, <code className="font-mono text-[13px]">jobs</code> and{" "}
+              <code className="font-mono text-[13px]">deployments</code>, revocable here, never able to mint keys, buy credits or change provider settings.
+            </p>
+            <ApiKeys />
             <ul className="grid gap-1.5 font-mono text-[13px]">
               {[
                 ["GET", "/v1/network", "live network numbers"],
+                ["POST", "/v1/keys", "create an API key (wallet session)"],
                 ["POST", "/v1/jobs", "queue a job (auth)"],
                 ["GET", "/v1/jobs/{id}", "result and proof (auth)"],
                 ["GET", "/v1/verify/task", "a task to check"],

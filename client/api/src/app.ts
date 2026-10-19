@@ -21,6 +21,7 @@ import { paymentsRouter } from "./routes/v1/payments.js";
 import { ipfsRouter } from "./routes/v1/ipfs.js";
 import { devRouter } from "./routes/v1/dev.js";
 import { accountRouter } from "./routes/v1/account.js";
+import { keysRouter } from "./routes/v1/keys.js";
 import { jobsRouter } from "./routes/v1/jobs.js";
 import { nodesRouter } from "./routes/v1/nodes.js";
 import { workRouter } from "./routes/v1/work.js";
@@ -86,8 +87,11 @@ export function buildApp<B extends object = Record<string, unknown>>(opts: Build
   app.openAPIRegistry.registerComponent("securitySchemes", "BearerAuth", {
     type: "http",
     scheme: "bearer",
-    bearerFormat: "JWT",
-    description: "Obtain via GET /v1/auth/nonce then POST /v1/auth/login.",
+    description:
+      "Either a wallet session token (GET /v1/auth/nonce → sign → POST /v1/auth/login; ended by POST /v1/auth/logout) " +
+      "or a developer API key cld_sk_… (POST /v1/keys) carrying the scope the route needs: read for GET, jobs for " +
+      "/v1/jobs writes, deployments for /v1/deployments and /v1/ipfs writes. Keys cannot manage keys, credits, " +
+      "payments or provider state.",
   });
 
   app.get("/health", async (c) => {
@@ -115,6 +119,7 @@ export function buildApp<B extends object = Record<string, unknown>>(opts: Build
   // v1 work pipeline (docs/BUILD_SPEC_V1.md §5)
   app.route("/v1", devRouter);
   app.route("/v1", accountRouter);
+  app.route("/v1", keysRouter);
   app.route("/v1", jobsRouter);
   app.route("/v1", nodesRouter);
   app.route("/v1", workRouter);
