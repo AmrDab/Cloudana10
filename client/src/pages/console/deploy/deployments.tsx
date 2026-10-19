@@ -76,8 +76,16 @@ async function sealNow(id: string, nodePubkey: string, node: string | null) {
   setSealState(id, { phase: "sealing", node: node ?? undefined });
   try {
     // Loaded on demand: the crypto only ships to tabs that seal something.
-    const { seal } = await import("@/lib/sealed");
-    const sealedEnv = await seal(nodePubkey, JSON.stringify(secrets));
+    const [{ seal, sealedEnvAad }, { publicKeyToAddress }] = await Promise.all([import("@/lib/sealed"), import("viem/accounts")]);
+    // Trust the node's address (the deployment names it), never the key alone: the API relays the key, and a wrong
+    // or substituted key would hand the secrets to whoever holds it. The key must derive to the assigned node.
+    if (!node) throw new Error("No node is assigned yet.");
+    const hex = (nodePubkey.startsWith("0x") ? nodePubkey : `0x${nodePubkey}`) as `0x${string}`;
+    if (publicKeyToAddress(hex).toLowerCase() !== node.toLowerCase()) {
+      throw new Error("The key the API returned is not the assigned node's key. Secrets were not sealed; try again or report this.");
+    }
+    // Bound to this deployment id: the node opens them only for this deployment (shared/sealed.ts v2).
+    const sealedEnv = seal(nodePubkey, JSON.stringify(secrets), sealedEnvAad(id));
     await api(`/deployments/${id}/secrets`, { method: "PATCH", auth: true, body: { sealedEnv } });
     clearPendingSecrets(id);
     setSealState(id, { phase: "sealed", node: node ?? undefined });

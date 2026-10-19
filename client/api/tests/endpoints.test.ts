@@ -57,7 +57,7 @@ async function node(workTypes: string[], opts: { fleet?: boolean; gpus?: typeof 
     workTypes,
     pubkey: n.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.3.0",
+    agentVersion: "1.5.0",
   });
   expect(res.status).toBe(200);
   await getD1()
@@ -77,7 +77,7 @@ async function user(credits = 100_000) {
 
 /** Heartbeat with the relay socket up; returns the instructions. */
 async function beat(n: PrivateKeyAccount, relay = true) {
-  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.3.0" });
+  const res = await signed(n, "/v1/nodes/heartbeat", { relay, agentVersion: "1.5.0" });
   expect(res.status).toBe(200);
   return (await res.json()).deployments as { id: string; action: string; kind: string; spec: any; relayed?: boolean; imageAllowed?: boolean }[];
 }
@@ -419,7 +419,7 @@ describe("stop and secrets", () => {
     const u = await user();
     const id = (await (await create(u.jwt, { ...ENDPOINT, replicas: 1, expectsSecrets: true })).json()).id;
     const [r1] = await replicas(id);
-    const sealed = Buffer.from("sealed").toString("base64");
+    const sealed = Buffer.concat([Buffer.from([2, 4]), Buffer.alloc(64 + 24 + 16, 1), Buffer.from("sealed")]).toString("base64"); // v2-shaped (shared/sealed.ts)
     const onParent = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed });
     expect(onParent.status).toBe(400);
     expect((await onParent.json()).error.message).toMatch(/per replica/);

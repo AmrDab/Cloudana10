@@ -24,13 +24,20 @@ import { normalizeAddress } from "../lib/eth.js";
 import { hold } from "./balance.service.js";
 import {
   HOUR_MS,
+  SEALED_V2_MIN_AGENT,
   addEvent,
   awaitingSecrets,
+  carriesSecrets,
   chargeHour,
   endDeployment,
   getDeploymentRow,
   type DeploymentRow,
 } from "./deployments.service.js";
+import { compareVersions } from "./instruction-signing.service.js";
+
+/** Whether a node's agent opens v2 (deployment-bound) sealed secrets; older agents never get a deployment that has any. */
+export const opensSealedV2 = (agentVersion: string | null | undefined): boolean =>
+  !!agentVersion && compareVersions(agentVersion, SEALED_V2_MIN_AGENT) >= 0;
 
 /** Capability of a node that runs images outside the curated list (agent: CLOUDANA_ANY_IMAGE=1). */
 export const ANY_IMAGE_CAPABILITY = "any-image";
@@ -234,6 +241,7 @@ async function assign(
   now: number,
   relayed: boolean,
   publicHost: boolean,
+  agentVersion: string | null,
 ): Promise<void> {
   const db = getD1();
   if (capabilities.includes("hosting")) {
@@ -272,6 +280,7 @@ async function assign(
     if (state.containers >= NODE_CAPACITY.container) break;
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
     if (q.workstation && !publicHost) continue; // workstations stay direct (WebSockets, SSH): a verified public host only
+    if (carriesSecrets(q) && !opensSealedV2(agentVersion)) continue; // its secrets are bound to the deployment; this agent cannot open them
     if (q.parent_id && !(await replicaFits(node, q, relayed, capabilities))) continue;
     if (fits(q, state) && (await claim(node, q, now, relayed))) addUsage(state, q, 1);
   }
@@ -309,18 +318,18 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .all<Queued>();
   if (!queued.results?.length) return 0;
   const nodes = await db
-    .prepare("SELECT address, work_types, manifest_json, public_host FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
+    .prepare("SELECT address, work_types, manifest_json, public_host, agent_version FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND last_seen >= ?")
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
-    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null }>();
-  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean };
+    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null; agent_version: string | null }>();
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean };
   const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
     if (!caps.includes("container")) continue;
-    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [], publicHost: !!n.public_host });
+    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [], publicHost: !!n.public_host, sealedV2: opensSealedV2(n.agent_version) });
   }
-  // Same rule as assign(): workstations only go to nodes with a verified public host.
-  const canTake = (q: Queued, s: Candidate) => !q.workstation || s.publicHost;
+  // Same rules as assign(): workstations only on a verified public host; secrets only on an agent that opens them.
+  const canTake = (q: Queued, s: Candidate) => (!q.workstation || s.publicHost) && (!carriesSecrets(q) || s.sealedV2);
   const live = await db.prepare(`SELECT * FROM deployments WHERE kind = 'container' AND status IN ${LIVE}`).all<DeploymentRow>();
   for (const r of live.results ?? []) {
     const s = r.node ? states.get(r.node) : undefined;
@@ -714,7 +723,7 @@ async function instructions(node: string): Promise<NodeInstruction[]> {
 /** Everything a heartbeat does for hosting (per-node duties only). Unbound nodes get no new work but still receive stops. */
 export async function runDeploymentDuties(node: string, now = Date.now()): Promise<NodeInstruction[]> {
   const row = await getD1()
-    .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host FROM nodes WHERE address = ?")
+    .prepare("SELECT payout, work_types, manifest_json, fleet_id, relay_at, public_host, agent_version FROM nodes WHERE address = ?")
     .bind(node)
     .first<{
       payout: string | null;
@@ -723,6 +732,7 @@ export async function runDeploymentDuties(node: string, now = Date.now()): Promi
       fleet_id: string | null;
       relay_at: number | null;
       public_host: string | null;
+      agent_version: string | null;
     }>();
   if (!row) return [];
   const hw = JSON.parse(row.manifest_json ?? "{}") as NodeHardware;
@@ -733,7 +743,7 @@ export async function runDeploymentDuties(node: string, now = Date.now()): Promi
   const reachable = !relayed || (row.relay_at ?? 0) >= now - getEnv().RELAY_FRESH_SECONDS * 1000;
   const steps: [string, () => Promise<unknown>][] = [
     ["auto-stop", () => autoStop(node, now)],
-    ["assign", () => (row.payout && reachable ? assign(node, caps, hw, row.fleet_id, now, relayed, !!row.public_host) : Promise.resolve())],
+    ["assign", () => (row.payout && reachable ? assign(node, caps, hw, row.fleet_id, now, relayed, !!row.public_host, row.agent_version) : Promise.resolve())],
     ["probe", () => probe(node, now)],
     ["bill", () => bill(node, now)],
   ];

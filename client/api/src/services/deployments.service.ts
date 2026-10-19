@@ -312,6 +312,31 @@ export function awaitingSecrets(r: Pick<DeploymentRow, "kind" | "spec_json" | "s
   return r.kind === "container" && !r.sealed_env && (JSON.parse(r.spec_json) as ContainerSpec).expectsSecrets === true;
 }
 
+/** A container that carries, or will carry, sealed secrets: it may only go to a node whose agent opens v2 payloads. */
+export function carriesSecrets(r: Pick<DeploymentRow, "kind" | "spec_json" | "sealed_env">): boolean {
+  return r.kind === "container" && (r.sealed_env !== null || (JSON.parse(r.spec_json) as ContainerSpec).expectsSecrets === true);
+}
+
+/**
+ * Sealed secrets v2 (shared/sealed.ts): bound to the deployment id, so the API cannot move one deployment's secrets
+ * into another's container. The first agent that opens them; older agents never receive a deployment with secrets.
+ */
+export const SEALED_V2_MIN_AGENT = "1.5.0";
+/** First byte of a v2 payload (shared/sealed.ts SEALED_V2_TAG; the API does not import the crypto). */
+const SEALED_V2_TAG = 0x02;
+const SEALED_V2_MIN_BYTES = 1 + 65 + 24 + 16;
+
+/** True when `sealedEnv` has the shape of a v2 payload: the v2 tag, then an uncompressed ephemeral key, nonce and tag. */
+export function isSealedV2(sealedEnv: string): boolean {
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(sealedEnv, "base64");
+  } catch {
+    return false;
+  }
+  return buf.length >= SEALED_V2_MIN_BYTES && buf[0] === SEALED_V2_TAG && buf[1] === 0x04;
+}
+
 export const capabilityFor = (kind: DeploymentKind) => (kind === "static" ? "hosting" : "container");
 
 /** The capability a new deployment waits for: "any-image" / "gpu" when its image or GPUs need it. */
@@ -440,6 +465,13 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string)
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "sealed secrets are for containers only" };
   if (isEndpoint(row)) return { ok: false, code: "validation_failed", message: "seal secrets per replica (each is sealed to its node): PATCH /deployments/{replicaId}/secrets" };
+  if (!isSealedV2(sealedEnv)) {
+    return {
+      ok: false,
+      code: "validation_failed",
+      message: "sealedEnv must be a v2 payload bound to this deployment (shared/sealed.ts seal(pubkey, plaintext, sealedEnvAad(id))); reload the console and seal again",
+    };
+  }
   const r = await getD1()
     .prepare("UPDATE deployments SET sealed_env = ? WHERE id = ? AND status IN ('queued','assigned')")
     .bind(sealedEnv, id)

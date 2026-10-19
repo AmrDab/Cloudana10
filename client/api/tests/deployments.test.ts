@@ -45,7 +45,7 @@ async function signed(node: PrivateKeyAccount, path: string, payload: unknown = 
 const MANIFEST = { cpuThreads: 8, ramGB: 16, gpus: [], os: "linux" };
 
 /** A bound fleet node with the given capabilities (payout = a fresh wallet); it serves on 127.0.0.1 (DEV_MODE). */
-async function boundNode(workTypes: string[]) {
+async function boundNode(workTypes: string[], opts: { agentVersion?: string } = {}) {
   const node = privateKeyToAccount(generatePrivateKey());
   const res = await signed(node, "/v1/nodes/announce", {
     manifest: MANIFEST,
@@ -53,7 +53,7 @@ async function boundNode(workTypes: string[]) {
     workTypes,
     pubkey: node.publicKey.slice(2),
     publicHost: "127.0.0.1",
-    agentVersion: "1.3.0",
+    agentVersion: opts.agentVersion ?? "1.5.0",
   });
   expect(res.status).toBe(200);
   const payout = "0x" + (++userSeq).toString(16).padStart(40, "e");
@@ -68,6 +68,8 @@ async function user(credits = 10_000) {
 }
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
+/** A v2-shaped sealed payload (shared/sealed.ts): v2 tag, an uncompressed ephemeral key, nonce and auth tag; `label` keeps each distinct. */
+const sealedV2 = (label: string) => Buffer.concat([Buffer.from([2, 4]), Buffer.alloc(64 + 24 + 16, 1), Buffer.from(label)]).toString("base64");
 const SITE = { files: [{ path: "index.html", contentBase64: b64("<h1>hi</h1>") }, { path: "css/a.css", contentBase64: b64("h1{}") }] };
 const CONTAINER = { image: "nginx:alpine", env: { A: "1", SECRET_ISH: "plain" }, ports: [{ container: 80 }], cpu: 500, memMb: 512, storageMb: 1024 };
 
@@ -307,7 +309,7 @@ describe("owner actions", () => {
     const u = await user();
     const { node } = await boundNode(["matmul", "hosting", "container"]);
     const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
-    const sealed = b64("ciphertext");
+    const sealed = sealedV2("ciphertext");
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(200);
     const hb = await heartbeat(node);
     expect(hb.deployments[0]).toMatchObject({ id, action: "start", kind: "container", sealedEnv: sealed, spec: CONTAINER });
@@ -334,11 +336,37 @@ describe("owner actions", () => {
       expect(got.events[0].message).toBe("waiting for sealed secrets");
       expect(got.nodePubkey).toBe(node.publicKey.slice(2));
     }
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${viaFlag}/secrets`, { sealedEnv: b64("sealed") })).status).toBe(200);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${viaFlag}/secrets`, { sealedEnv: sealedV2("sealed") })).status).toBe(200);
     const hb = await heartbeat(node);
     expect(hb.deployments).toEqual([
-      { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: b64("sealed"), imageAllowed: false, relayed: false },
+      { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: sealedV2("sealed"), imageAllowed: false, relayed: false },
     ]);
+  });
+
+  it("refuses a legacy (v1) or malformed sealedEnv: secrets must be bound to the deployment", async () => {
+    const u = await user();
+    await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
+    const v1 = Buffer.concat([Buffer.from([4]), Buffer.alloc(64 + 24 + 16, 1)]).toString("base64");
+    for (const bad of [b64("ciphertext"), v1]) {
+      const res = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: bad });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.message).toMatch(/v2 payload bound to this deployment/);
+    }
+    expect((await row(id))!.sealed_env).toBeNull();
+  });
+
+  it("a container with secrets waits for an agent that opens bound secrets (>= 1.5.0); a plain one does not", async () => {
+    const u = await user();
+    const { node: old } = await boundNode(["matmul", "hosting", "container"], { agentVersion: "1.4.1" });
+    const withSecrets = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    const plain = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
+    expect((await heartbeat(old)).deployments.map((d) => d.id)).toEqual([plain]);
+    expect(await row(withSecrets)).toMatchObject({ status: "queued", node: null });
+    expect(await row(plain)).toMatchObject({ status: "assigned", node: old.address.toLowerCase() });
+    const { node: current } = await boundNode(["matmul", "hosting", "container"]);
+    await heartbeat(current);
+    expect(await row(withSecrets)).toMatchObject({ status: "assigned", node: current.address.toLowerCase() });
   });
 
   it("DELETE stops now; the node gets 'stop' until it confirms", async () => {
@@ -444,7 +472,7 @@ describe("dead-node requeue", () => {
     const u = await user();
     const { node: old } = await boundNode(["matmul", "hosting", "container"]);
     const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: b64("to-old") })).status).toBe(200);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("to-old") })).status).toBe(200);
     await heartbeat(old);
     await signed(old, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint: "http://127.0.0.1:42004" });
     await getD1().prepare("UPDATE nodes SET last_seen = ? WHERE address = ?").bind(Date.now() - 44_000, old.address.toLowerCase()).run();
@@ -461,9 +489,9 @@ describe("dead-node requeue", () => {
     const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
     expect(got.nodePubkey).toBe(next.publicKey.slice(2));
     expect(got.events.map((e: { message: string }) => e.message)).toContain("secrets were sealed to the old node — re-seal them for the next node");
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: b64("to-next") })).status).toBe(200);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("to-next") })).status).toBe(200);
     expect((await heartbeat(next)).deployments).toEqual([
-      expect.objectContaining({ id, action: "start", sealedEnv: b64("to-next") }),
+      expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("to-next") }),
     ]);
   });
 });

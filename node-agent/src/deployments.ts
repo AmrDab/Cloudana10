@@ -2,7 +2,7 @@ import http from "node:http";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { open } from "../../shared/sealed.ts";
+import { open, sealedEnvAad } from "../../shared/sealed.ts";
 import { findFreePort, serveSite, writeSite, type StaticSpec } from "./hosting.ts";
 import { dockerRunArgs, imageAllowed, realDocker, type ContainerSpec, type DockerOps } from "./container.ts";
 import { preStartCheck, type HardeningResult } from "./hardening.ts";
@@ -378,7 +378,7 @@ export class DeploymentManager {
     const used = new Set([...this.gpuAlloc.values()].flat());
     const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb, spec.gpu?.class);
     if (gpus.length) this.gpuAlloc.set(id, gpus);
-    const env: Record<string, string> = { ...(spec.env ?? {}), ...this.openSealed(sealedEnv) };
+    const env: Record<string, string> = { ...(spec.env ?? {}), ...this.openSealed(id, sealedEnv) };
     const taken = this.takenPorts();
     const hostPorts: number[] = [];
     for (let i = 0; i < spec.ports.length; i++) {
@@ -413,13 +413,18 @@ export class DeploymentManager {
     }
   }
 
-  private openSealed(sealedEnv?: string): Record<string, string> {
+  /**
+   * Secrets are opened under the aad of the deployment that is about to start (shared/sealed.ts v2): a payload sealed
+   * for another deployment — however it got onto this id's instruction — fails its tag and nothing is injected.
+   */
+  private openSealed(id: string, sealedEnv?: string): Record<string, string> {
     if (!sealedEnv) return {};
     let secret: unknown;
     try {
-      secret = JSON.parse(open(this.o.privateKey, sealedEnv));
-    } catch {
-      throw new Error("could not open sealed env (wrong node key or tampered)");
+      secret = JSON.parse(open(this.o.privateKey, sealedEnv, sealedEnvAad(id)));
+    } catch (err) {
+      const why = /unbound|not a sealed|bound to a deployment/.test((err as Error).message) ? (err as Error).message : "wrong node key, wrong deployment or tampered";
+      throw new Error(`could not open sealed env (${why})`);
     }
     if (!secret || typeof secret !== "object" || Array.isArray(secret)) throw new Error("sealed env is not an object");
     return secret as Record<string, string>;
@@ -438,7 +443,7 @@ export class DeploymentManager {
     const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb, spec.gpu?.class);
     this.gpuAlloc.set(id, gpus);
     const token = spec.tokenEnv && spec.access.web ? newWebToken() : undefined;
-    const env = workstationEnv(spec, this.openSealed(sealedEnv), token);
+    const env = workstationEnv(spec, this.openSealed(id, sealedEnv), token);
     const taken = this.takenPorts();
     const ports: WorkstationPorts = {};
     for (const k of ["web", "ssh"] as const) {
