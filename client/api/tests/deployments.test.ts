@@ -334,9 +334,11 @@ describe("owner actions", () => {
       expect((await row(id))!.status).toBe("assigned");
       const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
       expect(got.events[0].message).toBe("waiting for sealed secrets");
+      expect(got.deployment.awaitingSecrets).toBe(true);
       expect(got.nodePubkey).toBe(node.publicKey.slice(2));
     }
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${viaFlag}/secrets`, { sealedEnv: sealedV2("sealed") })).status).toBe(200);
+    expect((await (await authed(u.jwt, "GET", `/v1/deployments/${viaFlag}`)).json()).deployment.awaitingSecrets).toBe(false);
     const hb = await heartbeat(node);
     expect(hb.deployments).toEqual([
       { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: sealedV2("sealed"), imageAllowed: false, relayed: false },
@@ -488,6 +490,7 @@ describe("dead-node requeue", () => {
     expect((await row(id))!.status).toBe("assigned");
     const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
     expect(got.nodePubkey).toBe(next.publicKey.slice(2));
+    expect(got.deployment.awaitingSecrets).toBe(true); // the console shows "needs secrets" from this, not from its own memory
     expect(got.events.map((e: { message: string }) => e.message)).toContain("secrets were sealed to the old node — re-seal them for the next node");
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("to-next") })).status).toBe(200);
     expect((await heartbeat(next)).deployments).toEqual([

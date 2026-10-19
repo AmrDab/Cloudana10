@@ -19,7 +19,8 @@ import {
 import { errText, signInWithToast } from "@/components/console/actions";
 import { ReportProblem } from "@/components/console/report-problem";
 import { KindPill } from "./templates";
-import { autoSeal, clearPendingSecrets, getSealState, hostOf, pendingSecrets, publicUrl, setSealState, useSealVersion } from "./model";
+import { autoSeal, clearPendingSecrets, getSealState, hostOf, pendingSecrets, publicUrl, savePendingSecrets, setSealState, useSealVersion } from "./model";
+import { sealSecretsTo, SecretsForm } from "./secrets";
 
 // ── Status chip ─────────────────────────────────────────────────────────────
 const TONE: Record<string, "muted" | "work" | "ok" | "burn"> = {
@@ -73,25 +74,7 @@ function PriceH({ ucld, short: brief }: { ucld: number; short?: boolean }) {
 async function sealNow(id: string, nodePubkey: string, node: string | null) {
   const secrets = pendingSecrets(id);
   if (!secrets) return;
-  setSealState(id, { phase: "sealing", node: node ?? undefined });
-  try {
-    // Loaded on demand: the crypto only ships to tabs that seal something.
-    const [{ seal, sealedEnvAad }, { publicKeyToAddress }] = await Promise.all([import("@/lib/sealed"), import("viem/accounts")]);
-    // Trust the node's address (the deployment names it), never the key alone: the API relays the key, and a wrong
-    // or substituted key would hand the secrets to whoever holds it. The key must derive to the assigned node.
-    if (!node) throw new Error("No node is assigned yet.");
-    const hex = (nodePubkey.startsWith("0x") ? nodePubkey : `0x${nodePubkey}`) as `0x${string}`;
-    if (publicKeyToAddress(hex).toLowerCase() !== node.toLowerCase()) {
-      throw new Error("The key the API returned is not the assigned node's key. Secrets were not sealed; try again or report this.");
-    }
-    // Bound to this deployment id: the node opens them only for this deployment (shared/sealed.ts v2).
-    const sealedEnv = seal(nodePubkey, JSON.stringify(secrets), sealedEnvAad(id));
-    await api(`/deployments/${id}/secrets`, { method: "PATCH", auth: true, body: { sealedEnv } });
-    clearPendingSecrets(id);
-    setSealState(id, { phase: "sealed", node: node ?? undefined });
-  } catch (e) {
-    setSealState(id, { phase: "error", node: node ?? undefined, message: errText(e) });
-  }
+  if (await sealSecretsTo({ id, node, nodePubkey }, secrets)) clearPendingSecrets(id);
 }
 
 /** Polls one deployment until a node is assigned, then seals its pending secrets to that node's key. Renders nothing. */
@@ -120,19 +103,23 @@ function SealLine({ d }: { d: Deployment }) {
   useSealVersion();
   const s = getSealState(d.id);
   const pending = !!pendingSecrets(d.id);
-  if (!s && !pending) return null;
   const node = s?.node ?? d.node;
-  if (s?.phase === "sealed") return <Pill tone="ok"><Lock className="size-3" aria-hidden /> Sealed</Pill>;
   if (s?.phase === "sealing") return <Pill tone="work"><Loader2 className="size-3 animate-spin" aria-hidden /> Sealing secrets to node {short(node)}</Pill>;
   if (s?.phase === "error") return <Pill tone="burn" className="whitespace-normal">Secrets not sealed</Pill>;
-  return <Pill tone="muted"><KeyRound className="size-3" aria-hidden /> Secrets wait for a node</Pill>;
+  // The API's word wins over this tab's memory: after a re-queue the node changed and the secrets were cleared.
+  if (d.awaitingSecrets && !isTerminal(d.status)) return <Pill tone="muted"><KeyRound className="size-3" aria-hidden /> {pending ? "Secrets wait for a node" : "Needs secrets"}</Pill>;
+  if (s?.phase === "sealed") return <Pill tone="ok"><Lock className="size-3" aria-hidden /> Sealed</Pill>;
+  return null;
 }
 
 function SecretsControl({ d, detail }: { d: Deployment; detail?: DeploymentDetail }) {
   useSealVersion();
   const s = getSealState(d.id);
   const pending = !!pendingSecrets(d.id);
-  if (!pending && s?.phase !== "sealed" && s?.phase !== "error") return null;
+  // Waiting for secrets this tab does not hold: never had them (another tab created it), or the node changed since
+  // they were sealed and the API cleared them (they were sealed to the old node's key).
+  const reenter = d.awaitingSecrets && !pending && s?.phase !== "sealing" && (d.status === "queued" || d.status === "assigned");
+  if (!pending && !reenter && s?.phase !== "sealed" && s?.phase !== "error") return null;
   const canSeal = !!detail?.nodePubkey && (d.status === "queued" || d.status === "assigned");
   const auto = autoSeal.has(d.id) && s?.phase !== "error";
   return (
@@ -140,6 +127,16 @@ function SecretsControl({ d, detail }: { d: Deployment; detail?: DeploymentDetai
       <MonoLabel>Secrets</MonoLabel>
       <div className="mt-2" aria-live="polite"><SealLine d={d} /></div>
       {s?.phase === "error" && s.message && <p className="mt-2 text-[12px] leading-4 text-burn">{s.message}</p>}
+      {reenter && (
+        <>
+          <p className="mt-2 text-[12px] leading-4 text-muted-foreground">
+            {s?.phase === "sealed"
+              ? "It moved to another node; the secrets sealed to the old one were cleared. Enter them again to seal them to the new node."
+              : "It is waiting for secrets this tab does not have. Enter them; they are sealed in this browser to the assigned node."}
+          </p>
+          <SecretsForm onSave={(secrets) => savePendingSecrets(d.id, secrets)} />
+        </>
+      )}
       {pending && !auto && (
         <>
           <button type="button" className={cn(btn.ghost, btn.sm, "mt-3 w-full")} disabled={!canSeal || s?.phase === "sealing"} onClick={() => detail?.nodePubkey && sealNow(d.id, detail.nodePubkey, d.node)}>

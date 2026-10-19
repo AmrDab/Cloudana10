@@ -28,7 +28,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | Browser verifier (planted tasks, points) | 2 | — | e2e; `verify-feed` tests | — |
 | Containers (curated images) on fleet nodes, hardened | 3 | probed | API tests `deployments`, `workstations`; agent security selftest 94 checks; **no fleet node exists** | a datacenter/owner node with xfs pquota + Docker ≥ 28 |
 | GPU workstations (Jupyter / code-server / desktop), direct mode | 3 | probed · GPU reported by node | `workstations` tests; needs public-IP node (relay has no WebSockets) | a GPU node; relay WebSocket tunnelling |
-| GPU endpoints (bring your own model server), replicas, keys | 3 | probed (health) | `endpoints` tests; gateway tests | a GPU fleet node; console per-replica secret sealing (B-12) |
+| GPU endpoints (bring your own model server), replicas, keys, per-replica sealed secrets from the console | 3 | probed (health) | `endpoints` tests; gateway tests | a GPU fleet node |
 | Verified inference (teacher-forced checks) | 5 | — | `docs/V4_VERIFIED_SERVICES.md` §4 | reference node, calibration |
 | Edge functions | 5 | — | catalog entry only | — |
 

@@ -111,6 +111,31 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Residual.** Still one D1 for everything; the nonce batch is two statements by design (sweep + atomic insert).
   Next step for scale is a KV/DO-backed liveness store and 30 s beats (owner decision on the agent cadence).
 
+### 11 · endpoint secrets sealed per replica from the console (B-12); dependency upgrade
+- **Finding (SECURITY_AUDIT F7).** The endpoint form showed environment values as password fields and sent them in
+  the clear (`spec.env`): stored in D1, carried in the start instruction. Only plain containers had a seal path, and
+  the console could not seal endpoints at all (the API requires per-replica sealing; the console only sealed parent
+  rows), so an endpoint with secrets could never start from the console.
+- **API.** Every deployment carries `awaitingSecrets` (endpoints: while any replica waits); each replica carries
+  `awaitingSecrets` and, in `GET /deployments/{id}` once a node with a key holds it, `nodePubkey`. One extra column
+  on an existing statement; the heartbeat budgets are unchanged.
+- **Console.** Endpoint environment values are secrets: the form sends `expectsSecrets` and keeps the values in
+  `sessionStorage`; a sealer per endpoint polls the detail and seals each replica to its own node's key (the key must
+  derive to the assigned node's address), clears the plaintext once every replica is sealed, shows per-replica state.
+  Deploy and Endpoints tabs show "needs secrets" from the API's flag, never from tab memory, with a re-enter form
+  (new tab, or a container/replica re-queued to another node — the API clears the old payload). Shared code:
+  `client/src/pages/console/deploy/secrets.tsx`.
+- **Dependencies.** `npm audit fix` (semver-compatible only) in client/api, gateway, keeper, console root: hono
+  4.11.5 → 4.13.13, @hono/node-server 1.19.17, ws 8.21, wrangler 4.151.1, vite 7.3.7. Before/after per package and
+  what remains: SECURITY_AUDIT §3b. hono 4.13's stricter types surfaced an untyped `requireAuth` (fixed).
+- **Tests / results.** API 343/343 (the endpoint secrets test now runs two replicas on two nodes with distinct
+  keys, checks list vs detail exposure and a cross-owner 404; container tests assert the flag through assignment,
+  sealing and re-queue); gateway 28, keeper 28; console tsc, 3 tests, build clean; e2e re-run on the new hono: 43
+  checks.
+- **Residual.** Not run in a browser. Re-entry needs a human: an endpoint whose replica moves while no tab is open
+  waits, visibly, until the owner returns; a server-side re-encryption would defeat the design (B-9 fleet pinning
+  and B-24 confidential tier are the real answers).
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
@@ -134,7 +159,7 @@ the `CURRENT_AGENT_VERSION` comment.
 | 6 | Auth without revocation/scopes | Open (B-7). |
 | 7 | No fleet/GPU node | **Owner** (runbook 10). |
 | 8 | Legacy UI reachable | Reduced (68 orphan files gone); `/control/legacy` needs the owner's call (B-3). |
-| 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified); fleet pinning is B-9. |
+| 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified, now per replica from the console; endpoint env no longer sent in the clear); fleet pinning is B-9. |
 | 10 | Docs drift | README, API README, checklist domain, decisions header, archive README fixed; capability registry created. |
 
 ## Blockers that need the owner (exactly what is required)
@@ -153,9 +178,9 @@ the `CURRENT_AGENT_VERSION` comment.
 
 ## Next priorities (engineering, no owner input needed)
 
-B-12 per-replica sealing in the console → B-7 API keys and token lifecycle → B-13 retire direct mode /
-resolve-and-pin → B-14 container logs through the relay → B-15 custom domains → B-8 node state model and draining →
-B-5 follow-up (liveness off D1, 30 s beats) once a real load test exists.
+B-7 API keys and token lifecycle → B-13 retire direct mode / resolve-and-pin → B-14 container logs through the
+relay → B-15 custom domains → B-8 node state model and draining → B-5 follow-up (liveness off D1, 30 s beats) once a
+real load test exists → wallet-stack and Hardhat-toolchain majors (SECURITY_AUDIT §3b).
 
 ## Not done, and why
 

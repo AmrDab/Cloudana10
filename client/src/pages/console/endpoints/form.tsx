@@ -11,6 +11,7 @@ import { btn, MonoLabel, Panel, PanelHeader, Pill, Updated } from "@/components/
 import { useSession } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { useNetwork } from "@/hooks/useNetwork";
+import { savePendingSecrets } from "@/pages/console/deploy/model";
 import { NumberField, Section, Segmented, SubLabel } from "@/pages/console/workstations/spec-picker";
 
 const IMAGE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
@@ -78,7 +79,9 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
     const spec = {
       image: image.trim(),
       ...(command.trim() ? { command: argv(command.trim()) } : {}),
-      ...(envRows.length ? { env: Object.fromEntries(envRows.map(([k, v]) => [k.trim(), v])) } : {}),
+      // Environment values are secrets: they never go to the API in the clear. Each replica's are sealed in this
+      // browser to its node's key once it is assigned (Sealer in list.tsx); the start waits for them.
+      ...(envRows.length ? { expectsSecrets: true } : {}),
       port,
       ...resources,
       ...(gpuCount ? { gpu: { count: gpuCount, ...(vram ? { minVramGb: vram } : {}), class: tier } } : {}),
@@ -92,8 +95,9 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
         auth: true,
         body: { name: name.trim(), kind: "endpoint", spec },
       });
+      if (envRows.length) savePendingSecrets(r.id, Object.fromEntries(envRows.map(([k, v]) => [k.trim(), v])));
       toast.success("Endpoint queued", {
-        description: `${name.trim()} · ${usd(r.priceUsdPerHour ?? total)}/h for ${replicas} ${replicas === 1 ? "replica" : "replicas"} · ${auth === "key" ? "create a key once it runs" : "public"}`,
+        description: `${name.trim()} · ${usd(r.priceUsdPerHour ?? total)}/h for ${replicas} ${replicas === 1 ? "replica" : "replicas"} · ${auth === "key" ? "create a key once it runs" : "public"}${envRows.length ? " · keep this tab open: the environment seals to each replica's node" : ""}`,
       });
       qc.invalidateQueries({ queryKey: ["cld", "deployments"] });
       setName("");
@@ -174,7 +178,7 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
             </div>
           </Section>
 
-          <Section label="Environment" hint="Plain variables for your container, such as a model name or a Hugging Face token. The provider's node can read them.">
+          <Section label="Environment" hint="Variables for your container, such as a model name or a Hugging Face token. They are encrypted in this browser to each replica's node once it is assigned — the API never sees the values — so keep this tab open until the replicas start. The provider's node can read them.">
             <div className="space-y-2">
               {env.map(([k, v], i) => (
                 <div key={i} className="flex gap-2">

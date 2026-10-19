@@ -50,6 +50,10 @@ const ReplicaSchema = z.object({
   node: z.string().nullable(),
   startedAt: z.number().nullable(),
   probeOk: z.boolean().nullable(),
+  awaitingSecrets: z.boolean().openapi({ description: "True while this replica waits for PATCH /deployments/{replicaId}/secrets" }),
+  nodePubkey: z.string().optional().openapi({
+    description: "GET /deployments/{id} only, once a node with a key holds the replica: seal its secrets to this key (check it derives to `node` first)",
+  }),
   logs: z.string().optional().openapi({ description: "GET /deployments/{id} only: this replica's log tail from its last failure" }),
 });
 const DeploymentSchema = z.object({
@@ -59,6 +63,9 @@ const DeploymentSchema = z.object({
   kind: z.enum(["static", "container", "workstation", "endpoint"]),
   status: Status,
   statusReason: z.string().nullable(),
+  awaitingSecrets: z.boolean().openapi({
+    description: "True while the start waits for sealed secrets (re-queued to another node: they must be sealed again). Endpoints: while any replica waits",
+  }),
   node: z.string().nullable(),
   endpoint: z.string().nullable().openapi({ description: "The node's origin (owner detail); the public address is `url`" }),
   url: z.string().nullable().openapi({ description: "Public gateway URL https://{id}.{SITES_DOMAIN}; null for workstations" }),

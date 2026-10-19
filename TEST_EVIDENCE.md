@@ -17,7 +17,10 @@ Cloudflare or chain credentials, and no outbound access to `cloudana.io`, `*.wor
 | contract | `npx hardhat test` | **224 passing** | compiled with solcjs 0.8.20 from npm through a Hardhat subtask override because the solc binary list is unreachable here; CI uses the normal download |
 | repo root | `npm run check` (tsc) | clean | was 2 errors at baseline |
 | repo root | `npm run test:client` | 3 passed | |
-| repo root | `npm run build` (vite) | ok | `ConsoleApp` chunk 4.40 MB / 1.23 MB gzip (unchanged: the legacy routes still ship) |
+| repo root | `npm run build` (vite) | ok | `ConsoleApp` chunk 4.28 MB / 1.18 MB gzip (the legacy routes still ship) |
+
+All of the above re-run after the dependency upgrade (hono 4.13.13, wrangler 4.151.1, ws 8.21, vite 7.3.7 —
+`SECURITY_AUDIT.md` §3b) with the same results; the e2e below was re-run too (43 checks).
 
 ## 2. End-to-end: the work pipeline on the Node runtime
 
@@ -82,7 +85,12 @@ hash that anyone can confirm with `eth_getBlockByHash`; the script then passes f
 - `client/api/tests/deployments.test.ts`: `PATCH …/secrets` refuses v1 and malformed payloads with the reason; a
   deployment with secrets is not placed on an agent < 1.5.0 and is placed on ≥ 1.5.0; start timeout re-queues after
   10 min (static) / 60 min (container), skips the node, owes it a stop, fails after three nodes and frees the hold;
-  rows waiting for sealed secrets are not counted.
+  rows waiting for sealed secrets are not counted; `awaitingSecrets` is true through assignment, false once sealed,
+  true again after a re-queue to another node.
+- `client/api/tests/endpoints.test.ts` "seals secrets per replica, each to its own node's key": a 2-replica endpoint
+  with `expectsSecrets` on two relay nodes; neither node is told to start until its replica is sealed; the detail
+  carries each replica's own node key (two distinct keys) and the list carries none; sealing one replica starts only
+  its node; another owner gets 404; the endpoint stops waiting once both are sealed (SECURITY_AUDIT F7).
 
 ## 3b. Heartbeat D1 cost (backlog B-5), measured
 

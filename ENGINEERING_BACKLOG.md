@@ -83,9 +83,10 @@ test in `v1-network-nodes.test.ts`. The agent already prints a fresh bind link w
 **B-11 · Ledger invariant: no reward without a captured fee.** **Done in this pass** (PROGRESS.md commit 9): capture
 first, rewards only when it succeeded; test "no reward without a captured fee" in `v1-submit.test.ts`.
 
-**B-12 · Endpoint replicas: seal secrets per replica in the console.** The API requires per-replica sealing; the
-console only seals parent deployments. Acceptance: an endpoint created with `expectsSecrets` starts from the console
-on two relay nodes with different keys.
+**B-12 · Endpoint replicas: seal secrets per replica in the console.** **Done in this pass** (PROGRESS.md commit 11;
+SECURITY_AUDIT F7): per-replica `awaitingSecrets` + `nodePubkey` in the API, a sealer per endpoint in the console,
+environment values no longer sent in the clear, re-enter form after a re-queue. Acceptance met in `endpoints.test.ts`
+(two nodes, two keys); not yet exercised in a browser.
 
 **B-13 · Retire direct (public-IP) nodes once the relay is live, or resolve-and-pin before probing them.**
 Acceptance: either no code path fetches an operator-supplied URL, or every such fetch resolves the host, refuses

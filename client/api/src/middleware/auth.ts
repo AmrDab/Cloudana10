@@ -28,7 +28,7 @@ export interface JWTPayload {
  * Middleware: require a valid JWT Bearer token.
  * Sets c.set("jwtPayload", payload) on success.
  */
-export const requireAuth = createMiddleware(async (c: Context, next: Next) => {
+export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(async (c, next) => {
   const authHeader = c.req.header("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return fail(c, "unauthorized", "Missing or invalid Authorization header");

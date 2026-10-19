@@ -83,6 +83,24 @@ secret was found in it, but local state must never be reviewable or deployable b
 `/v1/auth/login` returned `{ status:"error", message }` instead of `{ status:"error", error:{ code, message } }`.
 Clients branching on `error.code` would treat an auth failure as a parse failure.
 
+### F7 — Endpoint environment values were sent and stored in the clear — Medium — FIXED (commit 11)
+
+The endpoint form (`client/src/pages/console/endpoints/form.tsx`) rendered every environment value as a password field
+(the default row is `HF_TOKEN`) and then sent them in `spec.env`, in the clear, where they sat in D1 (`spec_json`),
+in backups, and rode to the node inside the start instruction. The provider sees them either way (it runs the
+container); the exposure fixed here is the control plane: anyone with D1 access (dashboard, `wrangler d1`, a backup)
+read every tenant's tokens. Only plain containers had a seal path, and the console could not use it for endpoints
+at all: the API requires sealing per replica (each to its own node's key) and the console only sealed parent rows,
+so an endpoint with secrets could never start from the console.
+
+Fix: the form sends `expectsSecrets` and keeps the values in `sessionStorage`; the API reports per replica
+`awaitingSecrets` and, in the detail view once a node with a key holds the replica, `nodePubkey`; a sealer per
+endpoint seals to each replica's node (after checking that the key derives to the assigned node's address), and the
+plaintext is cleared when every replica is sealed. Re-queued replicas and containers show "needs secrets" from the
+API's `awaitingSecrets`, never from the tab's memory, with a re-enter form. Tests: `endpoints.test.ts` "seals secrets
+per replica, each to its own node's key" (two nodes, two keys, list vs detail exposure, cross-owner 404),
+`deployments.test.ts` (flag through assignment, sealing and re-queue).
+
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
 | Review item (C.5) | State in code | Where |
@@ -118,6 +136,26 @@ Clients branching on `error.code` would treat an auth failure as a parse failure
 | O10 | Medium | Relay DO `/kick` and `/status` are reachable to anyone with the binding; the gateway binding could kick nodes | Bindings are trusted scripts | Restrict `/kick` to the API via a shared header, or split the stub interface |
 | O11 | Low | Workstation SSH is published on the node's public IP (direct mode only) | WebSockets over the relay not built | Relay WebSocket tunnelling (planned) |
 | O12 | Low | `MIN_AGENT_VERSION` defaults to 1.3.0 while the agent is 1.5.0; sealed-v2 gating is per-deployment, not a hard minimum | Deliberate: do not cut off compute/hosting nodes | Raise the minimum once the owner's node runs 1.5.0 |
+| O13 | Low (dev-time) | Advisories left after `npm audit fix` that need major upgrades: the console's wallet stack (`@wagmi/connectors` pins old `ws`, `preact`, `d3-color`) and the Hardhat 2 toolchain (§3b) | No runtime path: build/test tooling and the browser wallet connector bundle | Bump `@wagmi/*` with the next console dependency pass; move to Hardhat 3 with the v2 contract work |
+
+### 3b. Dependency audit (`npm audit`, 2026-10-19)
+
+GitHub reports 737 Dependabot alerts on the default branch. That branch still carries the packages removed in this
+pass (`provider-node-server`, the orchestrator image, legacy scripts and 41 API files), so the figure is not
+comparable with this branch; re-check after merge. Per package here, before and after `npm audit fix`
+(semver-compatible changes only; nothing forced):
+
+| Package | Before | After | What changed / what remains |
+|---|---|---|---|
+| client/api | 5 (3 high) | **0** | hono 4.11.5 → 4.13.13 (38 advisories, among them JWT NumericDate validation in `hono/jwt` and CORS / `bodyLimit` issues — middleware this API uses), @hono/node-server 1.19.17 (serveStatic traversal; not used), ws 8.21 |
+| gateway | 3 (3 high) | **0** | wrangler 4.147 → 4.151.1 (miniflare, sharp: dev-only) |
+| keeper | 7 (3 high) | 4 moderate | same wrangler bump; `uuid` < 11.1.1 via wrangler needs a major — dev-only |
+| relay, node-agent | 0 | 0 | |
+| console root | 54 (21 high) | 25 (3 high) | vite 7.3.7, rollup, postcss, js-yaml, hono fixed; left: `d3-color`, `preact`, `ws` pinned under an old `@wagmi/connectors` (major bump of the wallet stack) and 22 moderate |
+| contract | 60 (1 critical) | 60 | Hardhat 2 toolchain (`handlebars` via solidity-coverage, `undici`/`adm-zip` via hardhat-network-helpers 1.x); all dev-only, all need majors — decide with the Hardhat 3 migration |
+
+hono 4.13's stricter types also surfaced an untyped `requireAuth` (fixed: `createMiddleware<{ Variables: AuthVariables }>`).
+Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13, dev-time only; no runtime path).
 
 ## 4. Verification and settlement (what the proofs do and do not establish)
 

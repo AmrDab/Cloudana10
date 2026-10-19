@@ -130,6 +130,10 @@ export interface ReplicaView {
   node: string | null;
   startedAt: number | null;
   probeOk: boolean | null;
+  /** True while the replica expects sealed secrets that have not arrived (PATCH /deployments/{replicaId}/secrets). */
+  awaitingSecrets: boolean;
+  /** Detail only, once a node with a key is assigned: seal this replica's secrets to it (it must derive to `node`). */
+  nodePubkey?: string;
   /** Detail only: the node's log tail from this replica's last failure. */
   logs?: string;
 }
@@ -148,6 +152,8 @@ export interface Deployment extends Partial<WorkstationView> {
   logs?: string;
   status: DeploymentStatus;
   statusReason: string | null;
+  /** True while a start waits for sealed secrets (an endpoint: while any replica does). */
+  awaitingSecrets: boolean;
   node: string | null;
   endpoint: string | null;
   /** Public gateway URL (https://{id}.{SITES_DOMAIN}); null for workstations. */
@@ -208,13 +214,15 @@ export function endpointStatus(parent: Pick<DeploymentRow, "status">, replicas: 
   return "stopped";
 }
 
-const replicaView = (r: DeploymentRow, detail: boolean): ReplicaView => ({
+const replicaView = (r: DeploymentRow, detail: boolean, pubkeys?: Map<string, string | null>): ReplicaView => ({
   id: r.id,
   status: r.status,
   statusReason: r.status_reason,
   node: r.node,
   startedAt: r.started_at,
   probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
+  awaitingSecrets: awaitingSecrets(r),
+  ...(detail && r.node && pubkeys?.get(r.node) && { nodePubkey: pubkeys.get(r.node)! }),
   ...(detail && r.last_logs && { logs: r.last_logs }),
 });
 
@@ -223,7 +231,14 @@ const replicaView = (r: DeploymentRow, detail: boolean): ReplicaView => ({
  * `replicas` = an endpoint's replica rows (presentDeployments loads them).
  * `detail` adds what the single-deployment view alone shows (connect.webToken, logs).
  */
-export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(), detail = false, replicas: DeploymentRow[] = []): Deployment {
+export function toDeployment(
+  r: DeploymentRow,
+  nodeGpus?: Gpu[],
+  now = Date.now(),
+  detail = false,
+  replicas: DeploymentRow[] = [],
+  pubkeys?: Map<string, string | null>,
+): Deployment {
   const spec = JSON.parse(r.spec_json);
   const endpoint = isEndpoint(r);
   return {
@@ -233,6 +248,7 @@ export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(
     kind: r.workstation ? "workstation" : endpoint ? "endpoint" : r.kind,
     status: endpoint ? endpointStatus(r, replicas) : r.status,
     statusReason: r.status_reason,
+    awaitingSecrets: endpoint ? replicas.some(awaitingSecrets) : awaitingSecrets(r),
     node: r.node,
     endpoint: r.endpoint,
     url: publicUrl(r),
@@ -246,7 +262,7 @@ export function toDeployment(r: DeploymentRow, nodeGpus?: Gpu[], now = Date.now(
     probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
     spec: redactSpec(r.kind, spec),
     ...(r.parent_id && { parentId: r.parent_id }),
-    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail)), auth: (spec as EndpointSpec).auth }),
+    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail, pubkeys)), auth: (spec as EndpointSpec).auth }),
     ...(detail && r.last_logs && { logs: r.last_logs }),
     ...(r.workstation ? workstationView(r, spec as WorkstationSpec, nodeGpus, now, detail) : {}),
   };
@@ -264,20 +280,29 @@ export async function replicasOf(parents: string[]): Promise<Map<string, Deploym
   return out;
 }
 
-/** toDeployment for many rows, loading the manifests of nodes that run workstations and the replicas of endpoints. */
+/**
+ * toDeployment for many rows, loading the replicas of endpoints and, in one statement, the manifests of nodes that run
+ * workstations plus (detail only) the keys of nodes that hold replicas — so the owner can seal each replica's secrets.
+ */
 export async function presentDeployments(rows: DeploymentRow[], detail = false): Promise<Deployment[]> {
-  const nodes = [...new Set(rows.filter((r) => r.workstation && r.node).map((r) => r.node!))];
-  const gpus = new Map<string, Gpu[]>();
-  if (nodes.length) {
-    const res = await getD1()
-      .prepare(`SELECT address, manifest_json FROM nodes WHERE address IN (${nodes.map(() => "?").join(",")})`)
-      .bind(...nodes)
-      .all<{ address: string; manifest_json: string | null }>();
-    for (const n of res.results ?? []) gpus.set(n.address, (JSON.parse(n.manifest_json ?? "{}").gpus ?? []) as Gpu[]);
-  }
   const replicas = await replicasOf(rows.filter(isEndpoint).map((r) => r.id));
+  const nodes = new Set(rows.filter((r) => r.workstation && r.node).map((r) => r.node!));
+  if (detail) for (const rs of replicas.values()) for (const r of rs) if (r.node) nodes.add(r.node);
+  const gpus = new Map<string, Gpu[]>();
+  const pubkeys = new Map<string, string | null>();
+  if (nodes.size) {
+    const list = [...nodes];
+    const res = await getD1()
+      .prepare(`SELECT address, manifest_json, pubkey FROM nodes WHERE address IN (${list.map(() => "?").join(",")})`)
+      .bind(...list)
+      .all<{ address: string; manifest_json: string | null; pubkey: string | null }>();
+    for (const n of res.results ?? []) {
+      gpus.set(n.address, (JSON.parse(n.manifest_json ?? "{}").gpus ?? []) as Gpu[]);
+      pubkeys.set(n.address, n.pubkey);
+    }
+  }
   const now = Date.now();
-  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail, replicas.get(r.id) ?? []));
+  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail, replicas.get(r.id) ?? [], pubkeys));
 }
 
 export async function addEvent(id: string, level: DeploymentEvent["level"], message: string, now = Date.now()): Promise<void> {
