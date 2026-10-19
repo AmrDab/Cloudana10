@@ -84,7 +84,7 @@ Decided 2026-10 in [DECISIONS_CONSENSUS.md](DECISIONS_CONSENSUS.md) (owner: "do 
 - [ ] Freeze: no edits during the window.
 - [ ] Deploy in order: D1 schema → Worker → Pages (one origin) → DNS 301 for app.cloudana.io → keeper start.
 - [ ] Smoke: `/health`, `/v1/network` (shows `priceNcldPerTmac`, `baseFeeUcld`, `lastSettledEpochAt`), sign in, run a
-      32×32 job to done, deploy a static site to running through `*.sites.cloudana.io`, `/control/faucet` redirects to
+      32×32 job to done, deploy a static site to running through `<id>.cloudana.run`, `/control/faucet` redirects to
       earnings, Stripe routes return 503, waitlist signup, litepaper/privacy/terms load, old deep links redirect.
 - [ ] Watch for 24 h: API error rate, probe failures, keeper posts/finalizes (first hourly epoch finalized within 2 h).
 

@@ -19,7 +19,12 @@
 import { keccak256, stringToBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-/** The agent version this API was built against (node-agent/package.json). MIN_AGENT_VERSION defaults to it. */
+/**
+ * Default minimum agent version (MIN_AGENT_VERSION falls back to it): the oldest agent whose protocol this API still
+ * serves work to, not the newest release (node-agent/package.json is 1.5.0). Capabilities that need a newer agent are
+ * gated per feature instead of raising this (storage ≥ 1.4.0, deployment-bound secrets ≥ 1.5.0), so compute and
+ * hosting nodes on older agents keep working until the owner raises the floor.
+ */
 export const CURRENT_AGENT_VERSION = "1.3.0";
 
 export interface InstructionEnvelope {
