@@ -957,6 +957,9 @@ export type ReportResult = { ok: true; status: string } | { ok: false; code: "no
 
 const hostOf = (url: string) => new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
+/** Node-supplied free text goes into the event log: a credential-looking query value never does. */
+const redactSecrets = (text: string) => text.replace(/\b(token|password|pwd|secret|key)=[^&\s]+/gi, "$1=…");
+
 /** A node reports what happened to a deployment it was given. */
 export async function reportDeploymentStatus(node: string, id: string, report: StatusReport, now = Date.now()): Promise<ReportResult> {
   const db = getD1();
@@ -1015,18 +1018,23 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
         )
         .bind(report.endpoint ?? null, report.sshEndpoint ?? null, report.webToken ?? null, now, now, id)
         .run();
-      const at = [report.endpoint ?? (row.relayed ? "the relay" : null), report.sshEndpoint && `ssh ${report.sshEndpoint}`].filter(Boolean).join(" · ");
-      if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", `running at ${at}${report.message ? ` — ${report.message}` : ""}`, now);
+      // A workstation's web URL carries its access token and its SSH host:port is its shell: the event log (which an
+      // API key may read, unlike `connect`) names neither. Plain deployments log their public endpoint as before.
+      const at = row.workstation
+        ? [(report.endpoint || row.relayed) && "web ready", report.sshEndpoint && "ssh ready"].filter(Boolean).join(" · ")
+        : [report.endpoint ?? (row.relayed ? "the relay" : null), report.sshEndpoint && `ssh ${report.sshEndpoint}`].filter(Boolean).join(" · ");
+      const where = at ? (row.workstation ? ` (${at})` : ` at ${at}`) : "";
+      if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", `running${where}${report.message ? ` — ${redactSecrets(report.message)}` : ""}`, now);
       return { ok: true, status: "running" };
     }
     if (row.status === "running" || row.status === "unreachable") {
       if (report.endpoint && row.endpoint !== report.endpoint) {
         await db.prepare("UPDATE deployments SET endpoint = ? WHERE id = ?").bind(report.endpoint, id).run();
-        await addEvent(id, "info", `endpoint changed to ${report.endpoint}`, now);
+        await addEvent(id, "info", row.workstation ? "web endpoint changed" : `endpoint changed to ${report.endpoint}`, now);
       }
       if (report.sshEndpoint && row.ssh_endpoint !== report.sshEndpoint) {
         await db.prepare("UPDATE deployments SET ssh_endpoint = ? WHERE id = ?").bind(report.sshEndpoint, id).run();
-        await addEvent(id, "info", `ssh endpoint changed to ${report.sshEndpoint}`, now);
+        await addEvent(id, "info", row.workstation ? "ssh endpoint changed" : `ssh endpoint changed to ${report.sshEndpoint}`, now);
       }
       if (report.webToken && row.web_token !== report.webToken) {
         await db.prepare("UPDATE deployments SET web_token = ? WHERE id = ?").bind(report.webToken, id).run();

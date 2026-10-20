@@ -509,12 +509,19 @@ export type Update = { ok: true } | { ok: false; code: "not_found" | "conflict" 
  * Store a sealed payload. `sealedFor` is the node the console sealed to (it checked the key derives to that address):
  * when given, the payload is refused unless the row is still assigned to exactly that node — a re-queue that raced
  * the seal would otherwise hand the next node a payload it cannot open. The start-timeout clock restarts at the
- * seal: no start could go out before the secrets existed.
+ * seal: no start could go out before the secrets existed. Once a start may have gone out (assigned with a payload)
+ * the payload cannot be replaced: an agent never re-reads sealedEnv for an id it is starting, so a "replacement"
+ * would be reported as applied while the container runs the old one. Workstations take no sealed env at all —
+ * their access token is issued by the node (tokenEnv); a `deployments`-scoped key must not be able to inject
+ * environment into a workstation it is not allowed to connect to.
  */
 export async function setSealedEnv(owner: string, id: string, sealedEnv: string, sealedFor?: string, now = Date.now()): Promise<Update> {
   const row = await getOwnedRow(owner, id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "sealed secrets are for containers only" };
+  if (row.workstation) {
+    return { ok: false, code: "validation_failed", message: "workstations take no sealed secrets: the node issues the access token (tokenEnv) and nothing else is injected" };
+  }
   if (isEndpoint(row)) return { ok: false, code: "validation_failed", message: "seal secrets per replica (each is sealed to its node): PATCH /deployments/{replicaId}/secrets" };
   if (!isSealedV2(sealedEnv)) {
     return {
@@ -530,7 +537,8 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string,
     // When the caller names the node it sealed to, the seal lands only while that node still holds the row.
     .prepare(
       "UPDATE deployments SET sealed_env = ?, assigned_at = CASE WHEN status = 'assigned' THEN ? ELSE assigned_at END " +
-        "WHERE id = ? AND status IN ('queued','assigned') AND (? IS NULL OR (status = 'assigned' AND node = ?))",
+        "WHERE id = ? AND status IN ('queued','assigned') AND (sealed_env IS NULL OR status = 'queued') " +
+        "AND (? IS NULL OR (status = 'assigned' AND node = ?))",
     )
     .bind(sealedEnv, now, id, target, target)
     .run();
@@ -538,6 +546,9 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string,
     const fresh = (await getDeploymentRow(id)) ?? row;
     if (fresh.status !== "queued" && fresh.status !== "assigned") {
       return { ok: false, code: "conflict", message: `secrets can only change while queued or assigned (status is ${fresh.status})` };
+    }
+    if (fresh.status === "assigned" && fresh.sealed_env !== null && (!target || fresh.node === target)) {
+      return { ok: false, code: "conflict", message: "the start already went out with the secrets sealed earlier (a node never re-reads them): stop and redeploy to change them" };
     }
     return {
       ok: false,

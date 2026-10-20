@@ -6,7 +6,7 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { buildApp } from "../src/app.js";
-import { getD1 } from "../src/lib/storage.js";
+import { getD1, getKV, initStorage } from "../src/lib/storage.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { creditUcld } from "../src/services/balance.service.js";
 import { authenticateApiKey, forgetApiKeyCache, MAX_KEYS_PER_ACCOUNT, scopeFor } from "../src/services/api-keys.service.js";
@@ -178,5 +178,56 @@ describe("sessions", () => {
   it("unauthenticated and key callers cannot touch /v1/keys or logout", async () => {
     expect((await call("/v1/keys")).status).toBe(401);
     expect((await call("/v1/auth/logout", { method: "POST" })).status).toBe(401);
+  });
+});
+
+describe("the shared revocation list", () => {
+  /** The real KV with one method failing, only for the revocation keys: nonces and rate limits keep working. */
+  function brokenKV(method: "get" | "put") {
+    const kv = getKV();
+    return new Proxy(kv, {
+      get(target, prop, receiver) {
+        if (prop === method) {
+          return async (key: string, ...rest: unknown[]) => {
+            if (String(key).startsWith("revoked:")) throw new Error("kv down");
+            return (Reflect.get(target, prop, receiver) as (...a: unknown[]) => unknown).call(target, key, ...rest);
+          };
+        }
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    }) as typeof kv;
+  }
+
+  it("a KV that cannot be read answers 503 for a session — never 'valid', never 'revoked' (which would sign consoles out); keys are unaffected", async () => {
+    const u = await user();
+    const key = await mint(u.jwt, ["read"]);
+    const kv = getKV();
+    initStorage(getD1(), brokenKV("get"));
+    try {
+      const res = await bearer(u.jwt, "GET", "/v1/account");
+      expect(res.status).toBe(503);
+      expect(res.headers.get("retry-after")).toBe("5");
+      expect((await res.json()).error).toMatchObject({ code: "service_unavailable", message: expect.stringMatching(/was not refused/) });
+      expect((await bearer(key.token, "GET", "/v1/account")).status).toBe(200);
+    } finally {
+      initStorage(getD1(), kv);
+    }
+    expect((await bearer(u.jwt, "GET", "/v1/account")).status).toBe(200);
+  });
+
+  it("a KV that cannot be written makes logout report revoked:false — only this process knows", async () => {
+    const u = await user();
+    const kv = getKV();
+    initStorage(getD1(), brokenKV("put"));
+    try {
+      const res = await bearer(u.jwt, "POST", "/v1/auth/logout");
+      expect(res.status).toBe(200);
+      expect((await res.json()).revoked).toBe(false);
+    } finally {
+      initStorage(getD1(), kv);
+    }
+    // Here (same process) it is refused all the same; revoked:false warns that other isolates would not.
+    expect((await bearer(u.jwt, "GET", "/v1/account")).status).toBe(401);
   });
 });

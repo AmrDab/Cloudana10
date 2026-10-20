@@ -37,6 +37,8 @@ import {
   revokeKey,
   setSealedEnv,
   stopDeployment,
+  type DeploymentRow,
+  type DeploymentEvent,
 } from "../../services/deployments.service.js";
 import { REPORTS_PER_DAY, reportProblem, requeueDeadNodeDeployments } from "../../services/deployment-duties.service.js";
 import { log } from "../../lib/logger.js";
@@ -179,6 +181,17 @@ function forCaller<T extends object>(auth: string | undefined, d: T): T {
   return auth === "key" && "connect" in d ? { ...d, connect: {}, endpoint: null } : d;
 }
 
+/**
+ * The event log of a workstation names no address since this fix, but events written before it (and node-supplied
+ * text) may: an API key gets none that carries the row's endpoint, ssh host or token, or looks like a token URL.
+ */
+function eventsForCaller(auth: string | undefined, row: DeploymentRow, events: DeploymentEvent[]): DeploymentEvent[] {
+  if (auth !== "key" || !row.workstation) return events;
+  const private_ = [row.endpoint, row.ssh_endpoint, row.web_token].filter((s): s is string => !!s);
+  // (`token=…` is the redacted form the duties write: no value follows, nothing to hide.)
+  return events.filter((e) => !/\b(token|password|pwd|secret|key)=[^&\s…]/i.test(e.message) && !private_.some((s) => e.message.includes(s)));
+}
+
 /** Cheap per-owner dead-node check, so a deployment does not wait for some node's heartbeat to re-queue it. */
 async function requeueMine(owner: string): Promise<void> {
   await requeueDeadNodeDeployments(Date.now(), owner).catch((err) => log.api.warn("[deployments] dead-node requeue failed:", err));
@@ -225,7 +238,8 @@ deploymentsRouter.openapi(getRoute, async (c) => {
   const [presented] = await presentDeployments([row], true);
   const deployment = forCaller(c.get("jwtPayload").auth, presented);
   const replicas = isEndpoint(row) ? (await replicasOf([row.id])).get(row.id) ?? [] : [];
-  return ok(c, { deployment, events: await listEvents(row.id, 50, replicas), ...(pubkey && { nodePubkey: pubkey }) });
+  const events = eventsForCaller(c.get("jwtPayload").auth, row, await listEvents(row.id, 50, replicas));
+  return ok(c, { deployment, events, ...(pubkey && { nodePubkey: pubkey }) });
 });
 
 // ── Report a problem (docs/V4_VERIFIED_SERVICES.md §5) ──────────────────────
@@ -335,7 +349,9 @@ const secretsRoute = createRoute({
   method: "patch",
   path: "/deployments/{id}/secrets",
   tags: TAGS,
-  description: "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers and endpoint replicas (per replica id) only.",
+  description:
+    "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers and endpoint replicas (per replica id) only; " +
+    "never workstations (400). Accepted while queued, or assigned without a payload yet; once a start went out with a payload it cannot be replaced (409): stop and redeploy.",
   security: BEARER_AUTH,
   request: {
     params: IdParam,

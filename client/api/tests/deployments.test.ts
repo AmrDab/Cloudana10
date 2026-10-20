@@ -305,15 +305,23 @@ describe("report a problem", () => {
 });
 
 describe("owner actions", () => {
-  it("PATCH secrets works only for containers while queued/assigned", async () => {
+  it("PATCH secrets works only for containers while queued/assigned, and only until the start goes out", async () => {
     const u = await user();
     const { node } = await boundNode(["matmul", "hosting", "container"]);
     const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
     const sealed = sealedV2("ciphertext");
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(200);
+    // Still queued: a payload can be replaced (no node has seen it).
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("replaced") })).status).toBe(200);
     const hb = await heartbeat(node);
-    expect(hb.deployments[0]).toMatchObject({ id, action: "start", kind: "container", sealedEnv: sealed, spec: CONTAINER });
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(200);
+    expect(hb.deployments[0]).toMatchObject({ id, action: "start", kind: "container", sealedEnv: sealedV2("replaced"), spec: CONTAINER });
+    // Assigned with a payload: the start went out with it and the agent never re-reads it — a "replacement" would be
+    // reported as applied while the container runs the old secrets.
+    const late = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("rotated"), node: node.address });
+    expect(late.status).toBe(409);
+    expect((await late.json()).error.message).toMatch(/the start already went out/);
+    expect((await row(id))!.sealed_env).toBe(sealedV2("replaced"));
+    expect((await heartbeat(node)).deployments[0]).toMatchObject({ id, sealedEnv: sealedV2("replaced") });
     await signed(node, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint: "http://127.0.0.1:42002" });
     expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(409);
 

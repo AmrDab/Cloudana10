@@ -35,7 +35,15 @@ export interface JWTPayload {
   scopes?: Scope[];
 }
 
-export type AuthFailure = { code: "unauthorized" | "forbidden"; message: string };
+export type AuthFailure = { code: "unauthorized" | "forbidden" | "service_unavailable"; message: string };
+
+/** The shared revocation list is bound but cannot be read: the caller cannot tell a revoked token from a valid one. */
+export class RevocationUnavailable extends Error {
+  constructor() {
+    super("the session revocation list cannot be read");
+    this.name = "RevocationUnavailable";
+  }
+}
 
 /** Resolve a bearer credential to its caller, or the reason it is refused. `method`/`path` decide an API key's scope. */
 export async function resolveBearer(token: string, method: string, path: string): Promise<{ payload: JWTPayload } | { error: AuthFailure }> {
@@ -47,7 +55,17 @@ export async function resolveBearer(token: string, method: string, path: string)
     if (!caller.scopes.includes(need)) return { error: { code: "forbidden", message: `This API key lacks the "${need}" scope` } };
     return { payload: { sub: caller.owner, role: "user", iat: 0, exp: 0, auth: "key", keyId: caller.keyId, scopes: caller.scopes } };
   }
-  const payload = await verifyBearer(token);
+  let payload: JWTPayload | null;
+  try {
+    payload = await verifyBearer(token);
+  } catch (err) {
+    // Not a refusal: the token may well be valid. A 401 here would make every client treat a KV blip as a logout
+    // (the console drops its session, and with it the secrets it has not sealed yet).
+    if (err instanceof RevocationUnavailable) {
+      return { error: { code: "service_unavailable", message: "The session revocation list cannot be read right now; retry in a few seconds (the token was not refused)" } };
+    }
+    throw err;
+  }
   return payload ? { payload } : { error: { code: "unauthorized", message: "Invalid, expired or revoked token" } };
 }
 
@@ -61,12 +79,15 @@ export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(async 
     return fail(c, "unauthorized", "Missing or invalid Authorization header");
   }
   const r = await resolveBearer(authHeader.slice(7).trim(), c.req.method, c.req.path);
-  if ("error" in r) return fail(c, r.error.code, r.error.message);
+  if ("error" in r) {
+    if (r.error.code === "service_unavailable") c.header("Retry-After", "5");
+    return fail(c, r.error.code, r.error.message);
+  }
   c.set("jwtPayload", r.payload);
   return next();
 });
 
-/** Verified payload for a session token, or null: bad signature, expired, or revoked. */
+/** Verified payload for a session token, or null: bad signature, expired, or revoked. Throws RevocationUnavailable. */
 export async function verifyBearer(token: string): Promise<JWTPayload | null> {
   const env = getEnv();
   let payload: JWTPayload | null = null;
@@ -167,7 +188,10 @@ export async function revokeToken(payload: Pick<JWTPayload, "jti" | "exp">): Pro
   }
 }
 
-/** Fails closed: a token whose revocation status cannot be read from a bound KV is treated as revoked. */
+/**
+ * Neither open nor closed: a bound KV that cannot be read makes the check unavailable (the request answers 503), so
+ * a blip is never reported as "valid" nor as "revoked" (which would sign every console out and drop unsealed secrets).
+ */
 async function isRevoked(jti: string): Promise<boolean> {
   const until = revokedMemory.get(jti);
   if (until !== undefined) {
@@ -179,7 +203,7 @@ async function isRevoked(jti: string): Promise<boolean> {
   try {
     return (await kv.get(revokedKey(jti))) !== null;
   } catch {
-    return true;
+    throw new RevocationUnavailable();
   }
 }
 

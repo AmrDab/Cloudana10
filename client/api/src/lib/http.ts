@@ -23,6 +23,7 @@ export type ErrorCode =
   | "unprocessable"
   | "upstream_failed"
   | "not_configured"
+  | "service_unavailable"
   | "internal";
 
 const STATUS_FOR: Record<ErrorCode, ContentfulStatusCode> = {
@@ -37,6 +38,7 @@ const STATUS_FOR: Record<ErrorCode, ContentfulStatusCode> = {
   unprocessable: 422,
   upstream_failed: 502,
   not_configured: 503,
+  service_unavailable: 503,
   internal: 500,
 };
 

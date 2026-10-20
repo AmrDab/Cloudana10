@@ -138,7 +138,21 @@ verifiers. The security-relevant ones, all fixed with tests (`PROGRESS.md` commi
 | Medium | `submitWork` did done → capture → rewards in three round trips; a failure between them stranded a hold or captured a fee with no rewards | one transaction, each statement conditioned on the previous |
 | Medium | `replay.ts` trusted the signer address the server being checked published | pinned signer (the agents' default); `--signer published` is explicit and labelled not a proof |
 | Medium | Logs answer read unbounded before the cap | capped reader; over-cap is 502 |
-| Low | API-key cache could outlive the key's expiry; session revocation failed open on KV errors; anyone could cancel a wallet's pending sign-in nonce | cache capped at expiry; fail closed on a bound KV; nonces keyed per nonce |
+| Low | API-key cache could outlive the key's expiry; session revocation failed open on KV errors; anyone could cancel a wallet's pending sign-in nonce | cache capped at expiry; a bound KV that cannot be read refuses the request (first as 401, since F10 as 503 "not refused, retry"); nonces keyed per nonce |
+
+### F10 — Findings of the review's completeness round — FIXED (commit 18)
+
+A critic read the seven reviewers' coverage and sent four finders after the cross-area interactions nobody had
+traced; each finding again challenged by three verifiers. Fixed with tests (`workstations.test.ts`, `api-keys.test.ts`,
+`deployments.test.ts`):
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | `forCaller` hid a workstation's `connect`/`endpoint` from API keys, but the node's running report wrote the full web URL (Jupyter token included) and the SSH host:port into the event log, which `GET /v1/deployments/{id}` returns unfiltered: a `read`-scoped key recovered exactly what was hidden | workstation events name no address ("running (web ready · ssh ready)"); node-supplied text has credential-looking query values redacted; events written before the fix are filtered out of a key's view when they carry the row's endpoint, ssh host, token or a token URL |
+| Medium | A bound KV whose read failed made `isRevoked` answer "revoked": one KV blip signed every console out at once (401), and the console's sign-out wiped the plaintext secrets the owner had typed but not sealed | an unreadable revocation list answers **503** with `Retry-After` and "the token was not refused"; the console wipes unsealed secrets only on a user sign-out or a wallet switch, never on a lost session |
+| Medium | `PATCH …/secrets` accepted workstations (stored as kind `container`): a `deployments`-scoped key, forbidden to connect to the owner's workstation, could inject environment into it before it started (`HASHED_PASSWORD`, `NOTEBOOK_ARGS`) | workstations take no sealed env (400): the node issues the access token and nothing else is injected |
+| Medium | A re-seal while `assigned` with a payload answered 200 and logged "sealed secrets updated" although the start had already gone out and an agent never re-reads `sealedEnv`: the container ran the old secrets while every view said the new ones applied | once a start may have gone out the payload cannot be replaced (409 "stop and redeploy"); replacement stays allowed while queued |
+| Low | F9 said the fail-closed revocation change was "fixed with tests"; no test exercised a KV error | two tests: a KV that cannot be read → 503 for a session, 200 for an API key; a KV that cannot be written → logout says `revoked:false` |
 
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 

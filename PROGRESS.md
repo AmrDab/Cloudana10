@@ -278,11 +278,38 @@ re-announcing on `bound:false`, and the docs that record hosting, the gateway an
   build; e2e 43 checks; `replay.ts --signer published` on a signed local stack passes every check but the expected
   "seedSource is the local fallback", the pinned mode refuses the local key; browser smoke 29/29 (§4b).
 
+### 18 · the review's completeness round: five more findings fixed
+The critic's four briefs (cross-area interactions nobody had traced) ran after the spend limit reset; 13 candidates,
+5 confirmed by two or three verifiers each, 1 refuted, 7 still unverified (their verifiers hit the limit again; the
+resumed run is verifying them). `SECURITY_AUDIT.md` F10 has the table.
+- **High — workstation token leaked to API keys through `events`.** `forCaller` hid `connect`/`endpoint`, but the
+  running report wrote `running at http://host:port/lab?token=…` and the ssh host:port into the event log, which the
+  detail route returned unfiltered. Workstation events now name no address (`running (web ready · ssh ready)`),
+  node-supplied text has credential-looking query values redacted, and a key's view drops any older event carrying
+  the row's endpoint, ssh host, token or a token URL (`deployment-duties.service.ts`, `routes/v1/deployments.ts`).
+- **Medium — a KV blip signed everyone out and wiped unsealed secrets.** Entry 16 made an unreadable revocation list
+  mean "revoked" (401). The console treats any 401 as a lost session, and its sign-out cleared `cld.secrets.*`. Now
+  an unreadable list answers **503** `service_unavailable` with `Retry-After: 5` ("the token was not refused"), and
+  the console clears unsealed secrets only on a user sign-out or when another wallet signs in (`auth.ts`,
+  `lib/http.ts`, `client/src/lib/cld.ts`).
+- **Medium — `PATCH …/secrets` took workstations.** Guard was `kind !== 'container'`; workstations are stored as
+  containers. A `deployments`-scoped key could inject env (`HASHED_PASSWORD`, `NOTEBOOK_ARGS`) into a workstation it
+  may not connect to. Workstations now answer 400 (`deployments.service.ts`).
+- **Medium — re-seal after the start went out answered 200.** An agent never re-reads `sealedEnv` for an id it is
+  starting, so the "replacement" was announced and never applied. The UPDATE now requires `sealed_env IS NULL OR
+  status = 'queued'`; otherwise 409 "stop and redeploy to change them".
+- **Low — F9 claimed tests it did not have** for the KV-error branches: added (above).
+- **Tests / results.** API tsc clean; vitest 368 → **372** (+2 `api-keys` KV read/write failures, +2 `workstations`
+  events and workstation secrets; the `deployments` seal test now pins the 409); console tsc, 3 tests, build;
+  browser smoke re-run (§4b).
+- **Residual.** Seven critic-round findings (re-seal holding a node slot, unbound `PATCH` race, a failed endpoint
+  replica never replaced, four billing races around `bill()`/`settleElapsed`/`settleHold`) await verification.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **368** |
+| client/api vitest | 330 | **372** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
