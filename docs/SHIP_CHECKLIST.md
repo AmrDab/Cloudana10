@@ -32,15 +32,17 @@ Decided 2026-10 in [DECISIONS_CONSENSUS.md](DECISIONS_CONSENSUS.md) (owner: "do 
       `node_modules/` and `.playwright-mcp/`; `client/api/.env` is deleted (confirm it never reached GitHub with real values;
       rotate anything that did).
 - [ ] Add `.gitattributes` (`* text=auto eol=lf`) so the LF→CRLF warnings stop polluting diffs.
-- [ ] Delete dead legacy Akash routes shadowed by `/v1/deployments` (`client/api/src/routes/v1/deploy.ts` GET/DELETE).
+- [x] ~~Delete dead legacy Akash routes shadowed by `/v1/deployments` (`client/api/src/routes/v1/deploy.ts` GET/DELETE).~~ (file removed in the hardening pass)
 - [ ] Decide which `/control/legacy/*` pages survive; remove the rest (their vocabulary is marketplace-era).
 
 ## 2. Secrets and environment
 - [ ] Worker secrets: `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_KEY`, `INSTRUCTION_SIGNING_KEY` (not a chain key),
-      `PINATA_JWT` (rotated), `TREASURY_ADDRESS`, `CHAIN_RPC_URL`, `SETTLEMENT_ADDRESS`, price env
-      (`PRICE_NCLD_PER_TMAC=14000`, `BASE_FEE_UCLD=1000`, `PRICE_CONTROLLER=on`), `EPOCH_SECONDS=3600`,
-      `VEST_B_SECONDS=3600`, `LANE_A_PER_MILLE=950`, `TREASURY_PER_MILLE=30`, `DEV_MODE` unset, `STRIPE_ENABLED` unset.
-      The API Worker holds **no chain key**.
+      `STORAGE_KEK`, `RELAY_TICKET_SECRET`, `PINATA_JWT` (rotated). Worker vars (`wrangler.toml`; names are the ones
+      `client/api/src/config/env.ts` reads — anything else is silently ignored): `CHAIN_RPC_URL`, `SETTLEMENT_ADDRESS`,
+      `USD_PER_CLD`, `PRICE_NUSD_PER_TMAC`, `BASE_FEE_USD`, `PRICE_CONTROLLER`, `EPOCH_SECONDS=3600`,
+      `VEST_B_SECONDS=3600`, `SUBSIDY_RHO`, `CLUSTER_N_MIN`, `SITES_DOMAIN`, `RELAY_URL`; `DEV_MODE` and
+      `STRIPE_ENABLED` unset. The fee split (95 / 3 / 2) is in the contract, not an env var. The API Worker holds
+      **no chain key**.
 - [ ] Keeper Worker secrets: `POSTER_PRIVATE_KEY`, `INTERNAL_API_KEY`; vars `API_URL`, `RPC_URL`, `SETTLEMENT_ADDRESS`, `CHAIN_ID`.
 - [ ] Frontend env: `VITE_API_URL=https://api.cloudana.io`, `VITE_WALLETCONNECT_PROJECT_ID` (the 403s), no `VITE_DEV_BURNER`.
 - [ ] The leaked wallet `0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A` is abandoned with the legacy contracts (decision 0);

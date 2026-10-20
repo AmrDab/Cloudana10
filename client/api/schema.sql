@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   created_at INTEGER, completed_at INTEGER,
   attempts INTEGER NOT NULL DEFAULT 0, -- verification failures; 3 → failed, hold released
   artifact TEXT, -- R2 key once a finished job's matrices moved out of D1 (a_json/b_json/result_json then NULL)
-  eligible_json TEXT -- the eligible set the draw ran over (sorted Candidate[]), published for replay at /v1/draws/{id}
+  eligible_json TEXT -- the eligible set the draw ran over (sorted Candidate[]), published for replay at /v1/draws/{id},
+  fee_captured_at INTEGER -- set in the same transaction that captures the fee and writes the rewards (submitWork)
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_status ON work_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_work_jobs_owner ON work_jobs(owner, created_at DESC);

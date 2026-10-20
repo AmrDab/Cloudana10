@@ -131,3 +131,15 @@ describe("session lifecycle (B-7)", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("sign-in nonces are per nonce, not per address", () => {
+  it("issuing a second nonce for an address does not invalidate the first", async () => {
+    const address = "0xABCDEF0000000000000000000000000000000009";
+    const first = await issueNonce(address);
+    const second = await issueNonce(address);
+    expect(await consumeNonce(address, first.message)).toBe(true);
+    expect(await consumeNonce(address, second.message)).toBe(true);
+    expect(await consumeNonce(address, first.message)).toBe(false);
+    expect(await consumeNonce(address, "Cloudana sign-in\nAddress: x\nIssued: now")).toBe(false);
+  });
+});

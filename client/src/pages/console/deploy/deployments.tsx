@@ -119,7 +119,9 @@ function SecretsControl({ d, detail }: { d: Deployment; detail?: DeploymentDetai
   const pending = !!pendingSecrets(d.id);
   // Waiting for secrets this tab does not hold: never had them (another tab created it), or the node changed since
   // they were sealed and the API cleared them (they were sealed to the old node's key).
-  const reenter = d.awaitingSecrets && !pending && s?.phase !== "sealing" && (d.status === "queued" || d.status === "assigned");
+  // The list's awaitingSecrets lags a seal by one poll: a seal made in the last half minute is not "moved".
+  const justSealed = s?.phase === "sealed" && !!s.at && Date.now() - s.at < 30_000;
+  const reenter = d.awaitingSecrets && !pending && !justSealed && s?.phase !== "sealing" && (d.status === "queued" || d.status === "assigned");
   if (!pending && !reenter && s?.phase !== "sealed" && s?.phase !== "error") return null;
   const canSeal = !!detail?.nodePubkey && (d.status === "queued" || d.status === "assigned");
   const auto = autoSeal.has(d.id) && s?.phase !== "error";
@@ -190,7 +192,7 @@ export function Deployments({ focusId, onBlank }: { focusId: string | null; onBl
 
   return (
     <Panel id="deployments" className="scroll-mt-6 overflow-hidden" aria-labelledby="dep-h">
-      {deps.filter((d) => autoSeal.has(d.id)).map((d) => <Sealer key={d.id} id={d.id} />)}
+      {deps.filter((d) => (autoSeal.has(d.id) || !!pendingSecrets(d.id)) && !isTerminal(d.status)).map((d) => <Sealer key={d.id} id={d.id} />)}
       <PanelHeader title={<span id="dep-h">Your deployments</span>} kicker="Hosting" right={session && <Updated at={q.dataUpdatedAt || null} offline={q.isError} />} />
       {!session ? (
         <Empty icon={Wallet} title="Sign in to deploy and see your sites and containers." action={<button type="button" className={btn.primary} onClick={() => signInWithToast()}><Wallet /> Sign in</button>} />

@@ -261,12 +261,14 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
         return [];
       })
     : [];
-  // Below the minimum version: no new work (stops and purges still go out so the node winds down cleanly).
-  if (!allowed) deployments = deployments.filter((d) => d.action !== "start");
+  // Below the minimum version, or suspended: no new work (stops and purges still go out so the node winds down
+  // cleanly). A draining node finishes what it was already handed; placement stops at claim().
+  const suspended = (row?.state ?? "active") === "suspended";
+  if (!allowed || suspended) deployments = deployments.filter((d) => d.action !== "start");
   // Storage-capable nodes get a third signed key; others keep the exact { assignment, deployments } body 1.3.x verifies.
-  const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed).catch(() => null) : null;
+  const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed && !suspended).catch(() => null) : null;
   const instructions = {
-    assignment: allowed && activity && activity.assignedJobs > 0 ? await getActiveAssignment(node) : null,
+    assignment: allowed && !suspended && activity && activity.assignedJobs > 0 ? await getActiveAssignment(node) : null,
     deployments,
     ...(storage ? { storage } : {}),
   };

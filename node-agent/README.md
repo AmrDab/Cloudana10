@@ -32,9 +32,10 @@ exits.
 ## Environment
 
 - `CLOUDANA_API` — API base URL when `--api` is not given
-- `CLOUDANA_INSTRUCTION_SIGNER` — address of the API's instruction-signing key
-  (`GET /v1/nodes/instruction-key`). Required until a default is baked into
-  `src/instructions.ts`; the agent exits without it.
+- `CLOUDANA_INSTRUCTION_SIGNER` — overrides the pinned production signer
+  (`DEFAULT_INSTRUCTION_SIGNER` in `src/instructions.ts`, shown by
+  `GET /v1/nodes/instruction-key`); only needed against a local or test API.
+  The agent exits if no valid signer is pinned.
 - `CLOUDANA_FLEET_TOKEN` — datacenter fleet token (see below)
 - `CLOUDANA_PUBLIC_HOST` — as `--public-host`
 - `CLOUDANA_PORTS` — as `--ports`

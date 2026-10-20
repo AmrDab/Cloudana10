@@ -11,9 +11,9 @@ import { registerObject } from "./storage.service.js";
 import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
-import { capture, hold, release } from "./balance.service.js";
+import { hold, release } from "./balance.service.js";
 import { getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
-import { epochOf, recordJobRewards } from "./ledger.service.js";
+import { epochOf, jobRewardStatements } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
 import { getWorkType } from "./work-types.js";
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
@@ -49,6 +49,8 @@ export interface WorkJobRow {
   artifact: string | null;
   /** The eligible set the draw ran over, sorted by address (JSON Candidate[]), so anyone can replay the draw. */
   eligible_json: string | null;
+  /** Set in the transaction that captured the fee and wrote the rewards (submitWork); null = result accepted without a fee. */
+  fee_captured_at: number | null;
 }
 
 export interface JobMatrices {
@@ -124,18 +126,25 @@ export interface Candidate {
   payout: string;
   weight: number;
 }
+/** What the draw needs: the replay functions take this, so published records (no payout) replay too. */
+export type Weighted = Pick<Candidate, "address" | "weight">;
+/** A candidate as published at GET /v1/draws/{id}: the payout wallet is replaced by an opaque per-operator id. */
+export interface PublicCandidate extends Weighted {
+  operator: string;
+}
+export const operatorId = (payout: string) => sha256(`operator:${normalizeAddress(payout)}`).slice(0, 16);
 
-function byAddress(a: Candidate, b: Candidate): number {
+function byAddress(a: Weighted, b: Weighted): number {
   return a.address < b.address ? -1 : a.address > b.address ? 1 : 0;
 }
 
 /** sha256 of the sorted "addr:weight" list — lets anyone replay who was eligible. */
-export function eligibleHash(candidates: Candidate[]): string {
+export function eligibleHash(candidates: Weighted[]): string {
   return sha256([...candidates].sort(byAddress).map((c) => `${c.address}:${c.weight}`).join(","));
 }
 
 /** Deterministic weighted draw: the first 52 bits of draw_seed pick a point on the cumulative weights (sorted by address). */
-export function weightedDraw(drawSeedHex: string, candidates: Candidate[]): string {
+export function weightedDraw(drawSeedHex: string, candidates: Weighted[]): string {
   if (candidates.length === 0) throw new Error("weightedDraw: no candidates");
   const sorted = [...candidates].sort(byAddress);
   const total = sorted.reduce((s, c) => s + Math.max(c.weight, 0), 0);
@@ -365,7 +374,7 @@ export interface DrawRecord {
   seedSource: string | null;
   drawSeed: string | null;
   eligibleHash: string | null;
-  eligible: Candidate[] | null;
+  eligible: PublicCandidate[] | null;
   clusterOk: boolean | null;
   assignedAt: number | null;
   completedAt: number | null;
@@ -378,7 +387,10 @@ export interface DrawRecord {
 export async function getDrawRecord(id: string): Promise<DrawRecord | null> {
   const r = await getWorkJob(id);
   if (!r) return null;
-  const eligible = r.eligible_json ? (JSON.parse(r.eligible_json) as Candidate[]) : null;
+  const stored = r.eligible_json ? (JSON.parse(r.eligible_json) as Candidate[]) : null;
+  // Published without payout wallets: address and weight are all the replay needs; the operator id lets anyone see
+  // how the weight was spread over operators without mapping the fleet to wallets.
+  const eligible = stored ? stored.map((c) => ({ address: c.address, weight: c.weight, operator: operatorId(c.payout) })) : null;
   return {
     jobId: r.id,
     status: r.status,
@@ -455,7 +467,9 @@ export async function submitWork(
     // A job that keeps failing verification stops after MAX_JOB_ATTEMPTS: it is marked failed and the owner's hold
     // goes back to spendable, instead of re-queuing forever with the fee held.
     const giveUp = (job.attempts ?? 0) + 1 >= MAX_JOB_ATTEMPTS;
-    const next = giveUp ? "status = 'failed', node = NULL, expires_at = NULL, completed_at = ?" : CLEAR_ASSIGNMENT;
+    // A job that failed for good keeps `node`: the public draw record then still says who was drawn and failed
+    // (nothing selects a node by `node` alone — every guard looks at status = 'assigned').
+    const next = giveUp ? "status = 'failed', expires_at = NULL, completed_at = ?" : CLEAR_ASSIGNMENT;
     const update = db
       .prepare(`UPDATE work_jobs SET ${next}, attempts = attempts + 1 WHERE id = ? AND status = 'assigned' AND node = ?`)
       .bind(...(giveUp ? [now, job.id, node] : [job.id, node]));
@@ -468,31 +482,45 @@ export async function submitWork(
     return { ok: false, code: "unprocessable", message: verdict.reason };
   }
 
-  const done = await db
-    .prepare(
-      "UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ? WHERE id = ? AND status = 'assigned' AND node = ?",
-    )
-    .bind(JSON.stringify(input.result), input.certificate.z, now, job.id, node)
-    .run();
-  if ((done.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "job was already completed" };
+  // One transaction: the fee is authorised on the job row only while the owner's hold covers it, captured only when
+  // that authorisation happened in this very batch, the reward entries are written under the same condition, and the
+  // result lands last. A failure anywhere rolls the whole thing back, so the node's retry is a clean second attempt;
+  // a job is never done with its fee still held, and a fee is never captured without its rewards (nor minted without
+  // its capture).
+  const owner = normalizeAddress(job.owner);
+  const { statements: rewardStmts, rewards: split } = jobRewardStatements(
+    { jobId: job.id, workType: job.work_type, provider: nodeRow.payout, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now },
+    { capturedAt: now },
+  );
+  const results = await db.batch([
+    db
+      .prepare(
+        "UPDATE work_jobs SET fee_captured_at = ? WHERE id = ? AND status = 'assigned' AND node = ? AND fee_captured_at IS NULL " +
+          "AND EXISTS (SELECT 1 FROM balances WHERE address = ? AND held_ucld >= ?)",
+      )
+      .bind(now, job.id, node, owner, job.price_ucld),
+    db
+      .prepare(
+        "UPDATE balances SET held_ucld = held_ucld - ?, updated_at = ? WHERE address = ? AND held_ucld >= ? " +
+          "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ?)",
+      )
+      .bind(job.price_ucld, new Date(now).toISOString(), owner, job.price_ucld, job.id, now),
+    ...rewardStmts,
+    db
+      .prepare("UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ? WHERE id = ? AND status = 'assigned' AND node = ?")
+      .bind(JSON.stringify(input.result), input.certificate.z, now, job.id, node),
+  ]);
+  const done = results[results.length - 1];
+  if ((done?.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "job was already completed" };
 
   // Invariant: nothing is minted for a fee that was not captured. The hold is taken at enqueue and released only when
   // the job fails for good, so a missing hold is a bug or tampering — the verified result still goes to the owner (the
-  // node did the work), but no reward entries are written, so the epoch close neither mints for it nor burns its fee.
-  const captured = await capture(job.owner, job.price_ucld);
+  // node did the work), but no reward entries were written, so the epoch close neither mints for it nor burns its fee.
+  const captured = (results[0]?.meta?.changes ?? 0) > 0;
   if (!captured) {
     L.error(`[work] capture of ${job.price_ucld} µCLD from ${job.owner} failed for job ${job.id} (hold missing) — result accepted, no rewards recorded`);
   }
-  const rewards = captured
-    ? await recordJobRewards({
-        jobId: job.id,
-        workType: job.work_type,
-        provider: nodeRow.payout,
-        feeUcld: job.price_ucld,
-        clusterOk: job.cluster_ok === 1,
-        now,
-      })
-    : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now) };
+  const rewards = captured ? split : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now) };
   const units = wt.meter(jobInput);
   const seconds = (now - (job.assigned_at ?? now)) / 1000;
   await db

@@ -9,9 +9,9 @@ Cloudflare or chain credentials, and no outbound access to `cloudana.io`, `*.wor
 | Package | Command | Result | Notes |
 |---|---|---|---|
 | client/api | `npm run type-check` | clean | |
-| client/api | `npm test` (vitest) | **40 files, 362 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind), +7 `api-keys.test.ts`, +3 `auth.test.ts`, +1 `security.test.ts` (API keys, logout, rotation), +2 `node-state.test.ts`, +1 `node-security.test.ts` (node states; direct-mode host rule), +5 `deployment-logs.test.ts` (logs through the relay) |
+| client/api | `npm test` (vitest) | **40 files, 366 passed** | 330 at baseline; +4 in `deployments.test.ts` (sealed v2 refusal, agent gate for secrets, start timeout ×2), +5 `public-replay.test.ts` (draw replay, tampered record, signed epoch, signed network, 404s/no leakage), +1 `v1-submit.test.ts` (no reward without a captured fee), +2 `heartbeat-cost.test.ts` (statement budgets), +1 `v1-network-nodes.test.ts` (unbind), +7 `api-keys.test.ts`, +3 `auth.test.ts`, +1 `security.test.ts` (API keys, logout, rotation), +2 `node-state.test.ts`, +1 `node-security.test.ts` (node states; direct-mode host rule), +5 `deployment-logs.test.ts` (logs through the relay), +4 after the independent review (late seal / secrets timeout, node-bound seal and refusal re-queue, vetoed epoch, per-nonce sign-in) |
 | gateway | `npx tsc --noEmit && npx vitest run` | clean; **28 passed** | |
-| relay | same | clean; **14 passed** | includes workerd e2e (`test/workerd.e2e.ts`) |
+| relay | same | clean; **14 passed** (`test/hub.test.ts`, unit) | `test/workerd.e2e.ts` is a separate manual script against `wrangler dev` and was not run here (no workerd network); the hub ↔ agent path is covered by the agent's relay e2e selftest (27 checks) |
 | keeper | same | clean; **28 passed** | tree vector fixture + run state machine |
 | node-agent | `npm run type-check && npm run selftest` | clean; **9 selftests pass**: signing; sealed (26 checks); hosting; workstation (89); security (94); relay (69); relay e2e (27, real hub ↔ real agent ↔ real app, incl. logs via dep `agent`); ops (20); storage | 1.6.0 |
 | contract | `npx hardhat test` | **224 passing** | compiled with solcjs 0.8.20 from npm through a Hardhat subtask override because the solc binary list is unreachable here; CI uses the normal download |
@@ -51,9 +51,13 @@ removal, and its cron tick ran duties, the price controller (hold when idle) and
 
 ### 2b. Independent replay from public data
 
-After the e2e, `client/api/scripts/verify/replay.ts --api http://127.0.0.1:7076 --job <id> --epoch <n>` against the
-same runtime (started with an `INSTRUCTION_SIGNING_KEY`), using only `GET /v1/network`, `/v1/nodes/instruction-key`,
-`/v1/draws/{id}`, `/v1/epochs/{n}` and `/v1/epochs/{n}/jobs`:
+After the e2e, `client/api/scripts/verify/replay.ts --api http://127.0.0.1:7076 --job <id> --epoch <n> --signer published`
+against the same runtime (started with an `INSTRUCTION_SIGNING_KEY`), using only `GET /v1/network`,
+`/v1/nodes/instruction-key`, `/v1/draws/{id}`, `/v1/epochs/{n}` and `/v1/epochs/{n}/jobs`. Without `--signer` the
+script pins the agents' production signer and refuses a local key (it did, in this pass: "pinned 0x90ec… — DIFFERENT,
+its signatures will fail"); `--signer published` trusts the server's own key, which is fine for a local stack and is
+not a proof. The draw record is signed too (checked below as "draw: …"); `--rpc <url>` additionally looks the seed up
+with `eth_getBlockByHash` where the seed is a block hash:
 
 ```
 ok   network: signature verifies over the published body
@@ -103,6 +107,14 @@ hash that anyone can confirm with `eth_getBlockByHash`; the script then passes f
   403, it leaves `nodesOnline`, its owner's drain/resume are 409; the admin lifts it and the ticket works again.
 - `client/api/tests/node-security.test.ts` (O8 / B-13): outside DEV_MODE a hostname `publicHost` stores no host and
   strips hosting; a direct node reporting an endpoint on any host but its announced one is refused (three hosts).
+- Independent-review regressions (PROGRESS.md commit 16): `deployments.test.ts` — a seal 90 min after assignment
+  restarts the start clock and the node gets the start; a container never sealed is failed after 24 h with the hold
+  returned; a seal naming another node is 409, a seal naming the right node is 200, a node that reports "cannot
+  serve" leaves the row queued without the payload and with `awaitingSecrets`, and a seal naming a node while queued
+  is 409. `public-replay.test.ts` — the draw record is signed over `{ draw }`, candidates carry no payout wallet, a
+  vetoed epoch is 404. `api-keys.test.ts` — a cached key dies at its expiry. `auth.test.ts` — a second nonce does not
+  cancel the first. `deployment-logs.test.ts` — a node answer over 64 KiB is 502, the node's truncation flag is
+  reported. `v1-submit.test.ts` — a job failed for good keeps the drawn node.
 - `client/api/tests/deployment-logs.test.ts` (B-14): the relay is asked as dep `agent` with the exact path and probe
   flag and the text comes back; tail bounds never reach the node; truncation flagged; owner-only, containers and
   replicas only (site 400, endpoint 400 pointing at replicas); failure tail after the node is gone, 409 when none;
@@ -138,7 +150,8 @@ container.
 headless Chromium 141 against the Node API runtime and two fake nodes (`scripts/dev/fake-node.ts`: no Docker, no
 GPU; they announce, heartbeat, serve static files on loopback, stub containers, and open sealed secrets with their
 own key). What it proves is the console ↔ API ↔ node contract as a user sees it, not the real agent (its selftests
-cover that). Result: **29/29 checks**:
+cover that). Result: **29/29 checks**, and 29/29 again after the independent review's fixes (the seal now names the
+node it was sealed to; the logs panel's message for a direct node changed):
 
 ```
 ok   API and console preview are up

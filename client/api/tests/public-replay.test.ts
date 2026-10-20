@@ -59,10 +59,17 @@ describe("public draw records and signed epochs / network", () => {
   it("publishes the eligible set with the draw, and the draw replays from public data alone", async () => {
     const res = await call(`/v1/draws/${jobId}`);
     expect(res.status).toBe(200);
-    const { draw } = await res.json();
+    const body = await res.json();
+    const { draw } = body;
     expect(draw.jobStatus).toBe("assigned");
     expect(draw.sigma).toBeNull(); // not before the job is done
     expect(draw.eligible).toHaveLength(2);
+    // Published candidates carry no payout wallet, only an opaque operator id; the record is signed over { draw }.
+    expect(Object.keys(draw.eligible[0]).sort()).toEqual(["address", "operator", "weight"]);
+    expect(JSON.stringify(body)).not.toMatch(/a1a1a1a1|b2b2b2b2/);
+    expect(body.signature.signer).toBe(SIGNER);
+    expect(await verifyPublic(signedBody(body), body.signature)).toBe(true);
+    expect(await verifyPublic({ draw: { ...draw, node: "0x" + "00".repeat(20) } }, body.signature)).toBe(false);
     const eligible = draw.eligible as Candidate[];
     expect(eligible.map((c) => c.address)).toEqual([...nodes].sort());
     expect(eligible.map((c) => c.weight)).toEqual(eligible.map((c) => (c.address === nodes[0] ? 1 : 2)));
@@ -125,6 +132,13 @@ describe("public draw records and signed epochs / network", () => {
     expect(await verifyPublic(signedBody(json), { ...signature, signer: "0x" + "00".repeat(20) })).toBe(false);
     const key = await (await call("/v1/nodes/instruction-key")).json();
     expect(key.signer).toBe(signature.signer);
+  });
+
+  it("a vetoed epoch is not published: nothing signs stale leaves", async () => {
+    await getD1().prepare("UPDATE epochs SET status = 'vetoed' WHERE id = ?").bind(epoch).run();
+    expect((await call(`/v1/epochs/${epoch}`)).status).toBe(404);
+    await getD1().prepare("UPDATE epochs SET status = 'closed' WHERE id = ?").bind(epoch).run();
+    expect((await call(`/v1/epochs/${epoch}`)).status).toBe(200);
   });
 
   it("GET /v1/network is signed over its stats; without a key the data is served unsigned", async () => {

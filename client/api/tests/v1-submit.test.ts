@@ -87,7 +87,7 @@ describe("POST /work/submit checks (real certificates, n=16)", () => {
     expect(r).toMatchObject({ ok: false, code: "unprocessable" });
     if (!r.ok) expect(r.message).toMatch(/Freivalds/);
     const failed = (await getWorkJob(jobId))!;
-    expect(failed).toMatchObject({ status: "failed", attempts: 3, node: null });
+    expect(failed).toMatchObject({ status: "failed", attempts: 3, node: nodeAddr }); // the drawn node stays on the public record
     expect(await getBalanceUcld(user)).toEqual({ balanceUcld: 10_000, heldUcld: 0 }); // hold released
     await runAssignment();
     expect(await getActiveAssignment(nodeAddr)).toBeNull(); // never handed out again

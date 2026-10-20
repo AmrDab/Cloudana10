@@ -9,7 +9,7 @@ import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
 import { closeEpochs } from "../src/services/ledger.service.js";
 import { endpointAllowed, priceUcldPerHour } from "../src/services/deployment-spec.js";
-import { runDutiesCron } from "../src/services/deployment-duties.service.js";
+import { NODE_CANNOT_SERVE, runDutiesCron } from "../src/services/deployment-duties.service.js";
 
 const TREASURY = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
 let app: ReturnType<typeof buildApp>;
@@ -559,6 +559,59 @@ describe("start timeout", () => {
     expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
     expect(await row(waiting)).toMatchObject({ status: "assigned", start_attempts: 0 });
     expect(await row(started)).toMatchObject({ status: "queued", start_attempts: 1 });
+  });
+
+  it("a late seal restarts the start clock; secrets never sealed fail the deployment after a day and free the hold", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(node);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: node.address.toLowerCase() });
+    // The owner comes back 90 minutes later and seals: no start could have gone out before, so the clock starts now.
+    await shift(id, "assigned_at", 90 * MIN);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("late"), node: node.address })).status).toBe(200);
+    expect((await row(id))!.assigned_at).toBeGreaterThan(Date.now() - MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
+    expect(await row(id)).toMatchObject({ status: "assigned", node: node.address.toLowerCase(), start_attempts: 0 });
+    expect((await heartbeat(node)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("late") })]);
+
+    // Never sealed: after DEPLOY_SECRETS_TIMEOUT_SECONDS the row stops pinning the node's slot and the hold comes back.
+    const never = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(node);
+    expect(await row(never)).toMatchObject({ status: "assigned" });
+    const held = (await row(never))!.held_ucld as number;
+    const before = await getBalanceUcld(u.addr);
+    await shift(never, "assigned_at", 23 * 60 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
+    await shift(never, "assigned_at", 2 * 60 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
+    expect(await row(never)).toMatchObject({ status: "failed", status_reason: "secrets were not sealed within 24 h of assignment", held_ucld: 0 });
+    expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: before.balanceUcld + held, heldUcld: before.heldUcld - held });
+  });
+
+  it("a seal names the node it was sealed to and is refused once the deployment moved; a refusing node clears the payload", async () => {
+    const u = await user();
+    const { node: a } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(a);
+    const moved = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("x"), node: "0x" + "77".repeat(20) });
+    expect(moved.status).toBe(409);
+    expect((await moved.json()).error.message).toMatch(/moved to node/);
+    expect((await row(id))!.sealed_env).toBeNull();
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("a"), node: a.address })).status).toBe(200);
+    expect((await heartbeat(a)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("a") })]);
+    // The node cannot serve it: back to the queue without the payload (it was sealed to this node's key).
+    expect((await signed(a, `/v1/nodes/deployments/${id}/status`, { status: "failed", message: `${NODE_CANNOT_SERVE} hardening check failed` })).status).toBe(200);
+    const back = (await row(id))!;
+    expect(back).toMatchObject({ status: "queued", node: null, sealed_env: null });
+    expect(JSON.parse(back.spec_json).expectsSecrets).toBe(true);
+    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment.awaitingSecrets).toBe(true);
+    expect(got.events.map((e: { message: string }) => e.message)).toContain("secrets were sealed to the old node — re-seal them for the next node");
+    // Queued again: a seal naming a node is refused until a node holds it.
+    const queued = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("b"), node: a.address });
+    expect(queued.status).toBe(409);
+    expect((await queued.json()).error.message).toMatch(/back in the queue/);
   });
 });
 

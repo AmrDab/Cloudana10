@@ -118,6 +118,40 @@ export async function recordJobRewards(input: {
   return { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch };
 }
 
+/**
+ * The reward entries of one verified job as prepared statements, each conditioned on the job row carrying
+ * `fee_captured_at = capturedAt`: submitWork writes them in the same transaction as the capture, so they exist exactly
+ * when the fee was taken and never for a fee that was not.
+ */
+export function jobRewardStatements(
+  input: { jobId: string; workType: string; provider: string; feeUcld: number; clusterOk: boolean; now?: number },
+  cond: { capturedAt: number },
+): { statements: D1PreparedStatement[]; rewards: JobRewards } {
+  const env = getEnv();
+  const now = input.now ?? Date.now();
+  const epoch = epochOf(now);
+  const split = splitFee(input.feeUcld, { rho: env.SUBSIDY_RHO, clusterOk: input.clusterOk, budgetRemaining: Number.MAX_SAFE_INTEGER });
+  const vestsAt = now + env.VEST_B_SECONDS * 1000;
+  const provider = normalizeAddress(input.provider);
+  const db = getD1();
+  const rows: [Lane, string, number, number][] = [
+    ["A", provider, split.laneA, now],
+    ["treasury", TREASURY_ACCOUNT, split.treasury, now],
+    ["B", provider, split.subsidy, vestsAt],
+  ];
+  const statements = rows
+    .filter(([, , amount]) => amount > 0)
+    .map(([lane, address, amount, vests]) =>
+      db
+        .prepare(
+          "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ? WHERE EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ?)",
+        )
+        .bind(crypto.randomUUID(), input.jobId, epoch, address, lane, input.workType, amount, vests, now, input.jobId, cond.capturedAt),
+    );
+  return { statements, rewards: { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch } };
+}
+
 /** Insert the non-zero A/treasury entries of one job or bill (vests_at = now: lane A has no vest). */
 async function insertLanes(jobId: string, epoch: number, workType: string, rows: [Lane, string, number][], now: number): Promise<void> {
   const db = getD1();
@@ -439,8 +473,12 @@ export async function epochJobs(
 }
 
 /** One closed/posted/settled epoch with its leaves (public: GET /v1/epochs/{id}); null while open or unknown. */
+/** A published epoch: closed, posted or settled. A vetoed (or never-closed) epoch has no payload anyone should sign or replay. */
 export async function getEpochPayload(id: number): Promise<EpochPayload | null> {
-  const row = await getD1().prepare("SELECT * FROM epochs WHERE id = ?").bind(id).first<EpochRow>();
+  const row = await getD1()
+    .prepare("SELECT * FROM epochs WHERE id = ? AND status IN ('closed','posted','settled')")
+    .bind(id)
+    .first<EpochRow>();
   return row ? toPayload(row) : null;
 }
 

@@ -122,7 +122,10 @@ re-verification.
 epoch is finalized with the team's poster offline (testnet drill).
 
 **B-17 · Pull-based assignment.** Nodes pull from a published seeded queue and can verify the draw before starting.
-Acceptance: the agent refuses an assignment whose σ does not match the published seed/eligible set.
+Acceptance: the agent refuses an assignment whose σ does not match the published seed/eligible set. Why it matters
+(review finding, commit 16): today's draw record is signed, but its eligible set is the orchestrator's attestation —
+nothing commits the set before the seed is known, so a replay proves the draw was computed as published, not that
+the set was complete. Committing the eligible hash before the seed (or publishing the set at enqueue) is the fix.
 
 **B-18 · Object storage phase 2 (buckets, signed URLs, lifecycle)** per `docs/V4_STORAGE_SPEC.md`, gated on the DMCA
 agent and abuse contact (runbook step 11). Acceptance: S3-compatible PUT/GET/DELETE with content hashes, metering per
@@ -148,7 +151,8 @@ run`.
 ## Decisions needed from the owner
 
 1. Which `/control/legacy` pages survive (B-3). Recommendation: none; the pricing calculators and decentralization page
-   move to the main console as rewritten pages.
+   move to the main console as rewritten pages. Note (review, commit 16): several legacy hooks call API routes that
+   this branch removed (they were Node-only and never deployed), so those pages already fail on use.
 2. Fleet pinning semantics (B-9): can a customer pin to a partner fleet they do not own? Recommendation: yes, by fleet
    id shown in the console, never by node.
 3. Whether to keep direct (public-IP) node mode at all once the relay is live (B-13). Recommendation: retire it.

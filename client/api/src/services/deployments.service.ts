@@ -12,6 +12,8 @@
  */
 import { getD1 } from "../lib/storage.js";
 import { getRelay } from "../lib/relay.js";
+import { readCapped } from "../lib/read-capped.js";
+import { getNode } from "./nodes.service.js";
 import { createHash, randomBytes } from "node:crypto";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
@@ -488,7 +490,13 @@ export async function nodePubkey(node: string | null): Promise<string | null> {
 
 export type Update = { ok: true } | { ok: false; code: "not_found" | "conflict" | "validation_failed"; message: string };
 
-export async function setSealedEnv(owner: string, id: string, sealedEnv: string): Promise<Update> {
+/**
+ * Store a sealed payload. `sealedFor` is the node the console sealed to (it checked the key derives to that address):
+ * when given, the payload is refused unless the row is still assigned to exactly that node — a re-queue that raced
+ * the seal would otherwise hand the next node a payload it cannot open. The start-timeout clock restarts at the
+ * seal: no start could go out before the secrets existed.
+ */
+export async function setSealedEnv(owner: string, id: string, sealedEnv: string, sealedFor?: string, now = Date.now()): Promise<Update> {
   const row = await getOwnedRow(owner, id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "sealed secrets are for containers only" };
@@ -500,14 +508,28 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string)
       message: "sealedEnv must be a v2 payload bound to this deployment (shared/sealed.ts seal(pubkey, plaintext, sealedEnvAad(id))); reload the console and seal again",
     };
   }
+  const target = sealedFor ? normalizeAddress(sealedFor) : null;
   const r = await getD1()
-    .prepare("UPDATE deployments SET sealed_env = ? WHERE id = ? AND status IN ('queued','assigned')")
-    .bind(sealedEnv, id)
+    .prepare(
+      "UPDATE deployments SET sealed_env = ?, assigned_at = CASE WHEN status = 'assigned' THEN ? ELSE assigned_at END " +
+        "WHERE id = ? AND status IN ('queued','assigned') AND (? IS NULL OR (status = 'assigned' AND node = ?))",
+    )
+    .bind(sealedEnv, now, id, target, target)
     .run();
   if ((r.meta?.changes ?? 0) === 0) {
-    return { ok: false, code: "conflict", message: `secrets can only change while queued or assigned (status is ${row.status})` };
+    const fresh = (await getDeploymentRow(id)) ?? row;
+    if (fresh.status !== "queued" && fresh.status !== "assigned") {
+      return { ok: false, code: "conflict", message: `secrets can only change while queued or assigned (status is ${fresh.status})` };
+    }
+    return {
+      ok: false,
+      code: "conflict",
+      message: fresh.node
+        ? `the deployment moved to node ${fresh.node} since its key was fetched — seal to that node's key and send again`
+        : "the deployment is back in the queue (no node holds it): wait for a node, then seal to its key",
+    };
   }
-  await addEvent(id, "info", "sealed secrets updated");
+  await addEvent(id, "info", "sealed secrets updated", now);
   return { ok: true };
 }
 
@@ -791,7 +813,19 @@ export async function deploymentLogs(owner: string, id: string, tail = LOGS_TAIL
     if (row.last_logs) return { ok: true, id: row.id, node: row.node, tail, source: "last_failure", logs: row.last_logs, truncated: false };
     return { ok: false, code: "conflict", message: `no node runs it now (status ${row.status}) and no failure logs were kept` };
   }
-  if (!row.relayed) return { ok: false, code: "conflict", message: "this deployment runs on a direct (public-IP) node; logs are served through the relay only" };
+  // The logs go through the node's relay socket whatever the deployment's own path is (a direct workstation on a
+  // relay-capable node has logs too): what matters is that the socket is up.
+  const nodeRow = await getNode(row.node!);
+  const socketFresh = (nodeRow?.relay_at ?? 0) >= Date.now() - getEnv().RELAY_FRESH_SECONDS * 1000;
+  if (!socketFresh) {
+    return {
+      ok: false,
+      code: "conflict",
+      message: nodeRow?.relay_at
+        ? "the node's relay socket is down right now; try again shortly"
+        : "this deployment's node runs without the relay (direct, public-IP mode); logs are served through the relay only",
+    };
+  }
   const relay = getRelay();
   if (!relay) return { ok: false, code: "not_configured", message: "this API runs no relay" };
   let res: Response;
@@ -822,7 +856,8 @@ export async function deploymentLogs(owner: string, id: string, tail = LOGS_TAIL
     await res.body?.cancel().catch(() => undefined);
     return { ok: false, code: "upstream_failed", message: `the node answered ${res.status}` };
   }
-  const text = await res.text();
-  const over = text.length > LOGS_MAX_BYTES;
-  return { ok: true, id: row.id, node: row.node, tail, source: "node", logs: over ? text.slice(-LOGS_MAX_BYTES) : text, truncated: over || res.headers.get("x-cld-truncated") === "1" };
+  // Read at most the cap: a node that sends more is misbehaving (its agent caps answers at the same size).
+  const bytes = await readCapped(res, LOGS_MAX_BYTES);
+  if (bytes === null) return { ok: false, code: "upstream_failed", message: `the node sent more than ${LOGS_MAX_BYTES} bytes of logs (agents cap answers at that size)` };
+  return { ok: true, id: row.id, node: row.node, tail, source: "node", logs: new TextDecoder().decode(bytes), truncated: res.headers.get("x-cld-truncated") === "1" };
 }

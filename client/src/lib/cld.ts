@@ -79,6 +79,12 @@ function setSession(s: Session | null) {
 export function signOut() {
   const s = getSession();
   setSession(null);
+  // Plaintext secrets waiting to be sealed belong to this session: they never outlive it in the tab.
+  try {
+    for (const k of Object.keys(sessionStorage)) if (k.startsWith("cld.secrets.")) sessionStorage.removeItem(k);
+  } catch {
+    /* no storage */
+  }
   if (s?.token) {
     fetch(`${API}/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${s.token}` }, keepalive: true }).catch(() => undefined);
   }

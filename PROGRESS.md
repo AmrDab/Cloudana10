@@ -212,11 +212,52 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Residual.** Endpoints, workstations, the relay logs path and a real wallet extension are not covered. The run is
   not in CI (it needs a browser and ~3 minutes); the command is in `TEST_EVIDENCE.md` §5.
 
+### 16 · independent review of the branch: 31 confirmed findings fixed
+- **How.** Before the pull request was handed over, seven fresh reviewers (auth and keys; secrets and deployments;
+  node states and logs; transparency and ledger; runtime and removals; docs versus code; console UI) read the whole
+  diff; every finding was challenged by three separate verifiers (code trace, reproduction, blast radius) and kept
+  only on a majority. 39 candidates, 31 confirmed; the 7 console-UI findings could not be verified (the org's spend
+  limit stopped the verifiers) and were fixed on their merits.
+- **High.** (1) A seal arriving after the start timeout was re-queued by the next cron before the node could start
+  → the start clock now restarts at the seal. (2) A node that refused a container ("cannot serve", GPU) kept the
+  payload sealed to its key on the re-queued row → cleared and flagged like every other re-queue. (3) An owner's
+  drain/resume could overwrite a concurrent suspension → one conditional write. (4) `GET /v1/epochs/{n}` signed
+  vetoed epochs with stale leaves → published epochs only. (5) The draw record was unsigned and its eligible set
+  self-attested → signed over `{ draw }`, payout wallets replaced by an opaque operator id, the attestation limit
+  stated in the route and in ARCHITECTURE (pull-based assignment, B-17, is the real fix). (6) The runbook told the
+  operator to run the secrets script with no arguments, which regenerates the pinned instruction key and the KEK →
+  rewritten. (7) A minted API key stayed on screen after sign-out → cleared on session change.
+- **Medium.** `PATCH …/secrets` now names the node it was sealed to and is refused if the row moved; a container whose
+  owner never seals is failed after `DEPLOY_SECRETS_TIMEOUT_SECONDS` (24 h) instead of pinning a slot for ever; a
+  placement can no longer race a suspension (`claim()` checks node state in the same statement; a suspended node's
+  heartbeat carries no start, no assignment, no storage fetch, and its relay socket is kicked); logs are read through
+  the capped reader; `replay.ts` pins the signer (the agents' default, `--signer` to override) and checks the seed
+  block with `--rpc`; `submitWork` is one transaction (fee authorised on the job row → captured → rewards → done,
+  each statement conditioned on the previous, so a crash rolls everything back and the retry is clean); a job that
+  failed for good keeps the drawn node on its public record; the relay-test row in TEST_EVIDENCE, the SHIP_CHECKLIST
+  env names, ARCHITECTURE §6 were corrected.
+- **Low.** API-key cache capped at the key's expiry; session revocation fails closed when a bound KV cannot be read
+  and reports `revoked:false` when the shared list could not be written; sign-in nonces keyed per nonce (issuing one
+  no longer cancels another); logs for workstations work when the node has a relay socket (the check is the socket,
+  not the deployment's path); suspended nodes get no storage fetch ops and cannot download copies; `/v1/network`
+  `burnedUcld` counts only fees that have reward entries (what the epochs burn); the public eligible set carries no
+  payout wallets; `worker.ts` header, runbook image tag 1.6.0, CAPABILITY_MATRIX numbers, node-agent README signer
+  note and the SECURITY_AUDIT ledger sentence corrected.
+- **Also.** `storage.test.ts` "next day opens" depended on the wall clock (failed between 00:00 and 01:00 UTC);
+  made clock-independent. `/control/legacy` hooks call API routes this branch deleted (they were Node-only and never
+  deployed) — one more reason for decision 1.
+- **Tests / results.** API 362 → **366** (late seal and secrets timeout, node-bound seal and refusal re-queue,
+  signed draw without wallets, vetoed epoch 404, key cache expiry, per-nonce sign-in, logs over-cap 502); e2e 43
+  checks on the transactional submit path; `replay.ts --signer published` passes on the local stack and the pinned
+  mode refuses the local key as designed; console tsc, 3 tests, build; browser smoke re-run (§4b).
+- **Residual.** The eligible set is still attested, not committed before the seed (B-17). Draining nodes finish
+  what they hold; only suspension kicks the socket.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **362** |
+| client/api vitest | 330 | **366** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |

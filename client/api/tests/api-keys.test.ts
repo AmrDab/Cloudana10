@@ -9,7 +9,7 @@ import { buildApp } from "../src/app.js";
 import { getD1 } from "../src/lib/storage.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { creditUcld } from "../src/services/balance.service.js";
-import { forgetApiKeyCache, MAX_KEYS_PER_ACCOUNT, scopeFor } from "../src/services/api-keys.service.js";
+import { authenticateApiKey, forgetApiKeyCache, MAX_KEYS_PER_ACCOUNT, scopeFor } from "../src/services/api-keys.service.js";
 import { MATMUL_N_MIN } from "../src/services/work-types.js";
 
 let app: ReturnType<typeof buildApp>;
@@ -136,6 +136,13 @@ describe("API keys", () => {
     await getD1().prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?").bind(Date.now() - 1, short.id).run();
     forgetApiKeyCache();
     expect((await bearer(short.token, "GET", "/v1/jobs")).status).toBe(401);
+    // The lookup cache never outlives the key: an expiry inside the 30 s window ends the entry there.
+    const soon = await mint(u.jwt, ["read"], { expiresInDays: 1 });
+    const expiresAt = Date.now() + 5_000;
+    await getD1().prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?").bind(expiresAt, soon.id).run();
+    forgetApiKeyCache();
+    expect(await authenticateApiKey(soon.token)).not.toBeNull();
+    expect(await authenticateApiKey(soon.token, expiresAt + 1)).toBeNull();
     for (const bad of ["cld_sk_", "cld_sk_" + "x".repeat(32), "cld_sk_" + "y".repeat(200), k.token.slice(0, -1) + (k.token.endsWith("A") ? "B" : "A")]) {
       expect((await bearer(bad, "GET", "/v1/jobs")).status, bad.slice(0, 20)).toBe(401);
     }

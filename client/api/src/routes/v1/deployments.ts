@@ -42,6 +42,7 @@ import { REPORTS_PER_DAY, reportProblem, requeueDeadNodeDeployments } from "../.
 import { log } from "../../lib/logger.js";
 import { requireInternalKey } from "./admin-epochs.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
+import { EthAddressSchema } from "../../schemas/common.schema.js";
 
 export const deploymentsRouter = createRouter();
 const TAGS = ["Deployments"];
@@ -332,7 +333,12 @@ const secretsRoute = createRoute({
       required: true,
       content: {
         "application/json": {
-          schema: z.object({ sealedEnv: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9+/]*={0,2}$/, "sealedEnv must be base64") }),
+          schema: z.object({
+            sealedEnv: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9+/]*={0,2}$/, "sealedEnv must be base64"),
+            node: EthAddressSchema.optional().openapi({
+              description: "The node whose key the payload was sealed to (the console checks the key derives to it). With it, the payload is refused (409) unless the deployment is still assigned to that node",
+            }),
+          }),
         },
       },
     },
@@ -341,7 +347,8 @@ const secretsRoute = createRoute({
 });
 
 deploymentsRouter.openapi(secretsRoute, async (c) => {
-  const r = await setSealedEnv(c.get("jwtPayload").sub, c.req.valid("param").id, c.req.valid("json").sealedEnv);
+  const { sealedEnv, node } = c.req.valid("json");
+  const r = await setSealedEnv(c.get("jwtPayload").sub, c.req.valid("param").id, sealedEnv, node);
   return r.ok ? ok(c, {}) : fail(c, r.code, r.message);
 });
 

@@ -121,6 +121,25 @@ Tests: `api-keys.test.ts` (18 route→scope cases; mint/list/hash; per-scope all
 expiry, garbage, cross-owner 404; the 20-key cap; logout), `auth.test.ts` (jti, revocation, rotation, a key against
 an app without storage → 401), `security.test.ts` (gates).
 
+### F9 — Findings of the independent review of this branch — FIXED (commit 16)
+
+Seven fresh reviewers read the whole diff before the pull request was handed over, each finding challenged by three
+verifiers. The security-relevant ones, all fixed with tests (`PROGRESS.md` commit 16 has the full list):
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | A node that refused a container kept the payload sealed to its key on the re-queued row; the next node failed to open it and the deployment died | cleared and flagged like every other re-queue |
+| High | An owner's drain/resume could overwrite a concurrent suspension | one conditional write guarded on state |
+| High | Vetoed epochs were published and signed with stale leaves | published epochs only (closed, posted, settled) |
+| High | The draw record was unsigned and its eligible set self-attested; it also listed every eligible node's payout wallet | signed over `{ draw }`; wallets replaced by an opaque operator id; the limit (attested, not pre-committed) stated in the API and ARCHITECTURE — pull-based assignment (B-17) is the real fix |
+| High | The runbook's secrets table had the operator regenerate the pinned instruction key and the storage KEK | rewritten: name the secret, set those two once |
+| Medium | `PATCH …/secrets` accepted a payload for whichever node now held the row | the console names the node it sealed to; refused once the row moved |
+| Medium | A placement could race a suspension; a suspended node still got storage fetches and kept its relay socket | `claim()` checks node state in the same statement; suspended heartbeats carry no start/assignment/fetch; socket kicked |
+| Medium | `submitWork` did done → capture → rewards in three round trips; a failure between them stranded a hold or captured a fee with no rewards | one transaction, each statement conditioned on the previous |
+| Medium | `replay.ts` trusted the signer address the server being checked published | pinned signer (the agents' default); `--signer published` is explicit and labelled not a proof |
+| Medium | Logs answer read unbounded before the cap | capped reader; over-cap is 502 |
+| Low | API-key cache could outlive the key's expiry; session revocation failed open on KV errors; anyone could cancel a wallet's pending sign-in nonce | cache capped at expiry; fail closed on a bound KV; nonces keyed per nonce |
+
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
 | Review item (C.5) | State in code | Where |
@@ -155,7 +174,7 @@ an app without storage → 401), `security.test.ts` (gates).
 | O9 | Medium | Testnet credits keyed per wallet/IP/ASN — cheap Sybil for free credits | Testnet only, no value | Remove before value (decided) |
 | O10 | Medium | Relay DO `/kick` and `/status` are reachable to anyone with the binding; the gateway binding could kick nodes | Bindings are trusted scripts | Restrict `/kick` to the API via a shared header, or split the stub interface |
 | O11 | Low | Workstation SSH is published on the node's public IP (direct mode only) | WebSockets over the relay not built | Relay WebSocket tunnelling (planned) |
-| O12 | Low | `MIN_AGENT_VERSION` defaults to 1.3.0 while the agent is 1.5.0; sealed-v2 gating is per-deployment, not a hard minimum | Deliberate: do not cut off compute/hosting nodes | Raise the minimum once the owner's node runs 1.5.0 |
+| O12 | Low | `MIN_AGENT_VERSION` defaults to 1.3.0 while the agent is 1.6.0; sealed-v2 (≥ 1.5.0) and logs (≥ 1.6.0) gating is per-feature, not a hard minimum | Deliberate: do not cut off compute/hosting nodes | Raise the minimum once the owner's node runs 1.6.0 |
 | O13 | Low (dev-time) | Advisories left after `npm audit fix` that need major upgrades: the console's wallet stack (`@wagmi/connectors` pins old `ws`, `preact`, `d3-color`) and the Hardhat 2 toolchain (§3b) | No runtime path: build/test tooling and the browser wallet connector bundle | Bump `@wagmi/*` with the next console dependency pass; move to Hardhat 3 with the v2 contract work |
 
 ### 3b. Dependency audit (`npm audit`, 2026-10-19)
@@ -202,8 +221,9 @@ Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13
 - **Ledger.** Integer µCLD; holds moved with conditional updates (`WHERE balance_ucld >= ?`, `WHERE held_ucld = ?`);
   the hour is claimed (`held_ucld → 0` conditional) before it is charged, so concurrent heartbeats cannot bill twice;
   epochs close once (vetoed ones re-close under the same id); clawed entries drop out of the next close and of
-  `fees_burned`. The e2e run in `TEST_EVIDENCE.md` shows two fees captured once each, a refused answer leaving its fee
-  held, and the posted treasury within the contract's bounds.
+  `fees_burned`. The e2e run in `TEST_EVIDENCE.md` shows three fees captured once each (balance 10,000,000 − 3,003,
+  held 0), a refused answer re-queued with its fee still held until the job was later verified, and
+  the posted treasury within the contract's bounds.
 
 ## 5. What the audit did not cover
 

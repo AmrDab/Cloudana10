@@ -134,29 +134,46 @@ export async function generateToken(walletAddress: string, role: JWTPayload["rol
 
 const revokedMemory = new Map<string, number>();
 const revokedKey = (jti: string) => `revoked:${jti}`;
+/** The bound KV namespace, or null when none is bound (unit tests, bare runtimes): then the list is per process. */
+function boundKV(): KVNamespace | null {
+  try {
+    return getKV();
+  } catch {
+    return null;
+  }
+}
 
-/** End a session token now. False when the token has no jti (minted before revocation existed). */
+/**
+ * End a session token now. False when the token has no jti (minted before revocation existed) or when the shared
+ * revocation list could not be written — the caller must not report a revocation that only this isolate knows.
+ */
 export async function revokeToken(payload: Pick<JWTPayload, "jti" | "exp">): Promise<boolean> {
   if (!payload.jti) return false;
   const ttl = Math.max(60, payload.exp - Math.floor(Date.now() / 1000));
+  revokedMemory.set(payload.jti, Date.now() + ttl * 1000);
+  const kv = boundKV();
+  if (!kv) return true;
   try {
-    await getKV().put(revokedKey(payload.jti), "1", { expirationTtl: ttl });
+    await kv.put(revokedKey(payload.jti), "1", { expirationTtl: ttl });
+    return true;
   } catch {
-    revokedMemory.set(payload.jti, Date.now() + ttl * 1000);
+    return false;
   }
-  return true;
 }
 
+/** Fails closed: a token whose revocation status cannot be read from a bound KV is treated as revoked. */
 async function isRevoked(jti: string): Promise<boolean> {
   const until = revokedMemory.get(jti);
   if (until !== undefined) {
     if (until > Date.now()) return true;
     revokedMemory.delete(jti);
   }
+  const kv = boundKV();
+  if (!kv) return false;
   try {
-    return (await getKV().get(revokedKey(jti))) !== null;
+    return (await kv.get(revokedKey(jti))) !== null;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -173,9 +190,12 @@ export interface IssuedNonce {
   expiresAt: string;
 }
 
-function nonceKey(address: HexAddress): string {
-  return `nonce:${address}`;
+// Keyed per nonce, not per address: issuing a nonce for an address (which anyone can do, it is unauthenticated)
+// never invalidates one still in flight for that address.
+function nonceKey(address: HexAddress, nonce: string): string {
+  return `nonce:${address}:${nonce}`;
 }
+const NONCE_IN_MESSAGE = /^Nonce: ([0-9a-f]{32})$/m;
 
 function buildSignInMessage(address: HexAddress, nonce: string, issuedAt: string): string {
   return `Cloudana sign-in\nAddress: ${address}\nNonce: ${nonce}\nIssued: ${issuedAt}`;
@@ -210,7 +230,7 @@ export async function issueNonce(rawAddress: string): Promise<IssuedNonce> {
   const nonce = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   const issuedAt = new Date().toISOString();
   const message = buildSignInMessage(address, nonce, issuedAt);
-  await nonceStorePut(nonceKey(address), message);
+  await nonceStorePut(nonceKey(address, nonce), message);
   return {
     nonce,
     message,
@@ -223,6 +243,8 @@ export async function issueNonce(rawAddress: string): Promise<IssuedNonce> {
  * the message issued for it and it has not been used or expired.
  */
 export async function consumeNonce(rawAddress: string, message: string): Promise<boolean> {
-  const stored = await nonceStoreTake(nonceKey(normalizeAddress(rawAddress)));
+  const nonce = NONCE_IN_MESSAGE.exec(message)?.[1];
+  if (!nonce) return false;
+  const stored = await nonceStoreTake(nonceKey(normalizeAddress(rawAddress), nonce));
   return stored !== null && stored === message;
 }

@@ -376,6 +376,8 @@ export async function downloadCopy(node: string, id: string): Promise<DownloadRe
   const store = getArtifactStore();
   if (!master || !store) return { ok: false, code: "not_configured", message: "storage is not configured" };
   const db = getD1();
+  const st = await db.prepare("SELECT COALESCE(state, 'active') AS state FROM nodes WHERE address = ?").bind(node).first<{ state: string }>();
+  if (st?.state === "suspended") return { ok: false, code: "conflict", message: "this node is suspended: no copies are handed out" };
   const claimed = await db
     .prepare("UPDATE storage_copies SET fetches = fetches + 1 WHERE id = ? AND node = ? AND state = 'pending' AND fetches < ?")
     .bind(id, node, FETCHES_PER_COPY)

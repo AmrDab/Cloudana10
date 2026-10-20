@@ -3,11 +3,8 @@
  *
  * Storage: Cloudflare D1 (SQL) + KV (key-value), bound per request.
  * Everything else (middleware, security policy, routers, OpenAPI) comes from
- * app.ts and is shared with the Node orchestrator.
- *
- * Node-only routers (build-provider, verify, deploy, orchestration,
- * provider-logs, workload-status) need ssh2 / child_process / long-lived loops
- * and are mounted only by index.ts.
+ * app.ts and is shared with the Node runtime (index.ts), which mounts the same
+ * routers and adds only /metrics and a 60 s cron tick.
  */
 import type { MiddlewareHandler } from "hono";
 import { buildApp, type AppEnv } from "./app.js";

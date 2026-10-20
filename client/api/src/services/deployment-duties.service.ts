@@ -168,7 +168,18 @@ export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
   let n = 0;
   for (const row of rows.results ?? []) {
     const timeoutMs = (row.kind === "static" ? env.DEPLOY_START_TIMEOUT_STATIC_SECONDS : env.DEPLOY_START_TIMEOUT_SECONDS) * 1000;
-    if (row.assigned_at! > now - timeoutMs || awaitingSecrets(row)) continue;
+    if (awaitingSecrets(row)) {
+      // No start went out, so the start timeout does not apply — but the row holds one of the node's container slots.
+      // An owner who never comes back to seal loses the deployment after DEPLOY_SECRETS_TIMEOUT_SECONDS (hold released).
+      const limit = env.DEPLOY_SECRETS_TIMEOUT_SECONDS * 1000;
+      if (row.assigned_at! <= now - limit) {
+        const hours = Math.round(limit / 3_600_000);
+        const ended = await endDeployment(row, "failed", `secrets were not sealed within ${hours} h of assignment`, { acked: false, level: "error", now });
+        if (ended) n++;
+      }
+      continue;
+    }
+    if (row.assigned_at! > now - timeoutMs) continue;
     const attempts = (row.start_attempts ?? 0) + 1;
     const minutes = Math.round(timeoutMs / 60_000);
     if (attempts >= env.DEPLOY_START_ATTEMPTS) {
@@ -259,8 +270,13 @@ async function claim(node: string, q: Queued, now: number, relayed: boolean): Pr
   relayed = relayed && !q.workstation;
   const db = getD1();
   const r = await db
-    .prepare("UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ?, relayed = ? WHERE id = ? AND status = 'queued'")
-    .bind(node, now, relayed ? 1 : 0, q.id)
+    // The node's state is checked in the same statement: a suspension or drain that landed after this heartbeat's
+    // snapshot of the node row cannot be raced into a placement.
+    .prepare(
+      "UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ?, relayed = ? WHERE id = ? AND status = 'queued' " +
+        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active')",
+    )
+    .bind(node, now, relayed ? 1 : 0, q.id, node)
     .run();
   if ((r.meta?.changes ?? 0) === 0) return false;
   // Back on the node that lost it: its "start" replaces the owed stop.
@@ -1035,15 +1051,21 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
     // Our placement was wrong for this node (GPUs held elsewhere, or the node cannot serve at all):
     // queue it again for another node, not failed. assign() skips this node for it.
     const reason = gpuRefusal ? gpuRefusalReason(node) : `${nodeRefusalPrefix(node)} ${message.slice(NODE_CANNOT_SERVE.length).trim()}`.slice(0, 300);
+    // Like requeueRows: a payload sealed to this node's key is useless to the next one, so it is cleared and the
+    // start waits for the owner to seal again (the console shows "needs secrets" from awaitingSecrets).
+    const reseal = row.sealed_env !== null;
+    const spec = reseal ? JSON.stringify({ ...JSON.parse(row.spec_json), expectsSecrets: true }) : row.spec_json;
     const r = await db
       .prepare(
         "UPDATE deployments SET status = 'queued', status_reason = ?, node = NULL, endpoint = NULL, ssh_endpoint = NULL, web_token = NULL, " +
-          "assigned_at = NULL, started_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0 WHERE id = ? AND status = ? AND node = ?",
+          "assigned_at = NULL, started_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ? " +
+          "WHERE id = ? AND status = ? AND node = ?",
       )
-      .bind(reason, id, row.status, node)
+      .bind(reason, spec, id, row.status, node)
       .run();
     if ((r.meta?.changes ?? 0) > 0) {
       await addEvent(id, "warn", gpuRefusal ? `node ${node} had not enough free GPUs — re-queued` : `node ${node} could not serve it — re-queued`, now);
+      if (reseal) await addEvent(id, "info", "secrets were sealed to the old node — re-seal them for the next node", now);
     }
     return { ok: true, status: "queued" };
   }

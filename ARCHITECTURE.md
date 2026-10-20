@@ -72,7 +72,7 @@ containers/workstations/endpoints → fleet nodes that announced `container` (an
 CPU/RAM/GPU against the manifest minus a host reserve, ≤ 5 per node, relay nodes only for relayed kinds, public-host
 nodes only for direct workstations, agents ≥ 1.5.0 for anything carrying secrets, no sibling replica on the same node,
 and never a node that just refused the row. Outcomes are recorded as `deployment_events` and (for jobs) as the draw
-record; publishing them is backlog B-2.
+record, published signed at `GET /v1/draws/{id}` (seed, eligible set without wallets, σ once done).
 
 **Pricing** (`pricing.service.ts`): nano-USD per tera-MAC moved hourly by a utilization controller (±2 %, hold when
 idle, floor/ceiling around a 30-day EMA), converted at the reference rate; quotes lock for 5 minutes. Hosting and
@@ -121,11 +121,11 @@ reserved per container and re-read from Docker on resume.
 
 | Decision | Who makes it | Who can check it |
 |---|---|---|
-| Price | orchestrator controller | anyone, from `/v1/network` history (not yet signed) |
-| Assignment | orchestrator draw | anyone with `seed_source`, job id and the eligible set (stored, not yet published) |
+| Price | orchestrator controller | anyone: `/v1/network` is signed by the instruction key |
+| Assignment | orchestrator draw | anyone, from the signed `GET /v1/draws/{id}` (seed, eligible set, draw); the set is attested, not committed before the seed — pull-based assignment (B-17) closes that |
 | Verification | orchestrator (transcript + Freivalds); browsers re-check planted tasks | the keeper re-verifies only the root; results are reproducible from stored A, B |
 | Billing of hosting | orchestrator probes through the node's socket | the owner (events, report-a-problem) |
-| Epoch root | orchestrator computes; keeper re-verifies and posts | guardian Safe (veto); anyone once leaves are published (B-2) |
+| Epoch root | orchestrator computes; keeper re-verifies and posts | guardian Safe (veto); anyone, from the signed `GET /v1/epochs/{n}` leaves (`scripts/verify/replay.ts`) |
 | Mint | contract, bounded by fees burned + allowance + annual ceiling | anyone on-chain |
 | Claims | permissionless with a proof | anyone |
 

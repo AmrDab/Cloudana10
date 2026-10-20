@@ -30,9 +30,11 @@ upload them so nobody sees the values:
 
 | Secret | Where | Set by |
 |---|---|---|
-| `JWT_SECRET` (≥ 32 chars) | api | `node scripts/set-api-secrets.mjs` |
-| `INSTRUCTION_SIGNING_KEY` (secp256k1, not a chain key) | api | same script; address shown at `GET /v1/nodes/instruction-key`; must equal the agent's pinned default (`node-agent/src/instructions.ts`) |
-| `STORAGE_KEK` (base64 32 bytes) | api | same script; set once |
+| `JWT_SECRET` (≥ 32 chars) | api | `node scripts/set-api-secrets.mjs JWT_SECRET` (to rotate: first `wrangler secret put JWT_SECRET_PREVIOUS` with the old value, then this; remove the previous after 24 h) |
+| `INSTRUCTION_SIGNING_KEY` (secp256k1, not a chain key) | api | `node scripts/set-api-secrets.mjs INSTRUCTION_SIGNING_KEY` — **once**: agents pin its address (`node-agent/src/instructions.ts` `DEFAULT_INSTRUCTION_SIGNER`, shown at `GET /v1/nodes/instruction-key`); re-running it cuts every agent off until a release pins the new address |
+| `STORAGE_KEK` (base64 32 bytes) | api | `node scripts/set-api-secrets.mjs STORAGE_KEK` — **once**; never rotate without re-encrypting copies |
+
+**Always name the secret**: the script with no arguments generates and uploads fresh values for all three.
 | `INTERNAL_API_KEY` | api, keeper, gateway | `node scripts/set-relay-secrets.mjs` (also sets the relay secret) |
 | `RELAY_TICKET_SECRET` (≥ 32 chars, same value) | api, relay | same script |
 | `POSTER_PRIVATE_KEY` | keeper | owner, `wrangler secret put` |
@@ -127,14 +129,14 @@ Home / single machine (Docker ≥ 28 for containers; compute + hosting need only
 ```bash
 docker run -d --name cloudana-node --restart unless-stopped --network host \
   -v cloudana-node-data:/app/dist/node-agent/.data \
-  ghcr.io/amrdab/cloudana-node-agent:1.5.0
+  ghcr.io/amrdab/cloudana-node-agent:1.6.0
 docker logs -f cloudana-node     # prints the bind link once; open it, connect the payout wallet, sign
 ```
 
 Fleet (datacenter): `node-agent/deploy/kubernetes-daemonset.yaml` with secret `cloudana-fleet` /
 `CLOUDANA_FLEET_TOKEN` from `POST /v1/fleets`; containers additionally need `CLOUDANA_ALLOW_CONTAINERS=1`, root +
 `NET_ADMIN`, the docker socket, and Docker's data root on xfs with `pquota` (or btrfs/zfs). Verify an image before
-running it: `cosign verify ghcr.io/amrdab/cloudana-node-agent:1.5.0 --certificate-identity
+running it: `cosign verify ghcr.io/amrdab/cloudana-node-agent:1.6.0 --certificate-identity
 https://github.com/AmrDab/Cloudana10/.github/workflows/build-node-agent.yml@refs/heads/main
 --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 
