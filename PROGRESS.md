@@ -376,11 +376,37 @@ hosting fees exclude clawed bills; stale facts in CAPABILITY_MATRIX, SECURITY_AU
   keys, legacy failed draw, D1 revocation ×3 and nonces); each new test fails on the pre-fix code. Console tsc,
   3 tests, build; e2e 43; browser smoke 29/29.
 
+### 21 · the review of entry 20's diff, after the owner's own re-review
+An adversarial review of entry 20's diff (three area reviewers, three refuters per finding) confirmed five findings;
+the owner's re-review of the same diff found and fixed three of them first (`5782629`: the `bill()` backstop could
+strand an hour's hold on a stopped row when a concurrent heartbeat re-held it → both out-of-credits ends read the
+row afresh; the third secrets cycle abandoned an endpoint without the "still unsealed" guard → the triggering
+replica is ended under that guard first; the logout description promised a local refusal the D1 code no longer
+performs → reworded) plus the unverified ones (secrets cycles counted apart from start timeouts in `seal_timeouts`,
+10 s of seed-block skew in `replay.ts`, the KV namespace's real contents in the runbook). This entry adds the two
+that remained:
+- **Medium — a row waiting for its secrets on a draining or suspended node was unsealable for good.** The seal
+  refuses a non-active node, but only the drain route's one-shot hand-back moved such rows; a hand-back that failed
+  (D1 blip → the route answered 500 with the node already draining) or a drain from before it existed left the row
+  parked until the secrets timeout failed it. `requeueStuckAssigned` (every cron tick) now hands back every
+  `assigned` row with no payload whose node is not active — idempotent, same reason text as the route; a row whose
+  start already went out stays (a draining node finishes what it holds). Test: state flipped without the route →
+  queued on the next tick, sealed sibling untouched, second tick a no-op, suspended the same.
+- **Low — the console's Sealer went dormant after a refused seal.** A 409 "moved to node X" stopped the polling
+  while the tab still held the plaintext, so the next node was never sealed automatically. It now keeps polling
+  after a refusal and tries once per node; it stops when the seal landed (here or in another tab:
+  `awaitingSecrets` false while assigned) or the deployment left `queued`/`assigned`.
+- The review's "PROGRESS totals do not add up" candidate was checked by hand: 39 + 13 candidates; 31 + 4 (console,
+  upheld later) + 5 + 7 confirmed = 47; 2 + 2 + 1 refuted = 5. The addendum to entry 16 is where the four later-upheld
+  console findings are counted.
+- **Tests / results.** 43 files, **393** passed (the owner's three regression tests and the parked-row test; the
+  latter fails on the pre-fix duties code). Console tsc, build; browser smoke 29/29.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **387** |
+| client/api vitest | 330 | **393** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |

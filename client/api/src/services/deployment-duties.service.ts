@@ -217,12 +217,25 @@ export async function requeueDeadNodeDeployments(now = Date.now(), owner?: strin
 export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
   const env = getEnv();
   const db = getD1();
+  let n = 0;
+  // Rows waiting for their secrets on a node that is draining or suspended go back to the queue here as well: the
+  // drain route hands them back as it flips the state, but a hand-back that failed (or a drain from before it
+  // existed) must not leave a row that no seal can reach — the seal refuses a non-active node — until the secrets
+  // timeout fails it. Idempotent: a row already handed back is queued and does not match.
+  const parked = await db
+    .prepare(
+      "SELECT d.*, n.state AS node_state FROM deployments d JOIN nodes n ON n.address = d.node " +
+        "WHERE d.status = 'assigned' AND d.sealed_env IS NULL AND COALESCE(n.state, 'active') <> 'active'",
+    )
+    .all<DeploymentRow & { node_state: string | null }>();
+  for (const row of (parked.results ?? []).filter(awaitingSecrets)) {
+    n += await requeueRows([row], `node ${row.node} is ${row.node_state ?? "not active"}`, now, { unsealed: true });
+  }
   const shortest = Math.min(env.DEPLOY_START_TIMEOUT_SECONDS, env.DEPLOY_START_TIMEOUT_STATIC_SECONDS) * 1000;
   const rows = await db
     .prepare("SELECT * FROM deployments WHERE status = 'assigned' AND node IS NOT NULL AND assigned_at IS NOT NULL AND assigned_at <= ?")
     .bind(now - shortest)
     .all<DeploymentRow>();
-  let n = 0;
   for (const row of rows.results ?? []) {
     const timeoutMs = (row.kind === "static" ? env.DEPLOY_START_TIMEOUT_STATIC_SECONDS : env.DEPLOY_START_TIMEOUT_SECONDS) * 1000;
     if (awaitingSecrets(row)) {

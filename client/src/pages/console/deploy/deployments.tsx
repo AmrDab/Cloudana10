@@ -72,36 +72,46 @@ function PriceH({ ucld, short: brief }: { ucld: number; short?: boolean }) {
 }
 
 // ── Secret sealing ──────────────────────────────────────────────────────────
-async function sealNow(id: string, nodePubkey: string, node: string | null) {
+async function sealNow(id: string, nodePubkey: string, node: string | null): Promise<boolean> {
   const secrets = pendingSecrets(id);
-  if (!secrets) return;
-  if (await sealSecretsTo({ id, node, nodePubkey }, secrets)) clearPendingSecrets(id);
+  if (!secrets) return false;
+  const ok = await sealSecretsTo({ id, node, nodePubkey }, secrets);
+  if (ok) clearPendingSecrets(id);
+  return ok;
 }
 
 /** Polls one deployment until a node is assigned, then seals its pending secrets to that node's key. Renders nothing. */
 function Sealer({ id }: { id: string }) {
-  // Polls only while there is something to seal: once the seal went out (or can never go out) it stops, and the
-  // plaintext is dropped — a container that is already running will never take it.
+  // Polls only while there is something to seal: once the seal landed (here or in another tab) or can never land it
+  // stops, and the plaintext is dropped — a container that is already running will never take it. A refused seal
+  // (the row moved to another node since its key was read) keeps polling: the next node gets a fresh attempt.
   const [active, setActive] = useState(true);
   const q = useDeployment(id, active ? 2_000 : false);
-  const started = useRef(false);
+  const attempted = useRef<string | null>(null);
   const dep = q.data?.deployment;
   const pub = q.data?.nodePubkey;
   useEffect(() => {
-    if (!dep || started.current) return;
+    if (!dep || !active) return;
     if (dep.status !== "queued" && dep.status !== "assigned") {
-      started.current = true;
       autoSeal.delete(id);
       clearPendingSecrets(id);
       setActive(false);
       setSealState(id, { phase: "error", message: `The deployment is ${dep.status}; secrets can only be sealed before it starts.` });
-    } else if (pub) {
-      started.current = true;
-      void sealNow(id, pub, dep.node).finally(() => setActive(false));
+    } else if (dep.status === "assigned" && !dep.awaitingSecrets) {
+      // The secrets are in (sealed here or in another tab): nothing left to seal, nothing left to keep.
+      autoSeal.delete(id);
+      clearPendingSecrets(id);
+      setActive(false);
+      if (getSealState(id)?.phase !== "sealed") setSealState(id, { phase: "sealed", node: dep.node ?? undefined, at: Date.now() });
+    } else if (pub && dep.node && attempted.current !== dep.node) {
+      attempted.current = dep.node;
+      void sealNow(id, pub, dep.node).then((ok) => {
+        if (ok) setActive(false);
+      });
     } else if (!getSealState(id)) {
       setSealState(id, { phase: "waiting" });
     }
-  }, [id, dep, pub]);
+  }, [id, dep, pub, active]);
   return null;
 }
 

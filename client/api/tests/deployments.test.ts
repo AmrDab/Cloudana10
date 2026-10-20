@@ -694,6 +694,36 @@ describe("secrets and the node's state", () => {
     expect((await heartbeat(next)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("y") })]);
   });
 
+  it("the cron hands back rows waiting for secrets on a node that is draining or suspended, even when the drain route's hand-back did not run", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const waiting = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    const sealedOne = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(node);
+    expect(await row(waiting)).toMatchObject({ status: "assigned" });
+    expect(await row(sealedOne)).toMatchObject({ status: "assigned" });
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${sealedOne}/secrets`, { sealedEnv: sealedV2("in"), node: node.address })).status).toBe(200);
+    // The node's state flipped without the route (a hand-back that failed, or a drain from before it existed).
+    await getD1().prepare("UPDATE nodes SET state = 'draining' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    await runDutiesCron();
+    expect(await row(waiting)).toMatchObject({ status: "queued", node: null, status_reason: `node ${node.address.toLowerCase()} is draining` });
+    // The sealed one already has its start out: a draining node finishes what it holds.
+    expect(await row(sealedOne)).toMatchObject({ status: "assigned", node: node.address.toLowerCase(), sealed_env: sealedV2("in") });
+    // Idempotent: a second tick finds nothing parked.
+    await runDutiesCron();
+    expect(await row(waiting)).toMatchObject({ status: "queued" });
+    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${waiting}`)).json();
+    expect(got.events.filter((e: { message: string }) => e.message.endsWith("is draining — re-queued"))).toHaveLength(1);
+    // A suspended node is the same.
+    await getD1().prepare("UPDATE nodes SET state = 'active' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    const { node: other } = await boundNode(["matmul", "hosting", "container"]);
+    await heartbeat(other);
+    expect(await row(waiting)).toMatchObject({ status: "assigned", node: other.address.toLowerCase() });
+    await getD1().prepare("UPDATE nodes SET state = 'suspended' WHERE address = ?").bind(other.address.toLowerCase()).run();
+    await runDutiesCron();
+    expect(await row(waiting)).toMatchObject({ status: "queued", node: null, status_reason: `node ${other.address.toLowerCase()} is suspended` });
+  });
+
   it("an explicit expectsSecrets:false is honoured even for a template with secretEnv: the start goes out at once", async () => {
     const u = await user();
     const { node } = await boundNode(["matmul", "hosting", "container"]);

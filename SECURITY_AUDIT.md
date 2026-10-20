@@ -181,6 +181,8 @@ Four reviews from the owner's own session (`PROGRESS.md` entry 20 has every item
 | Low | A `read` key could fetch a workstation's failure log tail and its logs route; the events filter missed `access_token=`, custom token names and old addresses | no log tail or logs route for keys on workstations; the filter matches by shape |
 | Low | The operator id was an unsalted hash of a wallet the epoch leaves publish | keyed hash (key derived from `INSTRUCTION_SIGNING_KEY`). Limit: it hides the wallet only of operators never drawn into a paid job — `/v1/epochs/{n}/jobs` names each job's payout wallet, so a join maps every operator that has won one |
 | Medium (docs) | The runbook's secrets section contradicted `set-api-secrets.mjs` and could have had the owner cut off the live node | rewritten; checklist box ticked |
+| Medium | (re-review of this round) the `bill()` backstop could strand an hour's hold on a stopped row when a concurrent heartbeat re-held it; the third secrets cycle abandoned an endpoint without the still-unsealed guard | both out-of-credits ends read the row afresh; the triggering replica is ended under the guard first (owner's `5782629`) |
+| Medium | (re-review of this round) a row waiting for secrets on a draining or suspended node was unsealable for good: the seal refuses a non-active node and only the drain route's one-shot hand-back moved it | the cron hands back every unsealed `assigned` row whose node is not active, idempotently (entry 21) |
 
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
