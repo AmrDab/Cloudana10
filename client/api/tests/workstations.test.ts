@@ -427,10 +427,13 @@ describe("connect and hours", () => {
     await addEvent(web, "info", "running at http://127.0.0.1:42037/lab?token=t0k-2 · ssh 127.0.0.1:42038");
     await addEvent(web, "info", "ssh 127.0.0.1:42038 is up");
     await addEvent(web, "info", "open with access_token=zzz or api_key=yyy");
+    // What production wrote for workstations before this fix: the address after "changed to".
+    await addEvent(web, "info", "ssh endpoint changed to 127.0.0.1:42091");
+    await addEvent(web, "info", "endpoint changed to /lab?auth=0ldt0k");
     const key = (await (await authed(u.jwt, "POST", "/v1/keys", { name: "monitor", scopes: ["read"] })).json()).key.token as string;
     const viaKey = await (await authed(key, "GET", `/v1/deployments/${web}`)).json();
-    expect(JSON.stringify(viaKey)).not.toMatch(/t0k|4203[5-9]|zzz|yyy/);
-    expect(viaKey.events.length).toBe(messages.length + 1); // the three planted events are dropped; "ssh endpoint changed" stays
+    expect(JSON.stringify(viaKey)).not.toMatch(/t0k|4203[5-9]|42091|zzz|yyy/);
+    expect(viaKey.events.length).toBe(messages.length + 1); // the five planted events are dropped; "ssh endpoint changed" stays
     expect(JSON.stringify((await detail(u.jwt, web)).events)).toContain("t0k-2"); // the owner's session still sees it
   });
 

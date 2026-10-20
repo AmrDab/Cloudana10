@@ -34,6 +34,8 @@ const API = (args.get("api") ?? process.env.API ?? "https://api.cloudana.io").re
 const RPC = args.get("rpc");
 const SIGNER_ARG = args.get("signer");
 const SEED_WINDOW_SEC = Number(args.get("seed-window") ?? 60);
+/** Slack after assignedAt: the server stamps it before fetching the latest block (Base mints one every 2 s). */
+const SEED_SKEW_SEC = 10;
 if (SIGNER_ARG === "true" || (SIGNER_ARG !== undefined && SIGNER_ARG !== "published" && !/^0x[0-9a-fA-F]{40}$/.test(SIGNER_ARG))) {
   console.error("--signer takes an address (0x…) or the literal `published`; a bare --signer would silently trust the server's key");
   process.exit(2);
@@ -109,7 +111,9 @@ async function replayJob(id: string) {
   }
   if (!draw.node) {
     // Jobs that failed before failed rows kept their node: the record says so (`replayable: false`), nothing to replay.
-    check(draw.replayable === false, "no drawn node on record (failed before the record kept it): not replayable, and the record says so");
+    // Only a failed job may lack its node, and the record must still be the orchestrator's (signed).
+    check(draw.jobStatus === "failed" && draw.replayable === false, "no drawn node on record (failed before the record kept it): not replayable, and the record says so", draw.jobStatus);
+    await checkSignature("draw", json);
     return;
   }
   const eligible = draw.eligible as PublicCandidate[] | null;
@@ -126,10 +130,11 @@ async function replayJob(id: string) {
     const block = await rpcBlock(RPC, draw.seedSource);
     check(!!block, block ? `seedSource is block ${parseInt(block.number, 16)} on the chain at --rpc` : "seedSource is not a block on the chain at --rpc", draw.seedSource);
     if (block && typeof draw.assignedAt === "number") {
-      // The seed must be the chain's head at assignment, not a block chosen earlier for its hash.
+      // The seed must be the chain's head at assignment, not a block chosen earlier for its hash. assignedAt is taken
+      // before the seed is fetched, so a block minted in those few seconds is honest: SEED_SKEW_SEC of slack after it.
       const mintedAt = parseInt(block.timestamp, 16) * 1000;
       const lag = (draw.assignedAt - mintedAt) / 1000;
-      check(lag >= 0 && lag <= SEED_WINDOW_SEC, `seed block minted ${lag.toFixed(0)} s before the assignment (within --seed-window ${SEED_WINDOW_SEC} s)`, { mintedAt: new Date(mintedAt).toISOString(), assignedAt: new Date(draw.assignedAt).toISOString() });
+      check(lag >= -SEED_SKEW_SEC && lag <= SEED_WINDOW_SEC, `seed block minted ${lag.toFixed(0)} s before the assignment (within --seed-window ${SEED_WINDOW_SEC} s)`, { mintedAt: new Date(mintedAt).toISOString(), assignedAt: new Date(draw.assignedAt).toISOString() });
     }
   }
   // The record is signed: a mismatch here means the orchestrator did not publish this (what it does NOT prove: that

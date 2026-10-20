@@ -622,7 +622,7 @@ describe("replicas and the owner's money under concurrency (SECURITY_AUDIT F10)"
     await age();
     await runDutiesCron();
     const reason = `refused by node ${addr(holder)}: secrets were not sealed within 24 h of assignment`;
-    expect(await row(r2.id)).toMatchObject({ status: "queued", node: null, held_ucld: 5400, start_attempts: 1, status_reason: reason });
+    expect(await row(r2.id)).toMatchObject({ status: "queued", node: null, held_ucld: 5400, seal_timeouts: 1, start_attempts: 0, status_reason: reason });
     expect(await row(r1.id)).toMatchObject({ status: "assigned" });
     expect((await getBalanceUcld(u.addr)).heldUcld).toBe(held); // nothing released: the replica is still wanted
     let got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
@@ -638,7 +638,7 @@ describe("replicas and the owner's money under concurrency (SECURITY_AUDIT F10)"
     // Second cycle: back again. Third: nobody is coming — the endpoint is abandoned and every hold comes back.
     await age();
     await runDutiesCron();
-    expect(await row(r2.id)).toMatchObject({ status: "queued", start_attempts: 2 });
+    expect(await row(r2.id)).toMatchObject({ status: "queued", seal_timeouts: 2, start_attempts: 0 });
     const d = await relayGpuNode();
     expect(await beat(d)).toEqual([]);
     expect(await row(r2.id)).toMatchObject({ status: "assigned", node: addr(d) });
@@ -651,5 +651,21 @@ describe("replicas and the owner's money under concurrency (SECURITY_AUDIT F10)"
     expect((await getBalanceUcld(u.addr)).heldUcld).toBe(0);
     got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
     expect(got.deployment.status).toBe("failed");
+  });
+
+  it("start timeouts and secrets timeouts are counted apart: two earlier start timeouts do not abandon on the first secrets timeout", async () => {
+    const u = await user();
+    const id = (await (await create(u.jwt, { ...ENDPOINT, expectsSecrets: true })).json()).id as string;
+    const a = await relayGpuNode();
+    const b = await relayGpuNode();
+    expect(await beat(a)).toEqual([]);
+    expect(await beat(b)).toEqual([]);
+    const [r1, r2] = await replicas(id);
+    // Two start timeouts on earlier nodes (sealed each time), now waiting for a seal on this one for a day.
+    await getD1().prepare("UPDATE deployments SET start_attempts = 2, assigned_at = assigned_at - ? WHERE id = ?").bind(24 * 3_600_000 + 60_000, r2.id).run();
+    await runDutiesCron();
+    expect(await row(r2.id)).toMatchObject({ status: "queued", seal_timeouts: 1 });
+    expect(await row(r1.id)).toMatchObject({ status: "assigned" });
+    expect(await row(id)).not.toMatchObject({ status: "failed" });
   });
 });

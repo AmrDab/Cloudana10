@@ -350,7 +350,7 @@ Every item is either fixed here or answered on the thread. The blockers:
 - **Auth, high — KV quota.** Session revocation and sign-in nonces moved from KV to D1 (`revoked_tokens`,
   `login_nonces`, one shared list read with the request's other D1 work); node-route rate limits count per isolate
   (`store: "memory"`), so heartbeats no longer spend KV writes; a key store that cannot be read is 503, not
-  "revoked". The IP-keyed public limits stay in KV and degrade to memory when its quota is gone (follow-up B-18:
+  "revoked". The IP-keyed public limits stay in KV and degrade to memory when its quota is gone (follow-up B-25:
   the Workers rate-limiting binding the gateway already uses).
 - **Docs, medium — the runbook's secrets section contradicted the script** (which skips existing secrets since #50):
   rewritten with the five secrets marked set, `--rotate NAME` and its cost, the real JWT rotation recipe, the table
@@ -366,7 +366,7 @@ node are not replayable (and the verifier says so); `--signer` takes only an add
 the seed block's timestamp against `assignedAt` (`--seed-window`, 60 s); the operator id is a keyed hash; burned
 hosting fees exclude clawed bills; stale facts in CAPABILITY_MATRIX, SECURITY_AUDIT O12 and PROGRESS corrected.
 - **Not changed, by choice:** `MIN_AGENT_VERSION` stays 1.3.0 by default (raising it is the owner's config call now
-  that the first node runs 1.6.0); the IP-keyed limits stay in KV until B-18.
+  that the first node runs 1.6.0); the IP-keyed limits stay in KV until B-25.
 - **Deploy note.** The revocation list starts empty in D1: a session logged out in the 24 h before this deploy (its
   jti sits in KV, which nothing reads any more) is accepted again until it expires. Tokens live 24 h, so the window
   closes by itself; deploy at a quiet hour if that matters. `ensureSchema` creates both tables on the first request
@@ -412,8 +412,8 @@ hosting fees exclude clawed bills; stale facts in CAPABILITY_MATRIX, SECURITY_AU
    `RELAY_TICKET_SECRET` on api + relay; `INTERNAL_API_KEY` on api + gateway. `scripts/set-api-secrets.mjs` skips a
    secret that is already set; `--rotate NAME` is the only way to replace one, and a new signing key cuts off every
    pinned node, a new JWT secret signs everyone out, a new KEK makes stored copies unverifiable (DEPLOYMENT_RUNBOOK
-   §1). Run `scripts/set-relay-secrets.mjs` once the keeper is deployed (it sets `INTERNAL_API_KEY` on api, gateway
-   and keeper together).
+   §1). `scripts/set-relay-secrets.mjs` (owner only) replaces both relay secrets on every run, with a brief
+   relay/hosting outage; run it once the keeper is deployed, to give the keeper `INTERNAL_API_KEY`.
 3. ~~User-content domain~~ — **done 2026-10-18**: `cloudana.run`, proxied wildcard record, gateway deployed.
 4. ~~First node~~ — **done 2026-10-18**: Azure VM (compute, hosting and storage over the relay). Still to come: a
    Docker ≥ 28 / xfs-pquota machine for containers and GPU work.

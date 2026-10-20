@@ -179,7 +179,7 @@ Four reviews from the owner's own session (`PROGRESS.md` entry 20 has every item
 | Medium | A row left running with nothing held was never billed again | the out-of-credits end follows the row; a due running row with nothing held is held again or ended |
 | Medium | A workstation spec took `expectsSecrets: true`, which can never be sealed: the start waited a day and failed | refused at `checkSpec` |
 | Low | A `read` key could fetch a workstation's failure log tail and its logs route; the events filter missed `access_token=`, custom token names and old addresses | no log tail or logs route for keys on workstations; the filter matches by shape |
-| Low | The operator id was an unsalted hash of a wallet the epoch leaves publish | keyed hash (key derived from `INSTRUCTION_SIGNING_KEY`) |
+| Low | The operator id was an unsalted hash of a wallet the epoch leaves publish | keyed hash (key derived from `INSTRUCTION_SIGNING_KEY`). Limit: it hides the wallet only of operators never drawn into a paid job — `/v1/epochs/{n}/jobs` names each job's payout wallet, so a join maps every operator that has won one |
 | Medium (docs) | The runbook's secrets section contradicted `set-api-secrets.mjs` and could have had the owner cut off the live node | rewritten; checklist box ticked |
 
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass

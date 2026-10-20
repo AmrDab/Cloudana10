@@ -91,7 +91,12 @@ export const DEAD_NODE_FACTOR = 3;
  * owed a "stop" (deployment_stale_nodes) in case it comes back still serving. Secrets were sealed to
  * the old node's key, so they are cleared and the next start waits for the owner to re-seal.
  */
-async function requeueRows(rows: DeploymentRow[], reason: string, now: number, opts: { settleHour?: boolean; unsealed?: boolean } = {}): Promise<number> {
+async function requeueRows(
+  rows: DeploymentRow[],
+  reason: string,
+  now: number,
+  opts: { settleHour?: boolean; unsealed?: boolean; sealTimeout?: boolean } = {},
+): Promise<number> {
   const db = getD1();
   let requeued = 0;
   for (const row of rows) {
@@ -106,6 +111,8 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number, o
         "UPDATE deployments SET status = 'queued', status_reason = ?, node = NULL, endpoint = NULL, ssh_endpoint = NULL, web_token = NULL, " +
           "assigned_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ?" +
           (settle ? ", held_ucld = 0" : "") +
+          // A secrets timeout counts its cycle in this same statement (only if the re-queue itself lands).
+          (opts.sealTimeout ? ", seal_timeouts = COALESCE(seal_timeouts, 0) + 1" : "") +
           " WHERE id = ? AND status = ? AND node = ?" +
           (settle ? " AND held_ucld = ? AND last_billed_at IS ?" : "") +
           // A row re-queued for never being sealed: only while that is still so (a seal that just landed stays).
@@ -227,19 +234,17 @@ export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
         if (row.parent_id) {
           // An endpoint replica is not failed on its own (nothing would replace it; the endpoint would run short one
           // replica while priced for all): it goes back to the queue, refused by this node so it is not claimed
-          // straight back — for DEPLOY_START_ATTEMPTS cycles. After that the endpoint is abandoned: every replica and
-          // the parent fail and the holds come back to the owner.
-          const cycles = (row.start_attempts ?? 0) + 1;
+          // straight back — for DEPLOY_START_ATTEMPTS cycles (counted in seal_timeouts, apart from start timeouts).
+          // After that the endpoint is abandoned: every replica and the parent fail and the holds come back.
+          const cycles = (row.seal_timeouts ?? 0) + 1;
           if (cycles >= env.DEPLOY_START_ATTEMPTS) {
-            n += await failEndpoint(row.parent_id, `secrets were not sealed within ${hours} h of assignment, ${cycles} times — endpoint abandoned`, now);
+            const reason = `secrets were not sealed within ${hours} h of assignment, ${cycles} times — endpoint abandoned`;
+            // This replica first, and only while still unsealed: a seal that just landed keeps the endpoint.
+            if (!(await endDeployment(row, "failed", reason, { acked: false, level: "error", now, unsealedSince: row.assigned_at! }))) continue;
+            n += 1 + (await failEndpoint(row.parent_id, reason, now));
             continue;
           }
-          const bumped = await db
-            .prepare("UPDATE deployments SET start_attempts = ? WHERE id = ? AND status = 'assigned' AND node = ? AND sealed_env IS NULL AND COALESCE(start_attempts, 0) = ?")
-            .bind(cycles, row.id, row.node, cycles - 1)
-            .run();
-          if ((bumped.meta?.changes ?? 0) === 0) continue;
-          n += await requeueRows([row], `${nodeRefusalPrefix(row.node!)} secrets were not sealed within ${hours} h of assignment`, now, { unsealed: true });
+          n += await requeueRows([row], `${nodeRefusalPrefix(row.node!)} secrets were not sealed within ${hours} h of assignment`, now, { unsealed: true, sealTimeout: true });
           continue;
         }
         // Only while still unsealed: a seal that lands between this read and the write is not failed.
@@ -806,7 +811,7 @@ async function bill(node: string, now: number): Promise<void> {
             if ((r.meta?.changes ?? 0) === 0) await release(fresh.owner, fee);
             else await addEvent(fresh.id, "warn", `the hour's hold was missing — ${fee} µCLD held again`, now);
           } else {
-            await endDeployment(fresh, "stopped", "out of credits", { acked: false, level: "warn", now });
+            await endFresh(fresh.id, "out of credits", now);
           }
         }
         break;
@@ -826,9 +831,9 @@ async function bill(node: string, now: number): Promise<void> {
         }
         row = { ...row, last_billed_at: next, held_ucld: fee };
       } else {
-        if (!(await endDeployment({ ...row, last_billed_at: next, held_ucld: 0 }, "stopped", "out of credits", { acked: false, level: "warn", now }))) {
-          await endFresh(row.id, "out of credits", now);
-        }
+        // From a fresh read: a concurrent heartbeat's backstop may have put an hour's hold back on the row meanwhile,
+        // and ending from this snapshot (held 0) would strand it on a stopped row.
+        await endFresh(row.id, "out of credits", now);
         break;
       }
     }
@@ -1108,7 +1113,7 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
       const r = await db
         .prepare(
           "UPDATE deployments SET status = 'running', status_reason = NULL, endpoint = ?, ssh_endpoint = ?, web_token = ?, started_at = ?, " +
-            "last_billed_at = ?, probe_fail = 0, start_attempts = 0 WHERE id = ? AND status = 'assigned'",
+            "last_billed_at = ?, probe_fail = 0, start_attempts = 0, seal_timeouts = 0 WHERE id = ? AND status = 'assigned'",
         )
         .bind(report.endpoint ?? null, report.sshEndpoint ?? null, report.webToken ?? null, now, now, id)
         .run();

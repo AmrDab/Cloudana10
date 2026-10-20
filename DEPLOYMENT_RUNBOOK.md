@@ -26,16 +26,17 @@ Deploy order matters because of bindings and shared secrets:
 ## 1. Secrets and variables
 
 Never in git. **All five Worker secrets were set on 2026-10-18 and are not set again by hand**: a repeated
-`wrangler secret put` replaces the value. `scripts/set-api-secrets.mjs` is safe to re-run — it skips a secret that
-is already set — and replaces one only with `--rotate NAME`, which has the consequences in the last column.
+`wrangler secret put` replaces the value. `scripts/set-api-secrets.mjs` is not run without the owner: it skips a
+secret that is already set, and replaces one only with `--rotate NAME` (owner-approved), with the consequences in the
+last column.
 
 | Secret | Where | State | Replacing it |
 |---|---|---|---|
 | `JWT_SECRET` (≥ 32 chars) | api | set 2026-10-18 | `node scripts/set-api-secrets.mjs --rotate JWT_SECRET` signs everyone out once. The Worker cannot give the old value back, so a rotation that signs nobody out needs the old value kept when it was set: put it as `JWT_SECRET_PREVIOUS` with `JWT_SECRET_PREVIOUS_UNTIL` (unix seconds, ≤ 24 h ahead) *before* the new one lands, remove both after the window |
 | `INSTRUCTION_SIGNING_KEY` (secp256k1, not a chain key) | api | set 2026-10-18 — **do not replace** | agents pin its address (`node-agent/src/instructions.ts` `DEFAULT_INSTRUCTION_SIGNER`, shown at `GET /v1/nodes/instruction-key`): `--rotate` cuts every node off until a release pins the new address (OWNER_RUNBOOK step 2) |
 | `STORAGE_KEK` (base64 32 bytes) | api | set 2026-10-18 — **do not replace** | `--rotate` makes every stored copy unverifiable; re-encrypt first, ask first |
-| `INTERNAL_API_KEY` | api, keeper, gateway | set 2026-10-18 on api + gateway | `node scripts/set-relay-secrets.mjs` sets it on api, gateway and keeper together — run it once the keeper is deployed |
-| `RELAY_TICKET_SECRET` (≥ 32 chars, same value) | api, relay | set 2026-10-18 | the same script; nodes reconnect with fresh tickets within a minute |
+| `INTERNAL_API_KEY` | api, keeper, gateway | set 2026-10-18 on api + gateway | `node scripts/set-relay-secrets.mjs` (owner only) generates fresh values for **both** relay secrets on every run and replaces them Worker by Worker: hosting through the relay drops for the minute that takes (longer if it stops halfway — run it again). Run it once the keeper is deployed, to give the keeper the key |
+| `RELAY_TICKET_SECRET` (≥ 32 chars, same value) | api, relay | set 2026-10-18 | the same script, which always replaces this one too; nodes reconnect with fresh tickets within a minute |
 | `POSTER_PRIVATE_KEY` | keeper | owner, `wrangler secret put` | — |
 | `PINATA_JWT` | api | optional (IPFS pinning) | — |
 
@@ -47,11 +48,14 @@ stays unset.
 
 Rotation, one line each: `JWT_SECRET` (old value kept → `JWT_SECRET_PREVIOUS` + `JWT_SECRET_PREVIOUS_UNTIL` → `--rotate
 JWT_SECRET` → remove the previous after the window; without the old value everyone is signed out once),
-`INTERNAL_API_KEY` and `RELAY_TICKET_SECRET` (`set-relay-secrets.mjs`, all components in one go),
+`INTERNAL_API_KEY` and `RELAY_TICKET_SECRET` (`set-relay-secrets.mjs`, owner only: both replaced on every run, a
+brief relay/hosting outage while it runs),
 `INSTRUCTION_SIGNING_KEY` (**agents pin the address**: bump `DEFAULT_INSTRUCTION_SIGNER`, release an agent, then
 `--rotate`; or operators set `CLOUDANA_INSTRUCTION_SIGNER`), `STORAGE_KEK` (never without re-encrypting copies; ask
-first). Session revocation and sign-in nonces live in D1 (`revoked_tokens`, `login_nonces`), not KV: the KV
-namespace carries only the public rate limits, and running out of its quota degrades those to per-isolate memory.
+first). Session revocation and sign-in nonces live in D1 (`revoked_tokens`, `login_nonces`), not KV. The KV
+namespace carries the IP-keyed public rate limits (the polled and node ones count per isolate), the deposit watcher's
+block cursor and hardware-scan records: running out of its quota degrades the limits to per-isolate memory and stops
+the deposit cursor until 00:00 UTC.
 
 ## 2. Database (D1 `cloudana-db`)
 

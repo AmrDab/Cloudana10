@@ -39,8 +39,9 @@ export function applySecurity(app: AnyHono): void {
   // Reads are polled by the console (list every 5 s + open rows); writes hold credits, so they stay tight.
   // The route lookup gets its own bucket: the gateway's requests all arrive from a few Cloudflare egress IPs,
   // which would exhaust the per-IP read bucket for every site at once.
-  const routeRead = rateLimit({ bucket: "deployments-route", limit: 3000, windowSec: 60 });
-  const deployRead = rateLimit({ bucket: "deployments-read", limit: 300, windowSec: 60 });
+  // Both are polled (gateway lookups, the console every 5 s): counted per isolate, not against the KV quota.
+  const routeRead = rateLimit({ bucket: "deployments-route", limit: 3000, windowSec: 60, store: "memory" });
+  const deployRead = rateLimit({ bucket: "deployments-read", limit: 300, windowSec: 60, store: "memory" });
   const deployWrite = rateLimit({ bucket: "deployments-write", limit: 30, windowSec: 60 });
   const deployLimit: MiddlewareHandler = (c, next) =>
     isPublicRoute(c) ? routeRead(c, next) : c.req.method === "GET" ? deployRead(c, next) : deployWrite(c, next);
@@ -63,7 +64,8 @@ export function applySecurity(app: AnyHono): void {
   // Before the signature check only a per-IP layer applies, sized for a datacenter NAT (hundreds of nodes behind
   // one address). Per-node limits key on the VERIFIED address and live on the routes after requireNode
   // (routes/v1/nodes.ts): keyed on the raw X-Node header they would let anyone 429 a victim node offline.
-  app.use("/v1/nodes/*", rateLimit({ bucket: "nodes", limit: 2000, windowSec: 60 }));
+  // Per isolate: it runs on every heartbeat, and a shared counter would spend two KV operations on each.
+  app.use("/v1/nodes/*", rateLimit({ bucket: "nodes", limit: 2000, windowSec: 60, store: "memory" }));
   // Bind: a wallet signature check per call; the bind code is guessable only by brute force, so keep it tight per IP.
   app.on("POST", "/v1/nodes/bind", rateLimit({ bucket: "nodes-bind", limit: 10, windowSec: 60 }));
   // Providers: the caller's own nodes and datacenter fleet tokens.
@@ -74,7 +76,7 @@ export function applySecurity(app: AnyHono): void {
   app.on("POST", "/v1/fleets", rateLimit({ bucket: "fleets-create", limit: 10, windowSec: 3600 }));
   app.use("/v1/work/submit", rateLimit({ bucket: "work-submit", limit: 30, windowSec: 60 }));
   // Hosting status reports: one per deployment transition (plus re-reports on agent boot).
-  app.use("/v1/nodes/deployments/*", rateLimit({ bucket: "node-deploy-status", limit: 120, windowSec: 60 }));
+  app.use("/v1/nodes/deployments/*", rateLimit({ bucket: "node-deploy-status", limit: 120, windowSec: 60, store: "memory" }));
   // Browser verifiers (no login).
   // One check = one task + one verdict; 240/min allows a brisk browser without letting a script flood.
   app.use("/v1/verify/task", rateLimit({ bucket: "verify", limit: 240, windowSec: 60 }));

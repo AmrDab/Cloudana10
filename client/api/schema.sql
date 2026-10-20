@@ -221,7 +221,8 @@ CREATE TABLE IF NOT EXISTS deployments (
   last_logs TEXT,                          -- the node's `docker logs` tail from its last failed report
   last_ok_at INTEGER,                      -- last passing probe: an outage from here on is not charged
   probe_inconclusive INTEGER NOT NULL DEFAULT 0, -- inconclusive probes in a row; the third counts as a failure
-  start_attempts INTEGER NOT NULL DEFAULT 0 -- start timeouts so far (assigned, never reported); DEPLOY_START_ATTEMPTS of them fail it
+  start_attempts INTEGER NOT NULL DEFAULT 0, -- start timeouts so far (assigned, never reported); DEPLOY_START_ATTEMPTS of them fail it
+  seal_timeouts INTEGER NOT NULL DEFAULT 0 -- endpoint replica re-queues for secrets never sealed; DEPLOY_START_ATTEMPTS abandon the endpoint
 );
 CREATE INDEX IF NOT EXISTS idx_deployments_owner ON deployments(owner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deployments_node ON deployments(node, status);

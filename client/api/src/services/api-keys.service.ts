@@ -127,7 +127,6 @@ const cache = new Map<string, { caller: KeyCaller; until: number; touched: numbe
 const CACHE_MAX = 10_000;
 const TOUCH_EVERY_MS = 60_000;
 
-/** The caller behind a `cld_sk_` token, or null (unknown, expired, revoked, or storage unavailable). */
 /** The key store is bound but cannot be read: the caller cannot tell a revoked key from a valid one. */
 export class KeyStoreUnavailable extends Error {
   constructor() {
@@ -136,6 +135,7 @@ export class KeyStoreUnavailable extends Error {
   }
 }
 
+/** The caller behind a `cld_sk_` token, or null (unknown, expired or revoked); throws KeyStoreUnavailable. */
 export async function authenticateApiKey(token: string, now = Date.now()): Promise<KeyCaller | null> {
   if (!token.startsWith(API_KEY_PREFIX) || token.length > 128) return null;
   const h = hashKey(token);

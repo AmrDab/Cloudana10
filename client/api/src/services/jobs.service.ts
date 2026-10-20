@@ -399,7 +399,8 @@ export async function getDrawRecord(id: string): Promise<DrawRecord | null> {
   if (!r) return null;
   const stored = r.eligible_json ? (JSON.parse(r.eligible_json) as Candidate[]) : null;
   // Published without payout wallets: address and weight are all the replay needs; the operator id lets anyone see
-  // how the weight was spread over operators without mapping the fleet to wallets.
+  // how the weight was spread over operators. It hides the wallet only of operators never drawn into a paid job: the
+  // epoch job lists name the payout wallet of each job's node, so joining them maps every operator that has won one.
   const eligible = stored ? stored.map((c) => ({ address: c.address, weight: c.weight, operator: operatorId(c.payout) })) : null;
   return {
     jobId: r.id,

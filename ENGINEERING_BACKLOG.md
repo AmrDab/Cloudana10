@@ -127,9 +127,6 @@ Until then two gaps stay: the eligible set is attested, not committed before the
 is re-drawn with the earlier draw not kept (`CLEAR_ASSIGNMENT`), so the verifier (which now checks the seed block's
 timestamp against `assignedAt`) cannot see a re-roll.
 
-**B-18 · Public rate limits off KV.** The IP-keyed limiters still count in KV (two operations per request); when the
-free tier's quota is gone they degrade to per-isolate memory. Move them to the Workers rate-limiting binding the
-gateway already uses (`KEY_LIMIT`), one binding per bucket. Node routes already count per isolate.
 Acceptance: the agent refuses an assignment whose σ does not match the published seed/eligible set. Why it matters
 (review finding, commit 16): today's draw record is signed, but its eligible set is the orchestrator's attestation —
 nothing commits the set before the seed is known, so a replay proves the draw was computed as published, not that
@@ -155,6 +152,11 @@ WAF rules and per-site rate limits at the gateway, request logs per deployment.
 run`.
 **B-23 · Multiple independent gateway operators** (the hosting single point) and authoritative DNS, after B-15.
 **B-24 · Confidential compute tier** (TEE attestation) for secrets the provider must not see.
+
+**B-25 · Public rate limits off KV.** The IP-keyed security limiters (sign-in, bind, key and fleet creation, waitlist,
+public reads) still count in KV (two operations per request); when the quota is gone they degrade to per-isolate
+memory. Move them to the Workers rate-limiting binding the gateway already uses (`KEY_LIMIT`), one binding per bucket.
+Node routes and the polled read buckets already count per isolate.
 
 ## Decisions needed from the owner
 

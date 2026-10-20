@@ -184,8 +184,8 @@ function forCaller<T extends object>(auth: string | undefined, d: T): T {
 
 /** Credential-looking `name=value` in free text (any `…token=`, `…key=`, `password=`), not preceded by a word character. */
 const CREDENTIAL_IN_TEXT = /(?<![A-Za-z0-9_])[A-Za-z0-9_]*(token|password|pwd|secret|key)=[^&\s…]/i;
-/** A URL or an ssh host:port: what `connect` hides from a key. */
-const ADDRESS_IN_TEXT = /:\/\/|\bssh \S+:\d+/i;
+/** A URL, any host:port, or an address change ("… changed to …"): what `connect` hides from a key. */
+const ADDRESS_IN_TEXT = /:\/\/|[\w.-]+:\d{2,5}\b|\]:\d+|\bchanged to\b/i;
 
 /**
  * The event log of a workstation names no address since this fix, but events written before it (and node-supplied
@@ -193,7 +193,8 @@ const ADDRESS_IN_TEXT = /:\/\/|\bssh \S+:\d+/i;
  */
 function eventsForCaller(auth: string | undefined, row: DeploymentRow, events: DeploymentEvent[]): DeploymentEvent[] {
   if (auth !== "key" || !row.workstation) return events;
-  const private_ = [row.endpoint, row.ssh_endpoint, row.web_token].filter((s): s is string => !!s);
+  const tokenQuery = (JSON.parse(row.spec_json) as { tokenQuery?: string }).tokenQuery;
+  const private_ = [row.endpoint, row.ssh_endpoint, row.web_token, tokenQuery && `${tokenQuery}=`].filter((s): s is string => !!s);
   // (`token=…` is the redacted form the duties write: no value follows, nothing to hide.) Older endpoints and ssh
   // hosts no longer on the row are caught by their shape, not their value.
   return events.filter((e) => !CREDENTIAL_IN_TEXT.test(e.message) && !ADDRESS_IN_TEXT.test(e.message) && !private_.some((s) => e.message.includes(s)));

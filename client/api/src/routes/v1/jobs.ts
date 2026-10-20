@@ -115,7 +115,7 @@ const getJobRoute = createRoute({
 const CandidateSchema = z.object({
   address: z.string(),
   weight: z.number(),
-  operator: z.string().openapi({ description: "Opaque per-operator id (a keyed hash of the payout wallet, 16 hex; the key is the orchestrator's): shows how weight is spread over operators. Consistent, not reversible, and not needed for the replay" }),
+  operator: z.string().openapi({ description: "Opaque per-operator id (a keyed hash of the payout wallet, 16 hex; the key is the orchestrator's): shows how weight is spread over operators. Consistent and not reversible, but an operator that won a paid job can be matched to its wallet through GET /v1/epochs/{id}/jobs. Not needed for the replay" }),
 });
 const drawRoute = createRoute({
   method: "get",
