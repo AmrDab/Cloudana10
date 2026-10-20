@@ -1,6 +1,7 @@
 # Progress — hardening pass, 2026-10-19
 
-Branch `claude/trusting-maxwell-cfhscy` on top of `main` `4bef305`. Each change below lists the problem, root cause,
+Branch `claude/trusting-maxwell-cfhscy`; entries 1–15 merged to `main` as PR #49 (`98de016`, 2026-10-19), entries 16–17
+follow as a second PR on top of it. Each change below lists the problem, root cause,
 files, justification, tests, actual results, remaining risk and deployment implications. Nothing was deployed; no
 contract, fund or production secret was touched.
 
@@ -253,9 +254,10 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Residual.** The eligible set is still attested, not committed before the seed (B-17). Draining nodes finish
   what they hold; only suspension kicks the socket.
 
-### 17 · merge of the owner's parallel review (PR #50) into this branch
-The owner ran their own review in parallel and merged its fixes (`34b8af1`, `63037a4`) into this branch while
-entry 16 was being verified. The two sets overlapped on six files; the merge keeps, per overlap:
+### 17 · reconciliation with the owner's parallel review (PR #50)
+The owner ran their own review in parallel, merged its fixes (`34b8af1`, `63037a4`) into this branch and then merged
+the branch to `main` (PR #49) while entry 16 was being verified. The two sets overlapped on six files; the
+reconciliation keeps, per overlap:
 - `GET /v1/draws/{id}`: the signed record (16), and `replayable` stays true for a job that failed for good — this
   branch keeps the drawn node on failed rows (16), so the owner's "failed jobs lost their node" guard no longer applies.
 - `setSealedEnv`: the node-bound seal (16) **and** the owner's start-clock restart (`assigned_at` reset on seal), with
