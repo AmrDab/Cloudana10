@@ -154,6 +154,20 @@ traced; each finding again challenged by three verifiers. Fixed with tests (`wor
 | Medium | A re-seal while `assigned` with a payload answered 200 and logged "sealed secrets updated" although the start had already gone out and an agent never re-reads `sealedEnv`: the container ran the old secrets while every view said the new ones applied | once a start may have gone out the payload cannot be replaced (409 "stop and redeploy"); replacement stays allowed while queued |
 | Low | F9 said the fail-closed revocation change was "fixed with tests"; no test exercised a KV error | two tests: a KV that cannot be read → 503 for a session, 200 for an API key; a KV that cannot be written → logout says `revoked:false` |
 
+The round's remaining seven findings were verified once the spend limit reset (commit 19; tests `billing-races.test.ts`,
+`endpoints.test.ts`, `deployments.test.ts`):
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | A probe pass that read its rows before a bill ran re-queued the replica from that stale snapshot and settled "the elapsed hour" again: the owner paid twice for one hour and the provider was paid twice (a node can time a slow probe answer around its own bill) | the statement that re-queues a row also claims the hold it settles, against the snapshot's amount **and** billing clock; a row whose hold or clock moved since is skipped and re-read next pass |
+| Medium | `bill()` re-held the next hour with an unconditional `UPDATE`: a stop landing between its claim and its re-hold found nothing to settle, and a full hour stayed held on a stopped row for ever | the re-hold lands only on a live row with nothing held; otherwise the hour goes back to the owner |
+| Medium | `settleHold` claimed on the amount only: after a bill re-held the same amount, a stop carrying the older snapshot charged a full hour for the seconds since the bill | the claim covers the billing clock too; on a miss the fresh amount and clock are read and the settle retried |
+| Medium | An endpoint replica whose secrets were never sealed was failed for good by the 24 h timeout; nothing replaces a failed replica, so the endpoint ran short one replica while priced for all | a replica goes back to the queue instead (slot freed, hold kept); plain containers still fail |
+| Medium | A re-seal after the start went out answered 200 (see above) | fixed in commit 18 |
+| Low | Every accepted seal reset the start clock, so repeated seals could hold a node slot for ever | the clock resets on the first seal only: a payload lands once (commit 18) |
+| Low | The node binding of `PATCH …/secrets` was optional, so a client not sending `node` kept the moved-row race; a seal while queued was stored for whichever node came next | `node` is required; a seal lands only while that node holds the row and only for a container created with `expectsSecrets` (its start otherwise goes out without a payload on the first heartbeat) |
+| Low | `bill()` wrote "billed … for one hour" even when nothing was captured (hold missing) and no bill or reward existed | `chargeHour` reports the capture; every caller writes "hour … not charged … needs reconciliation" instead, and the test forces the state |
+
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
 | Review item (C.5) | State in code | Where |

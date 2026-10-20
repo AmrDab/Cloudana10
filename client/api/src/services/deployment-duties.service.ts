@@ -22,7 +22,7 @@ import { getD1 } from "../lib/storage.js";
 import { getEnv } from "../config/env.js";
 import { log } from "../lib/logger.js";
 import { normalizeAddress } from "../lib/eth.js";
-import { hold } from "./balance.service.js";
+import { hold, release } from "./balance.service.js";
 import {
   HOUR_MS,
   SEALED_V2_MIN_AGENT,
@@ -30,6 +30,7 @@ import {
   awaitingSecrets,
   carriesSecrets,
   chargeHour,
+  unchargedHour,
   endDeployment,
   getDeploymentRow,
   type DeploymentRow,
@@ -95,13 +96,19 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number, o
   for (const row of rows) {
     const reseal = row.sealed_env !== null;
     const spec = reseal ? JSON.stringify({ ...JSON.parse(row.spec_json), expectsSecrets: true }) : row.spec_json;
+    // Settling the hour it was in captures part of its hold, so the statement that re-queues the row also claims that
+    // hold (held_ucld → 0), against the snapshot's amount and billing clock: a bill that ran since the row was read
+    // (it charged the hour, moved the clock and re-held) makes this pass skip the row instead of charging it twice.
+    const settle = !!opts.settleHour && settleable(row);
     const r = await db
       .prepare(
         "UPDATE deployments SET status = 'queued', status_reason = ?, node = NULL, endpoint = NULL, ssh_endpoint = NULL, web_token = NULL, " +
-          "assigned_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ? " +
-          "WHERE id = ? AND status = ? AND node = ?",
+          "assigned_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ?" +
+          (settle ? ", held_ucld = 0" : "") +
+          " WHERE id = ? AND status = ? AND node = ?" +
+          (settle ? " AND held_ucld = ? AND last_billed_at IS ?" : ""),
       )
-      .bind(reason, spec, row.id, row.status, row.node)
+      .bind(reason, spec, row.id, row.status, row.node, ...(settle ? [row.held_ucld, row.last_billed_at] : []))
       .run();
     if ((r.meta?.changes ?? 0) === 0) continue;
     requeued++;
@@ -111,10 +118,13 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number, o
       .run();
     await addEvent(row.id, "warn", `${reason} — re-queued`, now);
     if (reseal) await addEvent(row.id, "warn", "secrets were sealed to the old node — re-seal them for the next node", now);
-    if (opts.settleHour) await settleElapsed(row, now);
+    if (settle) await settleElapsed(row, now);
   }
   return requeued;
 }
+
+/** A row whose current hour can be settled: it was serving, on a billing clock, with its hour held. */
+const settleable = (row: DeploymentRow) => row.status === "running" && row.last_billed_at !== null && row.held_ucld > 0 && !!row.node;
 
 /**
  * A row that was serving until its re-queue (the node is still up; its app failed its probes) pays the elapsed part
@@ -123,15 +133,28 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number, o
  * re-place, so the (already re-queued) row ends as out of credits and the rest of its hold goes back.
  */
 async function settleElapsed(row: DeploymentRow, now: number): Promise<void> {
-  if (row.status !== "running" || row.last_billed_at === null || row.held_ucld <= 0 || !row.node) return;
-  const elapsed = Math.max(0, Math.min(HOUR_MS, now - row.last_billed_at));
-  const charged = Math.min(row.held_ucld, Math.floor((row.price_ucld_per_hour * elapsed) / HOUR_MS));
-  if (charged <= 0) return;
-  await chargeHour(row, charged, now);
-  await addEvent(row.id, "info", `billed ${charged} µCLD for the ${Math.round(elapsed / 60_000)} min served before the re-queue`, now);
-  if (await hold(row.owner, charged)) return;
-  const remaining = row.held_ucld - charged;
-  await getD1().prepare("UPDATE deployments SET held_ucld = ? WHERE id = ?").bind(remaining, row.id).run();
+  // `row` is the snapshot whose hold requeueRows just claimed (the row's held_ucld is 0; the owner's pool still
+  // holds `full`): capture the elapsed part, then put a full hour back onto the row — only while it is still live.
+  const db = getD1();
+  const full = row.held_ucld;
+  const elapsed = Math.max(0, Math.min(HOUR_MS, now - row.last_billed_at!));
+  const charged = Math.min(full, Math.floor((row.price_ucld_per_hour * elapsed) / HOUR_MS));
+  if (charged > 0) {
+    const paid = await chargeHour(row, charged, now);
+    await addEvent(row.id, paid ? "info" : "warn", paid ? `billed ${charged} µCLD for the ${Math.round(elapsed / 60_000)} min served before the re-queue` : unchargedHour(charged), now);
+  }
+  if (charged <= 0 || (await hold(row.owner, charged))) {
+    const r = await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status IN ('queued','assigned','running')").bind(full, row.id).run();
+    if ((r.meta?.changes ?? 0) === 0) await release(row.owner, full); // ended meanwhile: nothing will settle it
+    return;
+  }
+  // The owner cannot cover the next hour: the rest of the hold goes back and the (already re-queued) row ends.
+  const remaining = full - charged;
+  const r = await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status = 'queued'").bind(remaining, row.id).run();
+  if ((r.meta?.changes ?? 0) === 0) {
+    if (remaining > 0) await release(row.owner, remaining);
+    return;
+  }
   await endDeployment({ ...row, status: "queued", node: null, last_billed_at: null, held_ucld: remaining }, "stopped", "out of credits", { acked: true, level: "warn", now });
 }
 
@@ -174,6 +197,13 @@ export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
       const limit = env.DEPLOY_SECRETS_TIMEOUT_SECONDS * 1000;
       if (row.assigned_at! <= now - limit) {
         const hours = Math.round(limit / 3_600_000);
+        if (row.parent_id) {
+          // An endpoint replica is never failed for good: nothing would replace it, and the endpoint would run short
+          // one replica while priced for all. It goes back to the queue (the slot is freed) and waits to be sealed
+          // once a node takes it again.
+          n += await requeueRows([row], `secrets were not sealed within ${hours} h of assignment`, now);
+          continue;
+        }
         const ended = await endDeployment(row, "failed", `secrets were not sealed within ${hours} h of assignment`, { acked: false, level: "error", now });
         if (ended) n++;
       }
@@ -728,10 +758,19 @@ async function bill(node: string, now: number): Promise<void> {
         .bind(next, row.id, row.last_billed_at, fee)
         .run();
       if ((claimed.meta?.changes ?? 0) === 0) break;
-      await chargeHour(row, fee, now);
-      await addEvent(row.id, "info", `billed ${fee} µCLD for one hour`, now);
+      const paid = await chargeHour(row, fee, now);
+      await addEvent(row.id, paid ? "info" : "warn", paid ? `billed ${fee} µCLD for one hour` : unchargedHour(fee), now);
       if (await hold(row.owner, fee)) {
-        await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ?").bind(fee, row.id).run();
+        // Onto the row only while it is still live: a stop that landed since the claim found nothing to settle
+        // (held 0), and the hour just held would otherwise sit on a stopped row for ever.
+        const reheld = await db
+          .prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status IN ('running','queued','assigned')")
+          .bind(fee, row.id)
+          .run();
+        if ((reheld.meta?.changes ?? 0) === 0) {
+          await release(row.owner, fee);
+          break;
+        }
         row = { ...row, last_billed_at: next, held_ucld: fee };
       } else {
         await endDeployment({ ...row, last_billed_at: next, held_ucld: 0 }, "stopped", "out of credits", { acked: false, level: "warn", now });

@@ -506,16 +506,17 @@ export async function nodePubkey(node: string | null): Promise<string | null> {
 export type Update = { ok: true } | { ok: false; code: "not_found" | "conflict" | "validation_failed"; message: string };
 
 /**
- * Store a sealed payload. `sealedFor` is the node the console sealed to (it checked the key derives to that address):
- * when given, the payload is refused unless the row is still assigned to exactly that node — a re-queue that raced
- * the seal would otherwise hand the next node a payload it cannot open. The start-timeout clock restarts at the
- * seal: no start could go out before the secrets existed. Once a start may have gone out (assigned with a payload)
- * the payload cannot be replaced: an agent never re-reads sealedEnv for an id it is starting, so a "replacement"
- * would be reported as applied while the container runs the old one. Workstations take no sealed env at all —
- * their access token is issued by the node (tokenEnv); a `deployments`-scoped key must not be able to inject
- * environment into a workstation it is not allowed to connect to.
+ * Store a sealed payload. `sealedFor` is the node the client sealed to (the console checks the key derives to that
+ * address): the payload lands only while the row is assigned to exactly that node — a re-queue that raced the seal
+ * would otherwise hand the next node a payload it cannot open, and while queued there is no key it could have been
+ * sealed to. It lands only once: an agent never re-reads sealedEnv for an id it is starting, so a "replacement"
+ * after the start went out would be reported as applied while the container runs the old one; for the same reason
+ * a container created without expectsSecrets (its start goes out on the first heartbeat, without a payload) takes
+ * none. The start-timeout clock restarts at that first seal: no start could go out before the secrets existed.
+ * Workstations take no sealed env at all — their access token is issued by the node (tokenEnv); a `deployments`-
+ * scoped key must not be able to inject environment into a workstation it is not allowed to connect to.
  */
-export async function setSealedEnv(owner: string, id: string, sealedEnv: string, sealedFor?: string, now = Date.now()): Promise<Update> {
+export async function setSealedEnv(owner: string, id: string, sealedEnv: string, sealedFor: string, now = Date.now()): Promise<Update> {
   const row = await getOwnedRow(owner, id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "sealed secrets are for containers only" };
@@ -530,33 +531,28 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string,
       message: "sealedEnv must be a v2 payload bound to this deployment (shared/sealed.ts seal(pubkey, plaintext, sealedEnvAad(id))); reload the console and seal again",
     };
   }
-  const target = sealedFor ? normalizeAddress(sealedFor) : null;
+  if ((JSON.parse(row.spec_json) as ContainerSpec).expectsSecrets !== true) {
+    return { ok: false, code: "validation_failed", message: "this container does not expect secrets: its start goes out without them on the first heartbeat, so a payload sealed now would never be applied — redeploy with expectsSecrets" };
+  }
+  const target = normalizeAddress(sealedFor);
   const r = await getD1()
-    // Sealing restarts the start clock: the start-timeout duty measures from assigned_at, and a row that waited for
+    // The seal restarts the start clock: the start-timeout duty measures from assigned_at, and a row that waited for
     // its secrets must not be re-queued (sealed_env wiped) minutes after the owner finally sealed them.
-    // When the caller names the node it sealed to, the seal lands only while that node still holds the row.
-    .prepare(
-      "UPDATE deployments SET sealed_env = ?, assigned_at = CASE WHEN status = 'assigned' THEN ? ELSE assigned_at END " +
-        "WHERE id = ? AND status IN ('queued','assigned') AND (sealed_env IS NULL OR status = 'queued') " +
-        "AND (? IS NULL OR (status = 'assigned' AND node = ?))",
-    )
-    .bind(sealedEnv, now, id, target, target)
+    .prepare("UPDATE deployments SET sealed_env = ?, assigned_at = ? WHERE id = ? AND status = 'assigned' AND node = ? AND sealed_env IS NULL")
+    .bind(sealedEnv, now, id, target)
     .run();
   if ((r.meta?.changes ?? 0) === 0) {
     const fresh = (await getDeploymentRow(id)) ?? row;
-    if (fresh.status !== "queued" && fresh.status !== "assigned") {
-      return { ok: false, code: "conflict", message: `secrets can only change while queued or assigned (status is ${fresh.status})` };
+    if (fresh.status === "queued") {
+      return { ok: false, code: "conflict", message: "no node holds the deployment yet, so there is no key to seal to: wait for one to be assigned (nodePubkey on GET /deployments/{id}), then seal to it" };
     }
-    if (fresh.status === "assigned" && fresh.sealed_env !== null && (!target || fresh.node === target)) {
-      return { ok: false, code: "conflict", message: "the start already went out with the secrets sealed earlier (a node never re-reads them): stop and redeploy to change them" };
+    if (fresh.status !== "assigned") {
+      return { ok: false, code: "conflict", message: `secrets can only be sealed while assigned to a node (status is ${fresh.status})` };
     }
-    return {
-      ok: false,
-      code: "conflict",
-      message: fresh.node
-        ? `the deployment moved to node ${fresh.node} since its key was fetched — seal to that node's key and send again`
-        : "the deployment is back in the queue (no node holds it): wait for a node, then seal to its key",
-    };
+    if (fresh.node !== target) {
+      return { ok: false, code: "conflict", message: `the deployment moved to node ${fresh.node} since its key was fetched — seal to that node's key and send again` };
+    }
+    return { ok: false, code: "conflict", message: "the start already went out with the secrets sealed earlier (a node never re-reads them): stop and redeploy to change them" };
   }
   await addEvent(id, "info", "sealed secrets updated", now);
   return { ok: true };
@@ -566,27 +562,45 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string,
  * Settle the hold when a deployment ends. A running deployment pays the elapsed part of its
  * current hour (pro rata, credited to the provider like a full hour); otherwise the hold is released.
  */
-export async function settleHold(row: DeploymentRow, now = Date.now()): Promise<void> {
+export async function settleHold(row: DeploymentRow, now = Date.now(), attempt = 0): Promise<void> {
   if (row.held_ucld <= 0) return;
   const db = getD1();
-  const r = await db.prepare("UPDATE deployments SET held_ucld = 0 WHERE id = ? AND held_ucld = ?").bind(row.id, row.held_ucld).run();
-  if ((r.meta?.changes ?? 0) === 0) return; // already settled elsewhere
+  // The claim covers the billing clock as well as the amount: a bill that ran since `row` was read re-held the same
+  // amount for a later hour, and the elapsed part must be measured from its clock — from the stale one it would be a
+  // full hour, charged a second time. On a miss the fresh amount and clock are read and the settle retried.
+  const r = await db
+    .prepare("UPDATE deployments SET held_ucld = 0 WHERE id = ? AND held_ucld = ? AND last_billed_at IS ?")
+    .bind(row.id, row.held_ucld, row.last_billed_at)
+    .run();
+  if ((r.meta?.changes ?? 0) === 0) {
+    if (attempt >= 3) return;
+    const fresh = await getDeploymentRow(row.id);
+    if (!fresh || fresh.held_ucld <= 0) return; // already settled elsewhere
+    return settleHold({ ...row, held_ucld: fresh.held_ucld, last_billed_at: fresh.last_billed_at }, now, attempt + 1);
+  }
   let charged = 0;
   if (row.status === "running" && row.last_billed_at !== null && row.node) {
     const elapsed = Math.max(0, Math.min(HOUR_MS, now - row.last_billed_at));
     charged = Math.min(row.held_ucld, Math.floor((row.price_ucld_per_hour * elapsed) / HOUR_MS));
   }
-  if (charged > 0) await chargeHour(row, charged, now);
+  if (charged > 0 && !(await chargeHour(row, charged, now))) await addEvent(row.id, "warn", unchargedHour(charged), now);
   if (row.held_ucld - charged > 0) await release(row.owner, row.held_ucld - charged);
 }
 
-/** Capture `fee` from the owner's hold and credit the node's payout wallet (lane A + treasury, no lane B). */
-export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now()): Promise<void> {
+/** The event a caller writes instead of "billed …" when chargeHour captured nothing: the state to reconcile. */
+export const unchargedHour = (fee: number) =>
+  `hour of ${fee} µCLD not charged: the owner's hold for it was missing (nothing captured, nothing paid out) — needs reconciliation`;
+
+/**
+ * Capture `fee` from the owner's hold and credit the node's payout wallet (lane A + treasury, no lane B). False when
+ * the hold was not there: then there is no bill and no reward, and the caller must say so instead of "billed".
+ */
+export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now()): Promise<boolean> {
   const db = getD1();
   // No reward without a captured fee (as for jobs): a bill whose hold wasn't there mints nothing and burns nothing.
   if (!(await capture(row.owner, fee))) {
     log.api.warn(`[deployments] ${row.id}: hour of ${fee} µCLD not captured (hold missing) — no bill, no reward`);
-    return;
+    return false;
   }
   const payout = await db.prepare("SELECT payout FROM nodes WHERE address = ?").bind(row.node).first<{ payout: string | null }>();
   const billId = crypto.randomUUID();
@@ -605,6 +619,7 @@ export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now
       now,
     });
   }
+  return true;
 }
 
 /**

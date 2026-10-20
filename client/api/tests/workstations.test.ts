@@ -440,7 +440,7 @@ describe("connect and hours", () => {
     expect(own.status).toBe(400);
     expect((await own.json()).error.message).toMatch(/workstations take no sealed secrets/);
     const key = (await (await authed(u.jwt, "POST", "/v1/keys", { name: "deployer", scopes: ["deployments"] })).json()).key.token as string;
-    expect((await authed(key, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(400);
+    expect((await authed(key, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed, node: node.address })).status).toBe(400);
     expect((await row(id))!.sealed_env).toBeNull();
     const start = (await heartbeat(node)).find((d) => d.id === id) as Record<string, unknown> | undefined;
     expect(start?.action).toBe("start");

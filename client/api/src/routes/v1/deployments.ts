@@ -350,8 +350,8 @@ const secretsRoute = createRoute({
   path: "/deployments/{id}/secrets",
   tags: TAGS,
   description:
-    "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers and endpoint replicas (per replica id) only; " +
-    "never workstations (400). Accepted while queued, or assigned without a payload yet; once a start went out with a payload it cannot be replaced (409): stop and redeploy.",
+    "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers and endpoint replicas (per replica id) created with expectsSecrets only; " +
+    "never workstations (400). Accepted once a node is assigned (nodePubkey on GET) and only once: after the start went out with a payload it cannot be replaced (409) — stop and redeploy.",
   security: BEARER_AUTH,
   request: {
     params: IdParam,
@@ -361,8 +361,8 @@ const secretsRoute = createRoute({
         "application/json": {
           schema: z.object({
             sealedEnv: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9+/]*={0,2}$/, "sealedEnv must be base64"),
-            node: EthAddressSchema.optional().openapi({
-              description: "The node whose key the payload was sealed to (the console checks the key derives to it). With it, the payload is refused (409) unless the deployment is still assigned to that node",
+            node: EthAddressSchema.openapi({
+              description: "The node whose key the payload was sealed to (the console checks nodePubkey derives to it). The payload lands only while the deployment is assigned to that node and has no payload yet; otherwise 409 says what to do",
             }),
           }),
         },

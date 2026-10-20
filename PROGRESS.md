@@ -305,11 +305,36 @@ resumed run is verifying them). `SECURITY_AUDIT.md` F10 has the table.
 - **Residual.** Seven critic-round findings (re-seal holding a node slot, unbound `PATCH` race, a failed endpoint
   replica never replaced, four billing races around `bill()`/`settleElapsed`/`settleHold`) await verification.
 
+### 19 · the completeness round's last seven findings
+Verified 3/3 each once the spend limit reset (52 candidates in all, 47 confirmed, 5 refuted). `SECURITY_AUDIT.md` F10
+has the second table. Billing paths now claim exactly what they read:
+- **High — stale probe snapshot settled the hour twice.** `requeueRows` guarded on status and node only, then
+  `settleElapsed` captured from the caller's snapshot. A bill between the probe's read and its write charged the hour,
+  and the re-queue charged it again (node-exploitable: fail your own probe around your bill). The re-queue statement
+  now also claims the hold (`held_ucld → 0`) against the snapshot's amount and `last_billed_at`; a moved row is
+  skipped. `settleElapsed` captures from the claimed amount and restores the hour only onto a live row.
+- **Medium — `bill()` re-held onto a stopped row.** The re-hold lands only on a live row with nothing held; else the
+  hour is released.
+- **Medium — `settleHold` ignored the clock.** Its claim now covers `last_billed_at`; on a miss it re-reads and
+  retries with the fresh amount and clock.
+- **Medium — a replica failed by the secrets timeout was never replaced.** Replica rows are re-queued instead
+  (`requeueRows`), keeping the hold; the endpoint keeps all its replicas.
+- **Low — `node` optional on `PATCH …/secrets`; seals while queued.** `node` is required; a seal lands only while
+  that node holds an `assigned` row with no payload, and only for containers created with `expectsSecrets`; while
+  queued there is no key to seal to (409). The start clock therefore resets on the first seal only.
+- **Low — "billed" written when nothing was captured.** `chargeHour` returns the capture; `bill()`,
+  `settleElapsed` and `settleHold` write "hour … not charged … needs reconciliation" (warn) instead.
+- **Tests / results.** `billing-races.test.ts` (3: stale-clock stop, stop mid-bill, uncharged hour; `hold` trapped
+  to land a stop inside the bill), `endpoints.test.ts` (+2: nested heartbeat inside a probe answer, replica secrets
+  timeout), `deployments.test.ts` seal test rewritten (queued → 409, `node` required, plain container → 400). Each
+  new test was run against the pre-fix service code and failed there. API tsc clean; vitest 372 → **377**; e2e 43;
+  replay; browser smoke 29/29.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **372** |
+| client/api vitest | 330 | **377** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
