@@ -123,6 +123,13 @@ re-verification.
 epoch is finalized with the team's poster offline (testnet drill).
 
 **B-17 · Pull-based assignment.** Nodes pull from a published seeded queue and can verify the draw before starting.
+Until then two gaps stay: the eligible set is attested, not committed before the seed, and an assignment that expires
+is re-drawn with the earlier draw not kept (`CLEAR_ASSIGNMENT`), so the verifier (which now checks the seed block's
+timestamp against `assignedAt`) cannot see a re-roll.
+
+**B-18 · Public rate limits off KV.** The IP-keyed limiters still count in KV (two operations per request); when the
+free tier's quota is gone they degrade to per-isolate memory. Move them to the Workers rate-limiting binding the
+gateway already uses (`KEY_LIMIT`), one binding per bucket. Node routes already count per isolate.
 Acceptance: the agent refuses an assignment whose σ does not match the published seed/eligible set. Why it matters
 (review finding, commit 16): today's draw record is signed, but its eligible set is the orchestrator's attestation —
 nothing commits the set before the seed is known, so a replay proves the draw was computed as published, not that

@@ -157,6 +157,20 @@ describe("public draw records and signed epochs / network", () => {
     }
   });
 
+  it("a job that failed before failed rows kept their node is not replayable, and the signed record says so", async () => {
+    await getD1()
+      .prepare(
+        "INSERT INTO work_jobs (id, owner, work_type, n, price_ucld, public, status, seed_source, draw_seed, eligible_hash, eligible_json, created_at) " +
+          "SELECT 'legacy-failed', owner, work_type, n, price_ucld, public, 'failed', seed_source, draw_seed, eligible_hash, eligible_json, created_at FROM work_jobs WHERE id = ?",
+      )
+      .bind(jobId)
+      .run();
+    const body = await (await call("/v1/draws/legacy-failed")).json();
+    expect(body.draw).toMatchObject({ jobStatus: "failed", node: null, replayable: false, replay: null });
+    expect(body.draw.eligible).toHaveLength(2);
+    expect(await verifyPublic(signedBody(body), body.signature)).toBe(true);
+  });
+
   it("an unknown job or epoch is 404; records never carry matrices or the owner", async () => {
     expect((await call("/v1/draws/nope")).status).toBe(404);
     expect((await call("/v1/epochs/1")).status).toBe(404);

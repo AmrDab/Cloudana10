@@ -94,7 +94,7 @@ const logoutRoute = createRoute({
     "API keys are revoked with DELETE /v1/keys/{id}, not here.",
   security: BEARER_AUTH,
   responses: responses(
-    { 200: json(z.object({ status: z.literal("success"), revoked: z.boolean().openapi({ description: "false for a token minted before revocation existed; it still expires on time" }) }), "Session ended") },
+    { 200: json(z.object({ status: z.literal("success"), revoked: z.boolean().openapi({ description: "false for a token minted before revocation existed (it still expires on time), or when the shared revocation list could not be written — then only this process refuses it until it expires" }) }), "Session ended") },
     401,
     403,
     429,

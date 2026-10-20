@@ -1,7 +1,7 @@
 # Progress — hardening pass, 2026-10-19
 
-Branch `claude/trusting-maxwell-cfhscy`; entries 1–15 merged to `main` as PR #49 (`98de016`, 2026-10-19), entries 16–17
-follow as a second PR on top of it. Each change below lists the problem, root cause,
+Branch `claude/trusting-maxwell-cfhscy`; entries 1–15 merged to `main` as PR #49 (`98de016`, 2026-10-19), entries 16–20
+follow as a second PR on top of it (#52). Each change below lists the problem, root cause,
 files, justification, tests, actual results, remaining risk and deployment implications. Nothing was deployed; no
 contract, fund or production secret was touched.
 
@@ -226,8 +226,9 @@ the `CURRENT_AGENT_VERSION` comment.
   vetoed epochs with stale leaves → published epochs only. (5) The draw record was unsigned and its eligible set
   self-attested → signed over `{ draw }`, payout wallets replaced by an opaque operator id, the attestation limit
   stated in the route and in ARCHITECTURE (pull-based assignment, B-17, is the real fix). (6) The runbook told the
-  operator to run the secrets script with no arguments, which regenerates the pinned instruction key and the KEK →
-  rewritten. (7) A minted API key stayed on screen after sign-out → cleared on session change.
+  operator to run the secrets script with no arguments, which then regenerated the pinned instruction key and the KEK →
+  rewritten (and rewritten again in entry 20 once the owner's script skipped existing secrets: `--rotate NAME` is
+  the only way to replace one). (7) A minted API key stayed on screen after sign-out → cleared on session change.
 - **Medium.** `PATCH …/secrets` now names the node it was sealed to and is refused if the row moved; a container whose
   owner never seals is failed after `DEPLOY_SECRETS_TIMEOUT_SECONDS` (24 h) instead of pinning a slot for ever; a
   placement can no longer race a suspension (`claim()` checks node state in the same statement; a suspended node's
@@ -253,6 +254,9 @@ the `CURRENT_AGENT_VERSION` comment.
   mode refuses the local key as designed; console tsc, 3 tests, build; browser smoke re-run (§4b).
 - **Residual.** The eligible set is still attested, not committed before the seed (B-17). Draining nodes finish
   what they hold; only suspension kicks the socket.
+- **Addendum.** The six console findings left unverified here were verified once the spend limit reset: four upheld
+  (already fixed in this commit), two refuted. With entries 18 and 19 the review's totals are 52 candidates, 47
+  confirmed, 5 refuted.
 
 ### 17 · reconciliation with the owner's parallel review (PR #50)
 The owner ran their own review in parallel, merged its fixes (`34b8af1`, `63037a4`) into this branch and then merged
@@ -268,7 +272,7 @@ reconciliation keeps, per overlap:
 - `/v1/network` `burnedUcld`: fees with a reward entry that is not clawed (16; the owner's version did not exclude
   clawed).
 - `replay.ts`: pinned signer / `--signer published` (16) over the owner's "published key (could not be fetched)".
-- `CAPABILITY_MATRIX`: this branch's assignment row, the owner's agent row (1.4.1 live, 1.6.0 publishes on merge).
+- `CAPABILITY_MATRIX`: this branch's assignment row, the owner's agent row (1.4.1 live at the time; 1.6.0 since 2026-10-20).
 Everything else of the owner's landed as is: `JWT_SECRET_PREVIOUS_UNTIL` grace window, `/v1/network` rate limit,
 `connect`/`endpoint` hidden from API-key callers, `capableWarning` on deployments, `chargeHour` stops when the capture
 fails, cron `ensureSchema`, `set-api-secrets.mjs` never overwriting a secret without `--rotate`, the agent
@@ -330,11 +334,53 @@ has the second table. Billing paths now claim exactly what they read:
   new test was run against the pre-fix service code and failed there. API tsc clean; vitest 372 → **377**; e2e 43;
   replay; browser smoke 29/29.
 
+### 20 · the owner's review of PR #52: five blockers and the rest
+Four review comments from the owner's own session (secrets and placement, money, auth, draws and docs), 11:30 UTC.
+Every item is either fixed here or answered on the thread. The blockers:
+- **Money, high — two submits in the same millisecond captured the fee twice and wrote the rewards twice.** The
+  capture and the reward inserts gated on `fee_captured_at = now` only; in Workers `Date.now()` is frozen between
+  I/O events. Both now also require `status = 'assigned' AND node = ?` (`jobs.service.ts`, `ledger.service.ts`);
+  test: two submits with one `now` → one capture, one set of rewards, 409.
+- **Money, medium — a row could end up running with nothing held and never be billed again.** The out-of-credits
+  ends in `settleElapsed` and `bill()` were conditional on a status another node's claim had already changed. They
+  now re-read and end the fresh row; and `bill()` finding a due running row with nothing held holds the hour again
+  or ends it (`billing-races.test.ts`, two cases).
+- **Secrets, high — the deploy form never sent `expectsSecrets`.** It sends `Object.keys(secrets).length > 0`; the
+  API honours an explicit `false` even for a template with `secretEnv`.
+- **Auth, high — KV quota.** Session revocation and sign-in nonces moved from KV to D1 (`revoked_tokens`,
+  `login_nonces`, one shared list read with the request's other D1 work); node-route rate limits count per isolate
+  (`store: "memory"`), so heartbeats no longer spend KV writes; a key store that cannot be read is 503, not
+  "revoked". The IP-keyed public limits stay in KV and degrade to memory when its quota is gone (follow-up B-18:
+  the Workers rate-limiting binding the gateway already uses).
+- **Docs, medium — the runbook's secrets section contradicted the script** (which skips existing secrets since #50):
+  rewritten with the five secrets marked set, `--rotate NAME` and its cost, the real JWT rotation recipe, the table
+  repaired; SHIP_CHECKLIST box ticked; PROGRESS blocker 2 and entry 16 (6) corrected.
+The rest, also in this commit: workstations refuse `expectsSecrets`; the endpoint sealer forgets attempts for
+replicas no longer sealable (a replica back on the same node is sealed again); a replica's secrets timeout re-queues
+with the refusal prefix and the third cycle abandons the endpoint (holds back); the secrets-timeout end and re-queue
+are guarded on `sealed_env IS NULL AND assigned_at = ?`; a drain hands back awaiting rows and the seal refuses a
+non-active node; the Sealer stops polling and drops plaintext once sealing is over; `pendingSecretIds` removed; the
+`schema.sql` comma; keys get neither a workstation's log tail nor its logs route; the events filter catches
+`access_token=`, custom token names, URLs and ssh hosts by shape; `revoked:false` documented; failed rows without a
+node are not replayable (and the verifier says so); `--signer` takes only an address or `published`; `--rpc` checks
+the seed block's timestamp against `assignedAt` (`--seed-window`, 60 s); the operator id is a keyed hash; burned
+hosting fees exclude clawed bills; stale facts in CAPABILITY_MATRIX, SECURITY_AUDIT O12 and PROGRESS corrected.
+- **Not changed, by choice:** `MIN_AGENT_VERSION` stays 1.3.0 by default (raising it is the owner's config call now
+  that the first node runs 1.6.0); the IP-keyed limits stay in KV until B-18.
+- **Deploy note.** The revocation list starts empty in D1: a session logged out in the 24 h before this deploy (its
+  jti sits in KV, which nothing reads any more) is accepted again until it expires. Tokens live 24 h, so the window
+  closes by itself; deploy at a quiet hour if that matters. `ensureSchema` creates both tables on the first request
+  and on the cron.
+- **Tests / results.** 41 files, **387** passed (+10: same-millisecond submit, two billing races, replica timeout
+  lifecycle, drain hand-back, explicit `expectsSecrets:false`, workstation flag refused, no workstation logs for
+  keys, legacy failed draw, D1 revocation ×3 and nonces); each new test fails on the pre-fix code. Console tsc,
+  3 tests, build; e2e 43; browser smoke 29/29.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **377** |
+| client/api vitest | 330 | **387** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
@@ -347,7 +393,7 @@ has the second table. Billing paths now claim exactly what they read:
 | # | Gap | State |
 |---|---|---|
 | 1 | No live settlement | **Owner** (runbook 3–6). Engineering side ready: contracts tested, keeper tested, deposit watcher inactive until `SETTLEMENT_ADDRESS`. |
-| 2 | Nothing publicly reachable | **Closed 2026-10-18.** Relay secrets set, gateway live at `https://<id>.cloudana.run`, first node (Azure, agent 1.4.1, relay) online; hosting is live. |
+| 2 | Nothing publicly reachable | **Closed 2026-10-18.** Relay secrets set, gateway live at `https://<id>.cloudana.run`, first node (Azure, relay; agent 1.4.1 then, 1.6.0 since 2026-10-20) online; hosting is live. |
 | 3 | D1 heartbeat cost | Measured and cut 13 → 5 statements per idle/steady beat (commit 10, pinned by a test); the architecture limit (one D1) remains. |
 | 4 | Orchestrator not independently checkable | Largely closed for phase 1: draws published with their eligible set (`GET /v1/draws/{id}`), epochs published with leaves and a signature (`GET /v1/epochs/{n}`), `/v1/network` signed, `scripts/verify/replay.ts` checks all of it from public data; seeds are block hashes once `CHAIN_RPC_URL` deploys. Left: signing individual draws, pull-based assignment (B-17). |
 | 5 | Verification cost = work cost | Open (B-6). |
@@ -363,10 +409,11 @@ has the second table. Billing paths now claim exactly what they read:
    `contract/scripts/v2/deploy.ts` (runbook step 4). Then engineering wires `SETTLEMENT_ADDRESS` into the API and
    keeper and runs the veto drill.
 2. ~~Worker secrets~~ — **done 2026-10-18**: `INSTRUCTION_SIGNING_KEY`, `JWT_SECRET`, `STORAGE_KEK` on cloudana-api;
-   `RELAY_TICKET_SECRET` on api + relay; `INTERNAL_API_KEY` on api + gateway. **Do not re-run
-   `scripts/set-api-secrets.mjs`**: it generates all three again, which would cut off every node pinned to the current
-   signer, sign everyone out and make stored storage copies unverifiable. Re-run `scripts/set-relay-secrets.mjs` only
-   once the keeper is deployed (it then rotates `INTERNAL_API_KEY` on api, gateway and keeper together).
+   `RELAY_TICKET_SECRET` on api + relay; `INTERNAL_API_KEY` on api + gateway. `scripts/set-api-secrets.mjs` skips a
+   secret that is already set; `--rotate NAME` is the only way to replace one, and a new signing key cuts off every
+   pinned node, a new JWT secret signs everyone out, a new KEK makes stored copies unverifiable (DEPLOYMENT_RUNBOOK
+   §1). Run `scripts/set-relay-secrets.mjs` once the keeper is deployed (it sets `INTERNAL_API_KEY` on api, gateway
+   and keeper together).
 3. ~~User-content domain~~ — **done 2026-10-18**: `cloudana.run`, proxied wildcard record, gateway deployed.
 4. ~~First node~~ — **done 2026-10-18**: Azure VM (compute, hosting and storage over the relay). Still to come: a
    Docker ≥ 28 / xfs-pquota machine for containers and GPU work.

@@ -310,6 +310,10 @@ function EndpointSealer({ id }: { id: string }) {
       return;
     }
     if (!getSealState(id)) setSealState(id, { phase: "waiting" });
+    // Attempts are remembered only while the replica is sealable on that node: a replica whose seal was wiped (dead
+    // node, probe failure) and that the same node claims again is sealed again, not skipped.
+    const live = new Set(sealable(dep).map((r) => `${r.id}:${r.node}`));
+    for (const k of attempted.current) if (!live.has(k)) attempted.current.delete(k);
     for (const r of sealable(dep)) {
       // Keyed by replica AND node: a replica re-queued to another node is sealed again, to the new key.
       const key = `${r.id}:${r.node}`;

@@ -131,8 +131,8 @@ verifiers. The security-relevant ones, all fixed with tests (`PROGRESS.md` commi
 | High | A node that refused a container kept the payload sealed to its key on the re-queued row; the next node failed to open it and the deployment died | cleared and flagged like every other re-queue |
 | High | An owner's drain/resume could overwrite a concurrent suspension | one conditional write guarded on state |
 | High | Vetoed epochs were published and signed with stale leaves | published epochs only (closed, posted, settled) |
-| High | The draw record was unsigned and its eligible set self-attested; it also listed every eligible node's payout wallet | signed over `{ draw }`; wallets replaced by an opaque operator id; the limit (attested, not pre-committed) stated in the API and ARCHITECTURE — pull-based assignment (B-17) is the real fix |
-| High | The runbook's secrets table had the operator regenerate the pinned instruction key and the storage KEK | rewritten: name the secret, set those two once |
+| High | The draw record was unsigned and its eligible set self-attested; it also listed every eligible node's payout wallet | signed over `{ draw }`; wallets replaced by an opaque operator id (a keyed hash since entry 20 — the epoch leaves name payout wallets, so an unkeyed hash was mappable); the limit (attested, not pre-committed) stated in the API and ARCHITECTURE — pull-based assignment (B-17) is the real fix |
+| High | The runbook's secrets table had the operator regenerate the pinned instruction key and the storage KEK | rewritten; and again in entry 20 after the owner's script started skipping existing secrets (#50): all five are set, `--rotate NAME` is the only way to replace one, and what each replacement costs |
 | Medium | `PATCH …/secrets` accepted a payload for whichever node now held the row | the console names the node it sealed to; refused once the row moved |
 | Medium | A placement could race a suspension; a suspended node still got storage fetches and kept its relay socket | `claim()` checks node state in the same statement; suspended heartbeats carry no start/assignment/fetch; socket kicked |
 | Medium | `submitWork` did done → capture → rewards in three round trips; a failure between them stranded a hold or captured a fee with no rewards | one transaction, each statement conditioned on the previous |
@@ -168,6 +168,20 @@ The round's remaining seven findings were verified once the spend limit reset (c
 | Low | The node binding of `PATCH …/secrets` was optional, so a client not sending `node` kept the moved-row race; a seal while queued was stored for whichever node came next | `node` is required; a seal lands only while that node holds the row and only for a container created with `expectsSecrets` (its start otherwise goes out without a payload on the first heartbeat) |
 | Low | `bill()` wrote "billed … for one hour" even when nothing was captured (hold missing) and no bill or reward existed | `chargeHour` reports the capture; every caller writes "hour … not charged … needs reconciliation" instead, and the test forces the state |
 
+### F11 — The owner's review of PR #52 — FIXED (commit 20)
+
+Four reviews from the owner's own session (`PROGRESS.md` entry 20 has every item). The security-relevant ones:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | Two submits in the same millisecond (Workers freeze `Date.now()` between I/O events) captured the fee twice and wrote the rewards twice: the capture and the reward inserts gated on `fee_captured_at = now` only | both also require `status = 'assigned' AND node = ?`; test with one `now` |
+| High | Session revocation and sign-in nonces in KV: a day of console polls and heartbeats exhausted the free tier's reads (every session 503 until midnight) and writes (every sign-in 401) | both in D1 (`revoked_tokens`, `login_nonces`); node-route limits count per isolate; a failing key store is 503, not "revoked" |
+| Medium | A row left running with nothing held was never billed again | the out-of-credits end follows the row; a due running row with nothing held is held again or ended |
+| Medium | A workstation spec took `expectsSecrets: true`, which can never be sealed: the start waited a day and failed | refused at `checkSpec` |
+| Low | A `read` key could fetch a workstation's failure log tail and its logs route; the events filter missed `access_token=`, custom token names and old addresses | no log tail or logs route for keys on workstations; the filter matches by shape |
+| Low | The operator id was an unsalted hash of a wallet the epoch leaves publish | keyed hash (key derived from `INSTRUCTION_SIGNING_KEY`) |
+| Medium (docs) | The runbook's secrets section contradicted `set-api-secrets.mjs` and could have had the owner cut off the live node | rewritten; checklist box ticked |
+
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
 | Review item (C.5) | State in code | Where |
@@ -202,7 +216,7 @@ The round's remaining seven findings were verified once the spend limit reset (c
 | O9 | Medium | Testnet credits keyed per wallet/IP/ASN — cheap Sybil for free credits | Testnet only, no value | Remove before value (decided) |
 | O10 | Medium | Relay DO `/kick` and `/status` are reachable to anyone with the binding; the gateway binding could kick nodes | Bindings are trusted scripts | Restrict `/kick` to the API via a shared header, or split the stub interface |
 | O11 | Low | Workstation SSH is published on the node's public IP (direct mode only) | WebSockets over the relay not built | Relay WebSocket tunnelling (planned) |
-| O12 | Low | `MIN_AGENT_VERSION` defaults to 1.3.0 while the agent is 1.6.0; sealed-v2 (≥ 1.5.0) and logs (≥ 1.6.0) gating is per-feature, not a hard minimum | Deliberate: do not cut off compute/hosting nodes | Raise the minimum once the owner's node runs 1.6.0 |
+| O12 | Low | `MIN_AGENT_VERSION` defaults to 1.3.0 while the agent is 1.6.0; sealed-v2 (≥ 1.5.0) and logs (≥ 1.6.0) gating is per-feature, not a hard minimum | Deliberate: do not cut off compute/hosting nodes | The owner's node runs 1.6.0 since 2026-10-20 (per the owner): raising `MIN_AGENT_VERSION` is now a config choice for the owner; the default stays 1.3.0 |
 | O13 | Low (dev-time) | Advisories left after `npm audit fix` that need major upgrades: the console's wallet stack (`@wagmi/connectors` pins old `ws`, `preact`, `d3-color`) and the Hardhat 2 toolchain (§3b) | No runtime path: build/test tooling and the browser wallet connector bundle | Bump `@wagmi/*` with the next console dependency pass; move to Hardhat 3 with the v2 contract work |
 
 ### 3b. Dependency audit (`npm audit`, 2026-10-19)

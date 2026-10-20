@@ -410,8 +410,9 @@ export async function createDeployment(input: {
   const usd = priceUsdPerHour(input.kind, checked.spec);
   const price = priceUcldPerHour(input.kind, checked.spec);
   const quoted = (n: number) => ({ priceUcldPerHour: price * n, priceUsdPerHour: usd * n, usdPerCld: getEnv().USD_PER_CLD });
-  if (input.kind === "container" && input.templateId && !(checked.spec as ContainerSpec).expectsSecrets) {
-    // A template that declares secretEnv means the browser will seal secrets after assignment.
+  if (input.kind === "container" && input.templateId && (checked.spec as ContainerSpec).expectsSecrets === undefined) {
+    // A template that declares secretEnv means the browser will seal secrets after assignment — unless the client said
+    // so itself (the console sends true or false from what the user typed; an explicit false is honoured).
     const t = await new TemplateService().getTemplateById(input.templateId);
     if (t?.secretEnv?.length) (checked.spec as ContainerSpec).expectsSecrets = true;
   }
@@ -538,11 +539,20 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string,
   const r = await getD1()
     // The seal restarts the start clock: the start-timeout duty measures from assigned_at, and a row that waited for
     // its secrets must not be re-queued (sealed_env wiped) minutes after the owner finally sealed them.
-    .prepare("UPDATE deployments SET sealed_env = ?, assigned_at = ? WHERE id = ? AND status = 'assigned' AND node = ? AND sealed_env IS NULL")
-    .bind(sealedEnv, now, id, target)
+    // … and only onto an active node: a draining or suspended one takes no start, and the row is on its way back
+    // to the queue (nodes.service / routes: drain hands awaiting rows back).
+    .prepare(
+      "UPDATE deployments SET sealed_env = ?, assigned_at = ? WHERE id = ? AND status = 'assigned' AND node = ? AND sealed_env IS NULL " +
+        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active')",
+    )
+    .bind(sealedEnv, now, id, target, target)
     .run();
   if ((r.meta?.changes ?? 0) === 0) {
     const fresh = (await getDeploymentRow(id)) ?? row;
+    const n = fresh.status === "assigned" && fresh.node === target ? await getNode(target) : null;
+    if (n && (n.state ?? "active") !== "active") {
+      return { ok: false, code: "conflict", message: `node ${target} is ${n.state}: the deployment moves to another node — seal to that node's key once it is assigned` };
+    }
     if (fresh.status === "queued") {
       return { ok: false, code: "conflict", message: "no node holds the deployment yet, so there is no key to seal to: wait for one to be assigned (nodePubkey on GET /deployments/{id}), then seal to it" };
     }
@@ -630,16 +640,18 @@ export async function endDeployment(
   row: DeploymentRow,
   status: "stopped" | "failed",
   reason: string,
-  opts: { acked: boolean; level?: DeploymentEvent["level"]; now?: number } = { acked: false },
+  opts: { acked: boolean; level?: DeploymentEvent["level"]; now?: number; unsealedSince?: number } = { acked: false },
 ): Promise<boolean> {
   const now = opts.now ?? Date.now();
   const acked = opts.acked || !row.node ? now : null;
+  // `unsealedSince`: end only while the row is still unsealed since that assignment (a seal that just landed stays).
   const r = await getD1()
     .prepare(
       "UPDATE deployments SET status = ?, status_reason = ?, stopped_at = ?, stop_acked_at = ? " +
-        "WHERE id = ? AND status = ?",
+        "WHERE id = ? AND status = ?" +
+        (opts.unsealedSince !== undefined ? " AND sealed_env IS NULL AND assigned_at = ?" : ""),
     )
-    .bind(status, reason, now, acked, row.id, row.status)
+    .bind(status, reason, now, acked, row.id, row.status, ...(opts.unsealedSince !== undefined ? [opts.unsealedSince] : []))
     .run();
   if ((r.meta?.changes ?? 0) === 0) return false;
   await settleHold(row, now);
@@ -688,6 +700,24 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
     if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", "volume purge requested");
   }
   return { ok: true };
+}
+
+/** Abandon an endpoint: every live replica and the parent fail and their holds come back. Returns the rows ended. */
+export async function failEndpoint(parentId: string, reason: string, now = Date.now()): Promise<number> {
+  const ended = (r: DeploymentRow) => r.status === "stopped" || r.status === "failed";
+  let n = 0;
+  for (const r of (await replicasOf([parentId])).get(parentId) ?? []) {
+    if (ended(r)) continue;
+    if (await endDeployment(r, "failed", reason, { acked: false, level: "error", now })) {
+      n++;
+      continue;
+    }
+    const fresh = await getDeploymentRow(r.id);
+    if (fresh && !ended(fresh) && (await endDeployment(fresh, "failed", reason, { acked: false, level: "error", now }))) n++;
+  }
+  const parent = await getDeploymentRow(parentId);
+  if (parent && !ended(parent) && (await endDeployment(parent, "failed", reason, { acked: true, level: "error", now }))) n++;
+  return n;
 }
 
 /** Stop every live replica of an endpoint; one that changed state meanwhile is re-read and stopped again. */

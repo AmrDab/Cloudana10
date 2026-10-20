@@ -608,7 +608,7 @@ describe("replicas and the owner's money under concurrency (SECURITY_AUDIT F10)"
     expect(messages.some((m: string) => m.includes("served before the re-queue"))).toBe(false);
   });
 
-  it("a replica whose secrets were never sealed goes back to the queue after a day, never to `failed`: the endpoint keeps its replicas", async () => {
+  it("a replica never sealed goes back to the queue after a day, refused by its node; the third cycle abandons the endpoint", async () => {
     const u = await user();
     const id = (await (await create(u.jwt, { ...ENDPOINT, expectsSecrets: true })).json()).id as string;
     const a = await relayGpuNode();
@@ -616,20 +616,40 @@ describe("replicas and the owner's money under concurrency (SECURITY_AUDIT F10)"
     expect(await beat(a)).toEqual([]);
     expect(await beat(b)).toEqual([]);
     const [r1, r2] = await replicas(id);
-    expect(await row(r2.id)).toMatchObject({ status: "assigned" });
+    const holder = (await row(r2.id))!.node === addr(a) ? a : b;
     const held = (await getBalanceUcld(u.addr)).heldUcld;
-    await getD1().prepare("UPDATE deployments SET assigned_at = assigned_at - ? WHERE id = ?").bind(24 * 3_600_000 + 60_000, r2.id).run();
+    const age = () => getD1().prepare("UPDATE deployments SET assigned_at = assigned_at - ? WHERE id = ?").bind(24 * 3_600_000 + 60_000, r2.id).run();
+    await age();
     await runDutiesCron();
-    expect(await row(r2.id)).toMatchObject({ status: "queued", node: null, held_ucld: 5400, status_reason: "secrets were not sealed within 24 h of assignment" });
+    const reason = `refused by node ${addr(holder)}: secrets were not sealed within 24 h of assignment`;
+    expect(await row(r2.id)).toMatchObject({ status: "queued", node: null, held_ucld: 5400, start_attempts: 1, status_reason: reason });
     expect(await row(r1.id)).toMatchObject({ status: "assigned" });
     expect((await getBalanceUcld(u.addr)).heldUcld).toBe(held); // nothing released: the replica is still wanted
-    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
-    expect(got.deployment.replicas.map((r: any) => r.status).sort()).toEqual(["assigned", "queued"]);
-    expect(got.events.map((e: any) => e.message)).toContain("llm #2: secrets were not sealed within 24 h of assignment — re-queued");
-    // A node takes it again and waits for the seal.
+    let got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.events.map((e: any) => e.message)).toContain(`llm #2: ${reason} — re-queued`);
+    // The node that sat on it is owed a stop and does not claim it straight back; a fresh node takes it and waits.
+    expect(await beat(holder)).toEqual([expect.objectContaining({ id: r2.id, action: "stop" })]);
+    expect(await row(r2.id)).toMatchObject({ status: "queued" });
     const c = await relayGpuNode();
     expect(await beat(c)).toEqual([]);
     expect(await row(r2.id)).toMatchObject({ status: "assigned", node: addr(c) });
+    got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
     expect(byIdOf(got).get(r2.id).awaitingSecrets).toBe(true);
+    // Second cycle: back again. Third: nobody is coming — the endpoint is abandoned and every hold comes back.
+    await age();
+    await runDutiesCron();
+    expect(await row(r2.id)).toMatchObject({ status: "queued", start_attempts: 2 });
+    const d = await relayGpuNode();
+    expect(await beat(d)).toEqual([]);
+    expect(await row(r2.id)).toMatchObject({ status: "assigned", node: addr(d) });
+    await age();
+    await runDutiesCron();
+    const abandoned = "secrets were not sealed within 24 h of assignment, 3 times — endpoint abandoned";
+    expect(await row(r2.id)).toMatchObject({ status: "failed", status_reason: abandoned, held_ucld: 0 });
+    expect(await row(r1.id)).toMatchObject({ status: "failed", status_reason: abandoned, held_ucld: 0 });
+    expect(await row(id)).toMatchObject({ status: "failed" });
+    expect((await getBalanceUcld(u.addr)).heldUcld).toBe(0);
+    got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment.status).toBe("failed");
   });
 });

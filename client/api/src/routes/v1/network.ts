@@ -66,7 +66,8 @@ const STATS_SQL = `SELECT
   (SELECT COALESCE(SUM(amount_ucld), 0) FROM reward_entries WHERE lane IN ('A','B','treasury') AND status != 'clawed') AS mintedUcld,
   (SELECT COALESCE(SUM(w.price_ucld), 0) FROM work_jobs w WHERE w.status = 'done'
      AND EXISTS (SELECT 1 FROM reward_entries r WHERE r.job_id = w.id AND r.status != 'clawed'))
-    + (SELECT COALESCE(SUM(fee_ucld), 0) FROM deployment_bills) AS burnedUcld,
+    + (SELECT COALESCE(SUM(b.fee_ucld), 0) FROM deployment_bills b
+         WHERE EXISTS (SELECT 1 FROM reward_entries r WHERE r.job_id = b.id AND r.status != 'clawed')) AS burnedUcld,
   (SELECT COUNT(DISTINCT session) FROM verify_verdicts WHERE created_at >= ?2) AS verifiersToday,
   (SELECT COUNT(*) FROM deployments WHERE status = 'running') AS deploymentsRunning,
   (SELECT COALESCE(SUM(json_array_length(json_extract(n.manifest_json, '$.gpus'))), 0) FROM nodes n

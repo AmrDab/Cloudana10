@@ -142,3 +142,35 @@ describe("no reward without a captured fee", () => {
     expect((await ledgerSummary(payout.address)).pending).toEqual({ A: 949, B: 40, treasury: 0 }); // unchanged
   });
 });
+
+describe("two submits in the same millisecond", () => {
+  it("capture the fee once and write the rewards once: the second answers 409 and moves no money", async () => {
+    const q = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
+    if (!q.ok) throw new Error(q.message);
+    // A second job of the same owner keeps its hold in the pool: a second capture would have something to take.
+    const sibling = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
+    if (!sibling.ok) throw new Error(sibling.message);
+    const a = await assignment();
+    expect(a.jobId).toBe(q.jobId);
+    const { certificate, result } = solveAssignedJob(a.sigma, A, B, n, nodeAddr, "dev");
+    const before = await getBalanceUcld(user);
+    const rewards = async () => (await getD1().prepare("SELECT COUNT(*) AS c FROM reward_entries WHERE job_id = ?").bind(q.jobId).first<{ c: number }>())!.c;
+    // Workers freeze Date.now() between I/O events, so a node firing twice gets the same `now` on both batches.
+    // Both submits read the job as assigned before either batch runs (concurrent requests), then the batches run one
+    // after the other: the second one's own authorisation misses, and nothing else of it may land.
+    const now = Date.now();
+    const [r1, r2] = await Promise.all([
+      submitWork(nodeAddr, { jobId: q.jobId, certificate, result }, now),
+      submitWork(nodeAddr, { jobId: q.jobId, certificate, result }, now),
+    ]);
+    expect([r1.ok, r2.ok].filter(Boolean)).toHaveLength(1);
+    expect([r1, r2].find((r) => !r.ok)).toMatchObject({ ok: false, code: "conflict" });
+    expect(await rewards()).toBeGreaterThan(0);
+    const duplicated = await getD1().prepare("SELECT lane, COUNT(*) AS c FROM reward_entries WHERE job_id = ? GROUP BY lane HAVING c > 1").bind(q.jobId).all();
+    expect(duplicated.results ?? []).toEqual([]);
+    const after = await getBalanceUcld(user);
+    expect(before.heldUcld - after.heldUcld).toBe(1001); // one capture: the sibling's hold is still there
+    expect(after.heldUcld).toBeGreaterThanOrEqual(1001);
+    expect(after.balanceUcld).toBe(before.balanceUcld);
+  });
+});

@@ -72,7 +72,7 @@ containers/workstations/endpoints → fleet nodes that announced `container` (an
 CPU/RAM/GPU against the manifest minus a host reserve, ≤ 5 per node, relay nodes only for relayed kinds, public-host
 nodes only for direct workstations, agents ≥ 1.5.0 for anything carrying secrets, no sibling replica on the same node,
 and never a node that just refused the row. Outcomes are recorded as `deployment_events` and (for jobs) as the draw
-record, published signed at `GET /v1/draws/{id}` (seed, eligible set without wallets, σ once done).
+record, published signed at `GET /v1/draws/{id}` (seed, eligible set with a keyed operator id in place of wallets, σ once done).
 
 **Pricing** (`pricing.service.ts`): nano-USD per tera-MAC moved hourly by a utilization controller (±2 %, hold when
 idle, floor/ceiling around a 30-day EMA), converted at the reference rate; quotes lock for 5 minutes. Hosting and

@@ -125,7 +125,7 @@ export async function recordJobRewards(input: {
  */
 export function jobRewardStatements(
   input: { jobId: string; workType: string; provider: string; feeUcld: number; clusterOk: boolean; now?: number },
-  cond: { capturedAt: number },
+  cond: { capturedAt: number; node: string },
 ): { statements: D1PreparedStatement[]; rewards: JobRewards } {
   const env = getEnv();
   const now = input.now ?? Date.now();
@@ -145,9 +145,9 @@ export function jobRewardStatements(
       db
         .prepare(
           "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
-            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ? WHERE EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ?)",
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ? WHERE EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ? AND status = 'assigned' AND node = ?)",
         )
-        .bind(crypto.randomUUID(), input.jobId, epoch, address, lane, input.workType, amount, vests, now, input.jobId, cond.capturedAt),
+        .bind(crypto.randomUUID(), input.jobId, epoch, address, lane, input.workType, amount, vests, now, input.jobId, cond.capturedAt, cond.node),
     );
   return { statements, rewards: { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch } };
 }

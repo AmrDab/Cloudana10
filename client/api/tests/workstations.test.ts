@@ -421,13 +421,42 @@ describe("connect and hours", () => {
     const messages = (mine.events as { message: string }[]).map((e) => e.message);
     expect(messages).toEqual(expect.arrayContaining(["running (web ready · ssh ready) — see ?token=…", "web endpoint changed", "ssh endpoint changed"]));
     expect(JSON.stringify(mine.events)).not.toMatch(/t0k|4203[5-8]/);
-    // An event written before this (or any node text that slipped through) still never reaches an API key.
+    // Events written before this (or any node text that slipped through) still never reach an API key: by shape, not
+    // by the row's current values — an old ssh host, a custom token query name, a URL of any kind.
+    expect((await report(node, web, { status: "running", endpoint: "http://127.0.0.1:42037/lab?token=t0k-2", sshEndpoint: "127.0.0.1:42039" })).status).toBe(200);
     await addEvent(web, "info", "running at http://127.0.0.1:42037/lab?token=t0k-2 · ssh 127.0.0.1:42038");
+    await addEvent(web, "info", "ssh 127.0.0.1:42038 is up");
+    await addEvent(web, "info", "open with access_token=zzz or api_key=yyy");
     const key = (await (await authed(u.jwt, "POST", "/v1/keys", { name: "monitor", scopes: ["read"] })).json()).key.token as string;
     const viaKey = await (await authed(key, "GET", `/v1/deployments/${web}`)).json();
-    expect(JSON.stringify(viaKey)).not.toMatch(/t0k|4203[5-8]/);
-    expect(viaKey.events.length).toBe(messages.length); // only the planted event is dropped
+    expect(JSON.stringify(viaKey)).not.toMatch(/t0k|4203[5-9]|zzz|yyy/);
+    expect(viaKey.events.length).toBe(messages.length + 1); // the three planted events are dropped; "ssh endpoint changed" stays
     expect(JSON.stringify((await detail(u.jwt, web)).events)).toContain("t0k-2"); // the owner's session still sees it
+  });
+
+  it("a workstation spec refuses expectsSecrets (a start held for a seal that can never land); false is dropped", async () => {
+    const u = await user();
+    const res = await create(u.jwt, WS({ gpu: { count: 0 }, expectsSecrets: true } as Partial<WorkstationSpec>));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toMatch(/workstations take no sealed secrets/);
+    const id = await createId(u.jwt, WS({ gpu: { count: 0 }, expectsSecrets: false } as Partial<WorkstationSpec>));
+    expect(JSON.parse((await row(id))!.spec_json)).not.toHaveProperty("expectsSecrets");
+  });
+
+  it("a key gets neither a workstation's failure log tail nor its logs route (an image may print its token)", async () => {
+    const u = await user();
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
+    const web = await running(node, u.jwt, WS({ gpu: { count: 0 } }), { endpoint: "http://127.0.0.1:42041", webToken: "k3y-cannot-see" });
+    await getD1().prepare("UPDATE deployments SET last_logs = ? WHERE id = ?").bind("[I] Jupyter at http://127.0.0.1:42041/lab?token=k3y-cannot-see", web).run();
+    expect((await detail(u.jwt, web)).deployment.logs).toContain("k3y-cannot-see");
+    const key = (await (await authed(u.jwt, "POST", "/v1/keys", { name: "monitor", scopes: ["read"] })).json()).key.token as string;
+    const viaKey = await (await authed(key, "GET", `/v1/deployments/${web}`)).json();
+    expect(viaKey.deployment.logs).toBeUndefined();
+    expect(JSON.stringify(viaKey)).not.toContain("k3y-cannot-see");
+    const logs = await authed(key, "GET", `/v1/deployments/${web}/logs`);
+    expect(logs.status).toBe(403);
+    expect((await logs.json()).error.message).toMatch(/wallet session/);
+    expect((await authed(u.jwt, "GET", `/v1/deployments/${web}/logs`)).status).not.toBe(403);
   });
 
   it("PATCH /secrets refuses workstations, for the owner and for a deployments-scoped key: nothing is injected into one", async () => {

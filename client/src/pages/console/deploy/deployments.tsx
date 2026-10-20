@@ -80,7 +80,10 @@ async function sealNow(id: string, nodePubkey: string, node: string | null) {
 
 /** Polls one deployment until a node is assigned, then seals its pending secrets to that node's key. Renders nothing. */
 function Sealer({ id }: { id: string }) {
-  const q = useDeployment(id, 2_000);
+  // Polls only while there is something to seal: once the seal went out (or can never go out) it stops, and the
+  // plaintext is dropped — a container that is already running will never take it.
+  const [active, setActive] = useState(true);
+  const q = useDeployment(id, active ? 2_000 : false);
   const started = useRef(false);
   const dep = q.data?.deployment;
   const pub = q.data?.nodePubkey;
@@ -89,10 +92,12 @@ function Sealer({ id }: { id: string }) {
     if (dep.status !== "queued" && dep.status !== "assigned") {
       started.current = true;
       autoSeal.delete(id);
+      clearPendingSecrets(id);
+      setActive(false);
       setSealState(id, { phase: "error", message: `The deployment is ${dep.status}; secrets can only be sealed before it starts.` });
     } else if (pub) {
       started.current = true;
-      void sealNow(id, pub, dep.node);
+      void sealNow(id, pub, dep.node).finally(() => setActive(false));
     } else if (!getSealState(id)) {
       setSealState(id, { phase: "waiting" });
     }

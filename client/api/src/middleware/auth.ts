@@ -3,7 +3,7 @@
  *
  * Two bearer credentials share `Authorization: Bearer …`:
  *  - a wallet session token: HS256 JWT, JWT_TTL_SECONDS long, with a random `jti`. Minted by POST /v1/auth/login,
- *    ended by POST /v1/auth/logout (a KV revocation list keyed by jti, kept until the token would have expired).
+ *    ended by POST /v1/auth/logout (a D1 revocation list keyed by jti, kept until the token would have expired).
  *    Verification accepts JWT_SECRET and, during a rotation, JWT_SECRET_PREVIOUS, so a secret can change without
  *    signing everyone out;
  *  - a developer API key `cld_sk_…` (services/api-keys.service.ts): scoped, revocable, hashed at rest. It never
@@ -12,11 +12,11 @@
 import type { Context, Next } from "hono";
 import { createMiddleware } from "hono/factory";
 import { sign, verify } from "hono/jwt";
-import { getKV } from "../lib/storage.js";
+import { getD1 } from "../lib/storage.js";
 import { normalizeAddress, type HexAddress } from "../lib/eth.js";
 import { getEnv } from "../config/env.js";
 import { fail } from "../lib/http.js";
-import { API_KEY_PREFIX, authenticateApiKey, scopeFor, type Scope } from "../services/api-keys.service.js";
+import { API_KEY_PREFIX, KeyStoreUnavailable, authenticateApiKey, scopeFor, type Scope } from "../services/api-keys.service.js";
 
 /** Hono `Variables` type for routers whose handlers read the verified caller. */
 export type AuthVariables = { jwtPayload: JWTPayload };
@@ -48,7 +48,15 @@ export class RevocationUnavailable extends Error {
 /** Resolve a bearer credential to its caller, or the reason it is refused. `method`/`path` decide an API key's scope. */
 export async function resolveBearer(token: string, method: string, path: string): Promise<{ payload: JWTPayload } | { error: AuthFailure }> {
   if (token.startsWith(API_KEY_PREFIX)) {
-    const caller = await authenticateApiKey(token);
+    let caller: Awaited<ReturnType<typeof authenticateApiKey>>;
+    try {
+      caller = await authenticateApiKey(token);
+    } catch (err) {
+      if (err instanceof KeyStoreUnavailable) {
+        return { error: { code: "service_unavailable", message: "The API-key store cannot be read right now; retry in a few seconds (the key was not refused)" } };
+      }
+      throw err;
+    }
     if (!caller) return { error: { code: "unauthorized", message: "Unknown, expired or revoked API key" } };
     const need = scopeFor(method, path);
     if (!need) return { error: { code: "forbidden", message: "This endpoint needs a wallet session, not an API key" } };
@@ -156,15 +164,16 @@ export async function generateToken(walletAddress: string, role: JWTPayload["rol
 }
 
 // ─── Session revocation (POST /v1/auth/logout) ──────────────────────────────
-// Keyed by jti in KV for the token's remaining lifetime; in memory when KV is not bound (unit tests). KV is
-// eventually consistent across colos (about a minute); in the colo that revoked, immediate.
+// Keyed by jti in D1 (`revoked_tokens`) for the token's remaining lifetime: one shared list every isolate reads
+// with the request's other D1 work — immediate everywhere, and never against the KV quota (a day of console polls
+// and node heartbeats exhausted the free tier's KV reads, which used to turn into a 503 for every wallet session).
+// In memory when no storage is bound (unit tests).
 
 const revokedMemory = new Map<string, number>();
-const revokedKey = (jti: string) => `revoked:${jti}`;
-/** The bound KV namespace, or null when none is bound (unit tests, bare runtimes): then the list is per process. */
-function boundKV(): KVNamespace | null {
+/** The bound D1, or null when none is bound (unit tests): then the lists are per process. */
+function boundD1(): D1Database | null {
   try {
-    return getKV();
+    return getD1();
   } catch {
     return null;
   }
@@ -176,12 +185,17 @@ function boundKV(): KVNamespace | null {
  */
 export async function revokeToken(payload: Pick<JWTPayload, "jti" | "exp">): Promise<boolean> {
   if (!payload.jti) return false;
-  const ttl = Math.max(60, payload.exp - Math.floor(Date.now() / 1000));
-  revokedMemory.set(payload.jti, Date.now() + ttl * 1000);
-  const kv = boundKV();
-  if (!kv) return true;
+  const expiresAt = Math.max(Date.now() + 60_000, payload.exp * 1000);
+  const db = boundD1();
+  if (!db) {
+    revokedMemory.set(payload.jti, expiresAt);
+    return true;
+  }
   try {
-    await kv.put(revokedKey(payload.jti), "1", { expirationTtl: ttl });
+    await db.batch([
+      db.prepare("DELETE FROM revoked_tokens WHERE expires_at <= ?").bind(Date.now()),
+      db.prepare("INSERT INTO revoked_tokens (jti, expires_at) VALUES (?, ?) ON CONFLICT(jti) DO UPDATE SET expires_at = excluded.expires_at").bind(payload.jti, expiresAt),
+    ]);
     return true;
   } catch {
     return false;
@@ -189,19 +203,20 @@ export async function revokeToken(payload: Pick<JWTPayload, "jti" | "exp">): Pro
 }
 
 /**
- * Neither open nor closed: a bound KV that cannot be read makes the check unavailable (the request answers 503), so
- * a blip is never reported as "valid" nor as "revoked" (which would sign every console out and drop unsealed secrets).
+ * Neither open nor closed: a list that cannot be read makes the check unavailable (the request answers 503), so a
+ * blip is never reported as "valid" nor as "revoked" (which would sign every console out and drop unsealed secrets).
  */
 async function isRevoked(jti: string): Promise<boolean> {
-  const until = revokedMemory.get(jti);
-  if (until !== undefined) {
-    if (until > Date.now()) return true;
+  const db = boundD1();
+  if (!db) {
+    const until = revokedMemory.get(jti);
+    if (until !== undefined && until > Date.now()) return true;
     revokedMemory.delete(jti);
+    return false;
   }
-  const kv = boundKV();
-  if (!kv) return false;
   try {
-    return (await kv.get(revokedKey(jti))) !== null;
+    const row = await db.prepare("SELECT 1 AS r FROM revoked_tokens WHERE jti = ? AND expires_at > ?").bind(jti, Date.now()).first<{ r: number }>();
+    return row !== null && row !== undefined;
   } catch {
     throw new RevocationUnavailable();
   }
@@ -231,25 +246,31 @@ function buildSignInMessage(address: HexAddress, nonce: string, issuedAt: string
   return `Cloudana sign-in\nAddress: ${address}\nNonce: ${nonce}\nIssued: ${issuedAt}`;
 }
 
+// Nonces live in D1 (`login_nonces`), like node nonces: one shared store, taken with a single DELETE … RETURNING.
+// (In KV, a put that failed on quota fell back to memory while a get that found nothing did not look there — every
+// sign-in then failed until midnight UTC.) In memory when no storage is bound (unit tests).
 async function nonceStorePut(key: string, value: string): Promise<void> {
-  try {
-    await getKV().put(key, value, { expirationTtl: NONCE_TTL_SEC });
-  } catch {
-    nonceMemory.set(key, { value, expiresAt: Date.now() + NONCE_TTL_SEC * 1000 });
+  const expiresAt = Date.now() + NONCE_TTL_SEC * 1000;
+  const db = boundD1();
+  if (!db) {
+    nonceMemory.set(key, { value, expiresAt });
+    return;
   }
+  await db.batch([
+    db.prepare("DELETE FROM login_nonces WHERE expires_at <= ?").bind(Date.now()),
+    db.prepare("INSERT OR REPLACE INTO login_nonces (key, message, expires_at) VALUES (?, ?, ?)").bind(key, value, expiresAt),
+  ]);
 }
 
 async function nonceStoreTake(key: string): Promise<string | null> {
-  try {
-    const kv = getKV();
-    const value = await kv.get(key);
-    if (value !== null) await kv.delete(key);
-    return value;
-  } catch {
+  const db = boundD1();
+  if (!db) {
     const entry = nonceMemory.get(key);
     nonceMemory.delete(key);
     return entry && entry.expiresAt > Date.now() ? entry.value : null;
   }
+  const row = await db.prepare("DELETE FROM login_nonces WHERE key = ? AND expires_at > ? RETURNING message").bind(key, Date.now()).first<{ message: string }>();
+  return row?.message ?? null;
 }
 
 /** Issue a nonce and the exact message the wallet must sign. */

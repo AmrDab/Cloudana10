@@ -664,3 +664,42 @@ describe("probe endpoint policy", () => {
     expect(endpointAllowed("http://203.0.113.7:42000", false)).toBe(true);
   });
 });
+
+describe("secrets and the node's state", () => {
+  it("a draining node hands back containers waiting for their secrets, and a seal onto a draining node is refused", async () => {
+    const u = await user();
+    const { node, payout } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    expect((await heartbeat(node)).deployments).toEqual([]);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: node.address.toLowerCase() });
+    // The node's state flips first (the row has not moved yet): the seal must not land on a node that is leaving.
+    await getD1().prepare("UPDATE nodes SET state = 'draining' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    const onDraining = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("x"), node: node.address });
+    expect(onDraining.status).toBe(409);
+    expect((await onDraining.json()).error.message).toMatch(/is draining/);
+    expect((await row(id))!.sealed_env).toBeNull();
+    await getD1().prepare("UPDATE nodes SET state = 'active' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    // The owner's drain: what waits for secrets goes back to the queue at once (no start went out).
+    const owner = await generateToken(payout);
+    expect((await authed(owner, "POST", `/v1/nodes/mine/${node.address}/drain`, {})).status).toBe(200);
+    expect(await row(id)).toMatchObject({ status: "queued", node: null, status_reason: `node ${node.address.toLowerCase()} is draining` });
+    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.events.map((e: { message: string }) => e.message)).toContain(`node ${node.address.toLowerCase()} is draining — re-queued`);
+    expect(got.deployment.awaitingSecrets).toBe(true);
+    // Another node takes it; the seal lands there.
+    const { node: next } = await boundNode(["matmul", "hosting", "container"]);
+    expect((await heartbeat(next)).deployments).toEqual([]);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: next.address.toLowerCase() });
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("y"), node: next.address })).status).toBe(200);
+    expect((await heartbeat(next)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("y") })]);
+  });
+
+  it("an explicit expectsSecrets:false is honoured even for a template with secretEnv: the start goes out at once", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const spec = { image: "postgres:16-alpine", ports: [{ container: 5432 }], cpu: 1000, memMb: 1024, storageMb: 10240, expectsSecrets: false };
+    const id = (await (await create(u.jwt, { kind: "container", templateId: "postgresql", spec })).json()).id;
+    expect((await heartbeat(node)).deployments).toEqual([expect.objectContaining({ id, action: "start" })]);
+    expect((await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json()).deployment.awaitingSecrets).toBe(false);
+  });
+});

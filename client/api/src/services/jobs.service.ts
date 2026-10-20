@@ -132,7 +132,17 @@ export type Weighted = Pick<Candidate, "address" | "weight">;
 export interface PublicCandidate extends Weighted {
   operator: string;
 }
-export const operatorId = (payout: string) => sha256(`operator:${normalizeAddress(payout)}`).slice(0, 16);
+/**
+ * Opaque per-operator id: a keyed hash of the payout wallet. The key derives from INSTRUCTION_SIGNING_KEY, so the
+ * epoch leaves (which name payout wallets) cannot be joined back to the eligible set without it; the id only has to
+ * be consistent, not reproducible — the replay groups weight by it and never recomputes it. No key (local stacks):
+ * an unkeyed hash, which the published key then makes mappable.
+ */
+export const operatorId = (payout: string) => {
+  const key = getEnv().INSTRUCTION_SIGNING_KEY;
+  const salt = key ? sha256(`cloudana-operator-id:${key}`) : "";
+  return sha256(`operator:${salt}:${normalizeAddress(payout)}`).slice(0, 16);
+};
 
 function byAddress(a: Weighted, b: Weighted): number {
   return a.address < b.address ? -1 : a.address > b.address ? 1 : 0;
@@ -405,8 +415,8 @@ export async function getDrawRecord(id: string): Promise<DrawRecord | null> {
     sigma: r.status === "done" ? r.sigma : null,
     certZ: r.cert_z,
     // A job that failed for good keeps its node (see submitWork), so its draw stays replayable: the record still says
-    // who was drawn, and that they failed.
-    replayable: !!eligible && !!r.seed_source && !r.seed_source.startsWith("local:"),
+    // who was drawn, and that they failed. Rows failed before that change have no node: nothing to replay against.
+    replayable: !!r.node && !!eligible && !!r.seed_source && !r.seed_source.startsWith("local:"),
   };
 }
 
@@ -492,7 +502,7 @@ export async function submitWork(
   const owner = normalizeAddress(job.owner);
   const { statements: rewardStmts, rewards: split } = jobRewardStatements(
     { jobId: job.id, workType: job.work_type, provider: nodeRow.payout, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now },
-    { capturedAt: now },
+    { capturedAt: now, node },
   );
   const results = await db.batch([
     db
@@ -504,9 +514,11 @@ export async function submitWork(
     db
       .prepare(
         "UPDATE balances SET held_ucld = held_ucld - ?, updated_at = ? WHERE address = ? AND held_ucld >= ? " +
-          "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ?)",
+          // `status = 'assigned'` as well: two submits in the same millisecond share `now`, and the second one's
+          // capture must not ride on the first one's authorisation (its own first statement missed).
+          "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ? AND status = 'assigned' AND node = ?)",
       )
-      .bind(job.price_ucld, new Date(now).toISOString(), owner, job.price_ucld, job.id, now),
+      .bind(job.price_ucld, new Date(now).toISOString(), owner, job.price_ucld, job.id, now, node),
     ...rewardStmts,
     db
       .prepare("UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ? WHERE id = ? AND status = 'assigned' AND node = ?")

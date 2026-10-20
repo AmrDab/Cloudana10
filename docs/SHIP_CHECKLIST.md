@@ -36,7 +36,7 @@ Decided 2026-10 in [DECISIONS_CONSENSUS.md](DECISIONS_CONSENSUS.md) (owner: "do 
 - [ ] Decide which `/control/legacy/*` pages survive; remove the rest (their vocabulary is marketplace-era).
 
 ## 2. Secrets and environment
-- [ ] Worker secrets: `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_KEY`, `INSTRUCTION_SIGNING_KEY` (not a chain key),
+- [x] Worker secrets (all five set 2026-10-18 — never set again by hand; `set-api-secrets.mjs` skips existing ones and `--rotate NAME` is the only way to replace one, see DEPLOYMENT_RUNBOOK §1): `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_KEY`, `INSTRUCTION_SIGNING_KEY` (not a chain key),
       `STORAGE_KEK`, `RELAY_TICKET_SECRET`, `PINATA_JWT` (rotated). Worker vars (`wrangler.toml`; names are the ones
       `client/api/src/config/env.ts` reads — anything else is silently ignored): `CHAIN_RPC_URL`, `SETTLEMENT_ADDRESS`,
       `USD_PER_CLD`, `PRICE_NUSD_PER_TMAC`, `BASE_FEE_USD`, `PRICE_CONTROLLER`, `EPOCH_SECONDS=3600`,

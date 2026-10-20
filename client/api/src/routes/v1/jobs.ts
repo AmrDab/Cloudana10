@@ -115,7 +115,7 @@ const getJobRoute = createRoute({
 const CandidateSchema = z.object({
   address: z.string(),
   weight: z.number(),
-  operator: z.string().openapi({ description: "Opaque per-operator id (sha256 of the payout wallet, 16 hex): shows how weight is spread over operators without naming wallets" }),
+  operator: z.string().openapi({ description: "Opaque per-operator id (a keyed hash of the payout wallet, 16 hex; the key is the orchestrator's): shows how weight is spread over operators. Consistent, not reversible, and not needed for the replay" }),
 });
 const drawRoute = createRoute({
   method: "get",
@@ -165,7 +165,9 @@ jobsRouter.openapi(drawRoute, async (c) => {
   const d = await getDrawRecord(c.req.valid("param").id);
   if (!d) return fail(c, "not_found", "job not found");
   const { status: jobStatus, ...rest } = d;
-  const body = { draw: { ...rest, jobStatus, replay: d.eligible ? replayDraw(d) : null } };
+  // No node on record (a job failed before failed rows kept theirs): nothing to replay against, and `replayable`
+  // says so — the record must not read as a rigged draw.
+  const body = { draw: { ...rest, jobStatus, replay: d.eligible && d.node ? replayDraw(d) : null } };
   return ok(c, { ...body, signature: await signPublic(body, Date.now()) });
 });
 

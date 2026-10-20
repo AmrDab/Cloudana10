@@ -119,19 +119,6 @@ export function clearPendingSecrets(id: string) {
 export const autoSeal = new Set<string>();
 
 export type SealState = { phase: "waiting" | "sealing" | "sealed" | "error"; node?: string; message?: string; at?: number };
-/** Deployment ids with plaintext still in this tab (survives a reload; sealers mount for them). */
-export function pendingSecretIds(): string[] {
-  const out: string[] = [];
-  try {
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const k = sessionStorage.key(i);
-      if (k?.startsWith("cld.secrets.")) out.push(k.slice("cld.secrets.".length));
-    }
-  } catch {
-    /* no storage */
-  }
-  return out;
-}
 const sealStates = new Map<string, SealState>();
 const listeners = new Set<() => void>();
 let version = 0;

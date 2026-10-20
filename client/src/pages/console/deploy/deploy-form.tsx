@@ -104,6 +104,9 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
             image: image.trim(),
             ...(d.command.length ? { command: d.command } : {}),
             ...(Object.keys(plain).length ? { env: plain } : {}),
+            // Secret rows are sealed to the node after assignment (Sealer): the start waits for them. Sent explicitly
+            // either way, so a template's secretEnv does not make a container wait when nothing was marked secret.
+            expectsSecrets: Object.keys(secrets).length > 0,
             ports: portList.map((p) => ({ container: p, protocol: "tcp" as const })),
             ...SIZES[size],
           };

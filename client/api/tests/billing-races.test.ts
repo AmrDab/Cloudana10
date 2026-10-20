@@ -143,6 +143,35 @@ describe("hosting bills under concurrency", () => {
     expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 10_000 - fee, heldUcld: 0 }); // one hour paid, nothing held for ever
   });
 
+  it("out of credits while another node claimed the row mid-bill: the end follows the row, nothing runs on with nothing held", async () => {
+    const { u, node, id, fee } = await siteWithHourDue();
+    await getD1().prepare("UPDATE balances SET balance_ucld = 0 WHERE address = ?").bind(u.addr).run(); // cannot cover the next hour
+    const other = "0x" + "99".repeat(20);
+    trap.fn = async () => {
+      // Between the claim and the re-hold, a dead-node re-queue and another node's claim moved the row.
+      await getD1().prepare("UPDATE deployments SET status = 'assigned', node = ?, last_billed_at = NULL, held_ucld = 0 WHERE id = ?").bind(other, id).run();
+    };
+    expect((await signed(node, "/v1/nodes/heartbeat")).status).toBe(200);
+    expect(await bills(id)).toBe(1); // the hour served was captured
+    expect(await row(id)).toMatchObject({ status: "stopped", status_reason: "out of credits", node: other, held_ucld: 0, stop_acked_at: null });
+    expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 0, heldUcld: 0 });
+  });
+
+  it("a running row found with nothing held for a due hour is held again, then billed — never skipped for ever", async () => {
+    const { u, node, id, fee } = await siteWithHourDue();
+    // A race left the row running with no hold at all (what the claims above now prevent; here forced).
+    await getD1().prepare("UPDATE deployments SET held_ucld = 0 WHERE id = ?").bind(id).run();
+    await getD1().prepare("UPDATE balances SET held_ucld = 0 WHERE address = ?").bind(u.addr).run();
+    expect((await signed(node, "/v1/nodes/heartbeat")).status).toBe(200);
+    expect(await bills(id)).toBe(0);
+    expect(await row(id)).toMatchObject({ status: "running", held_ucld: fee });
+    expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 10_000 - 2 * fee, heldUcld: fee });
+    expect(await events(u.jwt, id)).toContain(`warn: the hour's hold was missing — ${fee} µCLD held again`);
+    expect((await signed(node, "/v1/nodes/heartbeat")).status).toBe(200); // the due hour is billed now
+    expect(await bills(id)).toBe(1);
+    expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: 10_000 - 3 * fee, heldUcld: fee });
+  });
+
   it("an hour whose hold is missing is reported as not charged — never as billed — and nothing is paid out for it", async () => {
     const { u, node, id, fee } = await siteWithHourDue();
     // The pool no longer holds the hour (a state the claims above make unreachable; here forced).

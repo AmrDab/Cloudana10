@@ -32,6 +32,7 @@ import {
   chargeHour,
   unchargedHour,
   endDeployment,
+  failEndpoint,
   getDeploymentRow,
   type DeploymentRow,
 } from "./deployments.service.js";
@@ -90,7 +91,7 @@ export const DEAD_NODE_FACTOR = 3;
  * owed a "stop" (deployment_stale_nodes) in case it comes back still serving. Secrets were sealed to
  * the old node's key, so they are cleared and the next start waits for the owner to re-seal.
  */
-async function requeueRows(rows: DeploymentRow[], reason: string, now: number, opts: { settleHour?: boolean } = {}): Promise<number> {
+async function requeueRows(rows: DeploymentRow[], reason: string, now: number, opts: { settleHour?: boolean; unsealed?: boolean } = {}): Promise<number> {
   const db = getD1();
   let requeued = 0;
   for (const row of rows) {
@@ -106,9 +107,11 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number, o
           "assigned_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ?" +
           (settle ? ", held_ucld = 0" : "") +
           " WHERE id = ? AND status = ? AND node = ?" +
-          (settle ? " AND held_ucld = ? AND last_billed_at IS ?" : ""),
+          (settle ? " AND held_ucld = ? AND last_billed_at IS ?" : "") +
+          // A row re-queued for never being sealed: only while that is still so (a seal that just landed stays).
+          (opts.unsealed ? " AND sealed_env IS NULL AND assigned_at = ?" : ""),
       )
-      .bind(reason, spec, row.id, row.status, row.node, ...(settle ? [row.held_ucld, row.last_billed_at] : []))
+      .bind(reason, spec, row.id, row.status, row.node, ...(settle ? [row.held_ucld, row.last_billed_at] : []), ...(opts.unsealed ? [row.assigned_at] : []))
       .run();
     if ((r.meta?.changes ?? 0) === 0) continue;
     requeued++;
@@ -148,14 +151,38 @@ async function settleElapsed(row: DeploymentRow, now: number): Promise<void> {
     if ((r.meta?.changes ?? 0) === 0) await release(row.owner, full); // ended meanwhile: nothing will settle it
     return;
   }
-  // The owner cannot cover the next hour: the rest of the hold goes back and the (already re-queued) row ends.
+  // The owner cannot cover the next hour: the rest of the hold goes back and the (already re-queued) row ends — even
+  // when another node claimed it in between: a row that ran on with nothing held would never be billed again.
   const remaining = full - charged;
   const r = await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status = 'queued'").bind(remaining, row.id).run();
   if ((r.meta?.changes ?? 0) === 0) {
     if (remaining > 0) await release(row.owner, remaining);
+    await endFresh(row.id, "out of credits", now);
     return;
   }
-  await endDeployment({ ...row, status: "queued", node: null, last_billed_at: null, held_ucld: remaining }, "stopped", "out of credits", { acked: true, level: "warn", now });
+  if (!(await endDeployment({ ...row, status: "queued", node: null, last_billed_at: null, held_ucld: remaining }, "stopped", "out of credits", { acked: true, level: "warn", now }))) {
+    await endFresh(row.id, "out of credits", now);
+  }
+}
+
+/** The row moved (another node claimed it) between a claim and the end: end whatever it is now, never leave it running on nothing. */
+async function endFresh(id: string, reason: string, now: number): Promise<void> {
+  const fresh = await getDeploymentRow(id);
+  if (!fresh || fresh.status === "stopped" || fresh.status === "failed") return;
+  await endDeployment(fresh, "stopped", reason, { acked: false, level: "warn", now });
+}
+
+/**
+ * A node that begins draining hands back the containers waiting for their secrets on it: no start went out, and the
+ * owner would otherwise seal to a node that is leaving (the seal itself is refused on a non-active node).
+ */
+export async function requeueAwaitingSecrets(node: string, reason: string, now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare("SELECT * FROM deployments WHERE node = ? AND status = 'assigned' AND sealed_env IS NULL")
+    .bind(normalizeAddress(node))
+    .all<DeploymentRow>();
+  const waiting = (rows.results ?? []).filter(awaitingSecrets);
+  return waiting.length ? requeueRows(waiting, reason, now, { unsealed: true }) : 0;
 }
 
 /** G1: re-queue live deployments whose node went offline (all of them, or one owner's). */
@@ -198,13 +225,25 @@ export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
       if (row.assigned_at! <= now - limit) {
         const hours = Math.round(limit / 3_600_000);
         if (row.parent_id) {
-          // An endpoint replica is never failed for good: nothing would replace it, and the endpoint would run short
-          // one replica while priced for all. It goes back to the queue (the slot is freed) and waits to be sealed
-          // once a node takes it again.
-          n += await requeueRows([row], `secrets were not sealed within ${hours} h of assignment`, now);
+          // An endpoint replica is not failed on its own (nothing would replace it; the endpoint would run short one
+          // replica while priced for all): it goes back to the queue, refused by this node so it is not claimed
+          // straight back — for DEPLOY_START_ATTEMPTS cycles. After that the endpoint is abandoned: every replica and
+          // the parent fail and the holds come back to the owner.
+          const cycles = (row.start_attempts ?? 0) + 1;
+          if (cycles >= env.DEPLOY_START_ATTEMPTS) {
+            n += await failEndpoint(row.parent_id, `secrets were not sealed within ${hours} h of assignment, ${cycles} times — endpoint abandoned`, now);
+            continue;
+          }
+          const bumped = await db
+            .prepare("UPDATE deployments SET start_attempts = ? WHERE id = ? AND status = 'assigned' AND node = ? AND sealed_env IS NULL AND COALESCE(start_attempts, 0) = ?")
+            .bind(cycles, row.id, row.node, cycles - 1)
+            .run();
+          if ((bumped.meta?.changes ?? 0) === 0) continue;
+          n += await requeueRows([row], `${nodeRefusalPrefix(row.node!)} secrets were not sealed within ${hours} h of assignment`, now, { unsealed: true });
           continue;
         }
-        const ended = await endDeployment(row, "failed", `secrets were not sealed within ${hours} h of assignment`, { acked: false, level: "error", now });
+        // Only while still unsealed: a seal that lands between this read and the write is not failed.
+        const ended = await endDeployment(row, "failed", `secrets were not sealed within ${hours} h of assignment`, { acked: false, level: "error", now, unsealedSince: row.assigned_at! });
         if (ended) n++;
       }
       continue;
@@ -757,7 +796,21 @@ async function bill(node: string, now: number): Promise<void> {
         .prepare("UPDATE deployments SET held_ucld = 0, last_billed_at = ? WHERE id = ? AND status = 'running' AND last_billed_at = ? AND held_ucld = ?")
         .bind(next, row.id, row.last_billed_at, fee)
         .run();
-      if ((claimed.meta?.changes ?? 0) === 0) break;
+      if ((claimed.meta?.changes ?? 0) === 0) {
+        // Nothing held for a due hour on a running row (a race left it so): hold the hour now, or end the row —
+        // never let it run on with nothing held, which this claim would otherwise skip for ever.
+        const fresh = await getDeploymentRow(row.id);
+        if (fresh && fresh.status === "running" && fresh.node === node && fresh.held_ucld === 0 && fresh.last_billed_at === row.last_billed_at) {
+          if (await hold(fresh.owner, fee)) {
+            const r = await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status = 'running'").bind(fee, fresh.id).run();
+            if ((r.meta?.changes ?? 0) === 0) await release(fresh.owner, fee);
+            else await addEvent(fresh.id, "warn", `the hour's hold was missing — ${fee} µCLD held again`, now);
+          } else {
+            await endDeployment(fresh, "stopped", "out of credits", { acked: false, level: "warn", now });
+          }
+        }
+        break;
+      }
       const paid = await chargeHour(row, fee, now);
       await addEvent(row.id, paid ? "info" : "warn", paid ? `billed ${fee} µCLD for one hour` : unchargedHour(fee), now);
       if (await hold(row.owner, fee)) {
@@ -773,7 +826,9 @@ async function bill(node: string, now: number): Promise<void> {
         }
         row = { ...row, last_billed_at: next, held_ucld: fee };
       } else {
-        await endDeployment({ ...row, last_billed_at: next, held_ucld: 0 }, "stopped", "out of credits", { acked: false, level: "warn", now });
+        if (!(await endDeployment({ ...row, last_billed_at: next, held_ucld: 0 }, "stopped", "out of credits", { acked: false, level: "warn", now }))) {
+          await endFresh(row.id, "out of credits", now);
+        }
         break;
       }
     }

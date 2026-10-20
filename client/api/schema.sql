@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   created_at INTEGER, completed_at INTEGER,
   attempts INTEGER NOT NULL DEFAULT 0, -- verification failures; 3 → failed, hold released
   artifact TEXT, -- R2 key once a finished job's matrices moved out of D1 (a_json/b_json/result_json then NULL)
-  eligible_json TEXT -- the eligible set the draw ran over (sorted Candidate[]), published for replay at /v1/draws/{id},
+  eligible_json TEXT, -- the eligible set the draw ran over (sorted Candidate[]), published for replay at /v1/draws/{id}
   fee_captured_at INTEGER -- set in the same transaction that captures the fee and writes the rewards (submitWork)
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_status ON work_jobs(status, created_at);
@@ -254,6 +254,12 @@ CREATE TABLE IF NOT EXISTS testnet_claims (key TEXT PRIMARY KEY, at INTEGER NOT 
 -- Node request nonces (middleware/node-auth.ts): INSERT … ON CONFLICT DO NOTHING makes the replay check atomic.
 CREATE TABLE IF NOT EXISTS node_nonces (key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_node_nonces_expires ON node_nonces(expires_at);
+-- Session revocation (POST /v1/auth/logout) and sign-in nonces live in D1, not KV: read with the request's other D1
+-- work, never against the KV quota (middleware/auth.ts).
+CREATE TABLE IF NOT EXISTS revoked_tokens (jti TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);
+CREATE TABLE IF NOT EXISTS login_nonces (key TEXT PRIMARY KEY, message TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_login_nonces_expires ON login_nonces(expires_at);
 -- GPU endpoint keys (docs/V4_ENDPOINTS_CONTRACT.md): the key is shown once at create; only its sha256 is stored.
 CREATE TABLE IF NOT EXISTS endpoint_keys (
   id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL,

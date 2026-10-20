@@ -24,13 +24,13 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | Capability | Class | Proof | Evidence | What blocks class 1 |
 |---|---|---|---|---|
 | Matrix compute jobs (`POST /v1/jobs`, n 8–256), USD quote settled in CLD, hold → capture | 2 | proven | e2e 43 checks; API tests `v1-submit`, `v1-assignment`, `pouw-verify`, `job-ceiling`, `pricing` | a public node (owner step 10); settlement (B-1) |
-| Assignment by weighted random draw, replayable from the signed draw record | 2 | — | `jobs.service.ts`; `public-replay` tests; `scripts/verify/replay.ts` | `CHAIN_RPC_URL` deployed so seeds are block hashes; the eligible set is attested, not pre-committed (B-17) |
-| Provider agent: install, identify, benchmark, bind, heartbeat, signed instructions | 2 | — | agent selftests; image built and signed by CI (1.6.0 publishes on merge to `main`; 1.4.1 is live) | — (first public node live 2026-10-18, agent 1.4.1) |
+| Assignment by weighted random draw, replayable from the signed draw record | 2 | — | `jobs.service.ts`; `public-replay` tests; `scripts/verify/replay.ts` | the eligible set is attested, not pre-committed, and an expired-and-redrawn assignment leaves no trace (B-17) |
+| Provider agent: install, identify, benchmark, bind, heartbeat, signed instructions | 2 | — | agent selftests; image built and signed by CI (1.6.0 live on the first public node since 2026-10-20) | — |
 | Browser verifier (planted tasks, points) | 2 | — | e2e; `verify-feed` tests | — |
-| Containers (curated images) on fleet nodes, hardened | 3 | probed | API tests `deployments`, `workstations`; agent security selftest 94 checks; **no fleet node exists** | a datacenter/owner node with xfs pquota + Docker ≥ 28 |
+| Containers (curated images) on fleet nodes, hardened | 3 | probed | API tests `deployments`, `workstations`; agent security selftest 94 checks; no container-capable fleet node is recorded in these docs (the first public node serves compute, hosting and storage) | a node with xfs pquota + Docker ≥ 28, or the owner's word that one exists |
 | GPU workstations (Jupyter / code-server / desktop), direct mode | 3 | probed · GPU reported by node | `workstations` tests; needs public-IP node (relay has no WebSockets) | a GPU node; relay WebSocket tunnelling |
 | GPU endpoints (bring your own model server), replicas, keys, per-replica sealed secrets from the console | 3 | probed (health) | `endpoints` tests; gateway tests | a GPU fleet node |
-| Container logs on demand (`GET /deployments/{id}/logs`: live through the relay, failure tail otherwise, per-deployment limit) | 2 | — | `deployment-logs` tests; agent ops selftest (20 checks) and relay e2e logs case; console panel browser-tested on the direct-node error path (TEST_EVIDENCE §4b) | relay secret + a node on agent ≥ 1.6.0 |
+| Container logs on demand (`GET /deployments/{id}/logs`: live through the relay, failure tail otherwise, per-deployment limit) | 2 | — | `deployment-logs` tests; agent ops selftest (20 checks) and relay e2e logs case; console panel browser-tested on the direct-node error path (TEST_EVIDENCE §4b) | — (relay and a 1.6.0 node live since 2026-10-20) |
 | Verified inference (teacher-forced checks) | 5 | — | `docs/V4_VERIFIED_SERVICES.md` §4 | reference node, calibration |
 | Edge functions | 5 | — | catalog entry only | — |
 
@@ -38,9 +38,9 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 
 | Capability | Class | Proof | Evidence | What blocks class 1 |
 |---|---|---|---|---|
-| Static sites: upload ≤ 2 MB, served by a node through the relay, content-hash probed, billed per probed hour | 2 | probed | `deployments`, `hosting-gateway` tests; gateway 28 tests; relay e2e selftest | relay secret + gateway on `cloudana.run` + a node (B-1) |
-| Public URL `https://<id>.cloudana.run` with tenant isolation (sandbox CSP for sites, own origin for apps) | 2 | — | gateway tests | gateway deploy |
-| Outbound tunnels for nodes behind NAT (relay) | 2 | — | relay 14 tests + agent relay selftests 69 + e2e 27 | `RELAY_TICKET_SECRET` on api + relay |
+| Static sites: upload ≤ 2 MB, served by a node through the relay, content-hash probed, billed per probed hour | 2 | probed | `deployments`, `hosting-gateway` tests; gateway 28 tests; relay e2e selftest | settlement (B-1); relay, gateway and a node are live since 2026-10-18 |
+| Public URL `https://<id>.cloudana.run` with tenant isolation (sandbox CSP for sites, own origin for apps) | 2 | — | gateway tests | — (live on `cloudana.run` since 2026-10-18) |
+| Outbound tunnels for nodes behind NAT (relay) | 2 | — | relay 14 tests + agent relay selftests 69 + e2e 27 | — (set 2026-10-18) |
 | Report a problem → immediate probe → forgiven time | 2 | probed | `deployments` tests | — |
 | Custom domains, TLS for them | 5 | — | — | B-15 |
 | CDN / edge cache, cache invalidation, ETag beyond origin headers | 5 | — | gateway passes origin cache headers only | B-21 |

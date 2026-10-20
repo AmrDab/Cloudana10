@@ -178,8 +178,14 @@ const listRoute = createRoute({
  */
 function forCaller<T extends object>(auth: string | undefined, d: T): T {
   // A relayed workstation's endpoint is its app path, token included: hidden with the rest.
-  return auth === "key" && "connect" in d ? { ...d, connect: {}, endpoint: null } : d;
+  // The failure log tail goes too: an image that prints its token URL would hand it over.
+  return auth === "key" && "connect" in d ? { ...d, connect: {}, endpoint: null, logs: undefined } : d;
 }
+
+/** Credential-looking `name=value` in free text (any `…token=`, `…key=`, `password=`), not preceded by a word character. */
+const CREDENTIAL_IN_TEXT = /(?<![A-Za-z0-9_])[A-Za-z0-9_]*(token|password|pwd|secret|key)=[^&\s…]/i;
+/** A URL or an ssh host:port: what `connect` hides from a key. */
+const ADDRESS_IN_TEXT = /:\/\/|\bssh \S+:\d+/i;
 
 /**
  * The event log of a workstation names no address since this fix, but events written before it (and node-supplied
@@ -188,8 +194,9 @@ function forCaller<T extends object>(auth: string | undefined, d: T): T {
 function eventsForCaller(auth: string | undefined, row: DeploymentRow, events: DeploymentEvent[]): DeploymentEvent[] {
   if (auth !== "key" || !row.workstation) return events;
   const private_ = [row.endpoint, row.ssh_endpoint, row.web_token].filter((s): s is string => !!s);
-  // (`token=…` is the redacted form the duties write: no value follows, nothing to hide.)
-  return events.filter((e) => !/\b(token|password|pwd|secret|key)=[^&\s…]/i.test(e.message) && !private_.some((s) => e.message.includes(s)));
+  // (`token=…` is the redacted form the duties write: no value follows, nothing to hide.) Older endpoints and ssh
+  // hosts no longer on the row are caught by their shape, not their value.
+  return events.filter((e) => !CREDENTIAL_IN_TEXT.test(e.message) && !ADDRESS_IN_TEXT.test(e.message) && !private_.some((s) => e.message.includes(s)));
 }
 
 /** Cheap per-owner dead-node check, so a deployment does not wait for some node's heartbeat to re-queue it. */
@@ -531,7 +538,13 @@ const logsRoute = createRoute({
 });
 
 deploymentsRouter.openapi(logsRoute, async (c) => {
-  const r = await deploymentLogs(c.get("jwtPayload").sub, c.req.valid("param").id, c.req.valid("query").tail);
+  const { sub, auth } = c.get("jwtPayload");
+  if (auth === "key") {
+    // An image may print its access token at start-up: a workstation's logs are for the wallet session only.
+    const row = await getOwnedRow(sub, c.req.valid("param").id);
+    if (row?.workstation) return fail(c, "forbidden", "workstation logs need a wallet session, not an API key");
+  }
+  const r = await deploymentLogs(sub, c.req.valid("param").id, c.req.valid("query").tail);
   if (!r.ok) return fail(c, r.code, r.message);
   const { ok: _ok, ...body } = r;
   return ok(c, body);

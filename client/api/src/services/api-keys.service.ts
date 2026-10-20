@@ -128,6 +128,14 @@ const CACHE_MAX = 10_000;
 const TOUCH_EVERY_MS = 60_000;
 
 /** The caller behind a `cld_sk_` token, or null (unknown, expired, revoked, or storage unavailable). */
+/** The key store is bound but cannot be read: the caller cannot tell a revoked key from a valid one. */
+export class KeyStoreUnavailable extends Error {
+  constructor() {
+    super("the API-key store cannot be read");
+    this.name = "KeyStoreUnavailable";
+  }
+}
+
 export async function authenticateApiKey(token: string, now = Date.now()): Promise<KeyCaller | null> {
   if (!token.startsWith(API_KEY_PREFIX) || token.length > 128) return null;
   const h = hashKey(token);
@@ -136,11 +144,18 @@ export async function authenticateApiKey(token: string, now = Date.now()): Promi
     await touch(hit, now);
     return hit.caller;
   }
+  let db: D1Database;
+  try {
+    db = getD1();
+  } catch {
+    return null; // no storage bound: there is no key to find
+  }
   let row: Row | null;
   try {
-    row = await getD1().prepare("SELECT * FROM api_keys WHERE hash = ?").bind(h).first<Row>();
+    row = await db.prepare("SELECT * FROM api_keys WHERE hash = ?").bind(h).first<Row>();
   } catch {
-    return null;
+    // Bound but failing: say so (503 upstream) instead of the false "revoked" that signs a client out.
+    throw new KeyStoreUnavailable();
   }
   if (!row || row.revoked_at !== null || (row.expires_at !== null && row.expires_at <= now)) return null;
   const entry = {
