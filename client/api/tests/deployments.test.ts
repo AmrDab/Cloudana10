@@ -559,6 +559,22 @@ describe("start timeout", () => {
     expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
     expect(await row(waiting)).toMatchObject({ status: "assigned", start_attempts: 0 });
     expect(await row(started)).toMatchObject({ status: "queued", start_attempts: 1 });
+
+    // The owner seals after the long wait: the start clock restarts, so the fresh secret is not taken back (and wiped)
+    // a minute later — the node gets a full hour from the seal.
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${waiting}/secrets`, { sealedEnv: sealedV2("late") })).status).toBe(200);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
+    expect(await row(waiting)).toMatchObject({ status: "assigned", start_attempts: 0, sealed_env: sealedV2("late") });
+  });
+
+  it("a successful start resets the start-attempt count", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
+    await heartbeat(node);
+    await getD1().prepare("UPDATE deployments SET start_attempts = 2 WHERE id = ?").bind(id).run();
+    expect((await signed(node, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint: "http://127.0.0.1:42002" })).status).toBe(200);
+    expect(await row(id)).toMatchObject({ status: "running", start_attempts: 0 });
   });
 
   it("a late seal restarts the start clock; secrets never sealed fail the deployment after a day and free the hold", async () => {

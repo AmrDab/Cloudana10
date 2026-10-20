@@ -1,8 +1,8 @@
 # Decisions consensus — October 2026
 
 This is the consensus of a Fable review panel: token economics, payments and demand, operations and security, and a chair who cross-examined the three. The reviewers' condensed reports are in [REVIEW_PANEL_2026-10.md](REVIEW_PANEL_2026-10.md). Status: **approved by the owner ("do all") and implemented in October 2026** — see `PROGRESS.md` and
-`CAPABILITY_MATRIX.md` for what is live, built or still waiting on an owner step (contract deploy, keeper, relay secret,
-first node: `docs/OWNER_RUNBOOK.md`). The text below is kept as the decision record.
+`CAPABILITY_MATRIX.md` for what is live, built or still waiting on an owner step (contract deploy and keeper:
+`docs/OWNER_RUNBOOK.md`; the relay secret, gateway domain and first node are done since 2026-10-18). The text below is kept as the decision record.
 
 ## In one paragraph
 Only one event creates CLD: a verified, paid job.

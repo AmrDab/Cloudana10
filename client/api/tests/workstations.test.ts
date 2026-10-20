@@ -394,6 +394,21 @@ describe("connect and hours", () => {
     expect((await detail(u.jwt, ssh)).deployment.connect).toEqual({ ssh: "ssh -p 42023 root@127.0.0.1" });
   });
 
+  it("a developer API key (even scoped read) never sees workstation access: no web URL, token or ssh", async () => {
+    const u = await user();
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
+    const web = await running(node, u.jwt, WS({ gpu: { count: 0 } }), { endpoint: "http://127.0.0.1:42031", webToken: "k3y-cannot-see" });
+    const made = await authed(u.jwt, "POST", "/v1/keys", { name: "monitor", scopes: ["read"] });
+    expect(made.status).toBe(201);
+    const key = (await made.json()).key.token as string;
+    const viaKey = await (await authed(key, "GET", `/v1/deployments/${web}`)).json();
+    expect(viaKey.deployment.connect).toEqual({});
+    const listViaKey = await (await authed(key, "GET", "/v1/deployments")).json();
+    expect(JSON.stringify(listViaKey)).not.toContain("42031");
+    // The wallet session still gets it.
+    expect((await detail(u.jwt, web)).deployment.connect).toEqual({ web: "http://127.0.0.1:42031", webToken: "k3y-cannot-see" });
+  });
+
   it("sshEndpoint and webToken are refused for plain containers", async () => {
     const u = await user();
     const node = await boundNode(["matmul", "container"]);

@@ -82,6 +82,7 @@ async function checkSignature(label: string, json: Record<string, unknown>) {
     return;
   }
   check(await verifyPublic(signedBody(json), signature), `${label}: signature verifies over the published body`, signature);
+  // No pin, no proof: a self-chosen signer must never pass when the expected key is unknown.
   check(signer !== null && signature.signer.toLowerCase() === signer, `${label}: signed by the pinned key ${signer ?? "(none)"}`, signature.signer);
 }
 

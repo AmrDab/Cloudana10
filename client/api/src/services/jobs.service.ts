@@ -404,6 +404,8 @@ export async function getDrawRecord(id: string): Promise<DrawRecord | null> {
     completedAt: r.completed_at,
     sigma: r.status === "done" ? r.sigma : null,
     certZ: r.cert_z,
+    // A job that failed for good keeps its node (see submitWork), so its draw stays replayable: the record still says
+    // who was drawn, and that they failed.
     replayable: !!eligible && !!r.seed_source && !r.seed_source.startsWith("local:"),
   };
 }

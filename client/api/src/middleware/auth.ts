@@ -70,10 +70,16 @@ export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(async 
 export async function verifyBearer(token: string): Promise<JWTPayload | null> {
   const env = getEnv();
   let payload: JWTPayload | null = null;
-  for (const secret of [env.JWT_SECRET, env.JWT_SECRET_PREVIOUS]) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  // The previous secret only during its grace window, and only for tokens that expire inside it.
+  const until = env.JWT_SECRET_PREVIOUS_UNTIL;
+  const previous = env.JWT_SECRET_PREVIOUS && until && nowSec < until ? env.JWT_SECRET_PREVIOUS : undefined;
+  for (const secret of [env.JWT_SECRET, previous]) {
     if (!secret) continue;
     try {
-      payload = (await verify(token, secret, "HS256")) as unknown as JWTPayload;
+      const p = (await verify(token, secret, "HS256")) as unknown as JWTPayload;
+      if (secret === previous && !(typeof p.exp === "number" && p.exp <= until!)) continue;
+      payload = p;
       break;
     } catch {
       /* not this secret: try the previous one */

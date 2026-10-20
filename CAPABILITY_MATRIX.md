@@ -7,8 +7,9 @@ Updated 2026-10-19 from code, tests and the owner runbook, not from the site.
 Maturity classes (the directive's six, in order of trust):
 
 1. **Operational and verified** — runs in production for real users and was observed working there. *Nothing is
-   in this class today*: the v2 settlement is not deployed, the relay secret is unset and no public node is online
-   (`ENGINEERING_BASELINE.md` §1). Production could not be probed from this environment either.
+   in this class today*: the v2 settlement is not deployed. Since 2026-10-18 the relay secrets are set, the gateway
+   serves `https://<id>.cloudana.run` and a first public node (Azure, relay) is online, so hosting and storage can be
+   observed in production as soon as real users arrive.
 2. **Implemented, not deployed** — complete in code with passing tests; blocked on an owner step or a deploy.
 3. **Partially implemented** — some of the path exists; honest label "early access".
 4. **Broken or insecure** — exists but must not be used as is.
@@ -24,7 +25,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 |---|---|---|---|---|
 | Matrix compute jobs (`POST /v1/jobs`, n 8–256), USD quote settled in CLD, hold → capture | 2 | proven | e2e 43 checks; API tests `v1-submit`, `v1-assignment`, `pouw-verify`, `job-ceiling`, `pricing` | a public node (owner step 10); settlement (B-1) |
 | Assignment by weighted random draw, replayable from the signed draw record | 2 | — | `jobs.service.ts`; `public-replay` tests; `scripts/verify/replay.ts` | `CHAIN_RPC_URL` deployed so seeds are block hashes; the eligible set is attested, not pre-committed (B-17) |
-| Provider agent: install, identify, benchmark, bind, heartbeat, signed instructions | 2 | — | agent selftests; image built and signed by CI (1.6.0 pending CI run on `main`) | first public node |
+| Provider agent: install, identify, benchmark, bind, heartbeat, signed instructions | 2 | — | agent selftests; image built and signed by CI (1.6.0 publishes on merge to `main`; 1.4.1 is live) | — (first public node live 2026-10-18, agent 1.4.1) |
 | Browser verifier (planted tasks, points) | 2 | — | e2e; `verify-feed` tests | — |
 | Containers (curated images) on fleet nodes, hardened | 3 | probed | API tests `deployments`, `workstations`; agent security selftest 94 checks; **no fleet node exists** | a datacenter/owner node with xfs pquota + Docker ≥ 28 |
 | GPU workstations (Jupyter / code-server / desktop), direct mode | 3 | probed · GPU reported by node | `workstations` tests; needs public-IP node (relay has no WebSockets) | a GPU node; relay WebSocket tunnelling |

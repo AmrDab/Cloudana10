@@ -472,9 +472,10 @@ export async function epochJobs(
   };
 }
 
-/** One closed/posted/settled epoch with its leaves (public: GET /v1/epochs/{id}); null while open or unknown. */
-/** A published epoch: closed, posted or settled. A vetoed (or never-closed) epoch has no payload anyone should sign or replay. */
+/** One closed/posted/settled epoch with its leaves (public: GET /v1/epochs/{id}); null while open, vetoed or unknown. */
 export async function getEpochPayload(id: number): Promise<EpochPayload | null> {
+  // Vetoed: its root and fees were cleared and it will close again — nothing to publish (epochJobs treats it as open).
+  // Open epochs are not published either: only closed/posted/settled rows carry a final root.
   const row = await getD1()
     .prepare("SELECT * FROM epochs WHERE id = ? AND status IN ('closed','posted','settled')")
     .bind(id)
