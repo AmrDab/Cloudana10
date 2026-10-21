@@ -355,10 +355,12 @@ describe("checks", () => {
     const { n } = await holding();
     setRelay(honestRelay());
     const today = Math.floor(Date.now() / 86_400_000) * 86_400_000;
-    await getD1().prepare("UPDATE nodes SET storage_next_check_at = 0 WHERE address = ?").bind(addr(n)).run();
+    // The node must look fresh at the simulated check time, whatever the wall clock says (between 00:00 and 01:00
+    // UTC the real heartbeat would be "older" than today + 1 h and the day would see no samples).
+    await getD1().prepare("UPDATE nodes SET storage_next_check_at = 0, relay_at = ?, last_seen = ? WHERE address = ?").bind(today + 3_600_000, today + 3_600_000, addr(n)).run();
     await runChecks(today + 3_600_000);
     expect((await nodeRow(n))!.storage_passed_days).toBe(0);
-    await getD1().prepare("UPDATE nodes SET storage_next_check_at = 0, relay_at = ? WHERE address = ?").bind(today + 86_400_000 + 3_600_000, addr(n)).run();
+    await getD1().prepare("UPDATE nodes SET storage_next_check_at = 0, relay_at = ?, last_seen = ? WHERE address = ?").bind(today + 86_400_000 + 3_600_000, today + 86_400_000 + 3_600_000, addr(n)).run();
     await runChecks(today + 86_400_000 + 3_600_000);
     expect((await nodeRow(n))!.storage_passed_days).toBe(1);
   });

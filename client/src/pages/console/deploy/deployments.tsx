@@ -72,31 +72,46 @@ function PriceH({ ucld, short: brief }: { ucld: number; short?: boolean }) {
 }
 
 // ── Secret sealing ──────────────────────────────────────────────────────────
-async function sealNow(id: string, nodePubkey: string, node: string | null) {
+async function sealNow(id: string, nodePubkey: string, node: string | null): Promise<boolean> {
   const secrets = pendingSecrets(id);
-  if (!secrets) return;
-  if (await sealSecretsTo({ id, node, nodePubkey }, secrets)) clearPendingSecrets(id);
+  if (!secrets) return false;
+  const ok = await sealSecretsTo({ id, node, nodePubkey }, secrets);
+  if (ok) clearPendingSecrets(id);
+  return ok;
 }
 
 /** Polls one deployment until a node is assigned, then seals its pending secrets to that node's key. Renders nothing. */
 function Sealer({ id }: { id: string }) {
-  const q = useDeployment(id, 2_000);
-  const started = useRef(false);
+  // Polls only while there is something to seal: once the seal landed (here or in another tab) or can never land it
+  // stops, and the plaintext is dropped — a container that is already running will never take it. A refused seal
+  // (the row moved to another node since its key was read) keeps polling: the next node gets a fresh attempt.
+  const [active, setActive] = useState(true);
+  const q = useDeployment(id, active ? 2_000 : false);
+  const attempted = useRef<string | null>(null);
   const dep = q.data?.deployment;
   const pub = q.data?.nodePubkey;
   useEffect(() => {
-    if (!dep || started.current) return;
+    if (!dep || !active) return;
     if (dep.status !== "queued" && dep.status !== "assigned") {
-      started.current = true;
       autoSeal.delete(id);
+      clearPendingSecrets(id);
+      setActive(false);
       setSealState(id, { phase: "error", message: `The deployment is ${dep.status}; secrets can only be sealed before it starts.` });
-    } else if (pub) {
-      started.current = true;
-      void sealNow(id, pub, dep.node);
+    } else if (dep.status === "assigned" && !dep.awaitingSecrets) {
+      // The secrets are in (sealed here or in another tab): nothing left to seal, nothing left to keep.
+      autoSeal.delete(id);
+      clearPendingSecrets(id);
+      setActive(false);
+      if (getSealState(id)?.phase !== "sealed") setSealState(id, { phase: "sealed", node: dep.node ?? undefined, at: Date.now() });
+    } else if (pub && dep.node && attempted.current !== dep.node) {
+      attempted.current = dep.node;
+      void sealNow(id, pub, dep.node).then((ok) => {
+        if (ok) setActive(false);
+      });
     } else if (!getSealState(id)) {
       setSealState(id, { phase: "waiting" });
     }
-  }, [id, dep, pub]);
+  }, [id, dep, pub, active]);
   return null;
 }
 
@@ -119,7 +134,9 @@ function SecretsControl({ d, detail }: { d: Deployment; detail?: DeploymentDetai
   const pending = !!pendingSecrets(d.id);
   // Waiting for secrets this tab does not hold: never had them (another tab created it), or the node changed since
   // they were sealed and the API cleared them (they were sealed to the old node's key).
-  const reenter = d.awaitingSecrets && !pending && s?.phase !== "sealing" && (d.status === "queued" || d.status === "assigned");
+  // The list's awaitingSecrets lags a seal by one poll: a seal made in the last half minute is not "moved".
+  const justSealed = s?.phase === "sealed" && !!s.at && Date.now() - s.at < 30_000;
+  const reenter = d.awaitingSecrets && !pending && !justSealed && s?.phase !== "sealing" && (d.status === "queued" || d.status === "assigned");
   if (!pending && !reenter && s?.phase !== "sealed" && s?.phase !== "error") return null;
   const canSeal = !!detail?.nodePubkey && (d.status === "queued" || d.status === "assigned");
   const auto = autoSeal.has(d.id) && s?.phase !== "error";
@@ -190,7 +207,7 @@ export function Deployments({ focusId, onBlank }: { focusId: string | null; onBl
 
   return (
     <Panel id="deployments" className="scroll-mt-6 overflow-hidden" aria-labelledby="dep-h">
-      {deps.filter((d) => autoSeal.has(d.id)).map((d) => <Sealer key={d.id} id={d.id} />)}
+      {deps.filter((d) => (autoSeal.has(d.id) || !!pendingSecrets(d.id)) && !isTerminal(d.status)).map((d) => <Sealer key={d.id} id={d.id} />)}
       <PanelHeader title={<span id="dep-h">Your deployments</span>} kicker="Hosting" right={session && <Updated at={q.dataUpdatedAt || null} offline={q.isError} />} />
       {!session ? (
         <Empty icon={Wallet} title="Sign in to deploy and see your sites and containers." action={<button type="button" className={btn.primary} onClick={() => signInWithToast()}><Wallet /> Sign in</button>} />

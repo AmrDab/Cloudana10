@@ -181,6 +181,14 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
   if (!parsed.success) return invalid(parsed.error);
   // One vocabulary from here on: the stored spec (and what nodes receive) names a tier.
   if (parsed.data.gpu) parsed.data.gpu.class = requestTier(parsed.data.gpu.class);
+  // Workstations take no sealed secrets (the node issues their access token): a start held for a seal that can never
+  // land would wait a day, pin the slot and fail — refuse the flag outright.
+  if (kind === "workstation" && (parsed.data as { expectsSecrets?: boolean }).expectsSecrets !== undefined) {
+    if ((parsed.data as { expectsSecrets?: boolean }).expectsSecrets === true) {
+      return { ok: false, code: "validation_failed", message: "spec.expectsSecrets: workstations take no sealed secrets (the node issues the access token); remove it" };
+    }
+    delete (parsed.data as { expectsSecrets?: boolean }).expectsSecrets;
+  }
   // Plain containers never run as root (the node refuses it too); workstations keep the image's user model.
   if (kind !== "workstation" && parsed.data.user && /^0(:|$)/.test(parsed.data.user)) {
     return { ok: false, code: "validation_failed", message: "spec.user: containers cannot run as root (uid 0)" };

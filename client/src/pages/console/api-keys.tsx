@@ -1,7 +1,7 @@
 // Console · API keys (Docs → API): mint, list and revoke developer keys. The token is shown once; only its hash is
 // stored. Keys carry scopes and can never manage keys, credits or provider state — the API enforces it, this page
 // only says so.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { KeyRound, Loader2, Plus, Trash2, Wallet } from "lucide-react";
@@ -43,6 +43,8 @@ export function ApiKeys() {
   const [scopes, setScopes] = useState<Scope[]>(["read", "jobs"]);
   const [busy, setBusy] = useState(false);
   const [minted, setMinted] = useState<{ token: string; name: string } | null>(null);
+  // A token shown once is shown to one wallet: forget it when the session ends or changes.
+  useEffect(() => setMinted(null), [session?.address]);
   const live = (q.data ?? []).filter((k) => !k.revokedAt && (!k.expiresAt || k.expiresAt > Date.now()));
 
   async function create(e: React.FormEvent) {
@@ -64,7 +66,7 @@ export function ApiKeys() {
   async function revoke(k: ApiKey) {
     try {
       await api(`/keys/${k.id}`, { method: "DELETE", auth: true });
-      toast.success(`Key ${k.name} revoked`, { description: "Requests with it are refused from now on." });
+      toast.success(`Key ${k.name} revoked`, { description: "Refused from now on here, and everywhere within 30 seconds." });
       void qc.invalidateQueries({ queryKey: ["cld", "api-keys"] });
     } catch (err) {
       toast.error("Couldn't revoke the key", { description: errText(err) });

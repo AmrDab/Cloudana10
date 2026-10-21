@@ -22,7 +22,7 @@ import { getD1 } from "../lib/storage.js";
 import { getEnv } from "../config/env.js";
 import { log } from "../lib/logger.js";
 import { normalizeAddress } from "../lib/eth.js";
-import { hold } from "./balance.service.js";
+import { hold, release } from "./balance.service.js";
 import {
   HOUR_MS,
   SEALED_V2_MIN_AGENT,
@@ -30,7 +30,9 @@ import {
   awaitingSecrets,
   carriesSecrets,
   chargeHour,
+  unchargedHour,
   endDeployment,
+  failEndpoint,
   getDeploymentRow,
   type DeploymentRow,
 } from "./deployments.service.js";
@@ -89,19 +91,34 @@ export const DEAD_NODE_FACTOR = 3;
  * owed a "stop" (deployment_stale_nodes) in case it comes back still serving. Secrets were sealed to
  * the old node's key, so they are cleared and the next start waits for the owner to re-seal.
  */
-async function requeueRows(rows: DeploymentRow[], reason: string, now: number, opts: { settleHour?: boolean } = {}): Promise<number> {
+async function requeueRows(
+  rows: DeploymentRow[],
+  reason: string,
+  now: number,
+  opts: { settleHour?: boolean; unsealed?: boolean; sealTimeout?: boolean } = {},
+): Promise<number> {
   const db = getD1();
   let requeued = 0;
   for (const row of rows) {
     const reseal = row.sealed_env !== null;
     const spec = reseal ? JSON.stringify({ ...JSON.parse(row.spec_json), expectsSecrets: true }) : row.spec_json;
+    // Settling the hour it was in captures part of its hold, so the statement that re-queues the row also claims that
+    // hold (held_ucld → 0), against the snapshot's amount and billing clock: a bill that ran since the row was read
+    // (it charged the hour, moved the clock and re-held) makes this pass skip the row instead of charging it twice.
+    const settle = !!opts.settleHour && settleable(row);
     const r = await db
       .prepare(
         "UPDATE deployments SET status = 'queued', status_reason = ?, node = NULL, endpoint = NULL, ssh_endpoint = NULL, web_token = NULL, " +
-          "assigned_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ? " +
-          "WHERE id = ? AND status = ? AND node = ?",
+          "assigned_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ?" +
+          (settle ? ", held_ucld = 0" : "") +
+          // A secrets timeout counts its cycle in this same statement (only if the re-queue itself lands).
+          (opts.sealTimeout ? ", seal_timeouts = COALESCE(seal_timeouts, 0) + 1" : "") +
+          " WHERE id = ? AND status = ? AND node = ?" +
+          (settle ? " AND held_ucld = ? AND last_billed_at IS ?" : "") +
+          // A row re-queued for never being sealed: only while that is still so (a seal that just landed stays).
+          (opts.unsealed ? " AND sealed_env IS NULL AND assigned_at = ?" : ""),
       )
-      .bind(reason, spec, row.id, row.status, row.node)
+      .bind(reason, spec, row.id, row.status, row.node, ...(settle ? [row.held_ucld, row.last_billed_at] : []), ...(opts.unsealed ? [row.assigned_at] : []))
       .run();
     if ((r.meta?.changes ?? 0) === 0) continue;
     requeued++;
@@ -111,10 +128,13 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number, o
       .run();
     await addEvent(row.id, "warn", `${reason} — re-queued`, now);
     if (reseal) await addEvent(row.id, "warn", "secrets were sealed to the old node — re-seal them for the next node", now);
-    if (opts.settleHour) await settleElapsed(row, now);
+    if (settle) await settleElapsed(row, now);
   }
   return requeued;
 }
+
+/** A row whose current hour can be settled: it was serving, on a billing clock, with its hour held. */
+const settleable = (row: DeploymentRow) => row.status === "running" && row.last_billed_at !== null && row.held_ucld > 0 && !!row.node;
 
 /**
  * A row that was serving until its re-queue (the node is still up; its app failed its probes) pays the elapsed part
@@ -123,16 +143,53 @@ async function requeueRows(rows: DeploymentRow[], reason: string, now: number, o
  * re-place, so the (already re-queued) row ends as out of credits and the rest of its hold goes back.
  */
 async function settleElapsed(row: DeploymentRow, now: number): Promise<void> {
-  if (row.status !== "running" || row.last_billed_at === null || row.held_ucld <= 0 || !row.node) return;
-  const elapsed = Math.max(0, Math.min(HOUR_MS, now - row.last_billed_at));
-  const charged = Math.min(row.held_ucld, Math.floor((row.price_ucld_per_hour * elapsed) / HOUR_MS));
-  if (charged <= 0) return;
-  await chargeHour(row, charged, now);
-  await addEvent(row.id, "info", `billed ${charged} µCLD for the ${Math.round(elapsed / 60_000)} min served before the re-queue`, now);
-  if (await hold(row.owner, charged)) return;
-  const remaining = row.held_ucld - charged;
-  await getD1().prepare("UPDATE deployments SET held_ucld = ? WHERE id = ?").bind(remaining, row.id).run();
-  await endDeployment({ ...row, status: "queued", node: null, last_billed_at: null, held_ucld: remaining }, "stopped", "out of credits", { acked: true, level: "warn", now });
+  // `row` is the snapshot whose hold requeueRows just claimed (the row's held_ucld is 0; the owner's pool still
+  // holds `full`): capture the elapsed part, then put a full hour back onto the row — only while it is still live.
+  const db = getD1();
+  const full = row.held_ucld;
+  const elapsed = Math.max(0, Math.min(HOUR_MS, now - row.last_billed_at!));
+  const charged = Math.min(full, Math.floor((row.price_ucld_per_hour * elapsed) / HOUR_MS));
+  if (charged > 0) {
+    const paid = await chargeHour(row, charged, now);
+    await addEvent(row.id, paid ? "info" : "warn", paid ? `billed ${charged} µCLD for the ${Math.round(elapsed / 60_000)} min served before the re-queue` : unchargedHour(charged), now);
+  }
+  if (charged <= 0 || (await hold(row.owner, charged))) {
+    const r = await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status IN ('queued','assigned','running')").bind(full, row.id).run();
+    if ((r.meta?.changes ?? 0) === 0) await release(row.owner, full); // ended meanwhile: nothing will settle it
+    return;
+  }
+  // The owner cannot cover the next hour: the rest of the hold goes back and the (already re-queued) row ends — even
+  // when another node claimed it in between: a row that ran on with nothing held would never be billed again.
+  const remaining = full - charged;
+  const r = await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status = 'queued'").bind(remaining, row.id).run();
+  if ((r.meta?.changes ?? 0) === 0) {
+    if (remaining > 0) await release(row.owner, remaining);
+    await endFresh(row.id, "out of credits", now);
+    return;
+  }
+  if (!(await endDeployment({ ...row, status: "queued", node: null, last_billed_at: null, held_ucld: remaining }, "stopped", "out of credits", { acked: true, level: "warn", now }))) {
+    await endFresh(row.id, "out of credits", now);
+  }
+}
+
+/** The row moved (another node claimed it) between a claim and the end: end whatever it is now, never leave it running on nothing. */
+async function endFresh(id: string, reason: string, now: number): Promise<void> {
+  const fresh = await getDeploymentRow(id);
+  if (!fresh || fresh.status === "stopped" || fresh.status === "failed") return;
+  await endDeployment(fresh, "stopped", reason, { acked: false, level: "warn", now });
+}
+
+/**
+ * A node that begins draining hands back the containers waiting for their secrets on it: no start went out, and the
+ * owner would otherwise seal to a node that is leaving (the seal itself is refused on a non-active node).
+ */
+export async function requeueAwaitingSecrets(node: string, reason: string, now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare("SELECT * FROM deployments WHERE node = ? AND status = 'assigned' AND sealed_env IS NULL")
+    .bind(normalizeAddress(node))
+    .all<DeploymentRow>();
+  const waiting = (rows.results ?? []).filter(awaitingSecrets);
+  return waiting.length ? requeueRows(waiting, reason, now, { unsealed: true }) : 0;
 }
 
 /** G1: re-queue live deployments whose node went offline (all of them, or one owner's). */
@@ -160,15 +217,56 @@ export async function requeueDeadNodeDeployments(now = Date.now(), owner?: strin
 export async function requeueStuckAssigned(now = Date.now()): Promise<number> {
   const env = getEnv();
   const db = getD1();
+  let n = 0;
+  // Rows waiting for their secrets on a node that is draining or suspended go back to the queue here as well: the
+  // drain route hands them back as it flips the state, but a hand-back that failed (or a drain from before it
+  // existed) must not leave a row that no seal can reach — the seal refuses a non-active node — until the secrets
+  // timeout fails it. Idempotent: a row already handed back is queued and does not match.
+  const parked = await db
+    .prepare(
+      "SELECT d.*, n.state AS node_state FROM deployments d JOIN nodes n ON n.address = d.node " +
+        "WHERE d.status = 'assigned' AND d.sealed_env IS NULL AND COALESCE(n.state, 'active') <> 'active'",
+    )
+    .all<DeploymentRow & { node_state: string | null }>();
+  for (const row of (parked.results ?? []).filter(awaitingSecrets)) {
+    n += await requeueRows([row], `node ${row.node} is ${row.node_state ?? "not active"}`, now, { unsealed: true });
+  }
   const shortest = Math.min(env.DEPLOY_START_TIMEOUT_SECONDS, env.DEPLOY_START_TIMEOUT_STATIC_SECONDS) * 1000;
   const rows = await db
     .prepare("SELECT * FROM deployments WHERE status = 'assigned' AND node IS NOT NULL AND assigned_at IS NOT NULL AND assigned_at <= ?")
     .bind(now - shortest)
     .all<DeploymentRow>();
-  let n = 0;
   for (const row of rows.results ?? []) {
     const timeoutMs = (row.kind === "static" ? env.DEPLOY_START_TIMEOUT_STATIC_SECONDS : env.DEPLOY_START_TIMEOUT_SECONDS) * 1000;
-    if (row.assigned_at! > now - timeoutMs || awaitingSecrets(row)) continue;
+    if (awaitingSecrets(row)) {
+      // No start went out, so the start timeout does not apply — but the row holds one of the node's container slots.
+      // An owner who never comes back to seal loses the deployment after DEPLOY_SECRETS_TIMEOUT_SECONDS (hold released).
+      const limit = env.DEPLOY_SECRETS_TIMEOUT_SECONDS * 1000;
+      if (row.assigned_at! <= now - limit) {
+        const hours = Math.round(limit / 3_600_000);
+        if (row.parent_id) {
+          // An endpoint replica is not failed on its own (nothing would replace it; the endpoint would run short one
+          // replica while priced for all): it goes back to the queue, refused by this node so it is not claimed
+          // straight back — for DEPLOY_START_ATTEMPTS cycles (counted in seal_timeouts, apart from start timeouts).
+          // After that the endpoint is abandoned: every replica and the parent fail and the holds come back.
+          const cycles = (row.seal_timeouts ?? 0) + 1;
+          if (cycles >= env.DEPLOY_START_ATTEMPTS) {
+            const reason = `secrets were not sealed within ${hours} h of assignment, ${cycles} times — endpoint abandoned`;
+            // This replica first, and only while still unsealed: a seal that just landed keeps the endpoint.
+            if (!(await endDeployment(row, "failed", reason, { acked: false, level: "error", now, unsealedSince: row.assigned_at! }))) continue;
+            n += 1 + (await failEndpoint(row.parent_id, reason, now));
+            continue;
+          }
+          n += await requeueRows([row], `${nodeRefusalPrefix(row.node!)} secrets were not sealed within ${hours} h of assignment`, now, { unsealed: true, sealTimeout: true });
+          continue;
+        }
+        // Only while still unsealed: a seal that lands between this read and the write is not failed.
+        const ended = await endDeployment(row, "failed", `secrets were not sealed within ${hours} h of assignment`, { acked: false, level: "error", now, unsealedSince: row.assigned_at! });
+        if (ended) n++;
+      }
+      continue;
+    }
+    if (row.assigned_at! > now - timeoutMs) continue;
     const attempts = (row.start_attempts ?? 0) + 1;
     const minutes = Math.round(timeoutMs / 60_000);
     if (attempts >= env.DEPLOY_START_ATTEMPTS) {
@@ -259,8 +357,13 @@ async function claim(node: string, q: Queued, now: number, relayed: boolean): Pr
   relayed = relayed && !q.workstation;
   const db = getD1();
   const r = await db
-    .prepare("UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ?, relayed = ? WHERE id = ? AND status = 'queued'")
-    .bind(node, now, relayed ? 1 : 0, q.id)
+    // The node's state is checked in the same statement: a suspension or drain that landed after this heartbeat's
+    // snapshot of the node row cannot be raced into a placement.
+    .prepare(
+      "UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ?, relayed = ? WHERE id = ? AND status = 'queued' " +
+        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active')",
+    )
+    .bind(node, now, relayed ? 1 : 0, q.id, node)
     .run();
   if ((r.meta?.changes ?? 0) === 0) return false;
   // Back on the node that lost it: its "start" replaces the owed stop.
@@ -711,14 +814,39 @@ async function bill(node: string, now: number): Promise<void> {
         .prepare("UPDATE deployments SET held_ucld = 0, last_billed_at = ? WHERE id = ? AND status = 'running' AND last_billed_at = ? AND held_ucld = ?")
         .bind(next, row.id, row.last_billed_at, fee)
         .run();
-      if ((claimed.meta?.changes ?? 0) === 0) break;
-      await chargeHour(row, fee, now);
-      await addEvent(row.id, "info", `billed ${fee} µCLD for one hour`, now);
+      if ((claimed.meta?.changes ?? 0) === 0) {
+        // Nothing held for a due hour on a running row (a race left it so): hold the hour now, or end the row —
+        // never let it run on with nothing held, which this claim would otherwise skip for ever.
+        const fresh = await getDeploymentRow(row.id);
+        if (fresh && fresh.status === "running" && fresh.node === node && fresh.held_ucld === 0 && fresh.last_billed_at === row.last_billed_at) {
+          if (await hold(fresh.owner, fee)) {
+            const r = await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status = 'running'").bind(fee, fresh.id).run();
+            if ((r.meta?.changes ?? 0) === 0) await release(fresh.owner, fee);
+            else await addEvent(fresh.id, "warn", `the hour's hold was missing — ${fee} µCLD held again`, now);
+          } else {
+            await endFresh(fresh.id, "out of credits", now);
+          }
+        }
+        break;
+      }
+      const paid = await chargeHour(row, fee, now);
+      await addEvent(row.id, paid ? "info" : "warn", paid ? `billed ${fee} µCLD for one hour` : unchargedHour(fee), now);
       if (await hold(row.owner, fee)) {
-        await db.prepare("UPDATE deployments SET held_ucld = ? WHERE id = ?").bind(fee, row.id).run();
+        // Onto the row only while it is still live: a stop that landed since the claim found nothing to settle
+        // (held 0), and the hour just held would otherwise sit on a stopped row for ever.
+        const reheld = await db
+          .prepare("UPDATE deployments SET held_ucld = ? WHERE id = ? AND held_ucld = 0 AND status IN ('running','queued','assigned')")
+          .bind(fee, row.id)
+          .run();
+        if ((reheld.meta?.changes ?? 0) === 0) {
+          await release(row.owner, fee);
+          break;
+        }
         row = { ...row, last_billed_at: next, held_ucld: fee };
       } else {
-        await endDeployment({ ...row, last_billed_at: next, held_ucld: 0 }, "stopped", "out of credits", { acked: false, level: "warn", now });
+        // From a fresh read: a concurrent heartbeat's backstop may have put an hour's hold back on the row meanwhile,
+        // and ending from this snapshot (held 0) would strand it on a stopped row.
+        await endFresh(row.id, "out of credits", now);
         break;
       }
     }
@@ -941,6 +1069,9 @@ export type ReportResult = { ok: true; status: string } | { ok: false; code: "no
 
 const hostOf = (url: string) => new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
+/** Node-supplied free text goes into the event log: a credential-looking query value never does. */
+const redactSecrets = (text: string) => text.replace(/\b(token|password|pwd|secret|key)=[^&\s]+/gi, "$1=…");
+
 /** A node reports what happened to a deployment it was given. */
 export async function reportDeploymentStatus(node: string, id: string, report: StatusReport, now = Date.now()): Promise<ReportResult> {
   const db = getD1();
@@ -995,22 +1126,27 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
       const r = await db
         .prepare(
           "UPDATE deployments SET status = 'running', status_reason = NULL, endpoint = ?, ssh_endpoint = ?, web_token = ?, started_at = ?, " +
-            "last_billed_at = ?, probe_fail = 0, start_attempts = 0 WHERE id = ? AND status = 'assigned'",
+            "last_billed_at = ?, probe_fail = 0, start_attempts = 0, seal_timeouts = 0 WHERE id = ? AND status = 'assigned'",
         )
         .bind(report.endpoint ?? null, report.sshEndpoint ?? null, report.webToken ?? null, now, now, id)
         .run();
-      const at = [report.endpoint ?? (row.relayed ? "the relay" : null), report.sshEndpoint && `ssh ${report.sshEndpoint}`].filter(Boolean).join(" · ");
-      if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", `running at ${at}${report.message ? ` — ${report.message}` : ""}`, now);
+      // A workstation's web URL carries its access token and its SSH host:port is its shell: the event log (which an
+      // API key may read, unlike `connect`) names neither. Plain deployments log their public endpoint as before.
+      const at = row.workstation
+        ? [(report.endpoint || row.relayed) && "web ready", report.sshEndpoint && "ssh ready"].filter(Boolean).join(" · ")
+        : [report.endpoint ?? (row.relayed ? "the relay" : null), report.sshEndpoint && `ssh ${report.sshEndpoint}`].filter(Boolean).join(" · ");
+      const where = at ? (row.workstation ? ` (${at})` : ` at ${at}`) : "";
+      if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", `running${where}${report.message ? ` — ${redactSecrets(report.message)}` : ""}`, now);
       return { ok: true, status: "running" };
     }
     if (row.status === "running" || row.status === "unreachable") {
       if (report.endpoint && row.endpoint !== report.endpoint) {
         await db.prepare("UPDATE deployments SET endpoint = ? WHERE id = ?").bind(report.endpoint, id).run();
-        await addEvent(id, "info", `endpoint changed to ${report.endpoint}`, now);
+        await addEvent(id, "info", row.workstation ? "web endpoint changed" : `endpoint changed to ${report.endpoint}`, now);
       }
       if (report.sshEndpoint && row.ssh_endpoint !== report.sshEndpoint) {
         await db.prepare("UPDATE deployments SET ssh_endpoint = ? WHERE id = ?").bind(report.sshEndpoint, id).run();
-        await addEvent(id, "info", `ssh endpoint changed to ${report.sshEndpoint}`, now);
+        await addEvent(id, "info", row.workstation ? "ssh endpoint changed" : `ssh endpoint changed to ${report.sshEndpoint}`, now);
       }
       if (report.webToken && row.web_token !== report.webToken) {
         await db.prepare("UPDATE deployments SET web_token = ? WHERE id = ?").bind(report.webToken, id).run();
@@ -1035,15 +1171,21 @@ export async function reportDeploymentStatus(node: string, id: string, report: S
     // Our placement was wrong for this node (GPUs held elsewhere, or the node cannot serve at all):
     // queue it again for another node, not failed. assign() skips this node for it.
     const reason = gpuRefusal ? gpuRefusalReason(node) : `${nodeRefusalPrefix(node)} ${message.slice(NODE_CANNOT_SERVE.length).trim()}`.slice(0, 300);
+    // Like requeueRows: a payload sealed to this node's key is useless to the next one, so it is cleared and the
+    // start waits for the owner to seal again (the console shows "needs secrets" from awaitingSecrets).
+    const reseal = row.sealed_env !== null;
+    const spec = reseal ? JSON.stringify({ ...JSON.parse(row.spec_json), expectsSecrets: true }) : row.spec_json;
     const r = await db
       .prepare(
         "UPDATE deployments SET status = 'queued', status_reason = ?, node = NULL, endpoint = NULL, ssh_endpoint = NULL, web_token = NULL, " +
-          "assigned_at = NULL, started_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0 WHERE id = ? AND status = ? AND node = ?",
+          "assigned_at = NULL, started_at = NULL, last_billed_at = NULL, last_probe_at = NULL, probe_fail = 0, sealed_env = NULL, spec_json = ? " +
+          "WHERE id = ? AND status = ? AND node = ?",
       )
-      .bind(reason, id, row.status, node)
+      .bind(reason, spec, id, row.status, node)
       .run();
     if ((r.meta?.changes ?? 0) > 0) {
       await addEvent(id, "warn", gpuRefusal ? `node ${node} had not enough free GPUs — re-queued` : `node ${node} could not serve it — re-queued`, now);
+      if (reseal) await addEvent(id, "info", "secrets were sealed to the old node — re-seal them for the next node", now);
     }
     return { ok: true, status: "queued" };
   }

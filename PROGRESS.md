@@ -1,6 +1,7 @@
 # Progress — hardening pass, 2026-10-19
 
-Branch `claude/trusting-maxwell-cfhscy` on top of `main` `4bef305`. Each change below lists the problem, root cause,
+Branch `claude/trusting-maxwell-cfhscy`; entries 1–15 merged to `main` as PR #49 (`98de016`, 2026-10-19), entries 16–20
+follow as a second PR on top of it (#52). Each change below lists the problem, root cause,
 files, justification, tests, actual results, remaining risk and deployment implications. Nothing was deployed; no
 contract, fund or production secret was touched.
 
@@ -212,11 +213,200 @@ the `CURRENT_AGENT_VERSION` comment.
 - **Residual.** Endpoints, workstations, the relay logs path and a real wallet extension are not covered. The run is
   not in CI (it needs a browser and ~3 minutes); the command is in `TEST_EVIDENCE.md` §5.
 
+### 16 · independent review of the branch: 31 confirmed findings fixed
+- **How.** Before the pull request was handed over, seven fresh reviewers (auth and keys; secrets and deployments;
+  node states and logs; transparency and ledger; runtime and removals; docs versus code; console UI) read the whole
+  diff; every finding was challenged by three separate verifiers (code trace, reproduction, blast radius) and kept
+  only on a majority. 39 candidates, 31 confirmed; the 7 console-UI findings could not be verified (the org's spend
+  limit stopped the verifiers) and were fixed on their merits.
+- **High.** (1) A seal arriving after the start timeout was re-queued by the next cron before the node could start
+  → the start clock now restarts at the seal. (2) A node that refused a container ("cannot serve", GPU) kept the
+  payload sealed to its key on the re-queued row → cleared and flagged like every other re-queue. (3) An owner's
+  drain/resume could overwrite a concurrent suspension → one conditional write. (4) `GET /v1/epochs/{n}` signed
+  vetoed epochs with stale leaves → published epochs only. (5) The draw record was unsigned and its eligible set
+  self-attested → signed over `{ draw }`, payout wallets replaced by an opaque operator id, the attestation limit
+  stated in the route and in ARCHITECTURE (pull-based assignment, B-17, is the real fix). (6) The runbook told the
+  operator to run the secrets script with no arguments, which then regenerated the pinned instruction key and the KEK →
+  rewritten (and rewritten again in entry 20 once the owner's script skipped existing secrets: `--rotate NAME` is
+  the only way to replace one). (7) A minted API key stayed on screen after sign-out → cleared on session change.
+- **Medium.** `PATCH …/secrets` now names the node it was sealed to and is refused if the row moved; a container whose
+  owner never seals is failed after `DEPLOY_SECRETS_TIMEOUT_SECONDS` (24 h) instead of pinning a slot for ever; a
+  placement can no longer race a suspension (`claim()` checks node state in the same statement; a suspended node's
+  heartbeat carries no start, no assignment, no storage fetch, and its relay socket is kicked); logs are read through
+  the capped reader; `replay.ts` pins the signer (the agents' default, `--signer` to override) and checks the seed
+  block with `--rpc`; `submitWork` is one transaction (fee authorised on the job row → captured → rewards → done,
+  each statement conditioned on the previous, so a crash rolls everything back and the retry is clean); a job that
+  failed for good keeps the drawn node on its public record; the relay-test row in TEST_EVIDENCE, the SHIP_CHECKLIST
+  env names, ARCHITECTURE §6 were corrected.
+- **Low.** API-key cache capped at the key's expiry; session revocation fails closed when a bound KV cannot be read
+  and reports `revoked:false` when the shared list could not be written; sign-in nonces keyed per nonce (issuing one
+  no longer cancels another); logs for workstations work when the node has a relay socket (the check is the socket,
+  not the deployment's path); suspended nodes get no storage fetch ops and cannot download copies; `/v1/network`
+  `burnedUcld` counts only fees that have reward entries (what the epochs burn); the public eligible set carries no
+  payout wallets; `worker.ts` header, runbook image tag 1.6.0, CAPABILITY_MATRIX numbers, node-agent README signer
+  note and the SECURITY_AUDIT ledger sentence corrected.
+- **Also.** `storage.test.ts` "next day opens" depended on the wall clock (failed between 00:00 and 01:00 UTC);
+  made clock-independent. `/control/legacy` hooks call API routes this branch deleted (they were Node-only and never
+  deployed) — one more reason for decision 1.
+- **Tests / results.** API 362 → **366** (late seal and secrets timeout, node-bound seal and refusal re-queue,
+  signed draw without wallets, vetoed epoch 404, key cache expiry, per-nonce sign-in, logs over-cap 502); e2e 43
+  checks on the transactional submit path; `replay.ts --signer published` passes on the local stack and the pinned
+  mode refuses the local key as designed; console tsc, 3 tests, build; browser smoke re-run (§4b).
+- **Residual.** The eligible set is still attested, not committed before the seed (B-17). Draining nodes finish
+  what they hold; only suspension kicks the socket.
+- **Addendum.** The six console findings left unverified here were verified once the spend limit reset: four upheld
+  (already fixed in this commit), two refuted. With entries 18 and 19 the review's totals are 52 candidates, 47
+  confirmed, 5 refuted.
+
+### 17 · reconciliation with the owner's parallel review (PR #50)
+The owner ran their own review in parallel, merged its fixes (`34b8af1`, `63037a4`) into this branch and then merged
+the branch to `main` (PR #49) while entry 16 was being verified. The two sets overlapped on six files; the
+reconciliation keeps, per overlap:
+- `GET /v1/draws/{id}`: the signed record (16), and `replayable` stays true for a job that failed for good — this
+  branch keeps the drawn node on failed rows (16), so the owner's "failed jobs lost their node" guard no longer applies.
+- `setSealedEnv`: the node-bound seal (16) **and** the owner's start-clock restart (`assigned_at` reset on seal), with
+  both comments.
+- container logs: the 64 KiB cap with the "sent more than 65536 bytes" refusal (16) inside the owner's try/catch, so a
+  node that breaks off mid-stream answers 502 "broke off" instead of throwing.
+- `getEpochPayload`: closed/posted/settled only (16; a superset of the owner's vetoed exclusion).
+- `/v1/network` `burnedUcld`: fees with a reward entry that is not clawed (16; the owner's version did not exclude
+  clawed).
+- `replay.ts`: pinned signer / `--signer published` (16) over the owner's "published key (could not be fetched)".
+- `CAPABILITY_MATRIX`: this branch's assignment row, the owner's agent row (1.4.1 live at the time; 1.6.0 since 2026-10-20).
+Everything else of the owner's landed as is: `JWT_SECRET_PREVIOUS_UNTIL` grace window, `/v1/network` rate limit,
+`connect`/`endpoint` hidden from API-key callers, `capableWarning` on deployments, `chargeHour` stops when the capture
+fails, cron `ensureSchema`, `set-api-secrets.mjs` never overwriting a secret without `--rotate`, the agent
+re-announcing on `bound:false`, and the docs that record hosting, the gateway and the first public node as live since
+2026-10-18.
+- **Tests / results.** API tsc clean; vitest **368/368** (the owner's added cases included); console tsc, 3 tests,
+  build; e2e 43 checks; `replay.ts --signer published` on a signed local stack passes every check but the expected
+  "seedSource is the local fallback", the pinned mode refuses the local key; browser smoke 29/29 (§4b).
+
+### 18 · the review's completeness round: five more findings fixed
+The critic's four briefs (cross-area interactions nobody had traced) ran after the spend limit reset; 13 candidates,
+5 confirmed by two or three verifiers each, 1 refuted, 7 still unverified (their verifiers hit the limit again; the
+resumed run is verifying them). `SECURITY_AUDIT.md` F10 has the table.
+- **High — workstation token leaked to API keys through `events`.** `forCaller` hid `connect`/`endpoint`, but the
+  running report wrote `running at http://host:port/lab?token=…` and the ssh host:port into the event log, which the
+  detail route returned unfiltered. Workstation events now name no address (`running (web ready · ssh ready)`),
+  node-supplied text has credential-looking query values redacted, and a key's view drops any older event carrying
+  the row's endpoint, ssh host, token or a token URL (`deployment-duties.service.ts`, `routes/v1/deployments.ts`).
+- **Medium — a KV blip signed everyone out and wiped unsealed secrets.** Entry 16 made an unreadable revocation list
+  mean "revoked" (401). The console treats any 401 as a lost session, and its sign-out cleared `cld.secrets.*`. Now
+  an unreadable list answers **503** `service_unavailable` with `Retry-After: 5` ("the token was not refused"), and
+  the console clears unsealed secrets only on a user sign-out or when another wallet signs in (`auth.ts`,
+  `lib/http.ts`, `client/src/lib/cld.ts`).
+- **Medium — `PATCH …/secrets` took workstations.** Guard was `kind !== 'container'`; workstations are stored as
+  containers. A `deployments`-scoped key could inject env (`HASHED_PASSWORD`, `NOTEBOOK_ARGS`) into a workstation it
+  may not connect to. Workstations now answer 400 (`deployments.service.ts`).
+- **Medium — re-seal after the start went out answered 200.** An agent never re-reads `sealedEnv` for an id it is
+  starting, so the "replacement" was announced and never applied. The UPDATE now requires `sealed_env IS NULL OR
+  status = 'queued'`; otherwise 409 "stop and redeploy to change them".
+- **Low — F9 claimed tests it did not have** for the KV-error branches: added (above).
+- **Tests / results.** API tsc clean; vitest 368 → **372** (+2 `api-keys` KV read/write failures, +2 `workstations`
+  events and workstation secrets; the `deployments` seal test now pins the 409); console tsc, 3 tests, build;
+  browser smoke re-run (§4b).
+- **Residual.** Seven critic-round findings (re-seal holding a node slot, unbound `PATCH` race, a failed endpoint
+  replica never replaced, four billing races around `bill()`/`settleElapsed`/`settleHold`) await verification.
+
+### 19 · the completeness round's last seven findings
+Verified 3/3 each once the spend limit reset (52 candidates in all, 47 confirmed, 5 refuted). `SECURITY_AUDIT.md` F10
+has the second table. Billing paths now claim exactly what they read:
+- **High — stale probe snapshot settled the hour twice.** `requeueRows` guarded on status and node only, then
+  `settleElapsed` captured from the caller's snapshot. A bill between the probe's read and its write charged the hour,
+  and the re-queue charged it again (node-exploitable: fail your own probe around your bill). The re-queue statement
+  now also claims the hold (`held_ucld → 0`) against the snapshot's amount and `last_billed_at`; a moved row is
+  skipped. `settleElapsed` captures from the claimed amount and restores the hour only onto a live row.
+- **Medium — `bill()` re-held onto a stopped row.** The re-hold lands only on a live row with nothing held; else the
+  hour is released.
+- **Medium — `settleHold` ignored the clock.** Its claim now covers `last_billed_at`; on a miss it re-reads and
+  retries with the fresh amount and clock.
+- **Medium — a replica failed by the secrets timeout was never replaced.** Replica rows are re-queued instead
+  (`requeueRows`), keeping the hold; the endpoint keeps all its replicas.
+- **Low — `node` optional on `PATCH …/secrets`; seals while queued.** `node` is required; a seal lands only while
+  that node holds an `assigned` row with no payload, and only for containers created with `expectsSecrets`; while
+  queued there is no key to seal to (409). The start clock therefore resets on the first seal only.
+- **Low — "billed" written when nothing was captured.** `chargeHour` returns the capture; `bill()`,
+  `settleElapsed` and `settleHold` write "hour … not charged … needs reconciliation" (warn) instead.
+- **Tests / results.** `billing-races.test.ts` (3: stale-clock stop, stop mid-bill, uncharged hour; `hold` trapped
+  to land a stop inside the bill), `endpoints.test.ts` (+2: nested heartbeat inside a probe answer, replica secrets
+  timeout), `deployments.test.ts` seal test rewritten (queued → 409, `node` required, plain container → 400). Each
+  new test was run against the pre-fix service code and failed there. API tsc clean; vitest 372 → **377**; e2e 43;
+  replay; browser smoke 29/29.
+
+### 20 · the owner's review of PR #52: five blockers and the rest
+Four review comments from the owner's own session (secrets and placement, money, auth, draws and docs), 11:30 UTC.
+Every item is either fixed here or answered on the thread. The blockers:
+- **Money, high — two submits in the same millisecond captured the fee twice and wrote the rewards twice.** The
+  capture and the reward inserts gated on `fee_captured_at = now` only; in Workers `Date.now()` is frozen between
+  I/O events. Both now also require `status = 'assigned' AND node = ?` (`jobs.service.ts`, `ledger.service.ts`);
+  test: two submits with one `now` → one capture, one set of rewards, 409.
+- **Money, medium — a row could end up running with nothing held and never be billed again.** The out-of-credits
+  ends in `settleElapsed` and `bill()` were conditional on a status another node's claim had already changed. They
+  now re-read and end the fresh row; and `bill()` finding a due running row with nothing held holds the hour again
+  or ends it (`billing-races.test.ts`, two cases).
+- **Secrets, high — the deploy form never sent `expectsSecrets`.** It sends `Object.keys(secrets).length > 0`; the
+  API honours an explicit `false` even for a template with `secretEnv`.
+- **Auth, high — KV quota.** Session revocation and sign-in nonces moved from KV to D1 (`revoked_tokens`,
+  `login_nonces`, one shared list read with the request's other D1 work); node-route rate limits count per isolate
+  (`store: "memory"`), so heartbeats no longer spend KV writes; a key store that cannot be read is 503, not
+  "revoked". The IP-keyed public limits stay in KV and degrade to memory when its quota is gone (follow-up B-25:
+  the Workers rate-limiting binding the gateway already uses).
+- **Docs, medium — the runbook's secrets section contradicted the script** (which skips existing secrets since #50):
+  rewritten with the five secrets marked set, `--rotate NAME` and its cost, the real JWT rotation recipe, the table
+  repaired; SHIP_CHECKLIST box ticked; PROGRESS blocker 2 and entry 16 (6) corrected.
+The rest, also in this commit: workstations refuse `expectsSecrets`; the endpoint sealer forgets attempts for
+replicas no longer sealable (a replica back on the same node is sealed again); a replica's secrets timeout re-queues
+with the refusal prefix and the third cycle abandons the endpoint (holds back); the secrets-timeout end and re-queue
+are guarded on `sealed_env IS NULL AND assigned_at = ?`; a drain hands back awaiting rows and the seal refuses a
+non-active node; the Sealer stops polling and drops plaintext once sealing is over; `pendingSecretIds` removed; the
+`schema.sql` comma; keys get neither a workstation's log tail nor its logs route; the events filter catches
+`access_token=`, custom token names, URLs and ssh hosts by shape; `revoked:false` documented; failed rows without a
+node are not replayable (and the verifier says so); `--signer` takes only an address or `published`; `--rpc` checks
+the seed block's timestamp against `assignedAt` (`--seed-window`, 60 s); the operator id is a keyed hash; burned
+hosting fees exclude clawed bills; stale facts in CAPABILITY_MATRIX, SECURITY_AUDIT O12 and PROGRESS corrected.
+- **Not changed, by choice:** `MIN_AGENT_VERSION` stays 1.3.0 by default (raising it is the owner's config call now
+  that the first node runs 1.6.0); the IP-keyed limits stay in KV until B-25.
+- **Deploy note.** The revocation list starts empty in D1: a session logged out in the 24 h before this deploy (its
+  jti sits in KV, which nothing reads any more) is accepted again until it expires. Tokens live 24 h, so the window
+  closes by itself; deploy at a quiet hour if that matters. `ensureSchema` creates both tables on the first request
+  and on the cron.
+- **Tests / results.** 41 files, **387** passed (+10: same-millisecond submit, two billing races, replica timeout
+  lifecycle, drain hand-back, explicit `expectsSecrets:false`, workstation flag refused, no workstation logs for
+  keys, legacy failed draw, D1 revocation ×3 and nonces); each new test fails on the pre-fix code. Console tsc,
+  3 tests, build; e2e 43; browser smoke 29/29.
+
+### 21 · the review of entry 20's diff, after the owner's own re-review
+An adversarial review of entry 20's diff (three area reviewers, three refuters per finding) confirmed five findings;
+the owner's re-review of the same diff found and fixed three of them first (`5782629`: the `bill()` backstop could
+strand an hour's hold on a stopped row when a concurrent heartbeat re-held it → both out-of-credits ends read the
+row afresh; the third secrets cycle abandoned an endpoint without the "still unsealed" guard → the triggering
+replica is ended under that guard first; the logout description promised a local refusal the D1 code no longer
+performs → reworded) plus the unverified ones (secrets cycles counted apart from start timeouts in `seal_timeouts`,
+10 s of seed-block skew in `replay.ts`, the KV namespace's real contents in the runbook). This entry adds the two
+that remained:
+- **Medium — a row waiting for its secrets on a draining or suspended node was unsealable for good.** The seal
+  refuses a non-active node, but only the drain route's one-shot hand-back moved such rows; a hand-back that failed
+  (D1 blip → the route answered 500 with the node already draining) or a drain from before it existed left the row
+  parked until the secrets timeout failed it. `requeueStuckAssigned` (every cron tick) now hands back every
+  `assigned` row with no payload whose node is not active — idempotent, same reason text as the route; a row whose
+  start already went out stays (a draining node finishes what it holds). Test: state flipped without the route →
+  queued on the next tick, sealed sibling untouched, second tick a no-op, suspended the same.
+- **Low — the console's Sealer went dormant after a refused seal.** A 409 "moved to node X" stopped the polling
+  while the tab still held the plaintext, so the next node was never sealed automatically. It now keeps polling
+  after a refusal and tries once per node; it stops when the seal landed (here or in another tab:
+  `awaitingSecrets` false while assigned) or the deployment left `queued`/`assigned`.
+- The review's "PROGRESS totals do not add up" candidate was checked by hand: 39 + 13 candidates; 31 + 4 (console,
+  upheld later) + 5 + 7 confirmed = 47; 2 + 2 + 1 refuted = 5. The addendum to entry 16 is where the four later-upheld
+  console findings are counted.
+- **Tests / results.** 43 files, **393** passed (the owner's three regression tests and the parked-row test; the
+  latter fails on the pre-fix duties code). Console tsc, build; browser smoke 29/29.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **362** |
+| client/api vitest | 330 | **393** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
@@ -229,7 +419,7 @@ the `CURRENT_AGENT_VERSION` comment.
 | # | Gap | State |
 |---|---|---|
 | 1 | No live settlement | **Owner** (runbook 3–6). Engineering side ready: contracts tested, keeper tested, deposit watcher inactive until `SETTLEMENT_ADDRESS`. |
-| 2 | Nothing publicly reachable | **Closed 2026-10-18.** Relay secrets set, gateway live at `https://<id>.cloudana.run`, first node (Azure, agent 1.4.1, relay) online; hosting is live. |
+| 2 | Nothing publicly reachable | **Closed 2026-10-18.** Relay secrets set, gateway live at `https://<id>.cloudana.run`, first node (Azure, relay; agent 1.4.1 then, 1.6.0 since 2026-10-20) online; hosting is live. |
 | 3 | D1 heartbeat cost | Measured and cut 13 → 5 statements per idle/steady beat (commit 10, pinned by a test); the architecture limit (one D1) remains. |
 | 4 | Orchestrator not independently checkable | Largely closed for phase 1: draws published with their eligible set (`GET /v1/draws/{id}`), epochs published with leaves and a signature (`GET /v1/epochs/{n}`), `/v1/network` signed, `scripts/verify/replay.ts` checks all of it from public data; seeds are block hashes once `CHAIN_RPC_URL` deploys. Left: signing individual draws, pull-based assignment (B-17). |
 | 5 | Verification cost = work cost | Open (B-6). |
@@ -245,10 +435,11 @@ the `CURRENT_AGENT_VERSION` comment.
    `contract/scripts/v2/deploy.ts` (runbook step 4). Then engineering wires `SETTLEMENT_ADDRESS` into the API and
    keeper and runs the veto drill.
 2. ~~Worker secrets~~ — **done 2026-10-18**: `INSTRUCTION_SIGNING_KEY`, `JWT_SECRET`, `STORAGE_KEK` on cloudana-api;
-   `RELAY_TICKET_SECRET` on api + relay; `INTERNAL_API_KEY` on api + gateway. **Do not re-run
-   `scripts/set-api-secrets.mjs`**: it generates all three again, which would cut off every node pinned to the current
-   signer, sign everyone out and make stored storage copies unverifiable. Re-run `scripts/set-relay-secrets.mjs` only
-   once the keeper is deployed (it then rotates `INTERNAL_API_KEY` on api, gateway and keeper together).
+   `RELAY_TICKET_SECRET` on api + relay; `INTERNAL_API_KEY` on api + gateway. `scripts/set-api-secrets.mjs` skips a
+   secret that is already set; `--rotate NAME` is the only way to replace one, and a new signing key cuts off every
+   pinned node, a new JWT secret signs everyone out, a new KEK makes stored copies unverifiable (DEPLOYMENT_RUNBOOK
+   §1). `scripts/set-relay-secrets.mjs` (owner only) replaces both relay secrets on every run, with a brief
+   relay/hosting outage; run it once the keeper is deployed, to give the keeper `INTERNAL_API_KEY`.
 3. ~~User-content domain~~ — **done 2026-10-18**: `cloudana.run`, proxied wildcard record, gateway deployed.
 4. ~~First node~~ — **done 2026-10-18**: Azure VM (compute, hosting and storage over the relay). Still to come: a
    Docker ≥ 28 / xfs-pquota machine for containers and GPU work.

@@ -92,6 +92,10 @@ export const V1_TABLES = [
   // Node request nonces (middleware/node-auth.ts): INSERT … ON CONFLICT DO NOTHING makes the replay check atomic.
   `CREATE TABLE IF NOT EXISTS node_nonces (key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_node_nonces_expires ON node_nonces(expires_at)`,
+  `CREATE TABLE IF NOT EXISTS revoked_tokens (jti TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at)`,
+  `CREATE TABLE IF NOT EXISTS login_nonces (key TEXT PRIMARY KEY, message TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_login_nonces_expires ON login_nonces(expires_at)`,
   // GPU endpoint keys (docs/V4_ENDPOINTS_CONTRACT.md): the key itself is shown once; only its sha256 is kept.
   `CREATE TABLE IF NOT EXISTS endpoint_keys (
     id TEXT PRIMARY KEY, deployment_id TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL,
@@ -167,8 +171,12 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE deployments ADD COLUMN probe_inconclusive INTEGER NOT NULL DEFAULT 0",
   // Start timeouts so far (deployment-duties G4): after DEPLOY_START_ATTEMPTS the deployment fails and its hold is released.
   "ALTER TABLE deployments ADD COLUMN start_attempts INTEGER NOT NULL DEFAULT 0",
+  // Endpoint replicas re-queued for never being sealed (counted apart from start timeouts).
+  "ALTER TABLE deployments ADD COLUMN seal_timeouts INTEGER NOT NULL DEFAULT 0",
   // The eligible set a job's draw ran over (sorted Candidate[] JSON), published at GET /v1/draws/{id} for replay.
   "ALTER TABLE work_jobs ADD COLUMN eligible_json TEXT",
+  // Set in the same transaction that captures the fee and writes the rewards (jobs.service submitWork).
+  "ALTER TABLE work_jobs ADD COLUMN fee_captured_at INTEGER",
   // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
   "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN net_prefix TEXT",

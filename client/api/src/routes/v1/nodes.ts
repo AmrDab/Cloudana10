@@ -18,7 +18,7 @@ import { NODE_STATES, announceNode, bindNode, bindNodeToFleet, getNode, listNode
 import { fleetForToken } from "../../services/fleets.service.js";
 import { getActiveAssignment } from "../../services/jobs.service.js";
 import { workTypeIds } from "../../services/work-types.js";
-import { nodeActivity, runDeploymentDuties } from "../../services/deployment-duties.service.js";
+import { nodeActivity, requeueAwaitingSecrets, runDeploymentDuties } from "../../services/deployment-duties.service.js";
 import { endpointAllowed } from "../../services/deployment-spec.js";
 import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
 import { STORAGE_CAPABILITY, recordNodeNetwork, storageCapable, storageInstructions } from "../../services/storage.service.js";
@@ -42,9 +42,11 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 /** Cloudflare's ASN for the request (Workers only). */
 const cfAsn = (c: { req: { raw: Request } }) => (c.req.raw as Request & { cf?: { asn?: number } }).cf?.asn;
 /** Per-node limits, after requireNode so they key on the verified address (see middleware/security.ts). */
-const announceLimit = rateLimit({ bucket: "nodes-announce", limit: 10, windowSec: 60, keyBy: verifiedNodeKey });
-const heartbeatLimit = rateLimit({ bucket: "nodes-heartbeat", limit: 12, windowSec: 60, keyBy: verifiedNodeKey });
-const ticketLimit = rateLimit({ bucket: "nodes-relay-ticket", limit: 12, windowSec: 60, keyBy: verifiedNodeKey });
+// Signed node traffic is limited per isolate, not in KV: every node heartbeats every 15 s, and two KV operations per
+// heartbeat would spend the Worker's KV write quota in minutes (rate-limit.ts).
+const announceLimit = rateLimit({ bucket: "nodes-announce", limit: 10, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
+const heartbeatLimit = rateLimit({ bucket: "nodes-heartbeat", limit: 12, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
+const ticketLimit = rateLimit({ bucket: "nodes-relay-ticket", limit: 12, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
 /** Capability a relay-capable agent announces; kept only when this API runs the relay (RELAY_TICKET_SECRET). */
 export const RELAY_CAPABILITY = "relay";
 /** A hostname or IP as the node stores and compares it: lowercase, IPv6 without brackets. */
@@ -268,12 +270,14 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
         return [];
       })
     : [];
-  // Below the minimum version: no new work (stops and purges still go out so the node winds down cleanly).
-  if (!allowed) deployments = deployments.filter((d) => d.action !== "start");
+  // Below the minimum version, or suspended: no new work (stops and purges still go out so the node winds down
+  // cleanly). A draining node finishes what it was already handed; placement stops at claim().
+  const suspended = (row?.state ?? "active") === "suspended";
+  if (!allowed || suspended) deployments = deployments.filter((d) => d.action !== "start");
   // Storage-capable nodes get a third signed key; others keep the exact { assignment, deployments } body 1.3.x verifies.
-  const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed).catch(() => null) : null;
+  const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed && !suspended).catch(() => null) : null;
   const instructions = {
-    assignment: allowed && activity && activity.assignedJobs > 0 ? await getActiveAssignment(node) : null,
+    assignment: allowed && !suspended && activity && activity.assignedJobs > 0 ? await getActiveAssignment(node) : null,
     deployments,
     ...(storage ? { storage } : {}),
   };
@@ -411,6 +415,9 @@ nodesRouter.openapi(drainRoute, async (c) => {
   const { reason } = c.req.valid("json");
   const r = await setOwnNodeDraining(c.get("jwtPayload").sub, address, true, reason?.trim() || null);
   if (!r.ok) return fail(c, r.code, r.message);
+  // Containers still waiting for their secrets on this node go back to the queue now: no start went out, and the
+  // owner would otherwise seal to a node that is leaving. What runs finishes on it (that is what draining means).
+  await requeueAwaitingSecrets(address, `node ${address.toLowerCase()} is draining`);
   return ok(c, { address: address.toLowerCase(), state: r.state });
 });
 

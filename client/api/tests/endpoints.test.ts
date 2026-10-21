@@ -14,6 +14,7 @@ import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
 import { priceUcldPerHour } from "../src/services/deployment-spec.js";
+import { runDutiesCron } from "../src/services/deployment-duties.service.js";
 
 const SECRET = "r".repeat(40);
 const INTERNAL_KEY = "k".repeat(32);
@@ -421,7 +422,7 @@ describe("stop and secrets", () => {
     const id = (await (await create(u.jwt, { ...ENDPOINT, expectsSecrets: true })).json()).id;
     const [r1, r2] = await replicas(id);
     const sealed = (label: string) => Buffer.concat([Buffer.from([2, 4]), Buffer.alloc(64 + 24 + 16, 1), Buffer.from(label)]).toString("base64"); // v2-shaped (shared/sealed.ts)
-    const onParent = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed("x") });
+    const onParent = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed("x"), node: "0x" + "aa".repeat(20) });
     expect(onParent.status).toBe(400);
     expect((await onParent.json()).error.message).toMatch(/per replica/);
     // Before any node: the endpoint and both replicas wait for secrets; there is no key to seal to yet.
@@ -446,7 +447,7 @@ describe("stop and secrets", () => {
     expect(listed.awaitingSecrets).toBe(true);
     expect(listed.replicas.every((r: any) => r.nodePubkey === undefined && r.awaitingSecrets === true)).toBe(true);
     // Seal the first replica: only its node gets a start, carrying that payload; the other still waits.
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${r1.id}/secrets`, { sealedEnv: sealed("one") })).status).toBe(200);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${r1.id}/secrets`, { sealedEnv: sealed("one"), node: byId[r1.id].node })).status).toBe(200);
     const n1 = byId[r1.id].node === addr(a) ? a : b;
     const n2 = n1 === a ? b : a;
     expect(await beat(n1)).toEqual([expect.objectContaining({ id: r1.id, action: "start", sealedEnv: sealed("one") })]);
@@ -457,8 +458,8 @@ describe("stop and secrets", () => {
     expect(byIdOf(got).get(r2.id).awaitingSecrets).toBe(true);
     // Nobody else can seal a replica; the owner seals the second and its node starts it.
     const other = await user();
-    expect((await authed(other.jwt, "PATCH", `/v1/deployments/${r2.id}/secrets`, { sealedEnv: sealed("two") })).status).toBe(404);
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${r2.id}/secrets`, { sealedEnv: sealed("two") })).status).toBe(200);
+    expect((await authed(other.jwt, "PATCH", `/v1/deployments/${r2.id}/secrets`, { sealedEnv: sealed("two"), node: byId[r2.id].node })).status).toBe(404);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${r2.id}/secrets`, { sealedEnv: sealed("two"), node: byId[r2.id].node })).status).toBe(200);
     expect(await beat(n2)).toEqual([expect.objectContaining({ id: r2.id, action: "start", sealedEnv: sealed("two") })]);
     got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
     expect(got.deployment.awaitingSecrets).toBe(false);
@@ -574,5 +575,97 @@ describe("report a problem", () => {
     expect((await res.json()).error.message).toBe("nothing is running to check (status stopped)");
     // Refusals are not counted.
     expect((await getD1().prepare("SELECT COUNT(*) AS n FROM deployment_reports WHERE owner = ?").bind(u.addr).first<{ n: number }>())!.n).toBe(0);
+  });
+});
+
+describe("replicas and the owner's money under concurrency (SECURITY_AUDIT F10)", () => {
+  it("a probe pass that read its rows before a bill ran cannot settle that hour again: the re-queue claims the hold it settles", async () => {
+    const { u, id, a, r1 } = await liveEndpoint();
+    const reprobe = () => getD1().prepare("UPDATE deployments SET last_probe_at = 0 WHERE id = ?").bind(r1.id).run();
+    // Two misses already, and the hour is due.
+    await getD1().prepare("UPDATE deployments SET probe_fail = 2, last_billed_at = last_billed_at - ? WHERE id = ?").bind(61 * 60_000, r1.id).run();
+    const before = await getBalanceUcld(u.addr);
+    let nested = false;
+    setRelay(async () => {
+      if (!nested) {
+        nested = true;
+        // While this probe pass waits for the node's answer, another heartbeat bills the due hour and passes its own
+        // probe; this pass still holds the snapshot from before it (probe_fail 2, the old clock, the old hold).
+        await beat(a);
+        return new Response("", { status: 503 });
+      }
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    await reprobe();
+    await beat(a);
+    // The hour was billed once; the stale pass settled nothing on top of it and the replica stays where it runs.
+    expect(await row(r1.id)).toMatchObject({ status: "running", node: addr(a), probe_fail: 0, held_ucld: 5400 });
+    const after = await getBalanceUcld(u.addr);
+    expect(before.balanceUcld - after.balanceUcld).toBe(5400);
+    expect(after.heldUcld).toBe(before.heldUcld);
+    expect((await getD1().prepare("SELECT COUNT(*) AS n FROM deployment_bills WHERE deployment_id = ?").bind(r1.id).first<{ n: number }>())!.n).toBe(1);
+    const messages = (await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json()).events.map((e: any) => e.message as string);
+    expect(messages.some((m: string) => m.includes("served before the re-queue"))).toBe(false);
+  });
+
+  it("a replica never sealed goes back to the queue after a day, refused by its node; the third cycle abandons the endpoint", async () => {
+    const u = await user();
+    const id = (await (await create(u.jwt, { ...ENDPOINT, expectsSecrets: true })).json()).id as string;
+    const a = await relayGpuNode();
+    const b = await relayGpuNode();
+    expect(await beat(a)).toEqual([]);
+    expect(await beat(b)).toEqual([]);
+    const [r1, r2] = await replicas(id);
+    const holder = (await row(r2.id))!.node === addr(a) ? a : b;
+    const held = (await getBalanceUcld(u.addr)).heldUcld;
+    const age = () => getD1().prepare("UPDATE deployments SET assigned_at = assigned_at - ? WHERE id = ?").bind(24 * 3_600_000 + 60_000, r2.id).run();
+    await age();
+    await runDutiesCron();
+    const reason = `refused by node ${addr(holder)}: secrets were not sealed within 24 h of assignment`;
+    expect(await row(r2.id)).toMatchObject({ status: "queued", node: null, held_ucld: 5400, seal_timeouts: 1, start_attempts: 0, status_reason: reason });
+    expect(await row(r1.id)).toMatchObject({ status: "assigned" });
+    expect((await getBalanceUcld(u.addr)).heldUcld).toBe(held); // nothing released: the replica is still wanted
+    let got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.events.map((e: any) => e.message)).toContain(`llm #2: ${reason} — re-queued`);
+    // The node that sat on it is owed a stop and does not claim it straight back; a fresh node takes it and waits.
+    expect(await beat(holder)).toEqual([expect.objectContaining({ id: r2.id, action: "stop" })]);
+    expect(await row(r2.id)).toMatchObject({ status: "queued" });
+    const c = await relayGpuNode();
+    expect(await beat(c)).toEqual([]);
+    expect(await row(r2.id)).toMatchObject({ status: "assigned", node: addr(c) });
+    got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(byIdOf(got).get(r2.id).awaitingSecrets).toBe(true);
+    // Second cycle: back again. Third: nobody is coming — the endpoint is abandoned and every hold comes back.
+    await age();
+    await runDutiesCron();
+    expect(await row(r2.id)).toMatchObject({ status: "queued", seal_timeouts: 2, start_attempts: 0 });
+    const d = await relayGpuNode();
+    expect(await beat(d)).toEqual([]);
+    expect(await row(r2.id)).toMatchObject({ status: "assigned", node: addr(d) });
+    await age();
+    await runDutiesCron();
+    const abandoned = "secrets were not sealed within 24 h of assignment, 3 times — endpoint abandoned";
+    expect(await row(r2.id)).toMatchObject({ status: "failed", status_reason: abandoned, held_ucld: 0 });
+    expect(await row(r1.id)).toMatchObject({ status: "failed", status_reason: abandoned, held_ucld: 0 });
+    expect(await row(id)).toMatchObject({ status: "failed" });
+    expect((await getBalanceUcld(u.addr)).heldUcld).toBe(0);
+    got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment.status).toBe("failed");
+  });
+
+  it("start timeouts and secrets timeouts are counted apart: two earlier start timeouts do not abandon on the first secrets timeout", async () => {
+    const u = await user();
+    const id = (await (await create(u.jwt, { ...ENDPOINT, expectsSecrets: true })).json()).id as string;
+    const a = await relayGpuNode();
+    const b = await relayGpuNode();
+    expect(await beat(a)).toEqual([]);
+    expect(await beat(b)).toEqual([]);
+    const [r1, r2] = await replicas(id);
+    // Two start timeouts on earlier nodes (sealed each time), now waiting for a seal on this one for a day.
+    await getD1().prepare("UPDATE deployments SET start_attempts = 2, assigned_at = assigned_at - ? WHERE id = ?").bind(24 * 3_600_000 + 60_000, r2.id).run();
+    await runDutiesCron();
+    expect(await row(r2.id)).toMatchObject({ status: "queued", seal_timeouts: 1 });
+    expect(await row(r1.id)).toMatchObject({ status: "assigned" });
+    expect(await row(id)).not.toMatchObject({ status: "failed" });
   });
 });

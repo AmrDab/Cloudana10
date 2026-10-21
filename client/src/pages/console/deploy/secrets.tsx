@@ -28,8 +28,10 @@ export async function sealSecretsTo(target: SealTarget, secrets: Record<string, 
     }
     // Bound to this deployment (or replica) id: the node opens them only for it (shared/sealed.ts v2).
     const sealedEnv = seal(target.nodePubkey, JSON.stringify(secrets), sealedEnvAad(target.id));
-    await api(`/deployments/${target.id}/secrets`, { method: "PATCH", auth: true, body: { sealedEnv } });
-    setSealState(target.id, { phase: "sealed", node });
+    // `node` makes the API refuse the payload if the deployment moved since this key was fetched (a race with a
+    // re-queue): the next node could never open it.
+    await api(`/deployments/${target.id}/secrets`, { method: "PATCH", auth: true, body: { sealedEnv, node: target.node } });
+    setSealState(target.id, { phase: "sealed", node, at: Date.now() });
     return true;
   } catch (e) {
     setSealState(target.id, { phase: "error", node, message: errText(e) });

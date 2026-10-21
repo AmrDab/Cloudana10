@@ -121,6 +121,69 @@ Tests: `api-keys.test.ts` (18 route→scope cases; mint/list/hash; per-scope all
 expiry, garbage, cross-owner 404; the 20-key cap; logout), `auth.test.ts` (jti, revocation, rotation, a key against
 an app without storage → 401), `security.test.ts` (gates).
 
+### F9 — Findings of the independent review of this branch — FIXED (commit 16)
+
+Seven fresh reviewers read the whole diff before the pull request was handed over, each finding challenged by three
+verifiers. The security-relevant ones, all fixed with tests (`PROGRESS.md` commit 16 has the full list):
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | A node that refused a container kept the payload sealed to its key on the re-queued row; the next node failed to open it and the deployment died | cleared and flagged like every other re-queue |
+| High | An owner's drain/resume could overwrite a concurrent suspension | one conditional write guarded on state |
+| High | Vetoed epochs were published and signed with stale leaves | published epochs only (closed, posted, settled) |
+| High | The draw record was unsigned and its eligible set self-attested; it also listed every eligible node's payout wallet | signed over `{ draw }`; wallets replaced by an opaque operator id (a keyed hash since entry 20 — the epoch leaves name payout wallets, so an unkeyed hash was mappable); the limit (attested, not pre-committed) stated in the API and ARCHITECTURE — pull-based assignment (B-17) is the real fix |
+| High | The runbook's secrets table had the operator regenerate the pinned instruction key and the storage KEK | rewritten; and again in entry 20 after the owner's script started skipping existing secrets (#50): all five are set, `--rotate NAME` is the only way to replace one, and what each replacement costs |
+| Medium | `PATCH …/secrets` accepted a payload for whichever node now held the row | the console names the node it sealed to; refused once the row moved |
+| Medium | A placement could race a suspension; a suspended node still got storage fetches and kept its relay socket | `claim()` checks node state in the same statement; suspended heartbeats carry no start/assignment/fetch; socket kicked |
+| Medium | `submitWork` did done → capture → rewards in three round trips; a failure between them stranded a hold or captured a fee with no rewards | one transaction, each statement conditioned on the previous |
+| Medium | `replay.ts` trusted the signer address the server being checked published | pinned signer (the agents' default); `--signer published` is explicit and labelled not a proof |
+| Medium | Logs answer read unbounded before the cap | capped reader; over-cap is 502 |
+| Low | API-key cache could outlive the key's expiry; session revocation failed open on KV errors; anyone could cancel a wallet's pending sign-in nonce | cache capped at expiry; a bound KV that cannot be read refuses the request (first as 401, since F10 as 503 "not refused, retry"); nonces keyed per nonce |
+
+### F10 — Findings of the review's completeness round — FIXED (commit 18)
+
+A critic read the seven reviewers' coverage and sent four finders after the cross-area interactions nobody had
+traced; each finding again challenged by three verifiers. Fixed with tests (`workstations.test.ts`, `api-keys.test.ts`,
+`deployments.test.ts`):
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | `forCaller` hid a workstation's `connect`/`endpoint` from API keys, but the node's running report wrote the full web URL (Jupyter token included) and the SSH host:port into the event log, which `GET /v1/deployments/{id}` returns unfiltered: a `read`-scoped key recovered exactly what was hidden | workstation events name no address ("running (web ready · ssh ready)"); node-supplied text has credential-looking query values redacted; events written before the fix are filtered out of a key's view when they carry the row's endpoint, ssh host, token or a token URL |
+| Medium | A bound KV whose read failed made `isRevoked` answer "revoked": one KV blip signed every console out at once (401), and the console's sign-out wiped the plaintext secrets the owner had typed but not sealed | an unreadable revocation list answers **503** with `Retry-After` and "the token was not refused"; the console wipes unsealed secrets only on a user sign-out or a wallet switch, never on a lost session |
+| Medium | `PATCH …/secrets` accepted workstations (stored as kind `container`): a `deployments`-scoped key, forbidden to connect to the owner's workstation, could inject environment into it before it started (`HASHED_PASSWORD`, `NOTEBOOK_ARGS`) | workstations take no sealed env (400): the node issues the access token and nothing else is injected |
+| Medium | A re-seal while `assigned` with a payload answered 200 and logged "sealed secrets updated" although the start had already gone out and an agent never re-reads `sealedEnv`: the container ran the old secrets while every view said the new ones applied | once a start may have gone out the payload cannot be replaced (409 "stop and redeploy"); replacement stays allowed while queued |
+| Low | F9 said the fail-closed revocation change was "fixed with tests"; no test exercised a KV error | two tests: a KV that cannot be read → 503 for a session, 200 for an API key; a KV that cannot be written → logout says `revoked:false` |
+
+The round's remaining seven findings were verified once the spend limit reset (commit 19; tests `billing-races.test.ts`,
+`endpoints.test.ts`, `deployments.test.ts`):
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | A probe pass that read its rows before a bill ran re-queued the replica from that stale snapshot and settled "the elapsed hour" again: the owner paid twice for one hour and the provider was paid twice (a node can time a slow probe answer around its own bill) | the statement that re-queues a row also claims the hold it settles, against the snapshot's amount **and** billing clock; a row whose hold or clock moved since is skipped and re-read next pass |
+| Medium | `bill()` re-held the next hour with an unconditional `UPDATE`: a stop landing between its claim and its re-hold found nothing to settle, and a full hour stayed held on a stopped row for ever | the re-hold lands only on a live row with nothing held; otherwise the hour goes back to the owner |
+| Medium | `settleHold` claimed on the amount only: after a bill re-held the same amount, a stop carrying the older snapshot charged a full hour for the seconds since the bill | the claim covers the billing clock too; on a miss the fresh amount and clock are read and the settle retried |
+| Medium | An endpoint replica whose secrets were never sealed was failed for good by the 24 h timeout; nothing replaces a failed replica, so the endpoint ran short one replica while priced for all | a replica goes back to the queue instead (slot freed, hold kept); plain containers still fail |
+| Medium | A re-seal after the start went out answered 200 (see above) | fixed in commit 18 |
+| Low | Every accepted seal reset the start clock, so repeated seals could hold a node slot for ever | the clock resets on the first seal only: a payload lands once (commit 18) |
+| Low | The node binding of `PATCH …/secrets` was optional, so a client not sending `node` kept the moved-row race; a seal while queued was stored for whichever node came next | `node` is required; a seal lands only while that node holds the row and only for a container created with `expectsSecrets` (its start otherwise goes out without a payload on the first heartbeat) |
+| Low | `bill()` wrote "billed … for one hour" even when nothing was captured (hold missing) and no bill or reward existed | `chargeHour` reports the capture; every caller writes "hour … not charged … needs reconciliation" instead, and the test forces the state |
+
+### F11 — The owner's review of PR #52 — FIXED (commit 20)
+
+Four reviews from the owner's own session (`PROGRESS.md` entry 20 has every item). The security-relevant ones:
+
+| Severity | Finding | Fix |
+|---|---|---|
+| High | Two submits in the same millisecond (Workers freeze `Date.now()` between I/O events) captured the fee twice and wrote the rewards twice: the capture and the reward inserts gated on `fee_captured_at = now` only | both also require `status = 'assigned' AND node = ?`; test with one `now` |
+| High | Session revocation and sign-in nonces in KV: a day of console polls and heartbeats exhausted the free tier's reads (every session 503 until midnight) and writes (every sign-in 401) | both in D1 (`revoked_tokens`, `login_nonces`); node-route limits count per isolate; a failing key store is 503, not "revoked" |
+| Medium | A row left running with nothing held was never billed again | the out-of-credits end follows the row; a due running row with nothing held is held again or ended |
+| Medium | A workstation spec took `expectsSecrets: true`, which can never be sealed: the start waited a day and failed | refused at `checkSpec` |
+| Low | A `read` key could fetch a workstation's failure log tail and its logs route; the events filter missed `access_token=`, custom token names and old addresses | no log tail or logs route for keys on workstations; the filter matches by shape |
+| Low | The operator id was an unsalted hash of a wallet the epoch leaves publish | keyed hash (key derived from `INSTRUCTION_SIGNING_KEY`). Limit: it hides the wallet only of operators never drawn into a paid job — `/v1/epochs/{n}/jobs` names each job's payout wallet, so a join maps every operator that has won one |
+| Medium (docs) | The runbook's secrets section contradicted `set-api-secrets.mjs` and could have had the owner cut off the live node | rewritten; checklist box ticked |
+| Medium | (re-review of this round) the `bill()` backstop could strand an hour's hold on a stopped row when a concurrent heartbeat re-held it; the third secrets cycle abandoned an endpoint without the still-unsealed guard | both out-of-credits ends read the row afresh; the triggering replica is ended under the guard first (owner's `5782629`) |
+| Medium | (re-review of this round) a row waiting for secrets on a draining or suspended node was unsealable for good: the seal refuses a non-active node and only the drain route's one-shot hand-back moved it | the cron hands back every unsealed `assigned` row whose node is not active, idempotently (entry 21) |
+
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
 | Review item (C.5) | State in code | Where |
@@ -155,7 +218,7 @@ an app without storage → 401), `security.test.ts` (gates).
 | O9 | Medium | Testnet credits keyed per wallet/IP/ASN — cheap Sybil for free credits | Testnet only, no value | Remove before value (decided) |
 | O10 | Medium | Relay DO `/kick` and `/status` are reachable to anyone with the binding; the gateway binding could kick nodes | Bindings are trusted scripts | Restrict `/kick` to the API via a shared header, or split the stub interface |
 | O11 | Low | Workstation SSH is published on the node's public IP (direct mode only) | WebSockets over the relay not built | Relay WebSocket tunnelling (planned) |
-| O12 | Low | `MIN_AGENT_VERSION` defaults to 1.3.0 while the agent is 1.5.0; sealed-v2 gating is per-deployment, not a hard minimum | Deliberate: do not cut off compute/hosting nodes | Raise the minimum once the owner's node runs 1.5.0 |
+| O12 | Low | `MIN_AGENT_VERSION` defaults to 1.3.0 while the agent is 1.6.0; sealed-v2 (≥ 1.5.0) and logs (≥ 1.6.0) gating is per-feature, not a hard minimum | Deliberate: do not cut off compute/hosting nodes | The owner's node runs 1.6.0 since 2026-10-20 (per the owner): raising `MIN_AGENT_VERSION` is now a config choice for the owner; the default stays 1.3.0 |
 | O13 | Low (dev-time) | Advisories left after `npm audit fix` that need major upgrades: the console's wallet stack (`@wagmi/connectors` pins old `ws`, `preact`, `d3-color`) and the Hardhat 2 toolchain (§3b) | No runtime path: build/test tooling and the browser wallet connector bundle | Bump `@wagmi/*` with the next console dependency pass; move to Hardhat 3 with the v2 contract work |
 
 ### 3b. Dependency audit (`npm audit`, 2026-10-19)
@@ -202,8 +265,9 @@ Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13
 - **Ledger.** Integer µCLD; holds moved with conditional updates (`WHERE balance_ucld >= ?`, `WHERE held_ucld = ?`);
   the hour is claimed (`held_ucld → 0` conditional) before it is charged, so concurrent heartbeats cannot bill twice;
   epochs close once (vetoed ones re-close under the same id); clawed entries drop out of the next close and of
-  `fees_burned`. The e2e run in `TEST_EVIDENCE.md` shows two fees captured once each, a refused answer leaving its fee
-  held, and the posted treasury within the contract's bounds.
+  `fees_burned`. The e2e run in `TEST_EVIDENCE.md` shows three fees captured once each (balance 10,000,000 − 3,003,
+  held 0), a refused answer re-queued with its fee still held until the job was later verified, and
+  the posted treasury within the contract's bounds.
 
 ## 5. What the audit did not cover
 

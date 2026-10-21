@@ -86,7 +86,7 @@ export function Endpoints({ focusId }: { focusId: string | null }) {
 
   return (
     <Panel id="endpoints" className="scroll-mt-6 overflow-hidden" aria-labelledby="ep-h">
-      {eps.filter((e) => autoSeal.has(e.id)).map((e) => <EndpointSealer key={e.id} id={e.id} />)}
+      {eps.filter((e) => (autoSeal.has(e.id) || !!pendingSecrets(e.id)) && !isTerminal(e.status)).map((e) => <EndpointSealer key={e.id} id={e.id} />)}
       <PanelHeader title={<span id="ep-h">Your endpoints</span>} kicker="Endpoints" right={session && <Updated at={q.dataUpdatedAt || null} offline={q.isError} />} />
       {!session ? (
         <Empty icon={Wallet} title="Sign in to serve your model and see your endpoints." action={<button type="button" className={btn.primary} onClick={() => signInWithToast()}><Wallet /> Sign in</button>} />
@@ -310,9 +310,15 @@ function EndpointSealer({ id }: { id: string }) {
       return;
     }
     if (!getSealState(id)) setSealState(id, { phase: "waiting" });
+    // Attempts are remembered only while the replica is sealable on that node: a replica whose seal was wiped (dead
+    // node, probe failure) and that the same node claims again is sealed again, not skipped.
+    const live = new Set(sealable(dep).map((r) => `${r.id}:${r.node}`));
+    for (const k of attempted.current) if (!live.has(k)) attempted.current.delete(k);
     for (const r of sealable(dep)) {
-      if (attempted.current.has(r.id)) continue;
-      attempted.current.add(r.id);
+      // Keyed by replica AND node: a replica re-queued to another node is sealed again, to the new key.
+      const key = `${r.id}:${r.node}`;
+      if (attempted.current.has(key)) continue;
+      attempted.current.add(key);
       void sealSecretsTo(r, secrets).then((ok) => {
         if (ok) void qc.invalidateQueries({ queryKey: ["cld", "deployment", id] });
       });
@@ -352,8 +358,8 @@ function EndpointSecrets({ d }: { d: Endpoint }) {
         )}
       </div>
       {errors.map((x) => <p key={x.n} className="mt-2 text-[12px] leading-4 text-burn">#{x.n}: {x.e!.message}</p>)}
-      {pending && errors.length > 0 && (
-        <button type="button" className={cn(btn.ghost, btn.sm, "mt-3 w-full")} onClick={retry}><Lock /> Seal again</button>
+      {pending && !sealing && sealable(d).length > 0 && (
+        <button type="button" className={cn(btn.ghost, btn.sm, "mt-3 w-full")} onClick={retry}><Lock /> {errors.length ? "Seal again" : "Seal now"}</button>
       )}
       {pending && errors.length === 0 && (
         <p className="mt-1.5 text-[12px] leading-4 text-faint">Encrypted in this browser to each replica's node as nodes are assigned; the API never sees the values. Kept in this tab only until every replica is sealed.</p>

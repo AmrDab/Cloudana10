@@ -9,6 +9,8 @@ import { ok, fail } from "../../lib/http.js";
 import { enqueueWorkJob, getDrawRecord, getWorkJob, jobMatrices, listWorkJobs, replayDraw, toSummary } from "../../services/jobs.service.js";
 import { MATMUL_N_MAX, MATMUL_N_MIN } from "../../services/work-types.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
+import { SignatureSchema } from "./ledger.js";
+import { signPublic } from "../../services/public-signing.service.js";
 
 export const jobsRouter = createRouter();
 const TAGS = ["Jobs"];
@@ -110,7 +112,11 @@ const getJobRoute = createRoute({
 });
 
 // ── GET /v1/draws/{id} — public ─────────────────────────────────────────────
-const CandidateSchema = z.object({ address: z.string(), payout: z.string(), weight: z.number() });
+const CandidateSchema = z.object({
+  address: z.string(),
+  weight: z.number(),
+  operator: z.string().openapi({ description: "Opaque per-operator id (a keyed hash of the payout wallet, 16 hex; the key is the orchestrator's): shows how weight is spread over operators. Consistent and not reversible, but an operator that won a paid job can be matched to its wallet through GET /v1/epochs/{id}/jobs. Not needed for the replay" }),
+});
 const drawRoute = createRoute({
   method: "get",
   path: "/draws/{id}",
@@ -119,7 +125,10 @@ const drawRoute = createRoute({
     "Public draw record of a job, enough to replay its assignment without trusting the orchestrator: drawSeed = " +
     "sha256(seedSource ‖ jobId); eligibleHash = sha256 of the sorted \"address:weight\" list; node = the weighted draw of " +
     "drawSeed over `eligible` (cumulative weights, sorted by address). `replay` is the API's own re-check; outsiders run " +
-    "client/api/scripts/verify/replay.ts. No matrices or owner data; sigma only once the job is done.",
+    "client/api/scripts/verify/replay.ts. No matrices, owner data or payout wallets; sigma only once the job is done. " +
+    "The record is signed by the instruction key (signature covers { draw }). What it proves: the draw was computed as " +
+    "published from this seed and this set. What it does not prove: that the set was complete — it is the orchestrator's " +
+    "attestation, not committed before the seed (pull-based assignment, backlog B-17, closes that).",
   request: { params: z.object({ id: z.string().min(1).max(64) }) },
   responses: responses(
     {
@@ -142,6 +151,7 @@ const drawRoute = createRoute({
             replayable: z.boolean(),
             replay: z.object({ seedOk: z.boolean(), eligibleOk: z.boolean(), drawOk: z.boolean(), ok: z.boolean() }).nullable(),
           }),
+          signature: SignatureSchema.nullable(),
         }),
         "Draw record",
       ),
@@ -155,7 +165,10 @@ jobsRouter.openapi(drawRoute, async (c) => {
   const d = await getDrawRecord(c.req.valid("param").id);
   if (!d) return fail(c, "not_found", "job not found");
   const { status: jobStatus, ...rest } = d;
-  return ok(c, { draw: { ...rest, jobStatus, replay: d.eligible && jobStatus !== "failed" ? replayDraw(d) : null } });
+  // No node on record (a job failed before failed rows kept theirs): nothing to replay against, and `replayable`
+  // says so — the record must not read as a rigged draw.
+  const body = { draw: { ...rest, jobStatus, replay: d.eligible && d.node ? replayDraw(d) : null } };
+  return ok(c, { ...body, signature: await signPublic(body, Date.now()) });
 });
 
 jobsRouter.openapi(getJobRoute, async (c) => {

@@ -11,6 +11,7 @@ import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
 import { SSH_PUBLIC_KEY, checkSpec, priceUcldPerHour, type WorkstationSpec } from "../src/services/deployment-spec.js";
 import { gpuTier, gpusFit } from "../src/services/workstation.js";
 import { probeTarget } from "../src/services/deployment-duties.service.js";
+import { addEvent } from "../src/services/deployments.service.js";
 
 let app: ReturnType<typeof buildApp>;
 let ipSeq = 0;
@@ -407,6 +408,75 @@ describe("connect and hours", () => {
     expect(JSON.stringify(listViaKey)).not.toContain("42031");
     // The wallet session still gets it.
     expect((await detail(u.jwt, web)).deployment.connect).toEqual({ web: "http://127.0.0.1:42031", webToken: "k3y-cannot-see" });
+  });
+
+  it("a workstation's event log names no address, token URL or ssh host — what `connect` hides from a key, events do not leak", async () => {
+    const u = await user();
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
+    const spec = WS({ gpu: { count: 0 }, access: { web: { port: 8888, path: "/lab" }, ssh: { publicKey: KEY, user: "jovyan" } } });
+    const web = await running(node, u.jwt, spec, { endpoint: "http://127.0.0.1:42035/lab?token=t0k-in-url", sshEndpoint: "127.0.0.1:42036", message: "see ?token=t0k-in-url" });
+    expect((await report(node, web, { status: "running", endpoint: "http://127.0.0.1:42037/lab?token=t0k-2", sshEndpoint: "127.0.0.1:42038" })).status).toBe(200);
+    const mine = await detail(u.jwt, web);
+    expect(mine.deployment.connect).toEqual({ web: "http://127.0.0.1:42037/lab?token=t0k-2", ssh: "ssh -p 42038 jovyan@127.0.0.1" });
+    const messages = (mine.events as { message: string }[]).map((e) => e.message);
+    expect(messages).toEqual(expect.arrayContaining(["running (web ready · ssh ready) — see ?token=…", "web endpoint changed", "ssh endpoint changed"]));
+    expect(JSON.stringify(mine.events)).not.toMatch(/t0k|4203[5-8]/);
+    // Events written before this (or any node text that slipped through) still never reach an API key: by shape, not
+    // by the row's current values — an old ssh host, a custom token query name, a URL of any kind.
+    expect((await report(node, web, { status: "running", endpoint: "http://127.0.0.1:42037/lab?token=t0k-2", sshEndpoint: "127.0.0.1:42039" })).status).toBe(200);
+    await addEvent(web, "info", "running at http://127.0.0.1:42037/lab?token=t0k-2 · ssh 127.0.0.1:42038");
+    await addEvent(web, "info", "ssh 127.0.0.1:42038 is up");
+    await addEvent(web, "info", "open with access_token=zzz or api_key=yyy");
+    // What production wrote for workstations before this fix: the address after "changed to".
+    await addEvent(web, "info", "ssh endpoint changed to 127.0.0.1:42091");
+    await addEvent(web, "info", "endpoint changed to /lab?auth=0ldt0k");
+    const key = (await (await authed(u.jwt, "POST", "/v1/keys", { name: "monitor", scopes: ["read"] })).json()).key.token as string;
+    const viaKey = await (await authed(key, "GET", `/v1/deployments/${web}`)).json();
+    expect(JSON.stringify(viaKey)).not.toMatch(/t0k|4203[5-9]|42091|zzz|yyy/);
+    expect(viaKey.events.length).toBe(messages.length + 1); // the five planted events are dropped; "ssh endpoint changed" stays
+    expect(JSON.stringify((await detail(u.jwt, web)).events)).toContain("t0k-2"); // the owner's session still sees it
+  });
+
+  it("a workstation spec refuses expectsSecrets (a start held for a seal that can never land); false is dropped", async () => {
+    const u = await user();
+    const res = await create(u.jwt, WS({ gpu: { count: 0 }, expectsSecrets: true } as Partial<WorkstationSpec>));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toMatch(/workstations take no sealed secrets/);
+    const id = await createId(u.jwt, WS({ gpu: { count: 0 }, expectsSecrets: false } as Partial<WorkstationSpec>));
+    expect(JSON.parse((await row(id))!.spec_json)).not.toHaveProperty("expectsSecrets");
+  });
+
+  it("a key gets neither a workstation's failure log tail nor its logs route (an image may print its token)", async () => {
+    const u = await user();
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
+    const web = await running(node, u.jwt, WS({ gpu: { count: 0 } }), { endpoint: "http://127.0.0.1:42041", webToken: "k3y-cannot-see" });
+    await getD1().prepare("UPDATE deployments SET last_logs = ? WHERE id = ?").bind("[I] Jupyter at http://127.0.0.1:42041/lab?token=k3y-cannot-see", web).run();
+    expect((await detail(u.jwt, web)).deployment.logs).toContain("k3y-cannot-see");
+    const key = (await (await authed(u.jwt, "POST", "/v1/keys", { name: "monitor", scopes: ["read"] })).json()).key.token as string;
+    const viaKey = await (await authed(key, "GET", `/v1/deployments/${web}`)).json();
+    expect(viaKey.deployment.logs).toBeUndefined();
+    expect(JSON.stringify(viaKey)).not.toContain("k3y-cannot-see");
+    const logs = await authed(key, "GET", `/v1/deployments/${web}/logs`);
+    expect(logs.status).toBe(403);
+    expect((await logs.json()).error.message).toMatch(/wallet session/);
+    expect((await authed(u.jwt, "GET", `/v1/deployments/${web}/logs`)).status).not.toBe(403);
+  });
+
+  it("PATCH /secrets refuses workstations, for the owner and for a deployments-scoped key: nothing is injected into one", async () => {
+    const u = await user();
+    const node = await boundNode(GPU_CAPS, [RTX4090]);
+    const id = await createId(u.jwt, WS({ gpu: { count: 0 } }));
+    expect((await heartbeat(node)).map((d) => d.id)).toContain(id); // assigned, start sent
+    const sealed = Buffer.concat([Buffer.from([2, 4]), Buffer.alloc(64 + 24 + 16, 1), Buffer.from("ws")]).toString("base64");
+    const own = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed, node: node.address });
+    expect(own.status).toBe(400);
+    expect((await own.json()).error.message).toMatch(/workstations take no sealed secrets/);
+    const key = (await (await authed(u.jwt, "POST", "/v1/keys", { name: "deployer", scopes: ["deployments"] })).json()).key.token as string;
+    expect((await authed(key, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed, node: node.address })).status).toBe(400);
+    expect((await row(id))!.sealed_env).toBeNull();
+    const start = (await heartbeat(node)).find((d) => d.id === id) as Record<string, unknown> | undefined;
+    expect(start?.action).toBe("start");
+    expect(start?.sealedEnv).toBeUndefined();
   });
 
   it("sshEndpoint and webToken are refused for plain containers", async () => {

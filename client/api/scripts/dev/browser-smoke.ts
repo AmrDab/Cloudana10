@@ -228,7 +228,7 @@ async function main() {
   // 7. Logs panel: a direct node cannot serve live logs, and the UI says so.
   await page.locator("tr", { hasText: "smoke-db" }).first().click();
   await page.getByRole("button", { name: /fetch logs of smoke-db/i }).click();
-  await until(() => page.getByText(/direct \(public-IP\) node/).first().isVisible().catch(() => false), "the logs error text", 20_000);
+  await until(() => page.getByText(/without the relay \(direct, public-IP mode\)/).first().isVisible().catch(() => false), "the logs error text", 20_000);
   check(true, "the Logs panel names why a direct node has no live logs");
   await shot("05-logs-panel");
 

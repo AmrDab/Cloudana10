@@ -4,6 +4,13 @@
  * Backed by Cloudflare KV on the Worker (shared across isolates, eventually
  * consistent — good enough to stop abuse, not a precise quota) and by an
  * in-memory map on the Node orchestrator, where KV is not bound.
+ *
+ * `store: "memory"` keeps a limit per isolate on purpose: signed node traffic
+ * (announce, heartbeat, tickets, storage reports) is bounded by the protocol
+ * itself, and two KV operations per heartbeat would spend the free tier's KV
+ * write quota (1 000 a day) within minutes of midnight UTC. Public, IP-keyed
+ * limits stay in KV; when its quota is gone they degrade to per-isolate memory
+ * (the catch below), never to an outage.
  */
 import type { Context, Next } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -20,6 +27,8 @@ export interface RateLimitOptions {
   windowSec: number;
   /** Counter key for a request (default: client IP). E.g. the X-Node address for node routes. */
   keyBy?: (c: Context) => string;
+  /** "memory": count in this isolate only (never touches KV); default "shared". */
+  store?: "shared" | "memory";
 }
 
 /**
@@ -52,8 +61,21 @@ export function trustedClientIp(c: Context): string {
   return socket?.replace(/^::ffff:/, "") || "unknown";
 }
 
-async function bump(key: string, windowSec: number): Promise<number> {
+function bumpMemory(key: string, ttl: number): number {
+  const now = Date.now();
+  if (memory.size > 10_000) for (const [k, e] of memory) if (e.resetAt <= now) memory.delete(k);
+  const entry = memory.get(key);
+  if (!entry || entry.resetAt <= now) {
+    memory.set(key, { count: 1, resetAt: now + ttl * 1000 });
+    return 1;
+  }
+  entry.count += 1;
+  return entry.count;
+}
+
+async function bump(key: string, windowSec: number, store: "shared" | "memory"): Promise<number> {
   const ttl = Math.max(60, windowSec);
+  if (store === "memory") return bumpMemory(key, ttl);
   try {
     const kv = getKV();
     const raw = await kv.get(key);
@@ -61,15 +83,8 @@ async function bump(key: string, windowSec: number): Promise<number> {
     await kv.put(key, String(count), { expirationTtl: ttl });
     return count;
   } catch {
-    // No KV binding (Node runtime) — fall back to process memory.
-    const now = Date.now();
-    const entry = memory.get(key);
-    if (!entry || entry.resetAt <= now) {
-      memory.set(key, { count: 1, resetAt: now + ttl * 1000 });
-      return 1;
-    }
-    entry.count += 1;
-    return entry.count;
+    // No KV binding (Node runtime), or KV failing / out of quota — fall back to process memory.
+    return bumpMemory(key, ttl);
   }
 }
 
@@ -77,7 +92,7 @@ export function rateLimit(opts: RateLimitOptions) {
   return createMiddleware(async (c: Context, next: Next) => {
     const window = Math.floor(Date.now() / 1000 / opts.windowSec);
     const key = `rl:${opts.bucket}:${(opts.keyBy ?? clientIp)(c)}:${window}`;
-    const count = await bump(key, opts.windowSec);
+    const count = await bump(key, opts.windowSec, opts.store ?? "shared");
     c.header("X-RateLimit-Limit", String(opts.limit));
     c.header("X-RateLimit-Remaining", String(Math.max(0, opts.limit - count)));
     if (count > opts.limit) {

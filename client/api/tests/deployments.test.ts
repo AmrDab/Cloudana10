@@ -9,7 +9,7 @@ import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
 import { closeEpochs } from "../src/services/ledger.service.js";
 import { endpointAllowed, priceUcldPerHour } from "../src/services/deployment-spec.js";
-import { runDutiesCron } from "../src/services/deployment-duties.service.js";
+import { NODE_CANNOT_SERVE, runDutiesCron } from "../src/services/deployment-duties.service.js";
 
 const TREASURY = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
 let app: ReturnType<typeof buildApp>;
@@ -305,20 +305,42 @@ describe("report a problem", () => {
 });
 
 describe("owner actions", () => {
-  it("PATCH secrets works only for containers while queued/assigned", async () => {
+  it("PATCH secrets names the node, lands once a node holds the row and only until the start goes out; containers only", async () => {
     const u = await user();
     const { node } = await boundNode(["matmul", "hosting", "container"]);
-    const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
+    const spec = { ...CONTAINER, expectsSecrets: true };
+    const id = (await (await create(u.jwt, { kind: "container", spec })).json()).id;
     const sealed = sealedV2("ciphertext");
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(200);
+    // Queued: no node holds it, so there is no key a payload could have been sealed to.
+    const early = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed, node: node.address });
+    expect(early.status).toBe(409);
+    expect((await early.json()).error.message).toMatch(/no node holds the deployment yet/);
+    expect((await heartbeat(node)).deployments).toEqual([]); // assigned, waiting for the seal
+    // `node` is required: every payload is sealed to one key, and the API refuses it once that node lost the row.
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(400);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed, node: node.address })).status).toBe(200);
     const hb = await heartbeat(node);
-    expect(hb.deployments[0]).toMatchObject({ id, action: "start", kind: "container", sealedEnv: sealed, spec: CONTAINER });
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(200);
+    expect(hb.deployments[0]).toMatchObject({ id, action: "start", kind: "container", sealedEnv: sealed, spec });
+    // Assigned with a payload: the start went out with it and the agent never re-reads it — a "replacement" would be
+    // reported as applied while the container runs the old secrets.
+    const late = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("rotated"), node: node.address });
+    expect(late.status).toBe(409);
+    expect((await late.json()).error.message).toMatch(/the start already went out/);
+    expect((await row(id))!.sealed_env).toBe(sealed);
+    expect((await heartbeat(node)).deployments[0]).toMatchObject({ id, sealedEnv: sealed });
     await signed(node, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint: "http://127.0.0.1:42002" });
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed })).status).toBe(409);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealed, node: node.address })).status).toBe(409);
+
+    // A container created without expectsSecrets starts on its first heartbeat, without a payload: sealing one
+    // afterwards would be announced and never applied.
+    const plain = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
+    expect((await heartbeat(node)).deployments.map((d) => d.id)).toContain(plain);
+    const noSecrets = await authed(u.jwt, "PATCH", `/v1/deployments/${plain}/secrets`, { sealedEnv: sealed, node: node.address });
+    expect(noSecrets.status).toBe(400);
+    expect((await noSecrets.json()).error.message).toMatch(/does not expect secrets/);
 
     const site = (await (await create(u.jwt)).json()).id;
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${site}/secrets`, { sealedEnv: sealed })).status).toBe(400);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${site}/secrets`, { sealedEnv: sealed, node: node.address })).status).toBe(400);
   });
 
   it("a container expecting secrets is assigned but not started until sealedEnv arrives", async () => {
@@ -337,7 +359,7 @@ describe("owner actions", () => {
       expect(got.deployment.awaitingSecrets).toBe(true);
       expect(got.nodePubkey).toBe(node.publicKey.slice(2));
     }
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${viaFlag}/secrets`, { sealedEnv: sealedV2("sealed") })).status).toBe(200);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${viaFlag}/secrets`, { sealedEnv: sealedV2("sealed"), node: node.address })).status).toBe(200);
     expect((await (await authed(u.jwt, "GET", `/v1/deployments/${viaFlag}`)).json()).deployment.awaitingSecrets).toBe(false);
     const hb = await heartbeat(node);
     expect(hb.deployments).toEqual([
@@ -347,11 +369,12 @@ describe("owner actions", () => {
 
   it("refuses a legacy (v1) or malformed sealedEnv: secrets must be bound to the deployment", async () => {
     const u = await user();
-    await boundNode(["matmul", "hosting", "container"]);
-    const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(node);
     const v1 = Buffer.concat([Buffer.from([4]), Buffer.alloc(64 + 24 + 16, 1)]).toString("base64");
     for (const bad of [b64("ciphertext"), v1]) {
-      const res = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: bad });
+      const res = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: bad, node: node.address });
       expect(res.status).toBe(400);
       expect((await res.json()).error.message).toMatch(/v2 payload bound to this deployment/);
     }
@@ -402,7 +425,7 @@ describe("owner actions", () => {
     const id = (await (await create(a.jwt)).json()).id;
     expect((await authed(b.jwt, "GET", `/v1/deployments/${id}`)).status).toBe(404);
     expect((await authed(b.jwt, "DELETE", `/v1/deployments/${id}`)).status).toBe(404);
-    expect((await authed(b.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: b64("x") })).status).toBe(404);
+    expect((await authed(b.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: b64("x"), node: "0x" + "11".repeat(20) })).status).toBe(404);
     expect((await call("/v1/deployments")).status).toBe(401);
   });
 });
@@ -473,9 +496,10 @@ describe("dead-node requeue", () => {
   it("leaves deployments of live nodes alone and clears secrets sealed to the dead node", async () => {
     const u = await user();
     const { node: old } = await boundNode(["matmul", "hosting", "container"]);
-    const id = (await (await create(u.jwt, { kind: "container", spec: CONTAINER })).json()).id;
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("to-old") })).status).toBe(200);
-    await heartbeat(old);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    expect((await heartbeat(old)).deployments).toEqual([]); // assigned, waiting for the seal
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("to-old"), node: old.address })).status).toBe(200);
+    expect((await heartbeat(old)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("to-old") })]);
     await signed(old, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint: "http://127.0.0.1:42004" });
     await getD1().prepare("UPDATE nodes SET last_seen = ? WHERE address = ?").bind(Date.now() - 44_000, old.address.toLowerCase()).run();
     await authed(u.jwt, "GET", "/v1/deployments");
@@ -492,7 +516,7 @@ describe("dead-node requeue", () => {
     expect(got.nodePubkey).toBe(next.publicKey.slice(2));
     expect(got.deployment.awaitingSecrets).toBe(true); // the console shows "needs secrets" from this, not from its own memory
     expect(got.events.map((e: { message: string }) => e.message)).toContain("secrets were sealed to the old node — re-seal them for the next node");
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("to-next") })).status).toBe(200);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("to-next"), node: next.address })).status).toBe(200);
     expect((await heartbeat(next)).deployments).toEqual([
       expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("to-next") }),
     ]);
@@ -562,7 +586,7 @@ describe("start timeout", () => {
 
     // The owner seals after the long wait: the start clock restarts, so the fresh secret is not taken back (and wiped)
     // a minute later — the node gets a full hour from the seal.
-    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${waiting}/secrets`, { sealedEnv: sealedV2("late") })).status).toBe(200);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${waiting}/secrets`, { sealedEnv: sealedV2("late"), node: node.address })).status).toBe(200);
     expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
     expect(await row(waiting)).toMatchObject({ status: "assigned", start_attempts: 0, sealed_env: sealedV2("late") });
   });
@@ -576,6 +600,59 @@ describe("start timeout", () => {
     expect((await signed(node, `/v1/nodes/deployments/${id}/status`, { status: "running", endpoint: "http://127.0.0.1:42002" })).status).toBe(200);
     expect(await row(id)).toMatchObject({ status: "running", start_attempts: 0 });
   });
+
+  it("a late seal restarts the start clock; secrets never sealed fail the deployment after a day and free the hold", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(node);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: node.address.toLowerCase() });
+    // The owner comes back 90 minutes later and seals: no start could have gone out before, so the clock starts now.
+    await shift(id, "assigned_at", 90 * MIN);
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("late"), node: node.address })).status).toBe(200);
+    expect((await row(id))!.assigned_at).toBeGreaterThan(Date.now() - MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
+    expect(await row(id)).toMatchObject({ status: "assigned", node: node.address.toLowerCase(), start_attempts: 0 });
+    expect((await heartbeat(node)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("late") })]);
+
+    // Never sealed: after DEPLOY_SECRETS_TIMEOUT_SECONDS the row stops pinning the node's slot and the hold comes back.
+    const never = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(node);
+    expect(await row(never)).toMatchObject({ status: "assigned" });
+    const held = (await row(never))!.held_ucld as number;
+    const before = await getBalanceUcld(u.addr);
+    await shift(never, "assigned_at", 23 * 60 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 0 });
+    await shift(never, "assigned_at", 2 * 60 * MIN);
+    expect(await runDutiesCron()).toMatchObject({ stuck: 1 });
+    expect(await row(never)).toMatchObject({ status: "failed", status_reason: "secrets were not sealed within 24 h of assignment", held_ucld: 0 });
+    expect(await getBalanceUcld(u.addr)).toEqual({ balanceUcld: before.balanceUcld + held, heldUcld: before.heldUcld - held });
+  });
+
+  it("a seal names the node it was sealed to and is refused once the deployment moved; a refusing node clears the payload", async () => {
+    const u = await user();
+    const { node: a } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(a);
+    const moved = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("x"), node: "0x" + "77".repeat(20) });
+    expect(moved.status).toBe(409);
+    expect((await moved.json()).error.message).toMatch(/moved to node/);
+    expect((await row(id))!.sealed_env).toBeNull();
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("a"), node: a.address })).status).toBe(200);
+    expect((await heartbeat(a)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("a") })]);
+    // The node cannot serve it: back to the queue without the payload (it was sealed to this node's key).
+    expect((await signed(a, `/v1/nodes/deployments/${id}/status`, { status: "failed", message: `${NODE_CANNOT_SERVE} hardening check failed` })).status).toBe(200);
+    const back = (await row(id))!;
+    expect(back).toMatchObject({ status: "queued", node: null, sealed_env: null });
+    expect(JSON.parse(back.spec_json).expectsSecrets).toBe(true);
+    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.deployment.awaitingSecrets).toBe(true);
+    expect(got.events.map((e: { message: string }) => e.message)).toContain("secrets were sealed to the old node — re-seal them for the next node");
+    // Queued again: a seal naming a node is refused until a node holds it.
+    const queued = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("b"), node: a.address });
+    expect(queued.status).toBe(409);
+    expect((await queued.json()).error.message).toMatch(/no node holds the deployment yet/);
+  });
 });
 
 describe("probe endpoint policy", () => {
@@ -585,5 +662,74 @@ describe("probe endpoint policy", () => {
       expect(endpointAllowed(u, false)).toBe(false);
     }
     expect(endpointAllowed("http://203.0.113.7:42000", false)).toBe(true);
+  });
+});
+
+describe("secrets and the node's state", () => {
+  it("a draining node hands back containers waiting for their secrets, and a seal onto a draining node is refused", async () => {
+    const u = await user();
+    const { node, payout } = await boundNode(["matmul", "hosting", "container"]);
+    const id = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    expect((await heartbeat(node)).deployments).toEqual([]);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: node.address.toLowerCase() });
+    // The node's state flips first (the row has not moved yet): the seal must not land on a node that is leaving.
+    await getD1().prepare("UPDATE nodes SET state = 'draining' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    const onDraining = await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("x"), node: node.address });
+    expect(onDraining.status).toBe(409);
+    expect((await onDraining.json()).error.message).toMatch(/is draining/);
+    expect((await row(id))!.sealed_env).toBeNull();
+    await getD1().prepare("UPDATE nodes SET state = 'active' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    // The owner's drain: what waits for secrets goes back to the queue at once (no start went out).
+    const owner = await generateToken(payout);
+    expect((await authed(owner, "POST", `/v1/nodes/mine/${node.address}/drain`, {})).status).toBe(200);
+    expect(await row(id)).toMatchObject({ status: "queued", node: null, status_reason: `node ${node.address.toLowerCase()} is draining` });
+    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json();
+    expect(got.events.map((e: { message: string }) => e.message)).toContain(`node ${node.address.toLowerCase()} is draining — re-queued`);
+    expect(got.deployment.awaitingSecrets).toBe(true);
+    // Another node takes it; the seal lands there.
+    const { node: next } = await boundNode(["matmul", "hosting", "container"]);
+    expect((await heartbeat(next)).deployments).toEqual([]);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: next.address.toLowerCase() });
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${id}/secrets`, { sealedEnv: sealedV2("y"), node: next.address })).status).toBe(200);
+    expect((await heartbeat(next)).deployments).toEqual([expect.objectContaining({ id, action: "start", sealedEnv: sealedV2("y") })]);
+  });
+
+  it("the cron hands back rows waiting for secrets on a node that is draining or suspended, even when the drain route's hand-back did not run", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const waiting = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    const sealedOne = (await (await create(u.jwt, { kind: "container", spec: { ...CONTAINER, expectsSecrets: true } })).json()).id;
+    await heartbeat(node);
+    expect(await row(waiting)).toMatchObject({ status: "assigned" });
+    expect(await row(sealedOne)).toMatchObject({ status: "assigned" });
+    expect((await authed(u.jwt, "PATCH", `/v1/deployments/${sealedOne}/secrets`, { sealedEnv: sealedV2("in"), node: node.address })).status).toBe(200);
+    // The node's state flipped without the route (a hand-back that failed, or a drain from before it existed).
+    await getD1().prepare("UPDATE nodes SET state = 'draining' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    await runDutiesCron();
+    expect(await row(waiting)).toMatchObject({ status: "queued", node: null, status_reason: `node ${node.address.toLowerCase()} is draining` });
+    // The sealed one already has its start out: a draining node finishes what it holds.
+    expect(await row(sealedOne)).toMatchObject({ status: "assigned", node: node.address.toLowerCase(), sealed_env: sealedV2("in") });
+    // Idempotent: a second tick finds nothing parked.
+    await runDutiesCron();
+    expect(await row(waiting)).toMatchObject({ status: "queued" });
+    const got = await (await authed(u.jwt, "GET", `/v1/deployments/${waiting}`)).json();
+    expect(got.events.filter((e: { message: string }) => e.message.endsWith("is draining — re-queued"))).toHaveLength(1);
+    // A suspended node is the same.
+    await getD1().prepare("UPDATE nodes SET state = 'active' WHERE address = ?").bind(node.address.toLowerCase()).run();
+    const { node: other } = await boundNode(["matmul", "hosting", "container"]);
+    await heartbeat(other);
+    expect(await row(waiting)).toMatchObject({ status: "assigned", node: other.address.toLowerCase() });
+    await getD1().prepare("UPDATE nodes SET state = 'suspended' WHERE address = ?").bind(other.address.toLowerCase()).run();
+    await runDutiesCron();
+    expect(await row(waiting)).toMatchObject({ status: "queued", node: null, status_reason: `node ${other.address.toLowerCase()} is suspended` });
+  });
+
+  it("an explicit expectsSecrets:false is honoured even for a template with secretEnv: the start goes out at once", async () => {
+    const u = await user();
+    const { node } = await boundNode(["matmul", "hosting", "container"]);
+    const spec = { image: "postgres:16-alpine", ports: [{ container: 5432 }], cpu: 1000, memMb: 1024, storageMb: 10240, expectsSecrets: false };
+    const id = (await (await create(u.jwt, { kind: "container", templateId: "postgresql", spec })).json()).id;
+    expect((await heartbeat(node)).deployments).toEqual([expect.objectContaining({ id, action: "start" })]);
+    expect((await (await authed(u.jwt, "GET", `/v1/deployments/${id}`)).json()).deployment.awaitingSecrets).toBe(false);
   });
 });

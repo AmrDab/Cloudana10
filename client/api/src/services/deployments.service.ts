@@ -13,6 +13,7 @@
 import { getD1 } from "../lib/storage.js";
 import { getRelay } from "../lib/relay.js";
 import { readCapped } from "../lib/read-capped.js";
+import { getNode } from "./nodes.service.js";
 import { compareVersions } from "./instruction-signing.service.js";
 import { createHash, randomBytes } from "node:crypto";
 import { normalizeAddress } from "../lib/eth.js";
@@ -87,6 +88,7 @@ export interface DeploymentRow {
   probe_inconclusive: number | null;
   /** Start timeouts so far: assigned, start sent, never reported (deployment-duties G4). */
   start_attempts: number | null;
+  seal_timeouts: number | null;
 }
 
 export const isEndpoint = (r: Pick<DeploymentRow, "replicas">) => r.replicas > 0;
@@ -409,8 +411,9 @@ export async function createDeployment(input: {
   const usd = priceUsdPerHour(input.kind, checked.spec);
   const price = priceUcldPerHour(input.kind, checked.spec);
   const quoted = (n: number) => ({ priceUcldPerHour: price * n, priceUsdPerHour: usd * n, usdPerCld: getEnv().USD_PER_CLD });
-  if (input.kind === "container" && input.templateId && !(checked.spec as ContainerSpec).expectsSecrets) {
-    // A template that declares secretEnv means the browser will seal secrets after assignment.
+  if (input.kind === "container" && input.templateId && (checked.spec as ContainerSpec).expectsSecrets === undefined) {
+    // A template that declares secretEnv means the browser will seal secrets after assignment — unless the client said
+    // so itself (the console sends true or false from what the user typed; an explicit false is honoured).
     const t = await new TemplateService().getTemplateById(input.templateId);
     if (t?.secretEnv?.length) (checked.spec as ContainerSpec).expectsSecrets = true;
   }
@@ -504,10 +507,24 @@ export async function nodePubkey(node: string | null): Promise<string | null> {
 
 export type Update = { ok: true } | { ok: false; code: "not_found" | "conflict" | "validation_failed"; message: string };
 
-export async function setSealedEnv(owner: string, id: string, sealedEnv: string): Promise<Update> {
+/**
+ * Store a sealed payload. `sealedFor` is the node the client sealed to (the console checks the key derives to that
+ * address): the payload lands only while the row is assigned to exactly that node — a re-queue that raced the seal
+ * would otherwise hand the next node a payload it cannot open, and while queued there is no key it could have been
+ * sealed to. It lands only once: an agent never re-reads sealedEnv for an id it is starting, so a "replacement"
+ * after the start went out would be reported as applied while the container runs the old one; for the same reason
+ * a container created without expectsSecrets (its start goes out on the first heartbeat, without a payload) takes
+ * none. The start-timeout clock restarts at that first seal: no start could go out before the secrets existed.
+ * Workstations take no sealed env at all — their access token is issued by the node (tokenEnv); a `deployments`-
+ * scoped key must not be able to inject environment into a workstation it is not allowed to connect to.
+ */
+export async function setSealedEnv(owner: string, id: string, sealedEnv: string, sealedFor: string, now = Date.now()): Promise<Update> {
   const row = await getOwnedRow(owner, id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
   if (row.kind !== "container") return { ok: false, code: "validation_failed", message: "sealed secrets are for containers only" };
+  if (row.workstation) {
+    return { ok: false, code: "validation_failed", message: "workstations take no sealed secrets: the node issues the access token (tokenEnv) and nothing else is injected" };
+  }
   if (isEndpoint(row)) return { ok: false, code: "validation_failed", message: "seal secrets per replica (each is sealed to its node): PATCH /deployments/{replicaId}/secrets" };
   if (!isSealedV2(sealedEnv)) {
     return {
@@ -516,16 +533,39 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string)
       message: "sealedEnv must be a v2 payload bound to this deployment (shared/sealed.ts seal(pubkey, plaintext, sealedEnvAad(id))); reload the console and seal again",
     };
   }
+  if ((JSON.parse(row.spec_json) as ContainerSpec).expectsSecrets !== true) {
+    return { ok: false, code: "validation_failed", message: "this container does not expect secrets: its start goes out without them on the first heartbeat, so a payload sealed now would never be applied — redeploy with expectsSecrets" };
+  }
+  const target = normalizeAddress(sealedFor);
   const r = await getD1()
-    // Sealing restarts the start clock: the start-timeout duty measures from assigned_at, and a row that waited for
+    // The seal restarts the start clock: the start-timeout duty measures from assigned_at, and a row that waited for
     // its secrets must not be re-queued (sealed_env wiped) minutes after the owner finally sealed them.
-    .prepare("UPDATE deployments SET sealed_env = ?, assigned_at = CASE WHEN status = 'assigned' THEN ? ELSE assigned_at END WHERE id = ? AND status IN ('queued','assigned')")
-    .bind(sealedEnv, Date.now(), id)
+    // … and only onto an active node: a draining or suspended one takes no start, and the row is on its way back
+    // to the queue (nodes.service / routes: drain hands awaiting rows back).
+    .prepare(
+      "UPDATE deployments SET sealed_env = ?, assigned_at = ? WHERE id = ? AND status = 'assigned' AND node = ? AND sealed_env IS NULL " +
+        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active')",
+    )
+    .bind(sealedEnv, now, id, target, target)
     .run();
   if ((r.meta?.changes ?? 0) === 0) {
-    return { ok: false, code: "conflict", message: `secrets can only change while queued or assigned (status is ${row.status})` };
+    const fresh = (await getDeploymentRow(id)) ?? row;
+    const n = fresh.status === "assigned" && fresh.node === target ? await getNode(target) : null;
+    if (n && (n.state ?? "active") !== "active") {
+      return { ok: false, code: "conflict", message: `node ${target} is ${n.state}: the deployment moves to another node — seal to that node's key once it is assigned` };
+    }
+    if (fresh.status === "queued") {
+      return { ok: false, code: "conflict", message: "no node holds the deployment yet, so there is no key to seal to: wait for one to be assigned (nodePubkey on GET /deployments/{id}), then seal to it" };
+    }
+    if (fresh.status !== "assigned") {
+      return { ok: false, code: "conflict", message: `secrets can only be sealed while assigned to a node (status is ${fresh.status})` };
+    }
+    if (fresh.node !== target) {
+      return { ok: false, code: "conflict", message: `the deployment moved to node ${fresh.node} since its key was fetched — seal to that node's key and send again` };
+    }
+    return { ok: false, code: "conflict", message: "the start already went out with the secrets sealed earlier (a node never re-reads them): stop and redeploy to change them" };
   }
-  await addEvent(id, "info", "sealed secrets updated");
+  await addEvent(id, "info", "sealed secrets updated", now);
   return { ok: true };
 }
 
@@ -533,27 +573,45 @@ export async function setSealedEnv(owner: string, id: string, sealedEnv: string)
  * Settle the hold when a deployment ends. A running deployment pays the elapsed part of its
  * current hour (pro rata, credited to the provider like a full hour); otherwise the hold is released.
  */
-export async function settleHold(row: DeploymentRow, now = Date.now()): Promise<void> {
+export async function settleHold(row: DeploymentRow, now = Date.now(), attempt = 0): Promise<void> {
   if (row.held_ucld <= 0) return;
   const db = getD1();
-  const r = await db.prepare("UPDATE deployments SET held_ucld = 0 WHERE id = ? AND held_ucld = ?").bind(row.id, row.held_ucld).run();
-  if ((r.meta?.changes ?? 0) === 0) return; // already settled elsewhere
+  // The claim covers the billing clock as well as the amount: a bill that ran since `row` was read re-held the same
+  // amount for a later hour, and the elapsed part must be measured from its clock — from the stale one it would be a
+  // full hour, charged a second time. On a miss the fresh amount and clock are read and the settle retried.
+  const r = await db
+    .prepare("UPDATE deployments SET held_ucld = 0 WHERE id = ? AND held_ucld = ? AND last_billed_at IS ?")
+    .bind(row.id, row.held_ucld, row.last_billed_at)
+    .run();
+  if ((r.meta?.changes ?? 0) === 0) {
+    if (attempt >= 3) return;
+    const fresh = await getDeploymentRow(row.id);
+    if (!fresh || fresh.held_ucld <= 0) return; // already settled elsewhere
+    return settleHold({ ...row, held_ucld: fresh.held_ucld, last_billed_at: fresh.last_billed_at }, now, attempt + 1);
+  }
   let charged = 0;
   if (row.status === "running" && row.last_billed_at !== null && row.node) {
     const elapsed = Math.max(0, Math.min(HOUR_MS, now - row.last_billed_at));
     charged = Math.min(row.held_ucld, Math.floor((row.price_ucld_per_hour * elapsed) / HOUR_MS));
   }
-  if (charged > 0) await chargeHour(row, charged, now);
+  if (charged > 0 && !(await chargeHour(row, charged, now))) await addEvent(row.id, "warn", unchargedHour(charged), now);
   if (row.held_ucld - charged > 0) await release(row.owner, row.held_ucld - charged);
 }
 
-/** Capture `fee` from the owner's hold and credit the node's payout wallet (lane A + treasury, no lane B). */
-export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now()): Promise<void> {
+/** The event a caller writes instead of "billed …" when chargeHour captured nothing: the state to reconcile. */
+export const unchargedHour = (fee: number) =>
+  `hour of ${fee} µCLD not charged: the owner's hold for it was missing (nothing captured, nothing paid out) — needs reconciliation`;
+
+/**
+ * Capture `fee` from the owner's hold and credit the node's payout wallet (lane A + treasury, no lane B). False when
+ * the hold was not there: then there is no bill and no reward, and the caller must say so instead of "billed".
+ */
+export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now()): Promise<boolean> {
   const db = getD1();
   // No reward without a captured fee (as for jobs): a bill whose hold wasn't there mints nothing and burns nothing.
   if (!(await capture(row.owner, fee))) {
     log.api.warn(`[deployments] ${row.id}: hour of ${fee} µCLD not captured (hold missing) — no bill, no reward`);
-    return;
+    return false;
   }
   const payout = await db.prepare("SELECT payout FROM nodes WHERE address = ?").bind(row.node).first<{ payout: string | null }>();
   const billId = crypto.randomUUID();
@@ -572,6 +630,7 @@ export async function chargeHour(row: DeploymentRow, fee: number, now = Date.now
       now,
     });
   }
+  return true;
 }
 
 /**
@@ -582,16 +641,18 @@ export async function endDeployment(
   row: DeploymentRow,
   status: "stopped" | "failed",
   reason: string,
-  opts: { acked: boolean; level?: DeploymentEvent["level"]; now?: number } = { acked: false },
+  opts: { acked: boolean; level?: DeploymentEvent["level"]; now?: number; unsealedSince?: number } = { acked: false },
 ): Promise<boolean> {
   const now = opts.now ?? Date.now();
   const acked = opts.acked || !row.node ? now : null;
+  // `unsealedSince`: end only while the row is still unsealed since that assignment (a seal that just landed stays).
   const r = await getD1()
     .prepare(
       "UPDATE deployments SET status = ?, status_reason = ?, stopped_at = ?, stop_acked_at = ? " +
-        "WHERE id = ? AND status = ?",
+        "WHERE id = ? AND status = ?" +
+        (opts.unsealedSince !== undefined ? " AND sealed_env IS NULL AND assigned_at = ?" : ""),
     )
-    .bind(status, reason, now, acked, row.id, row.status)
+    .bind(status, reason, now, acked, row.id, row.status, ...(opts.unsealedSince !== undefined ? [opts.unsealedSince] : []))
     .run();
   if ((r.meta?.changes ?? 0) === 0) return false;
   await settleHold(row, now);
@@ -640,6 +701,24 @@ export async function stopDeployment(owner: string, id: string, purge = false): 
     if ((r.meta?.changes ?? 0) > 0) await addEvent(id, "info", "volume purge requested");
   }
   return { ok: true };
+}
+
+/** Abandon an endpoint: every live replica and the parent fail and their holds come back. Returns the rows ended. */
+export async function failEndpoint(parentId: string, reason: string, now = Date.now()): Promise<number> {
+  const ended = (r: DeploymentRow) => r.status === "stopped" || r.status === "failed";
+  let n = 0;
+  for (const r of (await replicasOf([parentId])).get(parentId) ?? []) {
+    if (ended(r)) continue;
+    if (await endDeployment(r, "failed", reason, { acked: false, level: "error", now })) {
+      n++;
+      continue;
+    }
+    const fresh = await getDeploymentRow(r.id);
+    if (fresh && !ended(fresh) && (await endDeployment(fresh, "failed", reason, { acked: false, level: "error", now }))) n++;
+  }
+  const parent = await getDeploymentRow(parentId);
+  if (parent && !ended(parent) && (await endDeployment(parent, "failed", reason, { acked: true, level: "error", now }))) n++;
+  return n;
 }
 
 /** Stop every live replica of an endpoint; one that changed state meanwhile is re-read and stopped again. */
@@ -813,7 +892,19 @@ export async function deploymentLogs(owner: string, id: string, tail = LOGS_TAIL
     if (row.last_logs) return { ok: true, id: row.id, node: row.node, tail, source: "last_failure", logs: row.last_logs, truncated: false };
     return { ok: false, code: "conflict", message: `no node runs it now (status ${row.status}) and no failure logs were kept` };
   }
-  if (!row.relayed) return { ok: false, code: "conflict", message: "this deployment runs on a direct (public-IP) node; logs are served through the relay only" };
+  // The logs go through the node's relay socket whatever the deployment's own path is (a direct workstation on a
+  // relay-capable node has logs too): what matters is that the socket is up.
+  const nodeRow = await getNode(row.node!);
+  const socketFresh = (nodeRow?.relay_at ?? 0) >= Date.now() - getEnv().RELAY_FRESH_SECONDS * 1000;
+  if (!socketFresh) {
+    return {
+      ok: false,
+      code: "conflict",
+      message: nodeRow?.relay_at
+        ? "the node's relay socket is down right now; try again shortly"
+        : "this deployment's node runs without the relay (direct, public-IP mode); logs are served through the relay only",
+    };
+  }
   const relay = getRelay();
   if (!relay) return { ok: false, code: "not_configured", message: "this API runs no relay" };
   let res: Response;
@@ -844,15 +935,13 @@ export async function deploymentLogs(owner: string, id: string, tail = LOGS_TAIL
     await res.body?.cancel().catch(() => undefined);
     return { ok: false, code: "upstream_failed", message: `the node answered ${res.status}` };
   }
-  let text: string;
+  let bytes: Uint8Array | null;
   try {
-    // The node is untrusted: read at most a little over the cap, never its whole stream.
-    const bytes = await readCapped(res, LOGS_MAX_BYTES * 2);
-    text = bytes ? new TextDecoder().decode(bytes) : "";
-    if (!bytes) return { ok: false, code: "upstream_failed", message: "the node sent more than the logs cap" };
+    // Read at most the cap: a node that sends more is misbehaving (its agent caps answers at the same size).
+    bytes = await readCapped(res, LOGS_MAX_BYTES);
   } catch {
     return { ok: false, code: "upstream_failed", message: "the node broke off while sending logs" };
   }
-  const over = text.length > LOGS_MAX_BYTES;
-  return { ok: true, id: row.id, node: row.node, tail, source: "node", logs: over ? text.slice(-LOGS_MAX_BYTES) : text, truncated: over || res.headers.get("x-cld-truncated") === "1" };
+  if (bytes === null) return { ok: false, code: "upstream_failed", message: `the node sent more than ${LOGS_MAX_BYTES} bytes of logs (agents cap answers at that size)` };
+  return { ok: true, id: row.id, node: row.node, tail, source: "node", logs: new TextDecoder().decode(bytes), truncated: res.headers.get("x-cld-truncated") === "1" };
 }

@@ -111,11 +111,13 @@ describe("GET /v1/deployments/{id}/logs", () => {
     expect(seen[1].headers["x-relay-path"]).toBe(`/logs/${id}?tail=50`);
     for (const q of ["?tail=0", "?tail=1001", "?tail=abc"]) expect((await logs(u.jwt, id, q)).status, q).toBe(400);
     expect(seen).toHaveLength(2);
-    // The node's own truncation flag and an oversize body are both reported.
-    relayAnswering("x".repeat(70_000), { headers: { "x-cld-truncated": "1" } });
-    const big = await (await logs(u.jwt, id)).json();
-    expect(big.truncated).toBe(true);
-    expect(big.logs).toHaveLength(64 * 1024);
+    // The node's own truncation flag is reported; a body over the cap is refused instead of read in full.
+    relayAnswering("tail", { headers: { "x-cld-truncated": "1" } });
+    expect(await (await logs(u.jwt, id)).json()).toMatchObject({ truncated: true, logs: "tail" });
+    relayAnswering("x".repeat(70_000));
+    const over = await logs(u.jwt, id);
+    expect(over.status).toBe(502);
+    expect((await over.json()).error.message).toMatch(/more than 65536 bytes/);
   });
 
   it("is the owner's only, for containers and replicas only", async () => {

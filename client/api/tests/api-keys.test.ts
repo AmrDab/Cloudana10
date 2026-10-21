@@ -6,10 +6,10 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { buildApp } from "../src/app.js";
-import { getD1 } from "../src/lib/storage.js";
-import { generateToken } from "../src/middleware/auth.js";
+import { getD1, getKV, initStorage } from "../src/lib/storage.js";
+import { consumeNonce, generateToken, issueNonce } from "../src/middleware/auth.js";
 import { creditUcld } from "../src/services/balance.service.js";
-import { forgetApiKeyCache, MAX_KEYS_PER_ACCOUNT, scopeFor } from "../src/services/api-keys.service.js";
+import { authenticateApiKey, forgetApiKeyCache, MAX_KEYS_PER_ACCOUNT, scopeFor } from "../src/services/api-keys.service.js";
 import { MATMUL_N_MIN } from "../src/services/work-types.js";
 
 let app: ReturnType<typeof buildApp>;
@@ -136,6 +136,13 @@ describe("API keys", () => {
     await getD1().prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?").bind(Date.now() - 1, short.id).run();
     forgetApiKeyCache();
     expect((await bearer(short.token, "GET", "/v1/jobs")).status).toBe(401);
+    // The lookup cache never outlives the key: an expiry inside the 30 s window ends the entry there.
+    const soon = await mint(u.jwt, ["read"], { expiresInDays: 1 });
+    const expiresAt = Date.now() + 5_000;
+    await getD1().prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?").bind(expiresAt, soon.id).run();
+    forgetApiKeyCache();
+    expect(await authenticateApiKey(soon.token)).not.toBeNull();
+    expect(await authenticateApiKey(soon.token, expiresAt + 1)).toBeNull();
     for (const bad of ["cld_sk_", "cld_sk_" + "x".repeat(32), "cld_sk_" + "y".repeat(200), k.token.slice(0, -1) + (k.token.endsWith("A") ? "B" : "A")]) {
       expect((await bearer(bad, "GET", "/v1/jobs")).status, bad.slice(0, 20)).toBe(401);
     }
@@ -171,5 +178,88 @@ describe("sessions", () => {
   it("unauthenticated and key callers cannot touch /v1/keys or logout", async () => {
     expect((await call("/v1/keys")).status).toBe(401);
     expect((await call("/v1/auth/logout", { method: "POST" })).status).toBe(401);
+  });
+});
+
+describe("the revocation list, the key store and sign-in nonces live in D1", () => {
+  /** The real D1 with every statement that mentions `fragment` failing at prepare; everything else keeps working. */
+  function brokenD1(fragment: string) {
+    const db = getD1();
+    return new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "prepare") {
+          return (sql: string) => {
+            if (sql.includes(fragment)) throw new Error("d1 down");
+            return target.prepare(sql);
+          };
+        }
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    }) as typeof db;
+  }
+
+  it("a revocation list that cannot be read answers 503 for a session — never 'valid', never 'revoked'; a key is unaffected", async () => {
+    const u = await user();
+    const key = await mint(u.jwt, ["read"]);
+    const db = getD1();
+    const kv = getKV();
+    initStorage(brokenD1("FROM revoked_tokens"), kv);
+    try {
+      const res = await bearer(u.jwt, "GET", "/v1/account");
+      expect(res.status).toBe(503);
+      expect(res.headers.get("retry-after")).toBe("5");
+      expect((await res.json()).error).toMatchObject({ code: "service_unavailable", message: expect.stringMatching(/was not refused/) });
+      expect((await bearer(key.token, "GET", "/v1/account")).status).toBe(200);
+    } finally {
+      initStorage(db, kv);
+    }
+    expect((await bearer(u.jwt, "GET", "/v1/account")).status).toBe(200);
+  });
+
+  it("a key store that cannot be read answers 503 for a key, not the false 'revoked' that signs a client out", async () => {
+    const u = await user();
+    const key = await mint(u.jwt, ["read"]);
+    forgetApiKeyCache();
+    const db = getD1();
+    const kv = getKV();
+    initStorage(brokenD1("FROM api_keys"), kv);
+    try {
+      const res = await bearer(key.token, "GET", "/v1/account");
+      expect(res.status).toBe(503);
+      expect((await res.json()).error.message).toMatch(/the key was not refused/);
+    } finally {
+      initStorage(db, kv);
+    }
+    expect((await bearer(key.token, "GET", "/v1/account")).status).toBe(200);
+  });
+
+  it("a revocation list that cannot be written makes logout say revoked:false — the token then runs to its expiry", async () => {
+    const u = await user();
+    const db = getD1();
+    const kv = getKV();
+    initStorage(brokenD1("INSERT INTO revoked_tokens"), kv);
+    try {
+      const res = await bearer(u.jwt, "POST", "/v1/auth/logout");
+      expect(res.status).toBe(200);
+      expect((await res.json()).revoked).toBe(false);
+    } finally {
+      initStorage(db, kv);
+    }
+    expect((await bearer(u.jwt, "GET", "/v1/account")).status).toBe(200); // exactly what revoked:false warns about
+    // A logout that could write refuses the token everywhere at once (one shared list, no KV).
+    expect((await (await bearer(u.jwt, "POST", "/v1/auth/logout")).json()).revoked).toBe(true);
+    expect((await bearer(u.jwt, "GET", "/v1/account")).status).toBe(401);
+    expect((await getD1().prepare("SELECT COUNT(*) AS n FROM revoked_tokens").first<{ n: number }>())!.n).toBeGreaterThan(0);
+  });
+
+  it("sign-in nonces are issued into D1, taken exactly once, and gone after", async () => {
+    const address = "0x" + "ab".repeat(20);
+    const issued = await issueNonce(address);
+    const count = async () => (await getD1().prepare("SELECT COUNT(*) AS n FROM login_nonces WHERE key LIKE ?").bind(`nonce:${address}:%`).first<{ n: number }>())!.n;
+    expect(await count()).toBe(1);
+    expect(await consumeNonce(address, issued.message)).toBe(true);
+    expect(await consumeNonce(address, issued.message)).toBe(false);
+    expect(await count()).toBe(0);
   });
 });

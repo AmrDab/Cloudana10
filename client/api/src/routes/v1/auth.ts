@@ -90,11 +90,11 @@ const logoutRoute = createRoute({
   path: "/auth/logout",
   tags: ["Auth"],
   description:
-    "End this session token now: it is refused from then on (everywhere within about a minute). " +
+    "End this session token now: it is refused from then on, everywhere. " +
     "API keys are revoked with DELETE /v1/keys/{id}, not here.",
   security: BEARER_AUTH,
   responses: responses(
-    { 200: json(z.object({ status: z.literal("success"), revoked: z.boolean().openapi({ description: "false for a token minted before revocation existed; it still expires on time" }) }), "Session ended") },
+    { 200: json(z.object({ status: z.literal("success"), revoked: z.boolean().openapi({ description: "false for a token minted before revocation existed, or when the revocation list could not be written — then the token stays valid until it expires (sign out again)" }) }), "Session ended") },
     401,
     403,
     429,

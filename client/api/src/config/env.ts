@@ -131,6 +131,8 @@ export const envSchema = z.object({
   DEPLOY_START_TIMEOUT_STATIC_SECONDS: int(600),
   /** Start timeouts (each on a different node) before a deployment is failed and its hold released. */
   DEPLOY_START_ATTEMPTS: int(3),
+  /** An assigned container whose owner never seals its secrets is failed (hold released, node slot freed) after this long. */
+  DEPLOY_SECRETS_TIMEOUT_SECONDS: int(86_400),
 
   // ── Payments ─────────────────────────────────────────────────────────────
   STRIPE_SECRET_KEY: z.string().optional(),

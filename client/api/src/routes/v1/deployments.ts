@@ -37,11 +37,14 @@ import {
   revokeKey,
   setSealedEnv,
   stopDeployment,
+  type DeploymentRow,
+  type DeploymentEvent,
 } from "../../services/deployments.service.js";
 import { REPORTS_PER_DAY, reportProblem, requeueDeadNodeDeployments } from "../../services/deployment-duties.service.js";
 import { log } from "../../lib/logger.js";
 import { requireInternalKey } from "./admin-epochs.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
+import { EthAddressSchema } from "../../schemas/common.schema.js";
 
 export const deploymentsRouter = createRouter();
 const TAGS = ["Deployments"];
@@ -175,7 +178,26 @@ const listRoute = createRoute({
  */
 function forCaller<T extends object>(auth: string | undefined, d: T): T {
   // A relayed workstation's endpoint is its app path, token included: hidden with the rest.
-  return auth === "key" && "connect" in d ? { ...d, connect: {}, endpoint: null } : d;
+  // The failure log tail goes too: an image that prints its token URL would hand it over.
+  return auth === "key" && "connect" in d ? { ...d, connect: {}, endpoint: null, logs: undefined } : d;
+}
+
+/** Credential-looking `name=value` in free text (any `…token=`, `…key=`, `password=`), not preceded by a word character. */
+const CREDENTIAL_IN_TEXT = /(?<![A-Za-z0-9_])[A-Za-z0-9_]*(token|password|pwd|secret|key)=[^&\s…]/i;
+/** A URL, any host:port, or an address change ("… changed to …"): what `connect` hides from a key. */
+const ADDRESS_IN_TEXT = /:\/\/|[\w.-]+:\d{2,5}\b|\]:\d+|\bchanged to\b/i;
+
+/**
+ * The event log of a workstation names no address since this fix, but events written before it (and node-supplied
+ * text) may: an API key gets none that carries the row's endpoint, ssh host or token, or looks like a token URL.
+ */
+function eventsForCaller(auth: string | undefined, row: DeploymentRow, events: DeploymentEvent[]): DeploymentEvent[] {
+  if (auth !== "key" || !row.workstation) return events;
+  const tokenQuery = (JSON.parse(row.spec_json) as { tokenQuery?: string }).tokenQuery;
+  const private_ = [row.endpoint, row.ssh_endpoint, row.web_token, tokenQuery && `${tokenQuery}=`].filter((s): s is string => !!s);
+  // (`token=…` is the redacted form the duties write: no value follows, nothing to hide.) Older endpoints and ssh
+  // hosts no longer on the row are caught by their shape, not their value.
+  return events.filter((e) => !CREDENTIAL_IN_TEXT.test(e.message) && !ADDRESS_IN_TEXT.test(e.message) && !private_.some((s) => e.message.includes(s)));
 }
 
 /** Cheap per-owner dead-node check, so a deployment does not wait for some node's heartbeat to re-queue it. */
@@ -224,7 +246,8 @@ deploymentsRouter.openapi(getRoute, async (c) => {
   const [presented] = await presentDeployments([row], true);
   const deployment = forCaller(c.get("jwtPayload").auth, presented);
   const replicas = isEndpoint(row) ? (await replicasOf([row.id])).get(row.id) ?? [] : [];
-  return ok(c, { deployment, events: await listEvents(row.id, 50, replicas), ...(pubkey && { nodePubkey: pubkey }) });
+  const events = eventsForCaller(c.get("jwtPayload").auth, row, await listEvents(row.id, 50, replicas));
+  return ok(c, { deployment, events, ...(pubkey && { nodePubkey: pubkey }) });
 });
 
 // ── Report a problem (docs/V4_VERIFIED_SERVICES.md §5) ──────────────────────
@@ -334,7 +357,9 @@ const secretsRoute = createRoute({
   method: "patch",
   path: "/deployments/{id}/secrets",
   tags: TAGS,
-  description: "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers and endpoint replicas (per replica id) only.",
+  description:
+    "sealedEnv = base64(ephemeralPubkey(65) ‖ nonce(24) ‖ ciphertext) sealed to nodePubkey (V3 §6). Containers and endpoint replicas (per replica id) created with expectsSecrets only; " +
+    "never workstations (400). Accepted once a node is assigned (nodePubkey on GET) and only once: after the start went out with a payload it cannot be replaced (409) — stop and redeploy.",
   security: BEARER_AUTH,
   request: {
     params: IdParam,
@@ -342,7 +367,12 @@ const secretsRoute = createRoute({
       required: true,
       content: {
         "application/json": {
-          schema: z.object({ sealedEnv: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9+/]*={0,2}$/, "sealedEnv must be base64") }),
+          schema: z.object({
+            sealedEnv: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9+/]*={0,2}$/, "sealedEnv must be base64"),
+            node: EthAddressSchema.openapi({
+              description: "The node whose key the payload was sealed to (the console checks nodePubkey derives to it). The payload lands only while the deployment is assigned to that node and has no payload yet; otherwise 409 says what to do",
+            }),
+          }),
         },
       },
     },
@@ -351,7 +381,8 @@ const secretsRoute = createRoute({
 });
 
 deploymentsRouter.openapi(secretsRoute, async (c) => {
-  const r = await setSealedEnv(c.get("jwtPayload").sub, c.req.valid("param").id, c.req.valid("json").sealedEnv);
+  const { sealedEnv, node } = c.req.valid("json");
+  const r = await setSealedEnv(c.get("jwtPayload").sub, c.req.valid("param").id, sealedEnv, node);
   return r.ok ? ok(c, {}) : fail(c, r.code, r.message);
 });
 
@@ -508,7 +539,13 @@ const logsRoute = createRoute({
 });
 
 deploymentsRouter.openapi(logsRoute, async (c) => {
-  const r = await deploymentLogs(c.get("jwtPayload").sub, c.req.valid("param").id, c.req.valid("query").tail);
+  const { sub, auth } = c.get("jwtPayload");
+  if (auth === "key") {
+    // An image may print its access token at start-up: a workstation's logs are for the wallet session only.
+    const row = await getOwnedRow(sub, c.req.valid("param").id);
+    if (row?.workstation) return fail(c, "forbidden", "workstation logs need a wallet session, not an API key");
+  }
+  const r = await deploymentLogs(sub, c.req.valid("param").id, c.req.valid("query").tail);
   if (!r.ok) return fail(c, r.code, r.message);
   const { ok: _ok, ...body } = r;
   return ok(c, body);

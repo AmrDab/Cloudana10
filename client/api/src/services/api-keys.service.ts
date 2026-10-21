@@ -127,7 +127,15 @@ const cache = new Map<string, { caller: KeyCaller; until: number; touched: numbe
 const CACHE_MAX = 10_000;
 const TOUCH_EVERY_MS = 60_000;
 
-/** The caller behind a `cld_sk_` token, or null (unknown, expired, revoked, or storage unavailable). */
+/** The key store is bound but cannot be read: the caller cannot tell a revoked key from a valid one. */
+export class KeyStoreUnavailable extends Error {
+  constructor() {
+    super("the API-key store cannot be read");
+    this.name = "KeyStoreUnavailable";
+  }
+}
+
+/** The caller behind a `cld_sk_` token, or null (unknown, expired or revoked); throws KeyStoreUnavailable. */
 export async function authenticateApiKey(token: string, now = Date.now()): Promise<KeyCaller | null> {
   if (!token.startsWith(API_KEY_PREFIX) || token.length > 128) return null;
   const h = hashKey(token);
@@ -136,14 +144,26 @@ export async function authenticateApiKey(token: string, now = Date.now()): Promi
     await touch(hit, now);
     return hit.caller;
   }
+  let db: D1Database;
+  try {
+    db = getD1();
+  } catch {
+    return null; // no storage bound: there is no key to find
+  }
   let row: Row | null;
   try {
-    row = await getD1().prepare("SELECT * FROM api_keys WHERE hash = ?").bind(h).first<Row>();
+    row = await db.prepare("SELECT * FROM api_keys WHERE hash = ?").bind(h).first<Row>();
   } catch {
-    return null;
+    // Bound but failing: say so (503 upstream) instead of the false "revoked" that signs a client out.
+    throw new KeyStoreUnavailable();
   }
   if (!row || row.revoked_at !== null || (row.expires_at !== null && row.expires_at <= now)) return null;
-  const entry = { caller: { owner: row.owner, keyId: row.id, scopes: JSON.parse(row.scopes) as Scope[] }, until: now + getEnv().API_KEY_CACHE_SECONDS * 1000, touched: 0 };
+  const entry = {
+    caller: { owner: row.owner, keyId: row.id, scopes: JSON.parse(row.scopes) as Scope[] },
+    // The cache never outlives the key: an expiry inside the window ends the entry there.
+    until: Math.min(now + getEnv().API_KEY_CACHE_SECONDS * 1000, row.expires_at ?? Number.POSITIVE_INFINITY),
+    touched: 0,
+  };
   if (cache.size >= CACHE_MAX) cache.clear();
   cache.set(h, entry);
   await touch(entry, now);

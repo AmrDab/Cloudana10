@@ -14,8 +14,8 @@ export const nodesStorageRouter = createRouter<NodeVariables>();
 
 const TAGS = ["Nodes"];
 /** Per node (after requireNode): a node fetches ≤ 4 copies a heartbeat and reports once. */
-const downloadLimit = rateLimit({ bucket: "nodes-storage-copy", limit: 60, windowSec: 60, keyBy: verifiedNodeKey });
-const reportLimit = rateLimit({ bucket: "nodes-storage-report", limit: 20, windowSec: 60, keyBy: verifiedNodeKey });
+const downloadLimit = rateLimit({ bucket: "nodes-storage-copy", limit: 60, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
+const reportLimit = rateLimit({ bucket: "nodes-storage-report", limit: 20, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
 const IdParam = z.object({ id: z.string().regex(/^[0-9a-f-]{36}$/, "copy id") });
 
 // A binary body: a plain route (OpenAPI describes JSON).

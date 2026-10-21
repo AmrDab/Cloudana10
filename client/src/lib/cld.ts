@@ -46,7 +46,7 @@ export async function api<T = Record<string, unknown>>(path: string, opts: ApiOp
     /* non-JSON body */
   }
   if (!res.ok || !json || json.status === "error") {
-    if (res.status === 401 && auth) signOut();
+    if (res.status === 401 && auth) signOut("lost");
     const err = json?.error ?? {};
     throw new ApiError(err.code ?? (res.status === 429 ? "rate_limited" : "error"), err.message ?? `HTTP ${res.status}`, res.status);
   }
@@ -69,16 +69,42 @@ export function getSession(): Session | null {
   }
 }
 
+const OWNER_KEY = "cld.owner";
+/** Plaintext secrets waiting to be sealed (cld.secrets.<id>) belong to one wallet in this tab. */
+function clearSecrets() {
+  try {
+    for (const k of Object.keys(sessionStorage)) if (k.startsWith("cld.secrets.")) sessionStorage.removeItem(k);
+  } catch {
+    /* no storage */
+  }
+}
+
 function setSession(s: Session | null) {
-  if (s) sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
-  else sessionStorage.removeItem(SESSION_KEY);
+  if (s) {
+    // Another wallet signing in inherits nothing typed for the previous one.
+    const owner = s.address.toLowerCase();
+    try {
+      const prev = sessionStorage.getItem(OWNER_KEY);
+      if (prev && prev !== owner) clearSecrets();
+      sessionStorage.setItem(OWNER_KEY, owner);
+    } catch {
+      /* no storage */
+    }
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  } else sessionStorage.removeItem(SESSION_KEY);
   listeners.forEach((l) => l());
 }
 
-/** Drop the session here and end the token at the API (best effort: the token is useless to us either way). */
-export function signOut() {
+/**
+ * Drop the session here and end the token at the API (best effort: the token is useless to us either way).
+ * "user": the person signed out — the secrets they typed but did not seal go with the session. "lost": the API
+ * refused the token (expired, or revoked elsewhere) — the same wallet signs in again and still finds them; a blip
+ * must not cost the owner what they typed (the API answers 503, not 401, when it cannot check a token at all).
+ */
+export function signOut(reason: "user" | "lost" = "user") {
   const s = getSession();
   setSession(null);
+  if (reason === "user") clearSecrets();
   if (s?.token) {
     fetch(`${API}/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${s.token}` }, keepalive: true }).catch(() => undefined);
   }

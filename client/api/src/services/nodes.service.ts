@@ -8,6 +8,7 @@ import { verifyMessage } from "viem";
 import { getD1 } from "../lib/storage.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { getEnv } from "../config/env.js";
+import { getRelay } from "../lib/relay.js";
 
 export interface NodeRow {
   address: string;
@@ -284,12 +285,19 @@ export type StateResult = { ok: true; state: NodeState; requeued: number } | { o
  */
 export async function setOwnNodeDraining(payout: string, address: string, draining: boolean, reason: string | null, now = Date.now()): Promise<StateResult> {
   const nodeKey = normalizeAddress(address);
+  const payoutKey = normalizeAddress(payout);
   const db = getD1();
-  const row = await db.prepare("SELECT state FROM nodes WHERE address = ? AND payout = ?").bind(nodeKey, normalizeAddress(payout)).first<{ state: NodeState | null }>();
-  if (!row) return { ok: false, code: "not_found", message: "no such node is bound to this wallet" };
-  if (row.state === "suspended") return { ok: false, code: "conflict", message: "this node is suspended by Cloudana; contact support" };
   const state: NodeState = draining ? "draining" : "active";
-  await db.prepare("UPDATE nodes SET state = ?, state_reason = ?, state_at = ? WHERE address = ?").bind(state, draining ? reason : null, now, nodeKey).run();
+  // One conditional write: a suspension that lands between a read and this write can never be overwritten.
+  const r = await db
+    .prepare("UPDATE nodes SET state = ?, state_reason = ?, state_at = ? WHERE address = ? AND payout = ? AND COALESCE(state, 'active') <> 'suspended'")
+    .bind(state, draining ? reason : null, now, nodeKey, payoutKey)
+    .run();
+  if ((r.meta?.changes ?? 0) === 0) {
+    const row = await db.prepare("SELECT state FROM nodes WHERE address = ? AND payout = ?").bind(nodeKey, payoutKey).first<{ state: NodeState | null }>();
+    if (!row) return { ok: false, code: "not_found", message: "no such node is bound to this wallet" };
+    return { ok: false, code: "conflict", message: "this node is suspended by Cloudana; contact support" };
+  }
   return { ok: true, state, requeued: 0 };
 }
 
@@ -309,6 +317,10 @@ export async function setNodeSuspended(address: string, suspended: boolean, reas
   if (suspended) {
     const { requeueNodeDeployments } = await import("./deployment-duties.service.js");
     requeued = await requeueNodeDeployments([nodeKey], `node suspended${reason ? `: ${reason}` : ""}`, now);
+    // Drop its relay socket too: no probe, check or visitor request reaches it until it reconnects — and a
+    // suspended node gets no ticket to do so.
+    const relay = getRelay();
+    if (relay) await relay(nodeKey, "/kick").catch(() => undefined);
   }
   return { ok: true, state, requeued };
 }
