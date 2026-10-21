@@ -46,4 +46,4 @@ for (const { name, workers, optional = [] } of PLAN) {
   }
 }
 
-if (!process.env.DRY_RUN) console.log("\nDone. Tell Claude \"relay secrets done\" and the domain you bought.");
+if (!process.env.DRY_RUN) console.log("\nDone. Tell Claude the script finished.");
