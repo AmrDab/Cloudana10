@@ -416,6 +416,16 @@ that remained:
 - **Results.** Repo-root `tsc` clean, client tests 3/3, build passes; the `ConsoleApp` chunk 4,296 → 1,765 kB
   (gzip 1,186 → 481 kB). The pricing calculator and the decentralization page return later as rewritten console pages.
 
+### 23 · relay by default; direct nodes take workstations only (B-13, owner decision 2026-10-21)
+- Agents already connect through the relay whenever the API runs one (`node-agent/src/relay.ts`: "legacy" mode only
+  when the ticket route is not configured). What changed is placement: while the relay runs (the binding is
+  installed and `RELAY_TICKET_SECRET` is set), a node that is not on it takes **GPU workstations only** — sites and
+  containers are served through the relay (`deployment-duties.service.ts` `assign`). Workstations stay direct until
+  the relay carries WebSockets. Without a relay (local stacks, the Node runtime) direct nodes serve everything, as
+  before, so the e2e and browser runs are unchanged. Nothing already running moves.
+- Tests: `relay-api` — with the relay, a direct node takes a queued workstation but not a site or a plain container
+  (fails on the pre-change code); without it, the same node takes the site and the container. API 392 tests.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

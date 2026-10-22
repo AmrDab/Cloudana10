@@ -13,7 +13,7 @@ import { setRelay, type RelayFetch } from "../src/lib/relay.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld } from "../src/services/balance.service.js";
-import { reportDeploymentStatus } from "../src/services/deployment-duties.service.js";
+import { preemptForOnDemand, reportDeploymentStatus } from "../src/services/deployment-duties.service.js";
 import { verifyTicket } from "../../../shared/relay-ticket.js";
 
 const SECRET = "r".repeat(40);
@@ -294,5 +294,74 @@ describe("what goes through the relay", () => {
     expect(await depRow(box)).toMatchObject({ status: "assigned", relayed: 1 });
     expect(await depRow(ws)).toMatchObject({ status: "queued", relayed: 0 });
     expect(hb.deployments).toContainEqual(expect.objectContaining({ id: box, action: "start", relayed: true }));
+  });
+
+  // Owner decision 2026-10-21 (B-13): while the relay runs, direct serving stays only for workstations.
+  async function directNode(): Promise<string> {
+    const node = privateKeyToAccount(generatePrivateKey());
+    expect((await announce(node, ["matmul", "hosting", "container"])).status).toBe(200);
+    const addr = node.address.toLowerCase();
+    await getD1()
+      .prepare("UPDATE nodes SET payout = ?, fleet_id = 'fleet-1', public_host = '203.0.113.7', work_types = ? WHERE address = ?")
+      .bind("0x" + "e".repeat(40), JSON.stringify(["matmul", "hosting", "container"]), addr)
+      .run();
+    directNodes.set(addr, node);
+    return addr;
+  }
+  const directNodes = new Map<string, PrivateKeyAccount>();
+  async function queueContainer(workstation: number): Promise<string> {
+    const base = { image: "nginx:1", ports: [{ container: 80 }], cpu: 500, memMb: 256, storageMb: 512 };
+    const spec = workstation ? { ...base, tier: "on-demand", maxHours: 1, access: { web: { port: 80 } }, gpu: { count: 0 } } : base;
+    const id = crypto.randomUUID();
+    await getD1()
+      .prepare(
+        "INSERT INTO deployments (id, owner, name, kind, spec_json, price_ucld_per_hour, status, created_at, workstation) " +
+          "VALUES (?, ?, 'x', 'container', ?, 100, 'queued', ?, ?)",
+      )
+      .bind(id, "0x" + "d".repeat(40), JSON.stringify(spec), Date.now(), workstation)
+      .run();
+    return id;
+  }
+
+  it("while the relay runs, a node off it takes workstations only: no site, no plain container", async () => {
+    setRelay(async () => new Response("{}", { status: 200 }));
+    const addr = await directNode();
+    const site = await createSite();
+    const ws = await queueContainer(1);
+    const box = await queueContainer(0);
+    expect((await signed(directNodes.get(addr)!, "/v1/nodes/heartbeat", { agentVersion: "9.9.9" })).status).toBe(200);
+    expect(await depRow(site)).toMatchObject({ status: "queued" });
+    expect(await depRow(box)).toMatchObject({ status: "queued" });
+    expect(await depRow(ws)).toMatchObject({ status: "assigned", node: addr, relayed: 0 });
+  });
+
+  it("while the relay runs, nothing is preempted on a node off it for work that node cannot take", async () => {
+    setRelay(async () => new Response("{}", { status: 200 }));
+    const addr = await directNode();
+    await getD1().prepare("UPDATE nodes SET state = 'active', last_seen = ? WHERE address = ?").bind(Date.now(), addr).run();
+    await getD1().prepare("UPDATE deployments SET status = 'stopped', stop_acked_at = 1 WHERE status IN ('queued','running')").run();
+    // An interruptible workstation fills the direct node; an on-demand plain container waits.
+    const victim = crypto.randomUUID();
+    const big = { image: "nginx:1", ports: [{ container: 80 }], cpu: 8000, memMb: 8192, storageMb: 512, tier: "interruptible", maxHours: 5, access: { web: { port: 80 } }, gpu: { count: 0 } };
+    await getD1()
+      .prepare(
+        "INSERT INTO deployments (id, owner, name, kind, spec_json, price_ucld_per_hour, status, created_at, started_at, workstation, node) " +
+          "VALUES (?, ?, 'v', 'container', ?, 100, 'running', ?, ?, 1, ?)",
+      )
+      .bind(victim, "0x" + "d".repeat(40), JSON.stringify(big), Date.now(), Date.now(), addr)
+      .run();
+    await queueContainer(0);
+    expect(await preemptForOnDemand()).toBe(0);
+    expect(await depRow(victim)).toMatchObject({ status: "running" });
+  });
+
+  it("without a relay (local stacks), a direct node still serves sites and containers", async () => {
+    setRelay(null);
+    const addr = await directNode();
+    const site = await createSite();
+    const box = await queueContainer(0);
+    expect((await signed(directNodes.get(addr)!, "/v1/nodes/heartbeat", { agentVersion: "9.9.9" })).status).toBe(200);
+    expect(await depRow(site)).toMatchObject({ status: "assigned", node: addr, relayed: 0 });
+    expect(await depRow(box)).toMatchObject({ status: "assigned", node: addr, relayed: 0 });
   });
 });
