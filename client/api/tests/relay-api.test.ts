@@ -295,4 +295,53 @@ describe("what goes through the relay", () => {
     expect(await depRow(ws)).toMatchObject({ status: "queued", relayed: 0 });
     expect(hb.deployments).toContainEqual(expect.objectContaining({ id: box, action: "start", relayed: true }));
   });
+
+  // Owner decision 2026-10-21 (B-13): while the relay runs, direct serving stays only for workstations.
+  async function directNode(): Promise<string> {
+    const node = privateKeyToAccount(generatePrivateKey());
+    expect((await announce(node, ["matmul", "hosting", "container"])).status).toBe(200);
+    const addr = node.address.toLowerCase();
+    await getD1()
+      .prepare("UPDATE nodes SET payout = ?, fleet_id = 'fleet-1', public_host = '203.0.113.7', work_types = ? WHERE address = ?")
+      .bind("0x" + "e".repeat(40), JSON.stringify(["matmul", "hosting", "container"]), addr)
+      .run();
+    directNodes.set(addr, node);
+    return addr;
+  }
+  const directNodes = new Map<string, PrivateKeyAccount>();
+  async function queueContainer(workstation: number): Promise<string> {
+    const base = { image: "nginx:1", ports: [{ container: 80 }], cpu: 500, memMb: 256, storageMb: 512 };
+    const spec = workstation ? { ...base, tier: "on-demand", maxHours: 1, access: { web: { port: 80 } }, gpu: { count: 0 } } : base;
+    const id = crypto.randomUUID();
+    await getD1()
+      .prepare(
+        "INSERT INTO deployments (id, owner, name, kind, spec_json, price_ucld_per_hour, status, created_at, workstation) " +
+          "VALUES (?, ?, 'x', 'container', ?, 100, 'queued', ?, ?)",
+      )
+      .bind(id, "0x" + "d".repeat(40), JSON.stringify(spec), Date.now(), workstation)
+      .run();
+    return id;
+  }
+
+  it("while the relay runs, a node off it takes workstations only: no site, no plain container", async () => {
+    setRelay(async () => new Response("{}", { status: 200 }));
+    const addr = await directNode();
+    const site = await createSite();
+    const ws = await queueContainer(1);
+    const box = await queueContainer(0);
+    expect((await signed(directNodes.get(addr)!, "/v1/nodes/heartbeat", { agentVersion: "9.9.9" })).status).toBe(200);
+    expect(await depRow(site)).toMatchObject({ status: "queued" });
+    expect(await depRow(box)).toMatchObject({ status: "queued" });
+    expect(await depRow(ws)).toMatchObject({ status: "assigned", node: addr, relayed: 0 });
+  });
+
+  it("without a relay (local stacks), a direct node still serves sites and containers", async () => {
+    setRelay(null);
+    const addr = await directNode();
+    const site = await createSite();
+    const box = await queueContainer(0);
+    expect((await signed(directNodes.get(addr)!, "/v1/nodes/heartbeat", { agentVersion: "9.9.9" })).status).toBe(200);
+    expect(await depRow(site)).toMatchObject({ status: "assigned", node: addr, relayed: 0 });
+    expect(await depRow(box)).toMatchObject({ status: "assigned", node: addr, relayed: 0 });
+  });
 });

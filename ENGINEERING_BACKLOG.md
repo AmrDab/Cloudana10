@@ -103,8 +103,8 @@ environment values no longer sent in the clear, re-enter form after a re-queue. 
 **Engineering half closed** (PROGRESS.md commit 13): verified by reading and pinned by tests that, outside DEV_MODE,
 no hostname is ever stored or probed for a direct node (the public host must equal the announcing IP; reported
 endpoints must use it), so there is no DNS to rebind — the first acceptance branch holds as "no code path fetches an
-operator-chosen host". SECURITY_AUDIT O8 updated. The product half, retiring direct mode, stays with the owner
-(decision 3).
+operator-chosen host". SECURITY_AUDIT O8 updated. **Product half done** (owner decision 2026-10-21, PROGRESS entry 23): while the relay
+runs, direct nodes take GPU workstations only; direct mode retires fully once the relay tunnels WebSockets.
 
 **B-14 · Deployment logs and events for running containers.** **Done in this pass** (PROGRESS.md commit 14):
 `GET /v1/deployments/{id}/logs?tail=N` reads the tail live from the node through the relay (reserved dep `agent`,
