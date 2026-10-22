@@ -426,11 +426,27 @@ that remained:
 - Tests: `relay-api` — with the relay, a direct node takes a queued workstation but not a site or a plain container
   (fails on the pre-change code); without it, the same node takes the site and the container. API 392 tests.
 
+### 24 · fleet pinning (B-9, owner decision 2026-10-21)
+- **Spec.** Containers, workstations and endpoints take `placement: { fleetId }`: only nodes of that fleet run them —
+  the owner's own fleet or a partner's, chosen by the id the partner shares; never a single node. Create refuses an
+  unknown or revoked fleet (400 `spec.placement.fleetId: no such fleet`, nothing held) and a pinned static site; the
+  partner fleet's owner is never shown. Endpoint replicas inherit the pin from the endpoint's spec.
+- **Placement.** One rule (`fleetAllows`) for heartbeat assignment and pre-emption (nothing outside the fleet is
+  pre-empted for pinned work), and the claim statement checks the node's fleet again, so an eviction since the
+  heartbeat's snapshot cannot be raced into a placement. While no online node of the fleet can run it, the create
+  event reads `waiting for a node in fleet <name>`. Revoking a fleet fails what is pinned to it (no node can ever
+  join it again) and releases the holds; the served part of the current hour is not charged, as for the unpinned
+  deployments a revocation re-queues.
+- **Shown.** Deployments carry `placement` and, once on a node, `nodeFleet: { id, name } | null` (replicas too). The
+  console's deploy, workstation and endpoint forms have "Run only on a fleet" (your fleets, or a partner's id); the
+  lists show `0x1234…abcd · fleet Acme (flt_…)` beside the node, in the sealing line and on every replica row.
+- Tests: `fleet-pinning` (7; each fails on the pre-change code). API 400 tests; console tsc, client tests, build.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **393** |
+| client/api vitest | 330 | **400** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
@@ -450,7 +466,7 @@ that remained:
 | 6 | Auth without revocation/scopes | Closed for the API (commit 12): scoped API keys, logout revocation, secret rotation; a refresh-token flow is a product choice left open. |
 | 7 | No fleet/GPU node | A first public node is live (Azure VM, compute + hosting + storage over the relay, no GPU). A container/GPU fleet node is still the owner's (runbook 10). |
 | 8 | Legacy UI reachable | **Closed 2026-10-21** (entry 22): `/control/legacy` removed, old paths redirect to `/control`. |
-| 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified, now per replica from the console; endpoint env no longer sent in the clear); fleet pinning is B-9. |
+| 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified, now per replica from the console; endpoint env no longer sent in the clear); fleet pinning (B-9) done 2026-10-21 (entry 24). |
 | 10 | Docs drift | README, API README, checklist domain, decisions header, archive README fixed; capability registry created. |
 
 ## Blockers that need the owner (exactly what is required)

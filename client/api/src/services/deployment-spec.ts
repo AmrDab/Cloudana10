@@ -2,7 +2,7 @@
  * Deployment specs and protocol price (docs/V3_CONTRACT.md §3).
  *
  *   StaticSpec    { files: { path, contentBase64 }[] }   index.html required; ≤ 2 MB decoded
- *   ContainerSpec { image, command?, env?, ports[], cpu (millicores), memMb, storageMb }   ≤ 32 KB as JSON
+ *   ContainerSpec { image, command?, env?, ports[], cpu (millicores), memMb, storageMb, placement? }   ≤ 32 KB as JSON
  *   WorkstationSpec = ContainerSpec & { gpu?, tier, maxHours, access, volume?, workdir? }   (docs/WORKSTATIONS.md §1)
  *
  * Price per hour, in US dollars (docs/PRICES_USD.md), converted to µCLD at USD_PER_CLD when the deployment is
@@ -39,6 +39,9 @@ export const StaticSpecSchema = z.object({
     .min(1)
     .max(1000),
 });
+
+/** A fleet id as routes/v1/fleets.ts issues it. */
+export const FLEET_ID = /^flt_[0-9a-f]{16}$/;
 
 const EnvKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/, "env keys must match [A-Za-z_][A-Za-z0-9_]*");
 
@@ -77,6 +80,8 @@ export const ContainerSpecSchema = z.object({
       startupGraceSec: z.number().int().min(10).max(1800).optional(),
     })
     .optional(),
+  /** B-9: run only on nodes of this fleet — the owner's own or a partner's, chosen by its id; never a single node. */
+  placement: z.object({ fleetId: z.string().regex(FLEET_ID, "fleetId must be a fleet id (flt_ + 16 hex)") }).optional(),
 });
 
 /** GPU endpoint (docs/V4_ENDPOINTS_CONTRACT.md): a container spec with one port, replicas and visitor auth. */
@@ -159,6 +164,10 @@ export type SpecCheck =
 /** Validate a spec for its kind (shape, index.html, size limits). */
 export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
   if (kind === "static") {
+    // The static schema would strip it silently, and the owner would believe the site pinned.
+    if (raw && typeof raw === "object" && "placement" in raw) {
+      return { ok: false, code: "validation_failed", message: "spec.placement: static sites cannot be pinned to a fleet (any hosting node serves them); remove it" };
+    }
     const parsed = StaticSpecSchema.safeParse(raw);
     if (!parsed.success) return invalid(parsed.error);
     const files = parsed.data.files;

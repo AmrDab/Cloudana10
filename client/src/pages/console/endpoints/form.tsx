@@ -13,6 +13,7 @@ import { errText, signInWithToast } from "@/components/console/actions";
 import { useNetwork } from "@/hooks/useNetwork";
 import { savePendingSecrets } from "@/pages/console/deploy/model";
 import { NumberField, Section, Segmented, SubLabel } from "@/pages/console/workstations/spec-picker";
+import { FleetPin, placementOf, useFleetPin } from "@/pages/console/deploy/fleet";
 
 const IMAGE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
 const HEALTH = /^\/[A-Za-z0-9._~/?=&%-]*$/;
@@ -52,6 +53,7 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
   const [replicas, setReplicas] = useState(2);
   const [auth, setAuth] = useState<"key" | "public">("key");
   const [env, setEnv] = useState<[string, string][]>([["HF_TOKEN", ""]]);
+  const pin = useFleetPin();
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -68,7 +70,7 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
     : !(port >= 1 && port <= 65535) ? "Port is 1–65535."
     : !HEALTH.test(health.trim()) ? "Health path starts with / and is a plain path, e.g. /health."
     : badEnv ? `Environment key "${badEnv[0]}" must be letters, digits and _ (not starting with a digit).`
-    : null;
+    : pin.error;
 
   async function submit(ev: React.FormEvent) {
     ev.preventDefault();
@@ -88,6 +90,7 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
       health: { path: health.trim(), startupGraceSec: grace * 60 },
       replicas,
       auth,
+      ...placementOf(pin),
     };
     try {
       const r = await api<{ id: string; priceUcldPerHour: number; priceUsdPerHour?: number }>("/deployments", {
@@ -176,6 +179,10 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
                 <Segmented label="Who may call it" options={[["key", "Key"], ["public", "Public"]]} value={auth} onChange={setAuth} />
               </div>
             </div>
+          </Section>
+
+          <Section label="Run only on a fleet">
+            <div className="max-w-md"><FleetPin pin={pin} id="ep-fleet" showError={touched} /></div>
           </Section>
 
           <Section label="Environment" hint="Variables for your container, such as a model name or a Hugging Face token. They are encrypted in this browser to each replica's node once it is assigned — the API never sees the values — so keep this tab open until the replicas start. The provider's node can read them.">

@@ -22,6 +22,7 @@ import { LogsPanel } from "@/components/console/logs";
 import { KindPill } from "./templates";
 import { autoSeal, clearPendingSecrets, getSealState, hostOf, pendingSecrets, publicUrl, savePendingSecrets, setSealState, useSealVersion } from "./model";
 import { sealSecretsTo, SecretsForm } from "./secrets";
+import { FleetTag, fleetLabel } from "./fleet";
 
 // ── Status chip ─────────────────────────────────────────────────────────────
 const TONE: Record<string, "muted" | "work" | "ok" | "burn"> = {
@@ -120,7 +121,8 @@ function SealLine({ d }: { d: Deployment }) {
   const s = getSealState(d.id);
   const pending = !!pendingSecrets(d.id);
   const node = s?.node ?? d.node;
-  if (s?.phase === "sealing") return <Pill tone="work"><Loader2 className="size-3 animate-spin" aria-hidden /> Sealing secrets to node {short(node)}</Pill>;
+  const fleet = node === d.node && d.nodeFleet ? ` · ${fleetLabel(d.nodeFleet)}` : "";
+  if (s?.phase === "sealing") return <Pill tone="work"><Loader2 className="size-3 animate-spin" aria-hidden /> Sealing secrets to node {short(node)}{fleet}</Pill>;
   if (s?.phase === "error") return <Pill tone="burn" className="whitespace-normal">Secrets not sealed</Pill>;
   // The API's word wins over this tab's memory: after a re-queue the node changed and the secrets were cleared.
   if (d.awaitingSecrets && !isTerminal(d.status)) return <Pill tone="muted"><KeyRound className="size-3" aria-hidden /> {pending ? "Secrets wait for a node" : "Needs secrets"}</Pill>;
@@ -161,7 +163,7 @@ function SecretsControl({ d, detail }: { d: Deployment; detail?: DeploymentDetai
             <Lock /> Seal secrets now
           </button>
           <p className="mt-1.5 text-[12px] leading-4 text-faint">
-            {canSeal ? "Encrypts them in this browser to the assigned node's key." : "Available once a node is assigned. Kept in this tab only until sealed."}
+            {canSeal ? <>Encrypts them in this browser to the key of node {short(d.node)}<FleetTag fleet={d.nodeFleet} className="text-[12px]" />.</> : "Available once a node is assigned. Kept in this tab only until sealed."}
           </p>
         </>
       )}
@@ -279,7 +281,7 @@ function Row({ d, open, fresh, onToggle }: { d: Deployment; open: boolean; fresh
         </td>
         <td className="px-4 py-2.5"><KindPill kind={d.kind as "static" | "container"} /></td>
         <td className="px-4 py-2.5"><DeployChip status={d.status} /></td>
-        <td className="px-4 py-2.5 whitespace-nowrap"><Hash value={d.node} /></td>
+        <td className="px-4 py-2.5 whitespace-nowrap"><Hash value={d.node} /><FleetTag fleet={d.nodeFleet} /></td>
         <td className="px-4 py-2.5"><Endpoint url={liveUrl(d)} /></td>
         <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground"><PriceH ucld={d.priceUcldPerHour} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><Probe d={d} /></td>
@@ -332,7 +334,8 @@ function Detail({ d }: { d: Deployment }) {
           <dl className="grid grid-cols-[96px_1fr] gap-x-3 gap-y-1.5 font-mono text-[12px]">
             <dt className="text-faint">Id</dt><dd><Hash value={d.id} head={8} tail={4} className="text-[12px]" /></dd>
             <dt className="text-faint">Status</dt><dd className="text-text">{d.status}{d.statusReason ? <span className="text-muted-foreground"> · {d.statusReason}</span> : null}</dd>
-            <dt className="text-faint">Node</dt><dd><Hash value={d.node} className="text-[12px]" /></dd>
+            <dt className="text-faint">Node</dt><dd><Hash value={d.node} className="text-[12px]" /><FleetTag fleet={d.nodeFleet} /></dd>
+            {d.placement && (<><dt className="text-faint">Pinned</dt><dd className="break-all text-text">fleet {d.placement.fleetId}</dd></>)}
             <dt className="text-faint">Started</dt><dd><RelTime ms={d.startedAt} className="text-[12px]" /></dd>
             {d.stoppedAt && (<><dt className="text-faint">Stopped</dt><dd><RelTime ms={d.stoppedAt} className="text-[12px]" /></dd></>)}
             <dt className="text-faint">Probe</dt><dd><Probe d={d} /></dd>

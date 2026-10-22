@@ -141,6 +141,8 @@ export interface ReplicaView {
   nodePubkey?: string;
   /** Detail only: the node's log tail from this replica's last failure. */
   logs?: string;
+  /** Once on a node: that node's fleet (B-9), so the owner sees it before sealing; null = a node in no fleet. */
+  nodeFleet?: FleetRef | null;
 }
 
 export interface Deployment extends Partial<WorkstationView> {
@@ -171,6 +173,10 @@ export interface Deployment extends Partial<WorkstationView> {
   lastProbeAt: number | null;
   probeOk: boolean | null;
   spec: Record<string, unknown>;
+  /** B-9: pinned to this fleet (spec.placement): only its nodes run it. */
+  placement?: { fleetId: string };
+  /** Once on a node: that node's fleet, so the owner sees it before sealing secrets; null = a node in no fleet. */
+  nodeFleet?: FleetRef | null;
 }
 
 export interface DeploymentEvent {
@@ -219,7 +225,7 @@ export function endpointStatus(parent: Pick<DeploymentRow, "status">, replicas: 
   return "stopped";
 }
 
-const replicaView = (r: DeploymentRow, detail: boolean, pubkeys?: Map<string, string | null>): ReplicaView => ({
+const replicaView = (r: DeploymentRow, detail: boolean, pubkeys?: Map<string, string | null>, fleets?: Map<string, FleetRef | null>): ReplicaView => ({
   id: r.id,
   status: r.status,
   statusReason: r.status_reason,
@@ -229,12 +235,14 @@ const replicaView = (r: DeploymentRow, detail: boolean, pubkeys?: Map<string, st
   awaitingSecrets: awaitingSecrets(r),
   ...(detail && r.node && pubkeys?.get(r.node) && { nodePubkey: pubkeys.get(r.node)! }),
   ...(detail && r.last_logs && { logs: r.last_logs }),
+  ...(r.node && fleets && { nodeFleet: fleets.get(r.node) ?? null }),
 });
 
 /**
  * `nodeGpus` = the assigned node's manifest GPUs (workstations only; see presentDeployments).
  * `replicas` = an endpoint's replica rows (presentDeployments loads them).
  * `detail` adds what the single-deployment view alone shows (connect.webToken, logs).
+ * `fleets` = each node's fleet (B-9), shown beside the node.
  */
 export function toDeployment(
   r: DeploymentRow,
@@ -243,6 +251,7 @@ export function toDeployment(
   detail = false,
   replicas: DeploymentRow[] = [],
   pubkeys?: Map<string, string | null>,
+  fleets?: Map<string, FleetRef | null>,
 ): Deployment {
   const spec = JSON.parse(r.spec_json);
   const endpoint = isEndpoint(r);
@@ -266,8 +275,10 @@ export function toDeployment(
     lastProbeAt: r.last_probe_at,
     probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
     spec: redactSpec(r.kind, spec),
+    ...((spec as ContainerSpec).placement && { placement: (spec as ContainerSpec).placement }),
+    ...(r.node && fleets && { nodeFleet: fleets.get(r.node) ?? null }),
     ...(r.parent_id && { parentId: r.parent_id }),
-    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail, pubkeys)), auth: (spec as EndpointSpec).auth }),
+    ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail, pubkeys, fleets)), auth: (spec as EndpointSpec).auth }),
     ...(detail && r.last_logs && { logs: r.last_logs }),
     ...(r.workstation ? workstationView(r, spec as WorkstationSpec, nodeGpus, now, detail) : {}),
   };
@@ -286,28 +297,34 @@ export async function replicasOf(parents: string[]): Promise<Map<string, Deploym
 }
 
 /**
- * toDeployment for many rows, loading the replicas of endpoints and, in one statement, the manifests of nodes that run
- * workstations plus (detail only) the keys of nodes that hold replicas — so the owner can seal each replica's secrets.
+ * toDeployment for many rows, loading the replicas of endpoints and, in one statement, every node a row or replica is
+ * on: its fleet (B-9, shown beside the node), its manifest (workstations) and its key (detail only, so the owner can
+ * seal each replica's secrets).
  */
 export async function presentDeployments(rows: DeploymentRow[], detail = false): Promise<Deployment[]> {
   const replicas = await replicasOf(rows.filter(isEndpoint).map((r) => r.id));
-  const nodes = new Set(rows.filter((r) => r.workstation && r.node).map((r) => r.node!));
-  if (detail) for (const rs of replicas.values()) for (const r of rs) if (r.node) nodes.add(r.node);
+  const nodes = new Set(rows.filter((r) => r.node).map((r) => r.node!));
+  for (const rs of replicas.values()) for (const r of rs) if (r.node) nodes.add(r.node);
   const gpus = new Map<string, Gpu[]>();
   const pubkeys = new Map<string, string | null>();
+  const fleets = new Map<string, FleetRef | null>();
   if (nodes.size) {
-    const list = [...nodes];
+    // The addresses go in as one JSON parameter: a full list can name more nodes than D1 binds in one statement.
     const res = await getD1()
-      .prepare(`SELECT address, manifest_json, pubkey FROM nodes WHERE address IN (${list.map(() => "?").join(",")})`)
-      .bind(...list)
-      .all<{ address: string; manifest_json: string | null; pubkey: string | null }>();
+      .prepare(
+        "SELECT n.address, n.manifest_json, n.pubkey, n.fleet_id, f.name AS fleet_name FROM nodes n LEFT JOIN fleets f ON f.id = n.fleet_id " +
+          "WHERE n.address IN (SELECT value FROM json_each(?))",
+      )
+      .bind(JSON.stringify([...nodes]))
+      .all<{ address: string; manifest_json: string | null; pubkey: string | null; fleet_id: string | null; fleet_name: string | null }>();
     for (const n of res.results ?? []) {
       gpus.set(n.address, (JSON.parse(n.manifest_json ?? "{}").gpus ?? []) as Gpu[]);
       pubkeys.set(n.address, n.pubkey);
+      fleets.set(n.address, n.fleet_id ? { id: n.fleet_id, name: n.fleet_name } : null);
     }
   }
   const now = Date.now();
-  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail, replicas.get(r.id) ?? [], pubkeys));
+  return rows.map((r) => toDeployment(r, r.node ? gpus.get(r.node) ?? [] : undefined, now, detail, replicas.get(r.id) ?? [], pubkeys, fleets));
 }
 
 export async function addEvent(id: string, level: DeploymentEvent["level"], message: string, now = Date.now()): Promise<void> {
@@ -327,27 +344,35 @@ export async function getOwnedRow(owner: string, id: string): Promise<Deployment
   return row && row.owner === normalizeAddress(owner) ? row : null;
 }
 
-/** Bound nodes seen within NODE_ACTIVE_SECONDS that advertise `capability`. */
-export async function capableNodesOnline(capability: string, now = Date.now(), minAgent?: string): Promise<number> {
+/** Bound nodes seen within NODE_ACTIVE_SECONDS that advertise `capability` (only those of `fleetId` when given). */
+export async function capableNodesOnline(capability: string, now = Date.now(), minAgent?: string, fleetId?: string): Promise<number> {
   const rows =
     (
       await getD1()
         .prepare(
           "SELECT nodes.agent_version AS v FROM nodes, json_each(nodes.work_types) w " +
-            "WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?",
+            `WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?${fleetId ? " AND nodes.fleet_id = ?" : ""}`,
         )
-        .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability)
+        .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability, ...(fleetId ? [fleetId] : []))
         .all<{ v: string | null }>()
     ).results ?? [];
   return minAgent ? rows.filter((r) => !!r.v && compareVersions(r.v, minAgent) >= 0).length : rows.length;
 }
 
-/** The warning a new deployment gets when no online node could run it (a secret-carrying one needs a newer agent). */
-async function capableWarning(kind: string, spec: unknown, now: number): Promise<string | null> {
+/** A fleet as a deployment's owner may see it (B-9): its id and name, never its owner. */
+export type FleetRef = { id: string; name: string | null };
+
+/**
+ * The warning a new deployment gets when no online node could run it (a secret-carrying one needs a newer agent).
+ * A pinned one (B-9) counts only the nodes of its fleet.
+ */
+async function capableWarning(kind: string, spec: unknown, now: number, fleet: FleetRef | null): Promise<string | null> {
   const cap = neededCapability(kind as never, spec as never);
-  if ((await capableNodesOnline(cap, now)) === 0) return "waiting for a capable node";
+  if ((await capableNodesOnline(cap, now, undefined, fleet?.id)) === 0) {
+    return fleet ? `waiting for a node in fleet ${fleet.name ?? fleet.id}` : "waiting for a capable node";
+  }
   const secrets = (spec as { expectsSecrets?: boolean }).expectsSecrets === true;
-  if (secrets && (await capableNodesOnline(cap, now, SEALED_V2_MIN_AGENT)) === 0) {
+  if (secrets && (await capableNodesOnline(cap, now, SEALED_V2_MIN_AGENT, fleet?.id)) === 0) {
     return `waiting for a node running agent ${SEALED_V2_MIN_AGENT} or newer (sealed secrets need it)`;
   }
   return null;
@@ -429,6 +454,12 @@ export async function createDeployment(input: {
       for (const k of ["workdir", "sshPort", "tokenEnv", "tokenQuery"] as const) if (w[k] === undefined) delete w[k];
     }
   }
+  // B-9: a pin names a live fleet — the owner's own or a partner's (whose owner is never revealed).
+  const pin = input.kind === "static" ? undefined : (checked.spec as ContainerSpec).placement?.fleetId;
+  const fleet = pin
+    ? await getD1().prepare("SELECT id, name FROM fleets WHERE id = ? AND revoked_at IS NULL").bind(pin).first<FleetRef>()
+    : null;
+  if (pin && !fleet) return { ok: false, code: "validation_failed", message: "spec.placement.fleetId: no such fleet" };
   const owner = normalizeAddress(input.owner);
   const replicas = input.kind === "endpoint" ? (checked.spec as EndpointSpec).replicas : 1;
   if (!(await hold(owner, price * replicas))) {
@@ -451,7 +482,7 @@ export async function createDeployment(input: {
     }
     await getD1().batch(rows);
     await addEvent(id, "info", `queued ${replicas} replica${replicas > 1 ? "s" : ""} at ${price} µCLD/replica-hour; first hour held`, now);
-    const waiting = await capableWarning(input.kind, checked.spec, now);
+    const waiting = await capableWarning(input.kind, checked.spec, now, fleet);
     if (waiting) await addEvent(id, "warn", waiting, now);
     return { ok: true, id, ...quoted(replicas) };
   }
@@ -472,7 +503,7 @@ export async function createDeployment(input: {
       .catch((err) => log.api.warn("[deployments] probe columns not written (run HOSTING_MIGRATIONS):", err));
   }
   await addEvent(id, "info", `queued at ${price} µCLD/hour; first hour held`, now);
-  const waiting = await capableWarning(input.kind, checked.spec, now);
+  const waiting = await capableWarning(input.kind, checked.spec, now, fleet);
   if (waiting) await addEvent(id, "warn", waiting, now);
   return { ok: true, id, ...quoted(1) };
 }

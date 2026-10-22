@@ -233,7 +233,13 @@ export type Deployment = {
   lastProbeAt: number | null;
   probeOk: boolean | null;
   spec: unknown;
+  /** Pinned (spec.placement, B-9): only nodes of this fleet run it. */
+  placement?: { fleetId: string };
+  /** Once on a node: that node's fleet (null = a node in no fleet), shown beside the node before secrets are sealed. */
+  nodeFleet?: NodeFleet | null;
 };
+/** A node's fleet as a deployment's owner sees it: its id and name, never its owner. */
+export type NodeFleet = { id: string; name: string | null };
 export type DeploymentEvent = { id?: string; at: number; level: string; message: string };
 export type DeploymentDetail = { deployment: Deployment; events: DeploymentEvent[]; nodePubkey?: string };
 
@@ -282,6 +288,7 @@ export type WorkstationSpec = {
   maxHours: number;
   access: { web?: { port: number; path?: string }; ssh?: { publicKey: string } };
   volume?: { sizeGb: number; keepDays: number };
+  placement?: { fleetId: string };
 };
 
 /** A curated environment template (`kind: "workstation"`, §6). */
@@ -352,6 +359,7 @@ export type EndpointSpec = {
   health?: { path?: string; startupGraceSec?: number };
   replicas: number;
   auth: "public" | "key";
+  placement?: { fleetId: string };
 };
 export type Replica = {
   id: string;
@@ -366,8 +374,10 @@ export type Replica = {
   nodePubkey?: string;
   /** Detail only: the node's log tail from this replica's last failure. */
   logs?: string;
+  /** Once on a node: that node's fleet (null = a node in no fleet). */
+  nodeFleet?: NodeFleet | null;
 };
-export type Endpoint = Omit<Deployment, "kind" | "spec"> & {
+export type Endpoint =Omit<Deployment, "kind" | "spec"> & {
   kind: "endpoint";
   url: string | null;
   spec: EndpointSpec;

@@ -16,6 +16,7 @@ import {
   type Size, type StaticFile,
 } from "./model";
 import type { ListedTemplate } from "./templates";
+import { FleetPin, placementOf, useFleetPin } from "./fleet";
 
 type EnvRow = { key: string; value: string; secret: boolean };
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -43,6 +44,7 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
     ...(template?.secretEnv ?? []).map((key) => ({ key, value: "", secret: true })),
   ]);
   const [size, setSize] = useState<Size>(() => sizeFor(d));
+  const pin = useFleetPin();
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -72,7 +74,8 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
     : new Set(env.filter((r) => r.key).map((r) => r.key)).size !== env.filter((r) => r.key).length ? "Variable names must be unique."
     : env.some((r) => r.key && r.secret && !r.value) ? "Enter a value for every secret."
     : null;
-  const err = nameErr || staticErr || portsErr || imageErr || envErr;
+  const pinErr = kind === "container" ? pin.error : null;
+  const err = nameErr || staticErr || portsErr || imageErr || envErr || pinErr;
   const { prices, usdPerCld } = usePrices();
   const price = priceEstimate(prices, kind, SIZES[size]);
 
@@ -109,6 +112,7 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
             expectsSecrets: Object.keys(secrets).length > 0,
             ports: portList.map((p) => ({ container: p, protocol: "tcp" as const })),
             ...SIZES[size],
+            ...placementOf(pin),
           };
     try {
       const r = await api<{ id: string; priceUcldPerHour: number; status: string }>("/deployments", {
@@ -245,6 +249,9 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
                 Secret values never leave this browser in plain text: once a node is assigned they are sealed to its key, and the orchestrator stores only ciphertext. The node that runs your container can read them.
               </p>
             )}
+          </Field>
+          <Field label="Run only on a fleet" htmlFor="dep-fleet">
+            <FleetPin pin={pin} id="dep-fleet" showError={touched} />
           </Field>
         </>
       )}

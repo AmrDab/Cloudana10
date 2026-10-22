@@ -13,7 +13,7 @@ import { normalizeAddress } from "../lib/eth.js";
 import { getEnv } from "../config/env.js";
 import { sha256 } from "./jobs.service.js";
 import { unbindFleetNodes } from "./nodes.service.js";
-import { requeueNodeDeployments } from "./deployment-duties.service.js";
+import { failPinnedTo, requeueNodeDeployments } from "./deployment-duties.service.js";
 
 export const MAX_ACTIVE_FLEETS = 10;
 
@@ -109,7 +109,8 @@ export async function updateFleet(
 
 /**
  * Revoke (idempotent): new announces with the token fail, and every node of the fleet is unbound (its live
- * deployments are re-queued for other nodes). Returns the revocation time, or null if the caller owns no such fleet.
+ * deployments are re-queued for other nodes). Deployments pinned to it (B-9) fail: no node can serve them any more.
+ * Returns the revocation time, or null if the caller owns no such fleet.
  */
 export async function revokeFleet(owner: string, id: string): Promise<number | null> {
   const row = await ownedFleet(owner, id);
@@ -119,6 +120,7 @@ export async function revokeFleet(owner: string, id: string): Promise<number | n
   await getD1().prepare("UPDATE fleets SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").bind(now, id).run();
   const nodes = await unbindFleetNodes(id);
   await requeueNodeDeployments(nodes, "fleet revoked — node unbound", now);
+  await failPinnedTo(id, now);
   return now;
 }
 
