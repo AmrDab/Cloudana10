@@ -17,7 +17,12 @@ const LANE: Record<string, [string, "ok" | "work" | "chain" | "muted"]> = {
   verify: ["verifier credit", "chain"],
 };
 const STATUS: Record<string, "muted" | "work" | "chain" | "ok" | "burn"> = { pending: "muted", posted: "chain", settled: "ok", clawed: "burn" };
-const HELD_UNTIL = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+// The viewer's local time ("23 Oct 00:00"); the ledger header says so.
+const DAY = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const heldUntil = (ms: number) => `${DAY.format(ms)} ${CLOCK.format(ms)}`;
+/** 86 400 → "24 h", 5 400 → "90 min". */
+const duration = (s: number) => (s % 3600 === 0 ? `${s / 3600} h` : `${Math.round(s / 60)} min`);
 
 export default function EarningsPage() {
   const session = useSession();
@@ -42,10 +47,16 @@ function Earnings({ address }: { address: string }) {
   const ledger = useLedger(address);
   const l = ledger.data;
   const loading = ledger.isLoading;
-  // `held` is new in the API (B-6): read it defensively while an older API is still deployed.
+  // `held`, `clawed` and the two settings are new in the API (B-6): read them defensively while an older API is deployed.
   const held = l ? (l.held?.A ?? 0) + (l.held?.B ?? 0) : null;
+  const clawed = l ? (l.clawed?.A ?? 0) + (l.clawed?.B ?? 0) : 0;
   const inSettlement = l ? l.pending.A + l.pending.B - (held ?? 0) - l.vesting.B : null;
   const settled = l ? l.settled.A + l.settled.B : null;
+  const sampleK = l?.verifySampleK;
+  const holdSeconds = l?.payHoldSeconds ?? 0;
+  const hold = holdSeconds > 0 ? duration(holdSeconds) : null;
+  // Five tiles split 2 + 3 from md up (and the last one full width on a phone), so none is left alone on a row.
+  const span = (wide: boolean, last = false) => (hold ? `${wide ? "md:col-span-3" : "md:col-span-2"}${last ? " max-md:col-span-2" : ""}` : undefined);
   return (
     <>
       <PageHeader
@@ -61,22 +72,28 @@ function Earnings({ address }: { address: string }) {
           </div>
         }
       />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-        <Tile label="Held" value={held} unit="cld" loading={loading} tone="work" caption="24 h check window" />
-        <Tile label="In settlement" value={inSettlement} unit="cld" loading={loading} tone="chain" caption="Verified, batch not final" />
-        <Tile label="Vesting" value={l?.vesting.B} unit="cld" loading={loading} tone="work" caption="Subsidy, before it settles" />
-        <Tile label="Settled" value={settled} unit="cld" loading={loading} tone="ok" caption="Final on Base" />
-        <Tile label="Verifier credits" value={l?.credits} loading={loading} caption="Credits, not CLD" />
+      <div className={`grid grid-cols-2 gap-3 ${hold ? "md:grid-cols-6" : "md:grid-cols-4"}`}>
+        {hold && <Tile label="Held" value={held} unit="cld" loading={loading} tone="work" caption={`${hold} check window`} className={span(true)} />}
+        <Tile label="In settlement" value={inSettlement} unit="cld" loading={loading} tone="chain" caption="Verified, batch not final" className={span(true)} />
+        <Tile label="Vesting" value={l?.vesting.B} unit="cld" loading={loading} tone="work" caption="Subsidy, before it settles" className={span(false)} />
+        <Tile label="Settled" value={settled} unit="cld" loading={loading} tone="ok" caption="Final on Base" className={span(false)} />
+        <Tile label="Verifier credits" value={l?.credits} loading={loading} caption="Credits, not CLD" className={span(false, true)} />
       </div>
       <p className="mt-3 font-mono text-[12px] text-faint">
         Minted per verified job. Posted to Base in batches; subsidy vests first. The keeper claims for you once a batch is final.
       </p>
-      <p className="mt-1 font-mono text-[12px] text-faint">
-        Every answer is checked, and 1 job in 10 is re-executed in full. Pay is held 24 h first and clawed if a re-executed job from any of your nodes fails.
-      </p>
+      {sampleK !== undefined && (
+        <p className="mt-1 font-mono text-[12px] text-faint">
+          Every answer is checked, and {sampleK <= 1 ? "every job is" : `1 job in ${sampleK} is`} re-executed in full.
+          {hold && ` Pay is held ${hold} first and clawed if a re-executed job from any of your nodes fails.`}
+        </p>
+      )}
+      {clawed > 0 && (
+        <p className="mt-1 font-mono text-[12px] text-burn">Clawed: {cld(clawed)}, taken back after a failed check.</p>
+      )}
 
       <Panel className="mt-6">
-        <PanelHeader title="Ledger" kicker="Latest 50 entries" right={<Pill tone="ok">Claim · automatic</Pill>} />
+        <PanelHeader title="Ledger" kicker="Latest 50 entries · your local time" right={<Pill tone="ok">Claim · automatic</Pill>} />
         <LedgerTable entries={l?.entries} loading={loading} error={ledger.error} />
       </Panel>
     </>
@@ -129,7 +146,7 @@ function LedgerTable({ entries, loading, error }: { entries?: LedgerEntry[]; loa
                 <td className="px-5 py-3 max-sm:p-0 max-sm:text-right">
                   {e.releasesAt ? (
                     <Pill tone="work">
-                      <span title={absTime(e.releasesAt)}>held<span className="max-sm:hidden"> until</span> {HELD_UNTIL.format(new Date(e.releasesAt))}</span>
+                      <span title={absTime(e.releasesAt)}>held<span className="max-sm:hidden"> until</span> {heldUntil(e.releasesAt)}</span>
                     </Pill>
                   ) : (
                     <Pill tone={STATUS[e.status] ?? "muted"}>{e.status}</Pill>

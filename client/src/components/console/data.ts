@@ -158,6 +158,10 @@ export type Ledger = {
   settled: { A: number; B: number };
   clawed: { A: number; B: number };
   credits: number;
+  /** One matrix job in this many has its transcript re-executed (1 = every job). */
+  verifySampleK: number;
+  /** How long a job's provider pay stays clawable after it verifies (0 = no hold). */
+  payHoldSeconds: number;
   entries: LedgerEntry[];
 };
 export function useLedger(address?: string | null) {

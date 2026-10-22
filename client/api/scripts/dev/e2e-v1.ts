@@ -93,7 +93,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Jobs this node solved honestly, with what each earned (side jobs included: the single node takes whatever the draw assigns). */
 const solved = new Map<string, { laneAUcld: number; laneBUcld: number; priceUcld: number }>();
 const prices = new Map<string, number>();
-/** The latest end of a paid job's check window (B-6): its epoch can close only after it. */
+/** The latest end of a paid job's check window (B-6): its epoch opens then and can close one epoch later. */
 let heldUntil = 0;
 
 async function solveAndSubmit(node: PrivateKeyAccount, assignment: any): Promise<Res> {
@@ -243,9 +243,10 @@ async function main() {
   });
   check(verdict.b?.correct === true && verdict.b.credits === 1, `verify task (n=${task.b.n}, truth ${truth}) → ${JSON.stringify(verdict.b)}`);
 
-  // Wait until the epoch of the last job has ended, and with it the jobs' check window (PAY_HOLD_SECONDS).
+  // Wait until the epoch of the last job has ended: after the jobs' check window (PAY_HOLD_SECONDS) their epoch opens,
+  // and it closes one epoch later.
   const doneAt = Date.now();
-  const waitUntil = Math.max((Math.floor(doneAt / EPOCH_MS) + 1) * EPOCH_MS, heldUntil) + 1000;
+  const waitUntil = Math.max((Math.floor(doneAt / EPOCH_MS) + 1) * EPOCH_MS, heldUntil ? heldUntil + EPOCH_MS : 0) + 1000;
   console.log(`     waiting ${Math.ceil((waitUntil - Date.now()) / 1000)} s for the epoch to end…`);
   await sleep(waitUntil - Date.now());
 

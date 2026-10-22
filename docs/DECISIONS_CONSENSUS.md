@@ -8,7 +8,11 @@ This is the consensus of a Fable review panel: token economics, payments and dem
 > 1. **Subsidy (lane B) stays per settlement epoch (one hour)**, pro rata within the epoch, as built. No weekly pool,
 >    no contract change: the v2 contracts deploy as they are.
 > 2. **Verification sampling (B-6):** Freivalds on every job; the full transcript is re-executed on a random 1 in 10
->    jobs; every job's provider pay is held 24 h and clawed if its sampled check fails (the node is flagged).
+>    jobs; every job's provider pay is held 24 h and clawed if its sampled check fails (the node is flagged). Built
+>    (PROGRESS.md entry 25): the claw takes the held pay of the failing node's whole payout wallet, for every node
+>    including fleet-token nodes, and only the failing node is suspended. A false positive or a leaked fleet token is
+>    undone with `POST /v1/admin/claws/{jobId}/reverse` (held pay only; pay another failed check still covers stays
+>    clawed).
 > 3. **`/control/legacy` (B-3):** removed entirely; the pricing calculator and the decentralization page return later
 >    as rewritten console pages.
 > 4. **Fleet pinning (B-9):** a deployment may be pinned to the owner's own fleet or to a partner fleet chosen by its

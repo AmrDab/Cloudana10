@@ -64,7 +64,10 @@ the deposit cursor until 00:00 UTC.
   tolerant `ALTER TABLE … ADD COLUMN` on the first `/v1/*` request per isolate. This pass added
   `deployments.start_attempts`.
 - **Data migrations** are guarded by `schema_meta`: `epoch_seconds` (changing `EPOCH_SECONDS` voids unsettled
-  settlement entries — decide before changing it) and `price_unit`.
+  settlement entries — decide before changing it) and `price_unit`. Since B-6 every job's provider pay is booked
+  `PAY_HOLD_SECONDS` (24 h) ahead, so a change of `EPOCH_SECONDS` (`migrateEpochs`) now voids at least the last 24 h
+  of every provider's pending pay, besides anything not yet posted. Pick the mainnet value once, before value-bearing
+  traffic.
 - **Backup**: before a deploy that touches the schema, `npx wrangler d1 export cloudana-db --remote
   --output=backup-$(date +%F).sql`. D1 Time Travel restores any point in the last 30 days (7 on the free plan):
   `npx wrangler d1 time-travel restore cloudana-db --timestamp=<RFC3339>`.

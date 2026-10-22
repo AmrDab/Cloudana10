@@ -47,9 +47,9 @@ const submitRoute = createRoute({
   description:
     "Node-signed. Returns the µCLD earned: lane A, and lane B as the most this job's subsidy can be (scaled pro rata " +
     "with every other job in the epoch if the epoch's budget binds; vesting until vestsAt). The result is Freivalds-checked " +
-    "on every job and the transcript re-executed on a random 1 in 10 (default); the pay is held until heldUntil (24 h by " +
-    "default) and clawed, with all held pay of the node's payout wallet, if a sampled check of a node paying that " +
-    "wallet fails.",
+    "on every job and the transcript re-executed on a random 1 in 10 (default); the pay is held until heldUntil (more " +
+    "than 24 h by default) and clawed, with all held pay of the node's payout wallet, if a sampled check of a node " +
+    "paying that wallet fails.",
   middleware: [requireNode] as const,
   request: { body: { required: true, content: { "application/json": { schema: SubmitSchema } } } },
   responses: responses(

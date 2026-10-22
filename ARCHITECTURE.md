@@ -52,9 +52,10 @@ sha256(seed_source ‖ job id)`, `seed_source` = latest Base block hash (`CHAIN_
 σ binds job, node, nonce and seed; `eligible_hash` records who was eligible. Weight is verified throughput (EMA),
 never the self-reported benchmark. Submit: assigned-to-this-node and unexpired → node bound → certificate σ/n/r and
 A/B hash → Freivalds (n²) → on a random 1 in `VERIFY_SAMPLE_K` (10), transcript re-execution over the API's own A, B
-(n³) → `done`, capture, rewards booked `PAY_HOLD_SECONDS` (24 h) ahead. Three failed verifications fail the job and
-release the hold. A sampled job with a right answer and a wrong transcript is kept and charged, but its A/B and every
-held A/B entry of the node's payout wallet (any of its nodes) are clawed and the node is suspended (B-6).
+(n³) → `done`, capture, rewards held (clawable for at least `PAY_HOLD_SECONDS`, 24 h). Three failed verifications
+fail the job and release the hold. A sampled job with a right answer and a wrong transcript is kept and charged, but
+its A/B and every held A/B entry of the node's payout wallet (any of its nodes) are clawed and the node is suspended,
+in the same batch (B-6); `POST /v1/admin/claws/{jobId}/reverse` undoes a claw.
 
 **Deployments** (`deployments.service.ts`, `deployment-duties.service.ts`): `queued → assigned → running ⇄ unreachable
 → stopped | failed`. Create validates the spec, prices it in USD at the current table, converts to µCLD once, holds the

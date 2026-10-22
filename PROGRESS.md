@@ -458,50 +458,80 @@ that remained:
   HMAC-SHA256 over `jobId:σ`, keyed by `sha256("cloudana-sample:" + JWT_SECRET)`, are 0 mod `VERIFY_SAMPLE_K` (10;
   1 = every job). The node knows the job and σ but not the key; σ carries a fresh nonce, so a re-queued job is drawn
   again. Re-execution stays synchronous in the request (≈ 1.1 s CPU at n = 256, as every submit paid before). A passed
-  sample is never disclosed to the node (`work_jobs.sample_check` = NULL | 'passed' | 'failed' is internal).
-- **Hold.** A job's A, treasury and B entries are booked into `epochOf(now + PAY_HOLD_SECONDS)` (24 h), so the fee and
-  the rewards stay in one epoch and `closeEpochs` needs no change: it closes them 24–25 h after submit. Lane B vests
-  from that epoch's end. `PAY_HOLD_SECONDS` = 0 restores the previous booking exactly; 0 < hold < `EPOCH_SECONDS` is
-  refused at startup (the claw could not reach a job booked into the open epoch). Hosting bills are not held.
+  sample is never disclosed to the node (`work_jobs.sample_check` = NULL | 'passed' | 'failed' | 'reversed' is internal).
+- **Hold.** A job's A, treasury and B entries are booked into `b = epochOf(now + PAY_HOLD_SECONDS) + 1` (24 h), so the
+  fee and the rewards stay in one epoch and `closeEpochs` needs no change. The claw reaches epochs after the open one,
+  so the pay stays clawable until `b` opens (`heldUntil` = the start of `b`, always more than 24 h after submit) and
+  closes at the end of `b` (25–26 h). Lane B vests from that epoch's end. `PAY_HOLD_SECONDS` = 0 restores the previous
+  booking exactly; 0 < hold < `EPOCH_SECONDS` is refused at startup. Hosting bills are not held.
 - **Claw.** A sampled job with a right answer (every cheap check passed) and a wrong transcript: the result is kept,
   the job marked done with `sample_check = 'failed'`, the fee captured, its treasury entry written pending and its A/B
-  written clawed; in the same batch every pending A/B entry in an epoch after the open one that is paid to the node's
-  payout wallet (whichever of its nodes earned it) or was earned by the node's own done jobs is clawed (race-free with
-  `closeEpochs`, which only closes earlier epochs). The claw is wallet-wide: an operator running several modified
-  nodes under one wallet keeps none of their held pay. `jobs_failed + 1`, no `jobs_done` or throughput credit; only the
-  failing node is suspended, through the B-8 path with reason "sampled transcript check failed on job <id>"; it gets
-  422. Clawed jobs' fees still burn (treasury entries are never clawed), so every epoch stays within the contract's
-  bounds. A wrong C or a bad header keeps the reject-and-requeue path.
+  written clawed. In the same batch, before the "done" update and only while the job is still this node's assignment
+  (a submit that lost a race changes nothing): the claw covers every A/B entry in an epoch after the open one that is
+  paid to the node's payout wallet (any of its nodes, fleet-token nodes included) or was earned by the node's own jobs,
+  plus the failing job's own A/B, recording the coverage in `reward_claws` (also for entries an earlier failed check
+  already took), and claws the covered pending ones; `jobs_failed + 1` and the suspension ("sampled transcript check
+  failed on job <id>") are written in the same batch, so no error afterwards can leave the node active and paid. Only
+  the failing node is suspended; no `jobs_done` or throughput credit; the node gets 422. Afterwards, best effort: its
+  deployments re-queued and its relay socket kicked; a fleet node's log line names the fleet and says "if this node is
+  not yours, revoke the fleet's token and ask an admin to reverse the claw". Clawed jobs' fees still burn (treasury is
+  never clawed). A wrong C or a bad header keeps the reject-and-requeue path.
+- **Undo.** `POST /v1/admin/claws/{jobId}/reverse` (X-Internal-Key), one batch: entries the claw covers that no other
+  claw covers and that are still in an epoch after the open one go back to pending; its claw rows are dropped; the job
+  reads `sample_check = 'reversed'`. Pay another failed check still covers, pay of the open epoch or earlier, and pay
+  clawed another way (an operator's claw after a veto has no claw row) stay clawed. Returns the count; a second call
+  restores nothing. Lifting the suspension stays `DELETE /v1/admin/nodes/{address}/suspend`.
 - **Keeper.** An epoch whose provider entries were all clawed closes with `leaves = []` and fees > 0; the keeper used to
   skip it ("no leaves"; `buildTree` throws on empty). It now posts it with the zero root the API computes
-  (`epochRoot([])`), finalizes it (burn + treasury mint) and settles it with no claims. The v2 contracts are unchanged.
-  **Deploy the keeper before the API.**
-- **Provider view.** `POST /v1/work/submit` returns `heldUntil`; `GET /v1/ledger/{address}` adds `held {A,B}`,
-  `clawed {A,B}` and per-entry `releasesAt`, and `vesting.B` excludes held entries. Console Earnings: a "Held" tile
-  (24 h check window), "In settlement" = pending − held − vesting, rows "held until …" or "clawed", one caption line.
-  Console docs, the FAQ, `ARCHITECTURE.md` and `SECURITY_AUDIT.md` §4 no longer say every job is re-executed.
-- **Schema.** `work_jobs.sample_check TEXT`; `idx_reward_entries_job` (the claw and `epochJobs`). Env:
-  `VERIFY_SAMPLE_K` (10), `PAY_HOLD_SECONDS` (86400).
-- **Tests.** `sampled-verification.test.ts` (11): sampler 1/10 ± 0.3 % over 100k pairs, K = 1 samples all, the draw
+  (`epochRoot([])`), finalizes it (burn + treasury mint) and settles it with no claims. A vetoed all-clawed epoch would
+  re-close identically forever, so it is skipped ("vetoed all-clawed epoch: the guardian's decision stands") instead of
+  reported vetoed again each pass. The v2 contracts are unchanged. **Deploy the keeper before the API.**
+- **Provider view.** `POST /v1/work/submit` returns `heldUntil`. `GET /v1/ledger/{address}` adds `held {A,B}` (pending
+  A/B in an epoch after the open one: exactly what the claw can still take), `clawed {A,B}`, per-entry `releasesAt`
+  and the settings `verifySampleK` and `payHoldSeconds`; `vesting.B` excludes held entries. Console Earnings: a "Held"
+  tile (hidden with no hold), "In settlement" = pending − held − vesting, the caption worded from the two settings, the
+  clawed amount when there is one, rows "held until …" in local time (said in the ledger header), tiles split 2 + 3
+  with no orphan. Console docs, the services list, the FAQ, `ARCHITECTURE.md`, `SECURITY_AUDIT.md` §4, the litepaper
+  (`docs/Cloudana_Litepaper.md`, `client/public/litepaper.html`) and the whitepaper no longer say every job is
+  re-executed (minimal factual corrections only).
+- **Schema.** `work_jobs.sample_check TEXT` (NULL | passed | failed | reversed); `idx_reward_entries_job`;
+  `reward_claws (entry_id, job_id)` with `idx_reward_claws_job`. Env: `VERIFY_SAMPLE_K` (10), `PAY_HOLD_SECONDS`
+  (86400). Ops: changing `EPOCH_SECONDS` now voids at least the last 24 h of every provider's pending pay
+  (`DEPLOYMENT_RUNBOOK.md` §2).
+- **Tests.** `sampled-verification.test.ts` (13): sampler 1/10 ± 0.3 % over 100k pairs, K = 1 samples all, the draw
   changes with σ and with the key; a planted wrong transcript (n = 8, K = 10) caught in each of 400 runs, mean jobs
-  to detection in [8, 12] (≈ 10), ≥ 96 % within 44; K = 1 catches the first job; hold (booked into epochOf(t + 24 h),
-  nothing closes at t + 1 h, it closes with its fee at t + 25 h; a short hold is refused); claw path (3 held + the
-  failing job clawed, a released (posted) job and an open-epoch job untouched, treasury pending, node suspended,
-  payloads within T·10⁴ ≥ F·300, (A+T)·10⁴ ≤ F·9800, B ≤ budget, `epochJobs` sums = payload, all-clawed epochs with the
-  zero root, `/v1/network` deltas); wallet-wide claw (node 1 fails a sample: node 2 on the same payout wallet loses its
-  held A/B but stays active, node 3 on another wallet keeps everything; fails on a node-only claw).
-  `verify-cost.test.ts` measures CPU at n = 256: with the transcript ≈ 1.1 s, without ≈ 22 ms (≈ 50×), a whole
-  unsampled `submitWork` ≈ 31 ms (≈ 35×); amortised at K = 10 ≈ 8.4×. Keeper: an all-clawed
-  epoch is posted with the zero root, finalized and settled. Existing ledger/replay tests that close a job's own epoch
-  run with `PAY_HOLD_SECONDS = 0`. The new tests fail on the previous behaviour (checked by restoring it). API 415
-  tests, keeper 29.
+  to detection in [8, 12] (≈ 10), ≥ 96 % within 44; K = 1 catches the first job; hold (booked into
+  `epochOf(t + 24 h) + 1`, nothing closes before it ends, then it closes with its fee; a hosting bill is not held; a
+  short hold is refused); a failed check 1 minute before the 24 h are over still claws; the ledger reports the
+  settings; claw path (3 held + the failing job clawed, a released (posted) job and an open-epoch job untouched and
+  not "held", treasury pending, node suspended, payloads within T·10⁴ ≥ F·300, (A+T)·10⁴ ≤ F·9800, B ≤ budget,
+  `epochJobs` sums = payload, all-clawed epochs with the zero root, `/v1/network` deltas); wallet-wide claw (node 2
+  on the same wallet loses its held A/B but stays active, node 3 on another wallet keeps everything).
+  `sampled-claw.test.ts` (6): a D1 error after the batch still leaves the node suspended, counted and clawed; only the
+  winning batch of two racing submits claws; a fleet node's claw is wallet-wide, its log line names the fleet, and the
+  reverse restores it; the reverse route (internal key, held entries only, twice = no-op, `sample_check` 'reversed');
+  two failed checks covering the same pay (reversing one restores nothing they share, reversing both restores all);
+  pay clawed by an operator is never restored. `verify-cost.test.ts` measures CPU at n = 256: with the transcript
+  ≈ 1.1 s, without ≈ 22 ms (≈ 50×), a whole unsampled `submitWork` ≈ 31 ms (≈ 35×); amortised at K = 10 ≈ 8.4×.
+  Keeper (2): an all-clawed epoch is posted with the zero root, finalized and settled; a vetoed one is left alone.
+  Existing ledger/replay tests that close a job's own epoch run with `PAY_HOLD_SECONDS = 0`. Every new test fails on
+  the previous behaviour (checked by restoring it: 731fc63, or the single-`clawed_by` draft for the overlapping
+  claws). API 423 tests, keeper 30.
+- **Review of PR #58 (same PR).** Three reviewers, no contract-breaking defects; fixed: the hold window (pay used to
+  stop being clawable when its epoch opened, as little as 0 s before the 24 h ended), "held" shown for open-epoch pay
+  and hosting bills, the flag committed after the batch (a transient D1 error left the cheater active), a losing
+  concurrent submit re-running the claw, no undo for false positives (and overlapping claws, hence `reward_claws`),
+  the keeper's veto loop on an all-clawed epoch, hard-coded "1 in 10 / 24 h" in the console, clawed pay not shown,
+  times not labelled, and the public pages that still said every job is re-executed. A fleet-only claw scope was
+  tried and reverted: wallet-wide for every node is what stops an operator running a modified agent on many nodes,
+  and the reverse route is the remedy for a leaked fleet token.
 
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **415** |
-| gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / **29** |
+| client/api vitest | 330 | **423** |
+| gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / **30** |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
 | repo-root tsc | 2 errors | **clean** |

@@ -6,70 +6,15 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomBytes } from "node:crypto";
-import { solveAssignedJob } from "../../../pouw/src/index.js";
-import type { POUWCertificate } from "../../../pouw/src/types.js";
 import { buildApp } from "../src/app.js";
-import { getEnv, resetEnv } from "../src/config/env.js";
+import { getEnv } from "../src/config/env.js";
 import { getD1 } from "../src/lib/storage.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
-import { announceNode, getNode, touchNode } from "../src/services/nodes.service.js";
-import { enqueueWorkJob, getActiveAssignment, getWorkJob, runAssignment, sampledForCheck, sha256, submitWork } from "../src/services/jobs.service.js";
-import { closeEpochs, epochJobs, epochOf, ledgerSummary, releasesAt } from "../src/services/ledger.service.js";
+import { getNode } from "../src/services/nodes.service.js";
+import { getWorkJob, sampledForCheck, sha256, submitWork } from "../src/services/jobs.service.js";
+import { closeEpochs, epochJobs, epochOf, ledgerSummary, recordHostingRewards, releasesAt } from "../src/services/ledger.service.js";
 import { ZERO_ROOT } from "../src/services/epoch-merkle.js";
-
-const HOUR = 3_600_000;
-const n = 8;
-const A = Array.from({ length: n * n }, (_, i) => ((i * 7919) % 41) - 20);
-const B = Array.from({ length: n * n }, (_, i) => ((i * 104_729) % 37) - 18);
-const user = "0x" + "5e".repeat(20);
-const ENV = { CLUSTER_N_MIN: "1", EPOCH_SECONDS: "3600", PAY_HOLD_SECONDS: "86400", VERIFY_SAMPLE_K: "10" };
-
-function setEnv(vars: Record<string, string>): void {
-  Object.assign(process.env, vars);
-  resetEnv();
-}
-
-/** A node bound to `payout` (default: a wallet of its own). */
-async function freshNode(payout = "0x" + randomBytes(20).toString("hex")): Promise<{ node: string; payout: string }> {
-  const node = "0x" + randomBytes(20).toString("hex");
-  await announceNode(node, { cpuThreads: 8, ramGB: 16, gpus: [], os: "test" }, 100, ["matmul"]);
-  await getD1().prepare("UPDATE nodes SET payout = ? WHERE address = ?").bind(payout, node).run();
-  await touchNode(node);
-  return { node, payout };
-}
-
-/** The right answer with a transcript hash that is not the one the work produces. */
-const forged = (c: POUWCertificate): POUWCertificate => ({
-  ...c,
-  transcriptHash: (c.transcriptHash[0] === "0" ? "1" : "0") + c.transcriptHash.slice(1),
-});
-
-/**
- * Enqueue a job, let `node` draw it as the only node online (the file shares one in-memory database), and solve it;
- * `forge` submits a wrong transcript.
- */
-async function nextJob(node: string, forge = false) {
-  await getD1().prepare("UPDATE nodes SET last_seen = 0 WHERE address <> ?").bind(node).run();
-  await touchNode(node);
-  const q = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
-  if (!q.ok) throw new Error(q.message);
-  await runAssignment();
-  const a = await getActiveAssignment(node);
-  expect(a?.jobId).toBe(q.jobId);
-  const { certificate, result } = solveAssignedJob(a!.sigma, A, B, n, node, "dev");
-  return { jobId: q.jobId, sigma: a!.sigma, certificate: forge ? forged(certificate) : certificate, result };
-}
-
-/** lane:status of every reward entry of each job. */
-async function entryStates(jobIds: string[]): Promise<Record<string, string[]>> {
-  const rows = await getD1()
-    .prepare(`SELECT job_id, lane, status FROM reward_entries WHERE job_id IN (${jobIds.map(() => "?").join(",")}) ORDER BY lane`)
-    .bind(...jobIds)
-    .all<{ job_id: string; lane: string; status: string }>();
-  const out: Record<string, string[]> = Object.fromEntries(jobIds.map((id) => [id, []]));
-  for (const r of rows.results ?? []) out[r.job_id].push(`${r.lane}:${r.status}`);
-  return out;
-}
+import { ENV, HOUR, entryStates, freshNode, nextJob, setEnv, user } from "./helpers/sampled.js";
 
 describe("sampledForCheck: a keyed draw the node cannot predict", () => {
   // A fixed key and counter-derived inputs: HMAC outputs are pseudo-random, and the test is deterministic.
@@ -80,7 +25,7 @@ describe("sampledForCheck: a keyed draw the node cannot predict", () => {
     let hits = 0;
     for (let i = 0; i < 100_000; i++) if (sampledForCheck(...pair(i), 10)) hits++;
     expect(Math.abs(hits / 100_000 - 0.1)).toBeLessThanOrEqual(0.003);
-  });
+  }, 60_000);
 
   it("K = 1 samples every job; the env knob is the default", () => {
     for (let i = 0; i < 1000; i++) expect(sampledForCheck(...pair(i), 1)).toBe(true);
@@ -188,35 +133,63 @@ describe("the 24 h hold", () => {
     expect(getEnv().PAY_HOLD_SECONDS).toBe(86_400);
   });
 
-  it("books the job into epochOf(t + 24 h): closeEpochs at t + 1 h closes nothing, at t + 25 h it closes with the fee", async () => {
+  it("books the job into the epoch after epochOf(t + 24 h): nothing closes before the hold is over, then it closes with its fee", async () => {
     const s = await nextJob(node);
     const t = Date.now() - 14 * 24 * HOUR; // its own epochs: the describes share one database
-    const e = epochOf(t + 24 * HOUR);
+    const b = epochOf(t + 24 * HOUR) + 1;
     const r = await submitWork(node, s, t);
-    expect(r).toMatchObject({ ok: true, earned: { laneAUcld: 949, laneBUcld: 40 }, heldUntil: releasesAt(e), vestsAt: releasesAt(e) + HOUR });
+    // heldUntil = the start of b: the claw reaches b until then, which is always more than 24 h after t.
+    expect(r).toMatchObject({ ok: true, earned: { laneAUcld: 949, laneBUcld: 40 }, heldUntil: b * HOUR, vestsAt: (b + 1) * HOUR + HOUR });
+    expect((r as { heldUntil: number }).heldUntil).toBeGreaterThan(t + 24 * HOUR);
     expect((await getWorkJob(s.jobId))!.sample_check).toBe(sampledForCheck(s.jobId, s.sigma) ? "passed" : null);
     const rows = await getD1().prepare("SELECT epoch, lane, status FROM reward_entries WHERE job_id = ?").bind(s.jobId).all<{ epoch: number; status: string }>();
-    expect(rows.results?.map((x) => [x.epoch, x.status])).toEqual([[e, "pending"], [e, "pending"], [e, "pending"]]);
+    expect(rows.results?.map((x) => [x.epoch, x.status])).toEqual([[b, "pending"], [b, "pending"], [b, "pending"]]);
 
-    // The provider sees it as held, not as vesting or in settlement.
+    // The provider sees it as held, not as vesting or in settlement; a hosting bill of the same wallet, booked into the
+    // open epoch and never clawable, is not held.
+    await recordHostingRewards({ billId: `bill-${s.jobId}`, workType: "hosting", provider: payout, feeUcld: 1000, now: t });
     const held = await ledgerSummary(payout, t);
-    expect(held).toMatchObject({ pending: { A: 949, B: 40 }, held: { A: 949, B: 40 }, vesting: { B: 0 }, clawed: { A: 0, B: 0 } });
-    expect(held.entries.map((x) => x.releasesAt)).toEqual([releasesAt(e), releasesAt(e)]);
+    expect(held).toMatchObject({ pending: { A: 949 + 950, B: 40 }, held: { A: 949, B: 40 }, vesting: { B: 0 }, clawed: { A: 0, B: 0 } });
+    expect(held.entries.filter((x) => x.jobId === s.jobId).map((x) => x.releasesAt)).toEqual([releasesAt(b), releasesAt(b)]);
+    expect(held.entries.find((x) => x.jobId !== s.jobId)!.releasesAt).toBeNull();
+    expect(releasesAt(b)).toBe(b * HOUR);
 
-    expect(await closeEpochs(t + HOUR)).toEqual([]);
-    const closed = await closeEpochs(t + 25 * HOUR);
+    expect((await closeEpochs(t + HOUR)).map((p) => p.epoch)).toEqual([epochOf(t)]); // the hosting bill's epoch only
+    expect(await closeEpochs(t + 24 * HOUR)).toEqual([]);
+    expect(await closeEpochs(releasesAt(b))).toEqual([]); // b is open now: no longer clawable, not closed yet
+    const closed = await closeEpochs(releasesAt(b + 1));
     expect(closed).toHaveLength(1);
     expect(closed[0]).toMatchObject({
-      epoch: e,
+      epoch: b,
       feesBurnedUcld: 1001, // the fee burns in the rewards' epoch
       totalLaneAUcld: 949,
       totalLaneBUcld: 40,
       treasuryUcld: 31,
       leaves: [{ account: payout, laneAUcld: 949, laneBUcld: 40 }],
     });
-    const after = await ledgerSummary(payout, t + 25 * HOUR);
+    const after = await ledgerSummary(payout, releasesAt(b + 1));
     expect(after.held).toEqual({ A: 0, B: 0 });
-    expect(after.entries.map((x) => x.releasesAt)).toEqual([null, null]);
+    expect(after.entries.map((x) => x.releasesAt)).toEqual([null, null, null]);
+  });
+
+  it("keeps the pay clawable for the whole hold: a failed check 1 minute before 24 h is over still claws it", async () => {
+    // A job verified mid-epoch: before the fix its pay sat in epochOf(t + 24 h), which opened 30 min before the hold ended.
+    const t = (epochOf(Date.now() - 5 * 24 * HOUR) + 0.5) * HOUR; // after the claw-path describe's epochs
+    const s = await nextJob(node);
+    expect(await submitWork(node, s, t)).toMatchObject({ ok: true });
+    setEnv({ VERIFY_SAMPLE_K: "1" });
+    try {
+      const bad = await nextJob(node, true);
+      expect(await submitWork(node, bad, t + 24 * HOUR - 60_000)).toMatchObject({ ok: false, code: "unprocessable" });
+    } finally {
+      setEnv({ VERIFY_SAMPLE_K: "10" });
+    }
+    expect((await entryStates([s.jobId]))[s.jobId]).toEqual(["A:clawed", "B:clawed", "treasury:pending"]);
+  });
+
+  it("GET /v1/ledger/{address} reports the settings the console words its captions with", async () => {
+    const res = await buildApp({ runtime: "node" }).request(`/v1/ledger/${payout}`, { headers: { "cf-connecting-ip": "10.66.0.2" } });
+    expect(await res.json()).toMatchObject({ verifySampleK: 10, payHoldSeconds: 86_400 });
   });
 });
 
@@ -234,11 +207,11 @@ describe("claw path: a failed sampled check claws the provider's held pay", () =
     await setupV1Db(ENV);
     await creditUcld(user, 1_000_000);
     ({ node, payout } = await freshNode());
-    // released: booked into an epoch that ended before t0 (closed below); current: booked into the epoch open at t0 —
-    // out of the claw's reach though not closed yet; held1–3: booked after the open epoch.
+    // A job verified at x is booked into epochOf(x + 24 h) + 1. released: an epoch that ended before t0 (closed below);
+    // current: the epoch open at t0 — out of the claw's reach though not closed yet; held1–3: after the open epoch.
     const plan: [string, number][] = [
-      ["released", t0 - 26 * HOUR],
-      ["current", t0 - 24 * HOUR],
+      ["released", t0 - 27 * HOUR],
+      ["current", t0 - 25 * HOUR],
       ["held1", t0 - HOUR],
       ["held2", t0 - HOUR / 2],
       ["held3", t0 - 60_000],
@@ -249,7 +222,7 @@ describe("claw path: a failed sampled check claws the provider's held pay", () =
       ids[name] = s.jobId;
     }
     price = (await getWorkJob(ids.held1))!.price_ucld;
-    expect((await closeEpochs(t0)).map((p) => p.epoch)).toEqual([epochOf(t0 - 2 * HOUR)]);
+    expect((await closeEpochs(t0)).map((p) => p.epoch)).toEqual([epochOf(t0) - 2]);
     app = buildApp({ runtime: "node" });
     before = await network();
   });
@@ -287,13 +260,15 @@ describe("claw path: a failed sampled check claws the provider's held pay", () =
       jobs_failed: 1,
     });
     const summary = await ledgerSummary(payout, t0);
-    expect(summary).toMatchObject({ clawed: { A: 4 * 949, B: 4 * 40 }, pending: { A: 2 * 949, B: 2 * 40 }, held: { A: 949, B: 40 } });
+    // The open epoch's pay is pending but no longer held: nothing can claw it any more.
+    expect(summary).toMatchObject({ clawed: { A: 4 * 949, B: 4 * 40 }, pending: { A: 2 * 949, B: 2 * 40 }, held: { A: 0, B: 0 } });
     expect(summary.entries.filter((x) => x.status === "clawed")).toHaveLength(8);
   });
 
   it("every epoch payload stays within the contract's bounds and matches its job list; all-clawed epochs close with the zero root", async () => {
     const closed = await closeEpochs(t0 + 26 * HOUR);
-    expect(closed.map((p) => p.epoch)).toEqual([...new Set([t0, t0 + 23 * HOUR, t0 + 23.5 * HOUR, t0 + 24 * HOUR - 60_000, t0 + 24 * HOUR].map((x) => epochOf(x)))]);
+    const heldEpochs = [t0 + 23 * HOUR, t0 + 23.5 * HOUR, t0 + 24 * HOUR - 60_000, t0 + 24 * HOUR].map((x) => epochOf(x) + 1);
+    expect(closed.map((p) => p.epoch)).toEqual([epochOf(t0), ...new Set(heldEpochs)]);
     for (const p of closed) {
       expect(p.treasuryUcld * 10_000).toBeGreaterThanOrEqual(p.feesBurnedUcld * 300);
       expect((p.totalLaneAUcld + p.treasuryUcld) * 10_000).toBeLessThanOrEqual(p.feesBurnedUcld * 9_800);

@@ -76,9 +76,9 @@ export const envSchema = z.object({
   NODE_ACTIVE_SECONDS: int(45),
   ASSIGNMENT_TTL_SECONDS: int(60),
   // Sampled verification (ENGINEERING_BACKLOG B-6): Freivalds on every matmul job; the full transcript is re-executed
-  // on a random 1 in VERIFY_SAMPLE_K (1 = every job). A job's provider pay is booked into the epoch PAY_HOLD_SECONDS
-  // ahead and clawed if a sampled check of any node paying the same wallet fails meanwhile (0 = no hold; else at least
-  // EPOCH_SECONDS).
+  // on a random 1 in VERIFY_SAMPLE_K (1 = every job). A job's provider pay is booked into the epoch after the one
+  // PAY_HOLD_SECONDS ahead, so it stays clawable for at least PAY_HOLD_SECONDS, by a failed sampled check of any node
+  // paying the same wallet (0 = no hold; else at least EPOCH_SECONDS).
   VERIFY_SAMPLE_K: int(10),
   PAY_HOLD_SECONDS: int(86_400),
   /** Source of the assignment seed (latest block hash). Unset → local fallback seed. */

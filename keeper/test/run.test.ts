@@ -217,6 +217,21 @@ describe("runOnce lifecycle", () => {
     expect(other.chain.txs).toEqual([]);
   });
 
+  it("a vetoed all-clawed epoch is left as the guardian left it: no /vetoed loop, no re-post", async () => {
+    const { chain, api, deps } = world();
+    api.closeQueue = [{ epoch: 1000, root: zeroHash, leaves: [], totalLaneAUcld: 0, totalLaneBUcld: 0, treasuryUcld: 31, feesBurnedUcld: 1001, status: "closed" }];
+    await runOnce(deps);
+    chain.veto(1000n);
+    // The API re-closes it identically (its root is always zero) and lists it as closed again.
+    api.payloads.get(1000)!.status = "closed";
+    for (let pass = 0; pass < 2; pass++) {
+      const r = await runOnce(deps);
+      expect(r.epochs[0]).toMatchObject({ action: "skipped", reason: "vetoed all-clawed epoch: the guardian's decision stands" });
+    }
+    expect(api.calls.filter((c) => c.startsWith("vetoed:"))).toEqual([]);
+    expect(chain.txs.filter((t) => t.fn === "postEpoch")).toHaveLength(1);
+  });
+
   it("a clawed (void) lane B counts as settled and is never claimed", async () => {
     const { chain, api, deps } = world();
     api.closeQueue = [payload(1000, [{ account: A, laneAUcld: 10, laneBUcld: 5 }, { account: B, laneAUcld: 10, laneBUcld: 5 }])];

@@ -119,6 +119,11 @@ export async function processEpoch(deps: Deps, p: EpochPayload): Promise<EpochOu
     // Vetoed on-chain with this root: tell the API whatever it thinks (a missed /posted leaves it
     // 'closed'), so it re-closes with a corrected root. Never re-post the identical vetoed root.
     if (on.status === EpochStatus.Vetoed && on.root.toLowerCase() === tree.root.toLowerCase()) {
+      // An all-clawed epoch always re-closes with the zero root (treasury entries cannot be clawed), so reporting the
+      // veto would only loop: re-close, same root, veto reported again. Leave it as the guardian left it.
+      if (tree.root === zeroHash) {
+        return { epoch: p.epoch, action: "skipped", reason: "vetoed all-clawed epoch: the guardian's decision stands" };
+      }
       await api.vetoed(p.epoch, "vetoed on-chain; re-close with a corrected root");
       return { epoch: p.epoch, action: "marked-vetoed" };
     }

@@ -313,16 +313,21 @@ export async function setNodeSuspended(address: string, suspended: boolean, reas
     .bind(state, suspended ? reason : null, now, nodeKey)
     .run();
   if ((r.meta?.changes ?? 0) === 0) return { ok: false, code: "not_found", message: "unknown node" };
-  let requeued = 0;
-  if (suspended) {
-    const { requeueNodeDeployments } = await import("./deployment-duties.service.js");
-    requeued = await requeueNodeDeployments([nodeKey], `node suspended${reason ? `: ${reason}` : ""}`, now);
-    // Drop its relay socket too: no probe, check or visitor request reaches it until it reconnects — and a
-    // suspended node gets no ticket to do so.
-    const relay = getRelay();
-    if (relay) await relay(nodeKey, "/kick").catch(() => undefined);
-  }
+  const requeued = suspended ? await afterNodeSuspended(nodeKey, reason, now) : 0;
   return { ok: true, state, requeued };
+}
+
+/**
+ * What a suspension does beyond the node row (the row itself is written by the caller): live deployments re-queued,
+ * and the relay socket dropped — no probe, check or visitor request reaches the node until it reconnects, and a
+ * suspended node gets no ticket to do so. Returns the deployments re-queued.
+ */
+export async function afterNodeSuspended(nodeKey: string, reason: string | null, now = Date.now()): Promise<number> {
+  const { requeueNodeDeployments } = await import("./deployment-duties.service.js");
+  const requeued = await requeueNodeDeployments([nodeKey], `node suspended${reason ? `: ${reason}` : ""}`, now);
+  const relay = getRelay();
+  if (relay) await relay(nodeKey, "/kick").catch(() => undefined);
+  return requeued;
 }
 
 /** EMA weight for a new throughput sample. */

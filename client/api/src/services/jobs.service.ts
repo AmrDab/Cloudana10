@@ -12,7 +12,7 @@ import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { hold, release } from "./balance.service.js";
-import { getNode, nextThroughput, setNodeSuspended, type NodeRow } from "./nodes.service.js";
+import { afterNodeSuspended, getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
 import { epochOf, jobRewardStatements } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
 import { getWorkType } from "./work-types.js";
@@ -52,7 +52,7 @@ export interface WorkJobRow {
   /** Set in the transaction that captured the fee and wrote the rewards (submitWork); null = result accepted without a fee. */
   fee_captured_at: number | null;
   /** Sampled transcript re-execution (submitWork): null = not sampled. Never shown to the node. */
-  sample_check: "passed" | "failed" | null;
+  sample_check: "passed" | "failed" | "reversed" | null;
 }
 
 export interface JobMatrices {
@@ -467,6 +467,47 @@ export function sampledForCheck(jobId: string, sigma: string, k = getEnv().VERIF
   return createHmac("sha256", key).update(`${jobId}:${sigma}`).digest().readUInt32BE(0) % k === 0;
 }
 
+const suspensionReason = (jobId: string) => `sampled transcript check failed on job ${jobId}`;
+
+/**
+ * What a failed sampled check does, as statements for submitWork's batch, placed before its "done" update and run only
+ * while the job is still this node's assignment: a submit that lost a race (the job is already done) changes nothing,
+ * and nothing after the batch can leave the node active and paid.
+ *  1. The claw covers every A/B entry in an epoch after the open one (closeEpochs only closes earlier ones, so the two
+ *     never race; pay already posted needs the guardian veto) that is paid to the node's payout wallet — whichever of
+ *     its nodes earned it, fleet nodes included: an operator running a modified agent on many nodes keeps none of it —
+ *     or was earned by the node's own jobs (under a wallet it was bound to before), plus the failing job's own A/B
+ *     (written clawed just before). Coverage is recorded in reward_claws, also for entries an earlier failed check
+ *     already took, so reversing that one (POST /v1/admin/claws/{jobId}/reverse: a false positive, a leaked fleet
+ *     token) leaves them clawed. Entries clawed another way (no claw row) are not covered. Then every covered pending
+ *     entry is clawed.
+ *  2. The node: one more failure (no jobs_done, no throughput sample, so cheating speed earns no draw weight), and
+ *     suspended (the B-8 state; an admin lifts it).
+ */
+function caughtStatements(jobId: string, node: string, nodeRow: NodeRow, now: number): D1PreparedStatement[] {
+  const db = getD1();
+  const stillAssigned = "EXISTS (SELECT 1 FROM work_jobs WHERE id = ?1 AND status = 'assigned' AND node = ?2)";
+  return [
+    db
+      .prepare(
+        "INSERT OR IGNORE INTO reward_claws (entry_id, job_id) SELECT id, ?1 FROM reward_entries " +
+          "WHERE lane IN ('A','B') AND epoch > ?3 " +
+          "AND (address = ?4 OR job_id = ?1 OR job_id IN (SELECT id FROM work_jobs WHERE node = ?2 AND status = 'done')) " +
+          "AND (status = 'pending' OR job_id = ?1 OR (status = 'clawed' AND EXISTS (SELECT 1 FROM reward_claws c WHERE c.entry_id = reward_entries.id))) " +
+          `AND ${stillAssigned}`,
+      )
+      .bind(jobId, node, epochOf(now), normalizeAddress(nodeRow.payout!)),
+    db
+      .prepare(`UPDATE reward_entries SET status = 'clawed' WHERE status = 'pending' AND id IN (SELECT entry_id FROM reward_claws WHERE job_id = ?1) AND ${stillAssigned}`)
+      .bind(jobId, node),
+    db
+      .prepare(
+        `UPDATE nodes SET jobs_failed = jobs_failed + 1, state = 'suspended', state_reason = ?3, state_at = ?4 WHERE address = ?2 AND ${stillAssigned}`,
+      )
+      .bind(jobId, node, suspensionReason(jobId), now),
+  ];
+}
+
 export type SubmitResult =
   | { ok: true; units: number; earned: { laneAUcld: number; laneBUcld: number }; vestsAt: number; heldUntil: number }
   | { ok: false; code: "not_found" | "conflict" | "unprocessable"; message: string };
@@ -493,8 +534,7 @@ export async function submitWork(
   const verdict = wt.verify({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
   // Caught: a sampled job whose answer is right (every cheap check passed) but whose transcript is not — the work was
   // not done as proven. The verified result is kept and the fee captured (and burned), but the provider's pay is
-  // clawed, this job's and all its held pay (wallet-wide), and this node is suspended. Any other failure is refused and
-  // re-queued.
+  // clawed, this job's and its held pay, and this node is suspended. Any other failure is refused and re-queued.
   const caught = !verdict.ok && verdict.stage === "transcript";
 
   if (!verdict.ok && !caught) {
@@ -518,15 +558,16 @@ export async function submitWork(
 
   // One transaction: the fee is authorised on the job row only while the owner's hold covers it, captured only when
   // that authorisation happened in this very batch, the reward entries are written under the same condition, and the
-  // result lands last (then, if caught, the claw). A failure anywhere rolls the whole thing back, so the node's retry
-  // is a clean second attempt; a job is never done with its fee still held, and a fee is never captured without its
-  // rewards (nor minted without its capture).
+  // result lands last. A failure anywhere rolls the whole thing back, so the node's retry is a clean second attempt;
+  // a job is never done with its fee still held, and a fee is never captured without its rewards (nor minted without
+  // its capture).
   const owner = normalizeAddress(job.owner);
   const { statements: rewardStmts, rewards: split } = jobRewardStatements(
     { jobId: job.id, workType: job.work_type, provider: nodeRow.payout, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now },
     { capturedAt: now, node, clawed: caught },
   );
-  const doneAt = 2 + rewardStmts.length;
+  const caughtStmts = caught ? caughtStatements(job.id, node, nodeRow, now) : [];
+  const doneAt = 2 + rewardStmts.length + caughtStmts.length;
   const results = await db.batch([
     db
       .prepare(
@@ -543,27 +584,12 @@ export async function submitWork(
       )
       .bind(job.price_ucld, new Date(now).toISOString(), owner, job.price_ucld, job.id, now, node),
     ...rewardStmts,
+    ...caughtStmts,
     db
       .prepare(
         "UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ?, sample_check = ? WHERE id = ? AND status = 'assigned' AND node = ?",
       )
       .bind(JSON.stringify(input.result), input.certificate.z, now, caught ? "failed" : sampled ? "passed" : null, job.id, node),
-    // Caught: claw the provider's held pay — every pending A/B entry, in an epoch after the open one, paid to this node's
-    // payout wallet (whichever of its nodes earned it: one operator running several modified nodes keeps none of it)
-    // or earned by this node's own done jobs (under a wallet it was bound to before). closeEpochs only closes epochs
-    // before the open one, so the two never race; pay already posted or settled needs the guardian veto. Only once this
-    // batch's own "done" landed with the failed check.
-    ...(caught
-      ? [
-          db
-            .prepare(
-              "UPDATE reward_entries SET status = 'clawed' WHERE status = 'pending' AND lane IN ('A','B') AND epoch > ?1 " +
-                "AND (address = ?2 OR job_id IN (SELECT id FROM work_jobs WHERE node = ?3 AND status = 'done')) " +
-                "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ?4 AND sample_check = 'failed')",
-            )
-            .bind(epochOf(now), normalizeAddress(nodeRow.payout), node, job.id),
-        ]
-      : []),
   ]);
   const done = results[doneAt];
   if ((done?.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "job was already completed" };
@@ -576,11 +602,23 @@ export async function submitWork(
     L.error(`[work] capture of ${job.price_ucld} µCLD from ${job.owner} failed for job ${job.id} (hold missing) — result accepted, no rewards recorded`);
   }
   if (caught) {
-    // A failure for the node: no jobs_done and no throughput sample, so cheating speed earns no draw weight.
-    await db.prepare("UPDATE nodes SET jobs_failed = jobs_failed + 1 WHERE address = ?").bind(node).run();
-    const reason = `sampled transcript check failed on job ${job.id}`;
-    await setNodeSuspended(node, true, reason, now);
-    L.warn(`[work] ${reason} from ${node.slice(0, 10)}…: result kept, ${results[doneAt + 1]?.meta?.changes ?? 0} held entries clawed, node suspended`);
+    // The claw, the failure count and the suspension are already committed with the result; what is left is best effort.
+    const reason = suspensionReason(job.id);
+    const clawed = results[2 + rewardStmts.length + 1]?.meta?.changes ?? 0; // the UPDATE after the coverage INSERT
+    L.warn(`[work] ${reason} from ${node}: result kept, ${clawed} held entries of payout wallet ${normalizeAddress(nodeRow.payout)} clawed, node suspended`);
+    try {
+      if (nodeRow.fleet_id) {
+        // A fleet node pays the fleet owner's wallet: tell them which fleet, in case the node is not theirs (a leaked token).
+        const fleet = await db.prepare("SELECT name FROM fleets WHERE id = ?").bind(nodeRow.fleet_id).first<{ name: string | null }>();
+        L.warn(
+          `[work] the node is in fleet "${fleet?.name ?? "?"}" (${nodeRow.fleet_id}): if this node is not yours, revoke the fleet's ` +
+            `token and ask an admin to reverse the claw (POST /v1/admin/claws/${job.id}/reverse)`,
+        );
+      }
+      await afterNodeSuspended(node, reason, now);
+    } catch (err) {
+      L.warn(`[work] after suspending ${node.slice(0, 10)}…: a best-effort step failed (the claw and the suspension stand):`, err);
+    }
     return {
       ok: false,
       code: "unprocessable",

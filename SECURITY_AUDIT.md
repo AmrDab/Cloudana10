@@ -247,15 +247,21 @@ Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13
   because results are bounded to ±n·bound²) and, on a random 1 in `VERIFY_SAMPLE_K` (10), re-executes the transcript
   over *its own* copy of A and B (not the node's, so int32 wrap cannot bind a different matrix) and checks `z` (B-6,
   `PROGRESS.md` entry 25). The draw is an HMAC keyed from `JWT_SECRET` over (job, σ): the node cannot tell before it
-  submits. Every job's provider pay is booked 24 h ahead (`PAY_HOLD_SECONDS`); a sampled job with a right answer and a
-  wrong transcript keeps its result and burns its fee, but its A/B and every held A/B entry of the node's payout
-  wallet (any of its nodes) are clawed and the node is suspended. Freivalds proves **the answer is A·B** on every job; the transcript proves **the node did the
-  n³ work for this σ** on the sampled ones, and the hold makes skipping it a losing bet (a cheater is caught after 10
-  jobs on average, 99 % within 44, and loses up to a day of pay). Neither proves who ran it, on what hardware, or that
-  anything was kept confidential. Not covered by the claw: pay in the open epoch or already posted (jobs verified more
-  than ~23 h before the detection) needs the guardian veto; an operator that spreads its nodes over several payout
-  wallets keeps the other wallets' held pay (each node caught is still suspended). Submit-path CPU at n = 256: ≈ 50× lower unsampled; ≈ 8–9× amortised at K = 10. Replay: σ is
-  single-use per assignment and `cert_z` is stored; a certificate for another σ fails.
+  submits. Every job's provider pay stays clawable for at least 24 h (`PAY_HOLD_SECONDS`; booked into the epoch after
+  the one 24 h ahead); a sampled job with a right answer and a wrong transcript keeps its result and burns its fee, but
+  its A/B and every held A/B entry of the node's payout wallet (any of its nodes, fleet-token nodes included) are
+  clawed and the node is suspended — all in the batch that records the result, so no later error leaves it active.
+  `POST /v1/admin/claws/{jobId}/reverse` (internal key) undoes a claw for a false positive or a leaked fleet token;
+  coverage is per claw (`reward_claws`), so pay another failed check still covers stays clawed. Freivalds proves **the
+  answer is A·B** on every job; the transcript proves **the node did the n³ work for this σ** on the sampled ones,
+  and the hold makes skipping it a losing bet (a cheater is caught after 10 jobs on average, 99 % within 44, and
+  loses at least a day of pay). Neither proves who ran it, on what hardware, or that anything was kept confidential.
+  Not covered by the claw: pay already in the open epoch or posted (verified more than 24 h before the detection)
+  needs the guardian veto; an operator that spreads its nodes over several payout wallets keeps the other wallets'
+  held pay (each node caught is still suspended); a leaked fleet token lets its holder grief (claw) the fleet owner's
+  held pay, never profit — revoke the token and reverse the claw. Submit-path CPU at n = 256: ≈ 50× lower unsampled;
+  ≈ 8–9× amortised at K = 10. Replay: σ is single-use per assignment and `cert_z` is stored; a certificate for another
+  σ fails.
 - **Hosting / containers / endpoints.** *Probed*, not proven: a content hash (sites) or a health path (endpoints)
   fetched through the node's own relay socket every 60 s. Billing is for time a probe saw working. A node can serve
   the probe path correctly and other paths badly; nothing checks that, by design (fees only, no subsidy).

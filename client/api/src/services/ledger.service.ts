@@ -30,23 +30,25 @@ export function epochOf(ms: number, epochSeconds = getEnv().EPOCH_SECONDS): numb
   return Math.floor(ms / (epochSeconds * 1000));
 }
 
-/** End of epoch `epoch` (ms): from then on closeEpochs may close it. */
+/**
+ * When a held entry of `epoch` leaves its check window (ms): the start of its epoch. The claw on a failed sampled check
+ * reaches only epochs after the open one, so from then on the entry is no longer clawable; it closes at the epoch's end.
+ */
 export function releasesAt(epoch: number, epochSeconds = getEnv().EPOCH_SECONDS): number {
-  return (epoch + 1) * epochSeconds * 1000;
+  return epoch * epochSeconds * 1000;
 }
 
 /**
- * Where a verified job's entries go (ENGINEERING_BACKLOG B-6). With a hold they are booked into the epoch
- * PAY_HOLD_SECONDS ahead — fee and rewards together, so the fee still burns in the rewards' epoch — and stay pending,
- * clawable by a failed sampled check of any node paying the same wallet, until that epoch ends (heldUntil); lane B
- * vests VEST_B_SECONDS after that. PAY_HOLD_SECONDS = 0: the open epoch, vesting from now, nothing held.
+ * Where a verified job's entries go (ENGINEERING_BACKLOG B-6). With a hold they are booked into the epoch after the one
+ * PAY_HOLD_SECONDS ahead — fee and rewards together, so the fee still burns in the rewards' epoch. They stay clawable by
+ * a failed sampled check until that epoch opens (heldUntil, always more than PAY_HOLD_SECONDS away) and close at its
+ * end; lane B vests VEST_B_SECONDS after that. PAY_HOLD_SECONDS = 0: the open epoch, vesting from now, nothing held.
  */
 function jobBooking(now: number): { epoch: number; heldUntil: number; vestsAt: number } {
   const env = getEnv();
   if (env.PAY_HOLD_SECONDS === 0) return { epoch: epochOf(now), heldUntil: now, vestsAt: now + env.VEST_B_SECONDS * 1000 };
-  const epoch = epochOf(now + env.PAY_HOLD_SECONDS * 1000);
-  const heldUntil = releasesAt(epoch);
-  return { epoch, heldUntil, vestsAt: heldUntil + env.VEST_B_SECONDS * 1000 };
+  const epoch = epochOf(now + env.PAY_HOLD_SECONDS * 1000) + 1;
+  return { epoch, heldUntil: releasesAt(epoch), vestsAt: releasesAt(epoch + 1) + env.VEST_B_SECONDS * 1000 };
 }
 
 export interface LaneSplit {
@@ -142,7 +144,8 @@ export async function recordJobRewards(input: {
  * The reward entries of one verified job as prepared statements, each conditioned on the job row carrying
  * `fee_captured_at = capturedAt`: submitWork writes them in the same transaction as the capture, so they exist exactly
  * when the fee was taken and never for a fee that was not. `clawed`: the job failed its sampled transcript check — its
- * A/B entries are written already clawed; the treasury entry stays pending, so the fee is still burned.
+ * A/B entries are written already clawed (submitWork's claw records them under the job, so a reverse can restore them);
+ * the treasury entry stays pending, so the fee is still burned.
  */
 export function jobRewardStatements(
   input: { jobId: string; workType: string; provider: string; feeUcld: number; clusterOk: boolean; now?: number },
@@ -248,7 +251,7 @@ export interface LedgerSummary {
     workType: string;
     amountUcld: number;
     vestsAt: number;
-    /** When a held entry leaves its check window (the end of its epoch); null when it is not held. */
+    /** When a held entry leaves its check window (the start of its epoch); null when it is not held. */
     releasesAt: number | null;
     status: string;
     createdAt: number;
@@ -257,22 +260,22 @@ export interface LedgerSummary {
 
 /**
  * pending = earned, not yet settled on-chain (status pending or posted), per lane.
- * held = the part of pending A/B still pending in an epoch that has not ended (only while PAY_HOLD_SECONDS > 0).
+ * held = the part of pending A/B in an epoch after the open one: exactly what a failed sampled check can still claw
+ * (without a hold nothing is booked there, so nothing is held).
  * vesting.B = the part of pending B, not held, whose vests_at is still in the future.
  */
 export async function ledgerSummary(address: string, now = Date.now()): Promise<LedgerSummary> {
   const key = address.toLowerCase();
   const db = getD1();
-  // Entries from this epoch on are held; without a hold nothing is (the open epoch's entries are simply pending).
-  const heldFrom = getEnv().PAY_HOLD_SECONDS > 0 ? epochOf(now) : Number.MAX_SAFE_INTEGER;
-  const held = "status = 'pending' AND epoch >= ?3";
+  const open = epochOf(now);
+  const held = "status = 'pending' AND epoch > ?3";
   const sums = await db
     .prepare(
       `SELECT lane, status, SUM(amount_ucld) AS total, SUM(CASE WHEN ${held} THEN amount_ucld ELSE 0 END) AS held, ` +
         `SUM(CASE WHEN vests_at > ?1 AND NOT (${held}) THEN amount_ucld ELSE 0 END) AS unvested ` +
         "FROM reward_entries WHERE address = ?2 GROUP BY lane, status",
     )
-    .bind(now, key, heldFrom)
+    .bind(now, key, open)
     .all<{ lane: Lane; status: string; total: number; held: number; unvested: number }>();
 
   const out: LedgerSummary = {
@@ -320,7 +323,7 @@ export async function ledgerSummary(address: string, now = Date.now()): Promise<
     workType: r.work_type,
     amountUcld: r.amount_ucld,
     vestsAt: r.vests_at,
-    releasesAt: r.status === "pending" && (r.lane === "A" || r.lane === "B") && r.epoch >= heldFrom ? releasesAt(r.epoch) : null,
+    releasesAt: r.status === "pending" && (r.lane === "A" || r.lane === "B") && r.epoch > open ? releasesAt(r.epoch) : null,
     status: r.status,
     createdAt: r.created_at,
   }));
@@ -617,4 +620,31 @@ export async function clawEntry(epoch: number, entryId: string): Promise<EpochUp
   if ((r.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "entry changed — retry" };
   log.api.warn(`[ledger] epoch ${epoch}: clawed entry ${entryId} (lane ${row.lane}, ${row.amount_ucld} µCLD to ${row.address})`);
   return { ok: true };
+}
+
+/**
+ * Undo the claw of failed sampled check `jobId` (a false positive, e.g. an honest node on a buggy agent, or a leaked
+ * fleet token), in one batch: every entry it covers (reward_claws) that no other claw covers and that is still in an
+ * epoch after the open one goes back to pending; its claw rows are dropped; the job reads sample_check = 'reversed'.
+ * Entries another failed check still covers stay clawed; so do entries of the open epoch or earlier (the open one may
+ * close at any moment, closed or posted ones are on their way on-chain) and entries clawed another way (an operator's
+ * claw after a veto has no claw row). Lifting the node's suspension is a separate step
+ * (DELETE /v1/admin/nodes/{address}/suspend). Returns the entries restored; a second call restores none.
+ */
+export async function reverseSampleClaw(jobId: string, now = Date.now()): Promise<number> {
+  const db = getD1();
+  const [restored] = await db.batch([
+    db
+      .prepare(
+        "UPDATE reward_entries SET status = 'pending' WHERE status = 'clawed' AND epoch > ? " +
+          "AND id IN (SELECT entry_id FROM reward_claws WHERE job_id = ?) " +
+          "AND NOT EXISTS (SELECT 1 FROM reward_claws c WHERE c.entry_id = reward_entries.id AND c.job_id <> ?)",
+      )
+      .bind(epochOf(now), jobId, jobId),
+    db.prepare("DELETE FROM reward_claws WHERE job_id = ?").bind(jobId),
+    db.prepare("UPDATE work_jobs SET sample_check = 'reversed' WHERE id = ? AND sample_check = 'failed'").bind(jobId),
+  ]);
+  const count = restored?.meta?.changes ?? 0;
+  log.api.warn(`[ledger] sampled-check claw of job ${jobId} reversed: ${count} entries back to pending`);
+  return count;
 }

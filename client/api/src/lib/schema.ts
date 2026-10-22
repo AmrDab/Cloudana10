@@ -34,6 +34,11 @@ export const V1_TABLES = [
   `CREATE INDEX IF NOT EXISTS idx_reward_entries_epoch ON reward_entries(epoch, status)`,
   // The claw on a failed sampled check (jobs.service submitWork) and epochJobs look entries up by job.
   `CREATE INDEX IF NOT EXISTS idx_reward_entries_job ON reward_entries(job_id)`,
+  // Which failed sampled checks (work_jobs.id) cover which clawed entry. An entry stays clawed while any claw covers it,
+  // so reversing one claw (POST /v1/admin/claws/{jobId}/reverse) never restores pay another still holds back; entries
+  // clawed another way (an operator's claw after a veto) have no row and are never restored.
+  `CREATE TABLE IF NOT EXISTS reward_claws (entry_id TEXT NOT NULL, job_id TEXT NOT NULL, PRIMARY KEY (entry_id, job_id))`,
+  `CREATE INDEX IF NOT EXISTS idx_reward_claws_job ON reward_claws(job_id)`,
   `CREATE TABLE IF NOT EXISTS epochs (
     id INTEGER PRIMARY KEY, closed_at INTEGER, fees_burned_ucld INTEGER, mint_a_ucld INTEGER,
     mint_b_ucld INTEGER, leaves_json TEXT, root TEXT, tx_hash TEXT, status TEXT)`,
@@ -179,7 +184,7 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE work_jobs ADD COLUMN eligible_json TEXT",
   // Set in the same transaction that captures the fee and writes the rewards (jobs.service submitWork).
   "ALTER TABLE work_jobs ADD COLUMN fee_captured_at INTEGER",
-  // Sampled transcript re-execution (ENGINEERING_BACKLOG B-6): NULL = not sampled, 'passed' or 'failed'.
+  // Sampled transcript re-execution (ENGINEERING_BACKLOG B-6): NULL = not sampled, 'passed', 'failed' or 'reversed'.
   "ALTER TABLE work_jobs ADD COLUMN sample_check TEXT",
   // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
   "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",

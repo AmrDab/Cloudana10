@@ -6,12 +6,15 @@
  *   POST /v1/admin/epochs/:id/settled  { txHash }
  *   POST /v1/admin/epochs/:id/vetoed   { txHash?, reason? } — reopen: posted entries → pending; next close re-closes it
  *   POST /v1/admin/epochs/:id/entries/:entryId/claw          — claw one pending entry before the re-close
+ *   POST /v1/admin/claws/:jobId/reverse                      — undo a failed sampled check's claw (held entries only)
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { createMiddleware } from "hono/factory";
 import { getEnv } from "../../config/env.js";
 import { ok, fail } from "../../lib/http.js";
-import { clawEntry, closeEpochs, listEpochs, markEpochPosted, markEpochSettled, markEpochVetoed } from "../../services/ledger.service.js";
+import {
+  clawEntry, closeEpochs, listEpochs, markEpochPosted, markEpochSettled, markEpochVetoed, reverseSampleClaw,
+} from "../../services/ledger.service.js";
 import { createRouter, json, responses } from "./_openapi.js";
 
 export const adminEpochsRouter = createRouter();
@@ -143,3 +146,18 @@ adminEpochsRouter.openapi(clawRoute, async (c) => {
   const r = await clawEntry(id, entryId);
   return r.ok ? ok(c, {}) : fail(c, r.code, r.message);
 });
+
+const reverseClawRoute = createRoute({
+  method: "post",
+  path: "/admin/claws/{jobId}/reverse",
+  tags: TAGS,
+  description:
+    "Undo the claw of a failed sampled check (a false positive): every entry it clawed that is still in an epoch after " +
+    "the open one goes back to pending. Entries of the open epoch or earlier, and closed or posted epochs, are never " +
+    "touched. Lifting the node's suspension is DELETE /v1/admin/nodes/{address}/suspend.",
+  middleware: [requireInternalKey] as const,
+  request: { params: z.object({ jobId: z.string().min(1).max(64) }) },
+  responses: responses({ 200: json(z.object({ status: z.literal("success"), restored: z.number().int() }), "Reversed") }, 400, 401, 503),
+});
+
+adminEpochsRouter.openapi(reverseClawRoute, async (c) => ok(c, { restored: await reverseSampleClaw(c.req.valid("param").jobId) }));
