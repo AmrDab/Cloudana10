@@ -14,7 +14,7 @@ import {
   btn, Bone, Empty, Hash, MonoLabel, Panel, PanelHeader, Pill, RelTime, Unavailable, Updated, freshRow, useDelayed, useFreshIds, useNow,
 } from "@/components/console/primitives";
 import {
-  isTerminal, isUnavailable, useDeployment, useDeployments, useSession, type Deployment, type DeploymentDetail,
+  isTerminal, isUnavailable, useDeployment, useDeployments, useSession, type Deployment, type DeploymentDetail, type NodeFleet,
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { ReportProblem } from "@/components/console/report-problem";
@@ -73,10 +73,10 @@ function PriceH({ ucld, short: brief }: { ucld: number; short?: boolean }) {
 }
 
 // ── Secret sealing ──────────────────────────────────────────────────────────
-async function sealNow(id: string, nodePubkey: string, node: string | null): Promise<boolean> {
+async function sealNow(id: string, nodePubkey: string, node: string | null, nodeFleet?: NodeFleet | null): Promise<boolean> {
   const secrets = pendingSecrets(id);
   if (!secrets) return false;
-  const ok = await sealSecretsTo({ id, node, nodePubkey }, secrets);
+  const ok = await sealSecretsTo({ id, node, nodePubkey, nodeFleet }, secrets);
   if (ok) clearPendingSecrets(id);
   return ok;
 }
@@ -106,7 +106,7 @@ function Sealer({ id }: { id: string }) {
       if (getSealState(id)?.phase !== "sealed") setSealState(id, { phase: "sealed", node: dep.node ?? undefined, at: Date.now() });
     } else if (pub && dep.node && attempted.current !== dep.node) {
       attempted.current = dep.node;
-      void sealNow(id, pub, dep.node).then((ok) => {
+      void sealNow(id, pub, dep.node, dep.nodeFleet).then((ok) => {
         if (ok) setActive(false);
       });
     } else if (!getSealState(id)) {
@@ -121,7 +121,8 @@ function SealLine({ d }: { d: Deployment }) {
   const s = getSealState(d.id);
   const pending = !!pendingSecrets(d.id);
   const node = s?.node ?? d.node;
-  const fleet = node === d.node && d.nodeFleet ? ` · ${fleetLabel(d.nodeFleet)}` : "";
+  const nodeFleet = s?.fleet ?? (node === d.node ? d.nodeFleet : null);
+  const fleet = nodeFleet ? ` · ${fleetLabel(nodeFleet)}` : "";
   if (s?.phase === "sealing") return <Pill tone="work"><Loader2 className="size-3 animate-spin" aria-hidden /> Sealing secrets to node {short(node)}{fleet}</Pill>;
   if (s?.phase === "error") return <Pill tone="burn" className="whitespace-normal">Secrets not sealed</Pill>;
   // The API's word wins over this tab's memory: after a re-queue the node changed and the secrets were cleared.
@@ -159,11 +160,11 @@ function SecretsControl({ d, detail }: { d: Deployment; detail?: DeploymentDetai
       )}
       {pending && !auto && (
         <>
-          <button type="button" className={cn(btn.ghost, btn.sm, "mt-3 w-full")} disabled={!canSeal || s?.phase === "sealing"} onClick={() => detail?.nodePubkey && sealNow(d.id, detail.nodePubkey, d.node)}>
+          <button type="button" className={cn(btn.ghost, btn.sm, "mt-3 w-full")} disabled={!canSeal || s?.phase === "sealing"} onClick={() => detail?.nodePubkey && sealNow(d.id, detail.nodePubkey, detail.deployment.node, detail.deployment.nodeFleet)}>
             <Lock /> Seal secrets now
           </button>
           <p className="mt-1.5 text-[12px] leading-4 text-faint">
-            {canSeal ? <>Encrypts them in this browser to the key of node {short(d.node)}<FleetTag fleet={d.nodeFleet} className="text-[12px]" />.</> : "Available once a node is assigned. Kept in this tab only until sealed."}
+            {canSeal ? <>Encrypts them in this browser to the key of node {short(detail!.deployment.node)}<FleetTag fleet={detail!.deployment.nodeFleet} className="text-[12px]" />.</> : "Available once a node is assigned. Kept in this tab only until sealed."}
           </p>
         </>
       )}

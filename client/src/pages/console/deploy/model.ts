@@ -5,7 +5,7 @@ import {
   Activity, Blocks, Box, Brain, Code2, Database, FileCode2, Gamepad2, Globe, HardDrive, MessageSquare, Server, Wrench,
   type LucideIcon,
 } from "lucide-react";
-import type { Deployment, Template } from "@/components/console/data";
+import type { Deployment, NodeFleet, Template } from "@/components/console/data";
 
 export type Kind = "static" | "container";
 
@@ -118,7 +118,7 @@ export function clearPendingSecrets(id: string) {
 /** Deployments created while this app was loaded seal themselves; the rest wait for "Seal secrets now". */
 export const autoSeal = new Set<string>();
 
-export type SealState = { phase: "waiting" | "sealing" | "sealed" | "error"; node?: string; message?: string; at?: number };
+export type SealState = { phase: "waiting" | "sealing" | "sealed" | "error"; node?: string; fleet?: NodeFleet | null; message?: string; at?: number };
 const sealStates = new Map<string, SealState>();
 const listeners = new Set<() => void>();
 let version = 0;

@@ -18,7 +18,7 @@ import { NODE_STATES, announceNode, bindNode, bindNodeToFleet, getNode, listNode
 import { fleetForToken } from "../../services/fleets.service.js";
 import { getActiveAssignment } from "../../services/jobs.service.js";
 import { workTypeIds } from "../../services/work-types.js";
-import { nodeActivity, requeueAwaitingSecrets, runDeploymentDuties } from "../../services/deployment-duties.service.js";
+import { nodeActivity, requeueAwaitingSecrets, requeuePinnedOffFleet, runDeploymentDuties } from "../../services/deployment-duties.service.js";
 import { endpointAllowed } from "../../services/deployment-spec.js";
 import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
 import { STORAGE_CAPABILITY, recordNodeNetwork, storageCapable, storageInstructions } from "../../services/storage.service.js";
@@ -154,6 +154,8 @@ nodesRouter.openapi(announceRoute, async (c) => {
   if (fleet) {
     const r = await bindNodeToFleet(node.address, fleet);
     if (!r.ok) return fail(c, r.code, r.message);
+    // Moved here from another fleet of the same wallet: work pinned to that one may not stay on it.
+    if (node.fleet_id && node.fleet_id !== fleet.id) await requeuePinnedOffFleet(node.address, fleet.id);
     return ok(c, { bound: true, payout: fleet.owner, bindCode: null, fleetId: fleet.id });
   }
   return ok(c, {

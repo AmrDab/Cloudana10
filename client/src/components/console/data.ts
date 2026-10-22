@@ -239,7 +239,8 @@ export type Deployment = {
   nodeFleet?: NodeFleet | null;
 };
 /** A node's fleet as a deployment's owner sees it: its id and name, never its owner. */
-export type NodeFleet = { id: string; name: string | null };
+/** A node's fleet: `id` is null when the fleet is neither yours nor the one you pinned to (its owner's to share). */
+export type NodeFleet = { id: string | null; name: string | null };
 export type DeploymentEvent = { id?: string; at: number; level: string; message: string };
 export type DeploymentDetail = { deployment: Deployment; events: DeploymentEvent[]; nodePubkey?: string };
 
@@ -377,7 +378,7 @@ export type Replica = {
   /** Once on a node: that node's fleet (null = a node in no fleet). */
   nodeFleet?: NodeFleet | null;
 };
-export type Endpoint =Omit<Deployment, "kind" | "spec"> & {
+export type Endpoint = Omit<Deployment, "kind" | "spec"> & {
   kind: "endpoint";
   url: string | null;
   spec: EndpointSpec;

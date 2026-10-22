@@ -258,13 +258,48 @@ describe("what the owner sees", () => {
     expect(JSON.stringify(listed)).not.toContain(alice.addr);
     expect(JSON.stringify(got)).not.toContain(alice.addr);
 
-    // An unpinned one has no placement; its node's fleet is shown all the same.
+    // An unpinned one has no placement; its node's fleet is named, but a fleet that is neither Bob's nor his pin keeps
+    // its id (its owner's to share — otherwise anyone could pin to a one-node partner fleet, i.e. a single machine).
     const free = await createId(bob.jwt, "container", CONTAINER());
     const outside = await node(CONTAINER_NODE, other);
     await beat(outside);
     const unpinned = (await detail(bob.jwt, free)).deployment;
-    expect(unpinned).toMatchObject({ node: addr(outside), nodeFleet: { id: other.id, name: "other" } });
+    expect(unpinned).toMatchObject({ node: addr(outside), nodeFleet: { id: null, name: "other" } });
     expect(unpinned).not.toHaveProperty("placement");
+    expect(JSON.stringify(await detail(bob.jwt, free))).not.toContain(other.id);
+  });
+
+  it("a node that moves to another fleet of the same wallet hands back work pinned to its old fleet", async () => {
+    const acme = await fleet(alice, "acme");
+    const created = await authed(alice.jwt, "POST", "/v1/fleets", { name: "acme2" });
+    const token = (await created.json()).token as string;
+    const bob = await user();
+    const n = await node(CONTAINER_NODE, acme);
+    const id = await createId(bob.jwt, "container", CONTAINER({ fleetId: acme.id }));
+    await beat(n);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: addr(n) });
+    // The same node re-announces with acme2's token (same payout wallet: it just moves).
+    const res = await signed(n, "/v1/nodes/announce", {
+      manifest: { cpuThreads: 16, ramGB: 64, gpus: [], os: "linux" },
+      benchmarkMmacPerSec: 100,
+      workTypes: CONTAINER_NODE,
+      pubkey: n.publicKey.slice(2),
+      publicHost: "127.0.0.1",
+      agentVersion: "1.5.0",
+      fleetToken: token,
+    });
+    expect(res.status).toBe(200);
+    expect(await row(id)).toMatchObject({ status: "queued", node: null });
+  });
+
+  it("a revoke retried after a half failure still fails what is pinned to the fleet", async () => {
+    const acme = await fleet(alice, "acme");
+    const bob = await user();
+    const id = await createId(bob.jwt, "container", CONTAINER({ fleetId: acme.id }));
+    // The first revoke set revoked_at and died before failing pinned work.
+    await getD1().prepare("UPDATE fleets SET revoked_at = ? WHERE id = ?").bind(Date.now(), acme.id).run();
+    expect((await authed(alice.jwt, "DELETE", `/v1/fleets/${acme.id}`)).status).toBe(200);
+    expect(await row(id)).toMatchObject({ status: "failed", held_ucld: 0 });
   });
 
   it("an endpoint shows its pin, and each replica its node's fleet", async () => {

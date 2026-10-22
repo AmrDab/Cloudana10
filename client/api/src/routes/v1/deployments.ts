@@ -50,8 +50,10 @@ export const deploymentsRouter = createRouter();
 const TAGS = ["Deployments"];
 
 const Status = z.enum(["queued", "assigned", "running", "unreachable", "stopped", "failed"]);
-const NodeFleetSchema = z.object({ id: z.string(), name: z.string().nullable() }).nullable().optional().openapi({
-  description: "Once on a node: that node's fleet (its id and the name its owner gave it; null = a node in no fleet), so you see it before sealing secrets",
+const NodeFleetSchema = z.object({ id: z.string().nullable(), name: z.string().nullable() }).nullable().optional().openapi({
+  description:
+    "Once on a node: that node's fleet (the name its owner gave it; the id only when the fleet is yours or the one you pinned to — " +
+    "a fleet's id is its owner's to share; null = a node in no fleet), so you see it before sealing secrets",
 });
 const ReplicaSchema = z.object({
   id: z.string(),

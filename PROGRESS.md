@@ -441,12 +441,22 @@ that remained:
   console's deploy, workstation and endpoint forms have "Run only on a fleet" (your fleets, or a partner's id); the
   lists show `0x1234…abcd · fleet Acme (flt_…)` beside the node, in the sealing line and on every replica row.
 - Tests: `fleet-pinning` (7; each fails on the pre-change code). API 400 tests; console tsc, client tests, build.
+- **Review fixes (same PR).** A node that re-announces into another fleet of the same wallet hands back work pinned
+  to its old fleet (it kept running there). A revoke that lands between a create's fleet check and its insert, or a
+  revoke retried after dying half-way, no longer leaves pinned work queued with its hold: the create re-reads the
+  fleet after the insert, and a repeated DELETE finishes failing pinned work. `nodeFleet.id` is shown only when the
+  fleet is the caller's own or their pin (otherwise the name alone): a fleet's id is its owner's to share, and seen
+  by every tenant whose work landed there it would let anyone pin to a one-node partner fleet — a single machine.
+  Console: a chosen fleet that drops out of the list (revoked, wallet switched) is shown as unavailable and blocks
+  submit instead of looking like "Any node" while still being sent; the sealing line takes the fleet from the seal
+  itself (the list row lags); long fleet names are cut with the full label as tooltip. Tests 9 (the 3 new ones
+  fail on the PR's first commit); API 402.
 
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **400** |
+| client/api vitest | 330 | **402** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |

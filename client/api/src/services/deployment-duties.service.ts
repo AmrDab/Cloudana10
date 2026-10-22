@@ -296,6 +296,18 @@ export async function requeueNodeDeployments(nodes: string[], reason: string, no
   return requeueRows(rows.results ?? [], reason, now);
 }
 
+/** B-9: a node that moved into another fleet hands back what is pinned to a different one (the pin is the fleet). */
+export async function requeuePinnedOffFleet(node: string, fleetId: string, now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare(
+      `SELECT * FROM deployments WHERE node = ? AND status IN ${LIVE} ` +
+        "AND json_extract(spec_json, '$.placement.fleetId') IS NOT NULL AND json_extract(spec_json, '$.placement.fleetId') <> ?",
+    )
+    .bind(normalizeAddress(node), fleetId)
+    .all<DeploymentRow>();
+  return requeueRows(rows.results ?? [], "its node moved to another fleet; the deployment is pinned to its own", now);
+}
+
 /**
  * B-9: once a fleet is revoked no node can ever be in it again, so what is pinned to it could never be placed. It
  * fails instead of waiting for ever on its owner's hold: the hold comes back, a node still holding it is owed a stop,
