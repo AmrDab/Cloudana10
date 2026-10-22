@@ -426,7 +426,7 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [ ] Phase 2 (buckets): after the content domain (step 8) and the DMCA agent (step 11)
 
 ## Owner decisions 2026-10-21 ("go with your recommendations") · docs/DECISIONS_CONSENSUS.md top note
-- [ ] B-3: remove /control/legacy (routes, pages, hooks, links); calculator + decentralization page rewritten later
+- [x] B-3: remove /control/legacy (routes, pages, hooks, links); calculator + decentralization page rewritten later
 - [ ] B-6: Freivalds every job; full re-execution on a random 1 in 10; provider pay held 24 h, clawed on a failed sample, node flagged
 - [ ] B-9: spec.placement.fleetId (own fleet or partner fleet by id); assignment honours it; console shows the fleet before sealing
 - [ ] B-13: relay is the default for every node; direct mode only for GPU workstations until relay WebSocket tunnelling

@@ -402,6 +402,20 @@ that remained:
 - **Tests / results.** 43 files, **393** passed (the owner's three regression tests and the parked-row test; the
   latter fails on the pre-fix duties code). Console tsc, build; browser smoke 29/29.
 
+### 22 · remove the legacy console `/control/legacy` (B-3, owner decision 2026-10-21: none survive)
+- **Removed.** 92 files, 19,185 lines, every one reachable only through the legacy routes (import graph from
+  `main.tsx` and the tests, before and after): 27 pages (10,660 lines; `pages/new-deployment/`, `pages/pricing/`, the
+  provider, job, workload, user, docs, litepaper, decentralization and debug pages), 36 components (3,654;
+  `components/layout/`, `providers/`, `payments/`, `onboarding/`, `LegacyShell`, 17 unused `ui/` primitives), 9 hooks
+  and 17 lib helpers (several called API routes that no longer exist), 2 data files and `shared/contracts.ts` (the ABI
+  and address JSON stay: contract scripts and the subgraph use them). `index.css` loses the legacy-only `.glass-card`
+  and `appkit-button` styles.
+- **Redirects.** `ConsoleApp.tsx`: `/legacy/*` and the older paths that led there land on their successor (mining →
+  Earnings; provider, providers, register → Provide; pricing/gpus → Run) or the overview. `client/public/_redirects`:
+  `/control/legacy/* /control 301`.
+- **Results.** Repo-root `tsc` clean, client tests 3/3, build passes; the `ConsoleApp` chunk 4,296 → 1,765 kB
+  (gzip 1,186 → 481 kB). The pricing calculator and the decentralization page return later as rewritten console pages.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
@@ -425,7 +439,7 @@ that remained:
 | 5 | Verification cost = work cost | Open (B-6). |
 | 6 | Auth without revocation/scopes | Closed for the API (commit 12): scoped API keys, logout revocation, secret rotation; a refresh-token flow is a product choice left open. |
 | 7 | No fleet/GPU node | A first public node is live (Azure VM, compute + hosting + storage over the relay, no GPU). A container/GPU fleet node is still the owner's (runbook 10). |
-| 8 | Legacy UI reachable | Reduced (68 orphan files gone); `/control/legacy` needs the owner's call (B-3). |
+| 8 | Legacy UI reachable | **Closed 2026-10-21** (entry 22): `/control/legacy` removed, old paths redirect to `/control`. |
 | 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified, now per replica from the console; endpoint env no longer sent in the clear); fleet pinning is B-9. |
 | 10 | Docs drift | README, API README, checklist domain, decisions header, archive README fixed; capability registry created. |
 
@@ -459,6 +473,4 @@ Hardhat-toolchain majors (SECURITY_AUDIT §3b).
 - No load test, no container escape test. The browser pass covers the console's main flows on the local stack
   (sites, containers with secrets, keys, nodes) but not endpoints, workstations or a wallet extension
   (`TEST_EVIDENCE.md` §4, §4b).
-- `/control/legacy` (19 k lines) left in place: removing it changes what users can reach, which the owner asked to
-  decide (`tasks/lessons.md` 2026-09-28).
 - No pull request opened: not requested.

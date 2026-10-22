@@ -91,7 +91,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 |---|---|---|
 | OpenAPI generated from the routes (`/v1/doc`, `/v1/swagger`), one response envelope, stable error codes | 2 | Node runtime probe in this pass |
 | Console: Run (jobs), Deploy (sites, containers), Workstations, Endpoints, Provide, Verify, Earnings, Economics, Docs | 3 | builds; re-verified in headless Chromium on the local stack in this pass: 29 checks across Run, Deploy, Provide and Docs (TEST_EVIDENCE §4b); Workstations and Endpoints tabs not exercised |
-| `/control/legacy/*` marketplace-era pages | 6 | B-3 |
+| ~~`/control/legacy/*` marketplace-era pages~~ | removed | B-3 done 2026-10-21; `/control/legacy/*` → `/control` (301) |
 | SDK / CLI | 5 | B-22 |
 | Pagination and filtering on list endpoints | 3 | `epochs/{n}/jobs` paginates; `GET /jobs`, `GET /deployments` take a limit only |
 | Idempotency keys on writes | 5 | create endpoints are not idempotent; holds make double-submits cost money |

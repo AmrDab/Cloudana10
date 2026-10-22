@@ -16,7 +16,7 @@ in `PROGRESS.md`.
 | 5 | **Verification cost = work cost** (full transcript re-execution per matmul job, in the Worker) | Orchestrator CPU scales with every paid job; large n is unaffordable; blocks raising `MATMUL_N_MAX` | Compute product growth | M | High | No |
 | 6 | **Auth is a 24 h HS256 JWT with no revocation or scopes; console and SDK share it** | A leaked token is a full account for a day; no API keys for programs | Developer API, SDK/CLI | M | High | No |
 | 7 | **Containers/GPU only on fleet nodes that pass xfs-pquota + iptables; no datacenter node exists** | The AI product (endpoints, workstations) has zero capacity; home nodes cannot run it by design | AI inference, workstations | Owner hardware + S | High | **Yes** (runbook 10) |
-| 8 | **Marketplace-era legacy UI still reachable under `/control/legacy`** (27 pages, 19 k lines) with vocabulary the owner rejected | Contradicts the product on a reachable route; maintenance drag; was the source of two tsc errors | Developer experience, honest claims | S–M (decision + delete) | High | Decision |
+| 8 | ~~**Marketplace-era legacy UI still reachable under `/control/legacy`** (27 pages, 19 k lines) with vocabulary the owner rejected~~ — **closed 2026-10-21**: removed (B-3), old paths redirect to `/control` | Contradicts the product on a reachable route; maintenance drag; was the source of two tsc errors | Developer experience, honest claims | S–M (decision + delete) | High | Decision |
 | 9 | **A compromised API can place a secret-bearing deployment on a node it controls** (secrets now bound to the deployment, not to a fleet) | Tenant secrets on an attacker's machine | Sensitive workloads | M | High | No |
 | 10 | **Docs and claims drift**: SHIP_CHECKLIST still says `*.sites.cloudana.io`; DECISIONS header says "nothing implemented"; `MIN_AGENT_VERSION` 1.3.0 vs agent 1.5.0; services list vs reality | Every reader (owner, partner, auditor) gets a different system | Trust | S | High | No |
 
@@ -40,7 +40,10 @@ public `GET /v1/epochs/{n}` (leaves, totals, root, signed), public `GET /v1/draw
 the draw from public data (`TEST_EVIDENCE.md` §2b). Left open: signing individual draw records, and the seed's
 origin is checkable only where `CHAIN_RPC_URL` is set (it is, in `wrangler.toml`, pending deploy).
 
-**B-3 · Delete or rewrite `/control/legacy` (gap 8; owner decision on what survives).** Acceptance: no reachable route
+**B-3 · Delete or rewrite `/control/legacy` (gap 8; owner decision on what survives).** **Done 2026-10-21**
+(PROGRESS.md entry 22): owner decision "none survive"; every legacy page, hook, helper and component removed,
+`/control/legacy/*` redirects to `/control`; `ConsoleApp` chunk 4,296 → 1,765 kB; `tsc` and build clean. The pricing
+calculator and the decentralization page return later as rewritten console pages. Acceptance: no reachable route
 uses "marketplace", "bid", "pick a provider", "per epoch" vocabulary (`tasks/lessons.md` 2026-10-01); `ConsoleApp`
 chunk shrinks measurably; repo-root `tsc` and build stay clean.
 
