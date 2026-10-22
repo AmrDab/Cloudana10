@@ -204,32 +204,7 @@ html.theme-paper .cld-mark circle {
 
 /* Custom Utilities for that "Glass/Web3" feel */
 @layer utilities {
-  .glass-card {
-    @apply bg-card/60 backdrop-blur-md border border-white/5 shadow-xl;
-  }
   .text-glow {
     text-shadow: 0 0 10px hsla(180, 100%, 50%, 0.5);
   }
-}
-
-/* AppKit Button Styling to match platform */
-appkit-button {
-  --wui-color-accent-100: #3FD6C2 !important;
-}
-
-appkit-button::part(button) {
-  background: #3FD6C2 !important;
-  box-shadow: 0 0 40px rgba(63, 214, 194, 0.25) !important;
-  transition: all 0.3s ease !important;
-  border-radius: 9999px !important;
-}
-
-appkit-button::part(button):hover {
-  box-shadow: 0 0 60px rgba(63, 214, 194, 0.35) !important;
-  background: rgba(63, 214, 194, 0.9) !important;
-}
-
-appkit-button wui-text {
-  color: #04201C !important;
-  font-weight: 600 !important;
 }
