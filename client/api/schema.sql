@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   attempts INTEGER NOT NULL DEFAULT 0, -- verification failures; 3 → failed, hold released
   artifact TEXT, -- R2 key once a finished job's matrices moved out of D1 (a_json/b_json/result_json then NULL)
   eligible_json TEXT, -- the eligible set the draw ran over (sorted Candidate[]), published for replay at /v1/draws/{id}
-  fee_captured_at INTEGER -- set in the same transaction that captures the fee and writes the rewards (submitWork)
+  fee_captured_at INTEGER, -- set in the same transaction that captures the fee and writes the rewards (submitWork)
+  sample_check TEXT -- sampled transcript re-execution (B-6): NULL = not sampled, 'passed', 'failed' or 'reversed' (claw undone)
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_status ON work_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_work_jobs_owner ON work_jobs(owner, created_at DESC);
@@ -151,6 +152,11 @@ CREATE TABLE IF NOT EXISTS reward_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_reward_entries_address ON reward_entries(address, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reward_entries_epoch ON reward_entries(epoch, status);
+CREATE INDEX IF NOT EXISTS idx_reward_entries_job ON reward_entries(job_id);
+-- Which failed sampled checks (work_jobs.id) cover which clawed entry: an entry stays clawed while any claw covers it, so
+-- reversing one claw never restores pay another still holds back; entries clawed another way have no row.
+CREATE TABLE IF NOT EXISTS reward_claws (entry_id TEXT NOT NULL, job_id TEXT NOT NULL, PRIMARY KEY (entry_id, job_id));
+CREATE INDEX IF NOT EXISTS idx_reward_claws_job ON reward_claws(job_id);
 
 -- Datacenter fleets. token_hash = sha256(token); the token is shown once at creation.
 -- floor_ucld_per_mmac is stored for the owner but not yet used by placement.

@@ -1,5 +1,6 @@
 /** GET /v1/ledger/:address — earned µCLD by lane and status, verifier credits, latest 50 entries. Public. */
 import { createRoute, z } from "@hono/zod-openapi";
+import { getEnv } from "../../config/env.js";
 import { ok } from "../../lib/http.js";
 import { EthAddressSchema } from "../../schemas/common.schema.js";
 import { epochJobs, getEpochPayload, ledgerSummary } from "../../services/ledger.service.js";
@@ -13,9 +14,13 @@ const LedgerSchema = z.object({
   status: z.literal("success"),
   address: z.string(),
   pending: z.object({ A: z.number().int(), B: z.number().int(), treasury: z.number().int() }),
+  held: z.object({ A: z.number().int(), B: z.number().int() }),
   vesting: z.object({ B: z.number().int() }),
   settled: z.object({ A: z.number().int(), B: z.number().int() }),
+  clawed: z.object({ A: z.number().int(), B: z.number().int() }),
   credits: z.number().int(),
+  verifySampleK: z.number().int().openapi({ description: "One matrix job in this many has its transcript re-executed (1 = every job)." }),
+  payHoldSeconds: z.number().int().openapi({ description: "How long a job's provider pay stays clawable after it verifies (0 = no hold)." }),
   entries: z.array(
     z.object({
       id: z.string(),
@@ -25,6 +30,7 @@ const LedgerSchema = z.object({
       workType: z.string(),
       amountUcld: z.number().int(),
       vestsAt: z.number(),
+      releasesAt: z.number().nullable(),
       status: z.string(),
       createdAt: z.number(),
     }),
@@ -35,14 +41,19 @@ const ledgerRoute = createRoute({
   method: "get",
   path: "/ledger/{address}",
   tags: ["Ledger"],
-  description: "pending = earned, not yet settled on-chain; vesting.B = the part of pending B not yet vested.",
+  description:
+    "pending = earned, not yet settled on-chain; held = the part of pending A/B still in its check window, at least " +
+    "payHoldSeconds after the job verified (clawed if a sampled re-execution fails on any node paying this wallet; per " +
+    "entry, releasesAt says when the window ends); vesting.B = the part of pending B, not held, not yet vested; " +
+    "clawed = taken back. verifySampleK and payHoldSeconds are the orchestrator's current settings.",
   request: { params: z.object({ address: EthAddressSchema }) },
   responses: responses({ 200: json(LedgerSchema, "Ledger summary") }, 400),
 });
 
 ledgerRouter.openapi(ledgerRoute, async (c) => {
   const address = c.req.valid("param").address.toLowerCase();
-  return ok(c, { address, ...(await ledgerSummary(address)) });
+  const env = getEnv();
+  return ok(c, { address, ...(await ledgerSummary(address)), verifySampleK: env.VERIFY_SAMPLE_K, payHoldSeconds: env.PAY_HOLD_SECONDS });
 });
 
 // ── GET /v1/epochs/{id} — public, signed ────────────────────────────────────

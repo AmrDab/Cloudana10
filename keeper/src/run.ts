@@ -3,7 +3,7 @@
  * on-chain epoch status read in this pass, so a re-run after any failure continues where it stopped.
  *
  *   close -> for each closed|posted epoch:
- *     rebuild tree, require root == payload.root (else skip + log)
+ *     rebuild tree, require root == payload.root (else skip + log); no leaves but fees (all clawed) -> the zero root
  *     None/Vetoed  : postEpoch (not a vetoed root again), then API /posted
  *     Posted       : (API still "closed" -> /posted) ; after the veto window finalize
  *     Finalized    : claimFor lane A (+ lane B once vested) in chunks; when every lane is paid or void -> API /settled
@@ -20,6 +20,9 @@ import { buildTree, sumLanes, toWei } from "./tree";
 
 /** EIP-7825 caps a tx at 2^24 gas; a cold lane-A leaf costs ~62k, so 250 leaves (~15.5M) fit with margin. */
 export const DEFAULT_CLAIM_CHUNK = 250;
+
+/** An epoch without leaves: the zero root (what the API's epochRoot returns for no leaves), nothing to claim. */
+const EMPTY_TREE: ReturnType<typeof buildTree> = { root: zeroHash, leaves: [], leafHashes: [], proofs: [] };
 
 export type Logger = (msg: string, data?: Record<string, unknown>) => void;
 
@@ -83,9 +86,12 @@ export async function runOnce(deps: Deps): Promise<RunSummary> {
 export async function processEpoch(deps: Deps, p: EpochPayload): Promise<EpochOutcome> {
   const { api, chain, log } = deps;
   const epoch = BigInt(p.epoch);
-  if (!p.leaves?.length) return { epoch: p.epoch, action: "skipped", reason: "no leaves" };
+  // No leaves but fees: every provider entry was clawed (a failed sampled check, B-6) while the fees still burn and the
+  // treasury still mints. Post it with the zero root the API computes for no leaves (epochRoot([])); it then finalizes
+  // and settles with nothing to claim.
+  if (!p.leaves?.length && toWei(p.feesBurnedUcld) === 0n) return { epoch: p.epoch, action: "skipped", reason: "no leaves" };
 
-  const tree = buildTree(epoch, p.leaves);
+  const tree = p.leaves?.length ? buildTree(epoch, p.leaves) : EMPTY_TREE;
   if (tree.root.toLowerCase() !== String(p.root).toLowerCase()) {
     log(`epoch ${p.epoch}: ROOT MISMATCH, not posting`, { apiRoot: p.root, rebuilt: tree.root, leaves: p.leaves.length });
     return { epoch: p.epoch, action: "skipped", reason: `root mismatch (api ${p.root}, rebuilt ${tree.root})` };
@@ -113,6 +119,11 @@ export async function processEpoch(deps: Deps, p: EpochPayload): Promise<EpochOu
     // Vetoed on-chain with this root: tell the API whatever it thinks (a missed /posted leaves it
     // 'closed'), so it re-closes with a corrected root. Never re-post the identical vetoed root.
     if (on.status === EpochStatus.Vetoed && on.root.toLowerCase() === tree.root.toLowerCase()) {
+      // An all-clawed epoch always re-closes with the zero root (treasury entries cannot be clawed), so reporting the
+      // veto would only loop: re-close, same root, veto reported again. Leave it as the guardian left it.
+      if (tree.root === zeroHash) {
+        return { epoch: p.epoch, action: "skipped", reason: "vetoed all-clawed epoch: the guardian's decision stands" };
+      }
       await api.vetoed(p.epoch, "vetoed on-chain; re-close with a corrected root");
       return { epoch: p.epoch, action: "marked-vetoed" };
     }

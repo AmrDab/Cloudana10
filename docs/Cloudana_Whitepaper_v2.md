@@ -25,7 +25,7 @@ Cloudana's distinguishing bet is **Proof of Useful Work (PoUW)**: for matrix-hea
 
 **Wasted consensus energy.** Proof-of-Work chains spend enormous compute on puzzles with no use outside securing the chain. If the securing work were *also useful*, that energy produces value twice.
 
-**The DePIN verification problem.** Decentralized compute networks must answer "did the provider actually do the work?" Re-execution is expensive; pure trust is weak. For matrix jobs, Cloudana answers it today by binding the work to its assignment, re-executing it at the orchestrator and checking the answer with Freivalds; other services are probed.
+**The DePIN verification problem.** Decentralized compute networks must answer "did the provider actually do the work?" Re-execution is expensive; pure trust is weak. For matrix jobs, Cloudana answers it today by binding the work to its assignment, checking every answer with Freivalds and re-executing a random sample at the orchestrator, with provider pay held and clawed on a failed sample; other services are probed.
 
 ---
 
@@ -44,7 +44,7 @@ For a real workload supplying matrices A and B:
 3. **Proof.** z = SHA-256(σ ‖ H(transcript) ‖ H(A) ‖ H(B)). A certificate is valid when z has the required leading-zero bits (difficulty).
 4. **Decode.** Recover the clean product C = A·B in O(n²·r) — far cheaper than the O(n³) multiply already performed. **C is the answer the user paid for.**
 
-The provider submits the certificate *and* the decoded result. The orchestrator Freivalds-checks the result, verifies the certificate by re-executing the transcript over the job's own matrices, and returns C to the user. One operation, two outputs: a verifiable proof and a useful product.
+The provider submits the certificate *and* the decoded result. The orchestrator Freivalds-checks the result, on a random sample of jobs (1 in 10) also verifies the certificate by re-executing the transcript over the job's own matrices, and returns C to the user. One operation, two outputs: a verifiable proof and a useful product.
 
 ### 3.3 CLD is minted only for real, paid work
 
@@ -58,7 +58,7 @@ Not all compute is a matrix multiply, so PoUW is not the verification method for
 
 - **Tier 1 — Standard** (static hosting today; APIs, databases, CI later). Served through a Cloudana gateway and probed every minute for reachability and a content hash of the uploaded files; the orchestrator can stop a deployment. Paid by fees only — **no subsidy**.
 - **Tier 2 — Optimistic** (containers, ETL, transcoding, batch). Attested by probes and reputation today; fraud-proof windows later. Paid by fees only until a proof exists.
-- **Tier 3 — PoUW** (matrix-multiplication jobs; the only proven work today). Re-executed by the orchestrator and answer-checked (Freivalds), with the transcript bound to its assignment by σ. This is the tier where proof and product coincide, and the only tier eligible for the subsidy lane.
+- **Tier 3 — PoUW** (matrix-multiplication jobs; the only proven work today). Answer-checked (Freivalds) on every job and re-executed by the orchestrator on a random sample (1 in 10; provider pay held 24 h and clawed on a failed sample), with the transcript bound to its assignment by σ. This is the tier where proof and product coincide, and the only tier eligible for the subsidy lane.
 
 A user does not choose a tier manually. They describe what they need to run; the platform classifies the workload and routes it. The complexity is ours, not theirs. *(v2.0 described a bonded "challenger network" for Tiers 1–2; that design is superseded — see §6.4.)*
 
@@ -139,7 +139,7 @@ Provider rewards are **not** an allocation: they are minted per verified job und
 
 ### 6.4 Superseded: staking, slashing and challengers
 
-v2.0 §6.4 and §7.1 described provider bonds, 50% slashing and a bonded challenger network. **That design is superseded and not built.** Providers post no stake. Honesty is enforced by: the orchestrator's re-execution of every transcript, Freivalds checks on every result, hash-checked hosting probes, and unbinding and banning of a misbehaving node. Browser verifiers (with **planted tasks** that test the verifier) are a public re-check; their verdicts do not change outcomes. The **lane-B vesting period acts as the bond**: subsidy for a job later found fraudulent is voided by the guardian before it vests. After mainnet, an on-chain Freivalds challenge against a poster bond replaces the guardian for this role (see `DECENTRALIZATION_ROADMAP.md`). The legacy `StakingManager` and `ChallengeManager` contracts are abandoned.
+v2.0 §6.4 and §7.1 described provider bonds, 50% slashing and a bonded challenger network. **That design is superseded and not built.** Providers post no stake. Honesty is enforced by: Freivalds checks on every result, the orchestrator's re-execution of a random sample of transcripts (provider pay held 24 h and clawed on a failed sample), hash-checked hosting probes, and unbinding and banning of a misbehaving node. Browser verifiers (with **planted tasks** that test the verifier) are a public re-check; their verdicts do not change outcomes. The **lane-B vesting period acts as the bond**: subsidy for a job later found fraudulent is voided by the guardian before it vests. After mainnet, an on-chain Freivalds challenge against a poster bond replaces the guardian for this role (see `DECENTRALIZATION_ROADMAP.md`). The legacy `StakingManager` and `ChallengeManager` contracts are abandoned.
 
 ---
 
@@ -147,7 +147,7 @@ v2.0 §6.4 and §7.1 described provider bonds, 50% slashing and a bonded challen
 
 ### 7.1 Testnet (today): trust-minimized, orchestrator-coordinated
 
-- The orchestrator first Freivalds-checks the decoded result (entries are bounded, so the check is exact over the integers), then verifies the PoUW certificate by re-running the block multiply over the job's own matrices and checking the transcript hash.
+- The orchestrator first Freivalds-checks the decoded result (entries are bounded, so the check is exact over the integers), then, on a random sample of jobs (1 in 10), verifies the PoUW certificate by re-running the block multiply over the job's own matrices and checking the transcript hash; provider pay is held 24 h and clawed if a sampled check fails.
 - Replay is blocked by σ: it is issued at assignment and bound to the job and the node, so a certificate cannot be precomputed, reused or copied.
 - Browser verifiers re-check finished public jobs, with planted wrong answers to catch careless verifiers. It is a public re-check: verdicts do not change any job's outcome. Verifier credits are points, not CLD.
 - Settlement is a Merkle root per epoch on Base Sepolia, posted by a keeper that runs isolated from the API, with a veto window and a guardian multisig.

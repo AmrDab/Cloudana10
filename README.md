@@ -12,7 +12,7 @@ is in [`CAPABILITY_MATRIX.md`](CAPABILITY_MATRIX.md); the trust model and how it
 
 | Product | How | Checked by |
 |---|---|---|
-| Matrix compute (PoUW) | `POST /v1/jobs` — priced in USD, settled in CLD, assigned to a node by the draw | Transcript re-executed + Freivalds answer check (**proven**) |
+| Matrix compute (PoUW) | `POST /v1/jobs` — priced in USD, settled in CLD, assigned to a node by the draw | Freivalds answer check on every job + transcript re-executed on a random 1 in 10, pay held 24 h (**proven**) |
 | Static hosting | `POST /v1/deployments` kind `static` → `https://<id>.cloudana.run` (gateway live since 2026-10-18) | Content-hash probe every minute (**probed**) |
 | Containers, GPU workstations, GPU endpoints | kind `container` / `workstation` / `endpoint` on fleet nodes; secrets sealed in the browser to the node, bound to the deployment | Health probe through the relay (**probed**) |
 | Provide | one command installs the node agent; bind a wallet; earn per verified job and per probed hour | Signed heartbeat instructions; hardened containers on opted-in nodes |

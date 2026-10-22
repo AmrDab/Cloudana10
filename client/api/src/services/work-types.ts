@@ -19,7 +19,8 @@ export interface Submission {
   result: number[];
 }
 
-export type Verdict = { ok: true } | { ok: false; reason: string };
+/** stage "transcript": every cheap check passed (so C = A·B) and only the re-executed transcript failed. */
+export type Verdict = { ok: true } | { ok: false; reason: string; stage?: "transcript" };
 
 export interface PlantedTask {
   n: number;
@@ -37,8 +38,11 @@ export interface WorkType {
   validate(job: WorkJobInput): string | null;
   /** Protocol-computed units — never self-reported. */
   meter(job: WorkJobInput): number;
-  /** The proof for this resource. */
-  verify(submission: Submission): Verdict;
+  /**
+   * The proof for this resource. The cheap checks always run; `transcript: false` skips the full re-execution
+   * (sampled verification, ENGINEERING_BACKLOG B-6). Default: re-execute.
+   */
+  verify(submission: Submission, opts?: { transcript?: boolean }): Verdict;
   /** A known-answer task; `corrupt` flips one entry of C so the right verdict is "invalid". */
   plantedTask(base?: { n: number; matrixA: number[]; matrixB: number[]; matrixC: number[] }, corrupt?: boolean): PlantedTask;
 }
@@ -84,7 +88,7 @@ export const matmul: WorkType = {
 
   meter: ({ n }) => n * n * n,
 
-  verify({ job, certificate, result }) {
+  verify({ job, certificate, result }, { transcript = true } = {}) {
     const { n } = job;
     if (!certificate || typeof certificate !== "object") return { ok: false, reason: "certificate missing" };
     if (certificate.sigma !== job.sigma) return { ok: false, reason: "certificate sigma does not match the assignment" };
@@ -102,6 +106,7 @@ export const matmul: WorkType = {
       return { ok: false, reason: `result must be n*n = ${n * n} integers within ±${cMax}` };
     }
     if (!freivalds(job.matrixA, job.matrixB, result, n)) return { ok: false, reason: "result is not A·B (Freivalds check failed)" };
+    if (!transcript) return { ok: true };
     // Re-execute over the job's own matrices, never the copies the node sent: the int32 hash encoding wraps, so a
     // certificate over A + 2³² would otherwise bind to A (docs/POUW_REVIEW.md §2, h).
     let transcriptOk = false;
@@ -110,7 +115,7 @@ export const matmul: WorkType = {
     } catch {
       transcriptOk = false;
     }
-    if (!transcriptOk) return { ok: false, reason: "certificate transcript failed verification" };
+    if (!transcriptOk) return { ok: false, reason: "certificate transcript failed verification", stage: "transcript" };
     return { ok: true };
   },
 

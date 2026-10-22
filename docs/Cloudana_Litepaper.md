@@ -14,7 +14,7 @@ Independent providers contribute CPUs, GPUs, and servers. One orchestrator assig
 
 **2. You say what to run; the orchestrator places it.** Submit a job or a site. The orchestrator picks a node that fits by a random draw, sets the price, and handles placement. You never choose a provider.
 
-**3. Proof = product.** For matrix jobs, the provider proves the work by computing it. The proof is the full transcript of the computation, bound to its assignment by a seed σ, and the decoded result is the answer you paid for. The orchestrator re-executes the transcript and checks the answer with Freivalds. Hosting, containers, workstations and GPU endpoints are probed, not proven.
+**3. Proof = product.** For matrix jobs, the provider proves the work by computing it. The proof is the full transcript of the computation, bound to its assignment by a seed σ, and the decoded result is the answer you paid for. The orchestrator checks every answer with Freivalds and re-executes the transcript of a random sample of jobs (1 in 10); a provider's pay is held 24 h and clawed if a sampled check fails. Hosting, containers, workstations and GPU endpoints are probed, not proven.
 
 ---
 
@@ -38,7 +38,7 @@ Nothing about CLD is a promise of price or return.
 
 ### Where we are — said plainly
 
-Cloudana's testnet is **trust-minimized and orchestrator-coordinated**, not yet "completely decentralized." Verification is the orchestrator's re-execution of each matrix job plus a Freivalds check of its answer; services are probed. Browser verifiers can re-check public jobs, but their verdicts don't change outcomes. The planned trustless path, after mainnet, is an on-chain Freivalds challenge against a bonded poster — and we'll claim "decentralized verification" when it's true, not before.
+Cloudana's testnet is **trust-minimized and orchestrator-coordinated**, not yet "completely decentralized." Verification is a Freivalds check of every matrix job's answer plus the orchestrator's re-execution of the transcript on a random sample (1 in 10), with provider pay held 24 h and clawed on a failed sample; services are probed. Browser verifiers can re-check public jobs, but their verdicts don't change outcomes. The planned trustless path, after mainnet, is an on-chain Freivalds challenge against a bonded poster — and we'll claim "decentralized verification" when it's true, not before.
 
 ---
 

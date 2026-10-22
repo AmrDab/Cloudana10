@@ -4,7 +4,7 @@
  *
  * status: queued → assigned → done | failed; an expired assignment is re-queued.
  */
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { getD1 } from "../lib/storage.js";
 import { getArtifactStore } from "../lib/artifacts.js";
 import { registerObject } from "./storage.service.js";
@@ -12,7 +12,7 @@ import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { hold, release } from "./balance.service.js";
-import { getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
+import { afterNodeSuspended, getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
 import { epochOf, jobRewardStatements } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
 import { getWorkType } from "./work-types.js";
@@ -51,6 +51,8 @@ export interface WorkJobRow {
   eligible_json: string | null;
   /** Set in the transaction that captured the fee and wrote the rewards (submitWork); null = result accepted without a fee. */
   fee_captured_at: number | null;
+  /** Sampled transcript re-execution (submitWork): null = not sampled. Never shown to the node. */
+  sample_check: "passed" | "failed" | "reversed" | null;
 }
 
 export interface JobMatrices {
@@ -453,8 +455,61 @@ export async function getActiveAssignment(node: string, now = Date.now()): Promi
 
 // ─── Submit ───────────────────────────────────────────────────────────────────
 
+/**
+ * Whether a submission's transcript is re-executed (ENGINEERING_BACKLOG B-6): the first 32 bits of HMAC-SHA256 over
+ * "jobId:σ", keyed by a key derived from JWT_SECRET, are 0 mod k — one job in k. The node knows the job id and σ but
+ * not the key, so it cannot tell before it submits; σ carries a fresh nonce per assignment, so a re-queued job is drawn
+ * again. k ≤ 1: every job.
+ */
+export function sampledForCheck(jobId: string, sigma: string, k = getEnv().VERIFY_SAMPLE_K): boolean {
+  if (k <= 1) return true;
+  const key = sha256(`cloudana-sample:${getEnv().JWT_SECRET}`);
+  return createHmac("sha256", key).update(`${jobId}:${sigma}`).digest().readUInt32BE(0) % k === 0;
+}
+
+const suspensionReason = (jobId: string) => `sampled transcript check failed on job ${jobId}`;
+
+/**
+ * What a failed sampled check does, as statements for submitWork's batch, placed before its "done" update and run only
+ * while the job is still this node's assignment: a submit that lost a race (the job is already done) changes nothing,
+ * and nothing after the batch can leave the node active and paid.
+ *  1. The claw covers every A/B entry in an epoch after the open one (closeEpochs only closes earlier ones, so the two
+ *     never race; pay already posted needs the guardian veto) that is paid to the node's payout wallet — whichever of
+ *     its nodes earned it, fleet nodes included: an operator running a modified agent on many nodes keeps none of it —
+ *     or was earned by the node's own jobs (under a wallet it was bound to before), plus the failing job's own A/B
+ *     (written clawed just before). Coverage is recorded in reward_claws, also for entries an earlier failed check
+ *     already took, so reversing that one (POST /v1/admin/claws/{jobId}/reverse: a false positive, a leaked fleet
+ *     token) leaves them clawed. Entries clawed another way (no claw row) are not covered. Then every covered pending
+ *     entry is clawed.
+ *  2. The node: one more failure (no jobs_done, no throughput sample, so cheating speed earns no draw weight), and
+ *     suspended (the B-8 state; an admin lifts it).
+ */
+function caughtStatements(jobId: string, node: string, nodeRow: NodeRow, now: number): D1PreparedStatement[] {
+  const db = getD1();
+  const stillAssigned = "EXISTS (SELECT 1 FROM work_jobs WHERE id = ?1 AND status = 'assigned' AND node = ?2)";
+  return [
+    db
+      .prepare(
+        "INSERT OR IGNORE INTO reward_claws (entry_id, job_id) SELECT id, ?1 FROM reward_entries " +
+          "WHERE lane IN ('A','B') AND epoch > ?3 " +
+          "AND (address = ?4 OR job_id = ?1 OR job_id IN (SELECT id FROM work_jobs WHERE node = ?2 AND status = 'done')) " +
+          "AND (status = 'pending' OR job_id = ?1 OR (status = 'clawed' AND EXISTS (SELECT 1 FROM reward_claws c WHERE c.entry_id = reward_entries.id))) " +
+          `AND ${stillAssigned}`,
+      )
+      .bind(jobId, node, epochOf(now), normalizeAddress(nodeRow.payout!)),
+    db
+      .prepare(`UPDATE reward_entries SET status = 'clawed' WHERE status = 'pending' AND id IN (SELECT entry_id FROM reward_claws WHERE job_id = ?1) AND ${stillAssigned}`)
+      .bind(jobId, node),
+    db
+      .prepare(
+        `UPDATE nodes SET jobs_failed = jobs_failed + 1, state = 'suspended', state_reason = ?3, state_at = ?4 WHERE address = ?2 AND ${stillAssigned}`,
+      )
+      .bind(jobId, node, suspensionReason(jobId), now),
+  ];
+}
+
 export type SubmitResult =
-  | { ok: true; units: number; earned: { laneAUcld: number; laneBUcld: number }; vestsAt: number }
+  | { ok: true; units: number; earned: { laneAUcld: number; laneBUcld: number }; vestsAt: number; heldUntil: number }
   | { ok: false; code: "not_found" | "conflict" | "unprocessable"; message: string };
 
 export async function submitWork(
@@ -474,9 +529,15 @@ export async function submitWork(
 
   const wt = getWorkType(job.work_type)!;
   const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json!) as number[], matrixB: JSON.parse(job.b_json!) as number[] };
-  const verdict = wt.verify({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result });
+  // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6).
+  const sampled = sampledForCheck(job.id, job.sigma!);
+  const verdict = wt.verify({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
+  // Caught: a sampled job whose answer is right (every cheap check passed) but whose transcript is not — the work was
+  // not done as proven. The verified result is kept and the fee captured (and burned), but the provider's pay is
+  // clawed, this job's and its held pay, and this node is suspended. Any other failure is refused and re-queued.
+  const caught = !verdict.ok && verdict.stage === "transcript";
 
-  if (!verdict.ok) {
+  if (!verdict.ok && !caught) {
     // A job that keeps failing verification stops after MAX_JOB_ATTEMPTS: it is marked failed and the owner's hold
     // goes back to spendable, instead of re-queuing forever with the fee held.
     const giveUp = (job.attempts ?? 0) + 1 >= MAX_JOB_ATTEMPTS;
@@ -503,8 +564,10 @@ export async function submitWork(
   const owner = normalizeAddress(job.owner);
   const { statements: rewardStmts, rewards: split } = jobRewardStatements(
     { jobId: job.id, workType: job.work_type, provider: nodeRow.payout, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now },
-    { capturedAt: now, node },
+    { capturedAt: now, node, clawed: caught },
   );
+  const caughtStmts = caught ? caughtStatements(job.id, node, nodeRow, now) : [];
+  const doneAt = 2 + rewardStmts.length + caughtStmts.length;
   const results = await db.batch([
     db
       .prepare(
@@ -521,11 +584,14 @@ export async function submitWork(
       )
       .bind(job.price_ucld, new Date(now).toISOString(), owner, job.price_ucld, job.id, now, node),
     ...rewardStmts,
+    ...caughtStmts,
     db
-      .prepare("UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ? WHERE id = ? AND status = 'assigned' AND node = ?")
-      .bind(JSON.stringify(input.result), input.certificate.z, now, job.id, node),
+      .prepare(
+        "UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ?, sample_check = ? WHERE id = ? AND status = 'assigned' AND node = ?",
+      )
+      .bind(JSON.stringify(input.result), input.certificate.z, now, caught ? "failed" : sampled ? "passed" : null, job.id, node),
   ]);
-  const done = results[results.length - 1];
+  const done = results[doneAt];
   if ((done?.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "job was already completed" };
 
   // Invariant: nothing is minted for a fee that was not captured. The hold is taken at enqueue and released only when
@@ -535,7 +601,31 @@ export async function submitWork(
   if (!captured) {
     L.error(`[work] capture of ${job.price_ucld} µCLD from ${job.owner} failed for job ${job.id} (hold missing) — result accepted, no rewards recorded`);
   }
-  const rewards = captured ? split : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now) };
+  if (caught) {
+    // The claw, the failure count and the suspension are already committed with the result; what is left is best effort.
+    const reason = suspensionReason(job.id);
+    const clawed = results[2 + rewardStmts.length + 1]?.meta?.changes ?? 0; // the UPDATE after the coverage INSERT
+    L.warn(`[work] ${reason} from ${node}: result kept, ${clawed} held entries of payout wallet ${normalizeAddress(nodeRow.payout)} clawed, node suspended`);
+    try {
+      if (nodeRow.fleet_id) {
+        // A fleet node pays the fleet owner's wallet: tell them which fleet, in case the node is not theirs (a leaked token).
+        const fleet = await db.prepare("SELECT name FROM fleets WHERE id = ?").bind(nodeRow.fleet_id).first<{ name: string | null }>();
+        L.warn(
+          `[work] the node is in fleet "${fleet?.name ?? "?"}" (${nodeRow.fleet_id}): if this node is not yours, revoke the fleet's ` +
+            `token and ask an admin to reverse the claw (POST /v1/admin/claws/${job.id}/reverse)`,
+        );
+      }
+      await afterNodeSuspended(node, reason, now);
+    } catch (err) {
+      L.warn(`[work] after suspending ${node.slice(0, 10)}…: a best-effort step failed (the claw and the suspension stand):`, err);
+    }
+    return {
+      ok: false,
+      code: "unprocessable",
+      message: "sampled transcript check failed: the result is kept, the payout wallet's held pay is clawed and this node is suspended",
+    };
+  }
+  const rewards = captured ? split : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now), heldUntil: now };
   const units = wt.meter(jobInput);
   const seconds = (now - (job.assigned_at ?? now)) / 1000;
   await db
@@ -543,5 +633,11 @@ export async function submitWork(
     .bind(nextThroughput(nodeRow.throughput_mmac_s, units, seconds), node)
     .run();
 
-  return { ok: true, units, earned: { laneAUcld: rewards.laneAUcld, laneBUcld: rewards.laneBUcld }, vestsAt: rewards.vestsAt };
+  return {
+    ok: true,
+    units,
+    earned: { laneAUcld: rewards.laneAUcld, laneBUcld: rewards.laneBUcld },
+    vestsAt: rewards.vestsAt,
+    heldUntil: rewards.heldUntil,
+  };
 }

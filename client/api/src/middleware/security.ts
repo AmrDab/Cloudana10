@@ -20,7 +20,7 @@ export function applySecurity(app: AnyHono): void {
   // Money and minting.
   app.use("/v1/payments/*", rateLimit({ bucket: "payments", limit: 60, windowSec: 60 }));
 
-  // Verification is CPU-heavy (full re-execution of the matrix multiply).
+  // Verification is CPU-heavy on a sampled job (full re-execution of the matrix multiply, 1 in VERIFY_SAMPLE_K).
 
   // Outbound fetch to a caller-supplied host.
   app.use("/v1/providers/scan", rateLimit({ bucket: "scan", limit: 10, windowSec: 60 }));
@@ -60,7 +60,7 @@ export function applySecurity(app: AnyHono): void {
   app.use("/v1/keys/*", requireAuth);
   app.on("POST", "/v1/keys", rateLimit({ bucket: "keys-create", limit: 20, windowSec: 3600 }));
   app.on("POST", "/v1/jobs", rateLimit({ bucket: "jobs-create", limit: 30, windowSec: 60 }));
-  // Nodes heartbeat every 15 s and re-announce while unbound; submit re-executes the transcript (CPU-heavy).
+  // Nodes heartbeat every 15 s and re-announce while unbound; submit re-executes a sampled job's transcript (CPU-heavy).
   // Before the signature check only a per-IP layer applies, sized for a datacenter NAT (hundreds of nodes behind
   // one address). Per-node limits key on the VERIFIED address and live on the routes after requireNode
   // (routes/v1/nodes.ts): keyed on the raw X-Node header they would let anyone 429 a victim node offline.

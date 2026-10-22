@@ -42,7 +42,8 @@ describe("public draw records and signed epochs / network", () => {
 
   beforeAll(async () => {
     // No CHAIN_RPC_URL: the seed is the flagged local fallback, which the replay must report as not third-party checkable.
-    await setupV1Db({ INSTRUCTION_SIGNING_KEY: SIGNING_KEY, CLUSTER_N_MIN: "1", EPOCH_SECONDS: "3600" });
+    // PAY_HOLD_SECONDS 0: the job's entries are booked into its own epoch (no 24 h check window), as this test closes it.
+    await setupV1Db({ INSTRUCTION_SIGNING_KEY: SIGNING_KEY, CLUSTER_N_MIN: "1", EPOCH_SECONDS: "3600", PAY_HOLD_SECONDS: "0" });
     app = buildApp({ runtime: "node" });
     await creditUcld(user, 100_000);
     for (const [i, addr] of nodes.entries()) {

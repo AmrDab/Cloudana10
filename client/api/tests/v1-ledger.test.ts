@@ -36,6 +36,7 @@ describe("ledger entries + epoch close (SQLite)", () => {
       VEST_B_SECONDS: "120",
       SUBSIDY_RHO: "0.25", // above RHO_MAX on purpose: the ledger must cap it at 0.04
       EPOCH_SUBSIDY_BUDGET_UCLD: "50",
+      PAY_HOLD_SECONDS: "0", // booked into the open epoch: the 24 h hold has its own tests (sampled-verification.test.ts)
     }),
   );
 
@@ -94,7 +95,7 @@ describe("ledger entries + epoch close (SQLite)", () => {
 describe("lane-B subsidy budget, pro rata", () => {
   it("never posts more than the epoch budget, however many submits race, and every job gets the same share", async () => {
     const { setupV1Db } = await import("./helpers/v1-db.js");
-    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "100", SUBSIDY_RHO: "0.25", EPOCH_SECONDS: "3600" });
+    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "100", SUBSIDY_RHO: "0.25", EPOCH_SECONDS: "3600", PAY_HOLD_SECONDS: "0" });
     const { recordJobRewards, closeEpochs, epochOf } = await import("../src/services/ledger.service.js");
     const now = 1_700_000_000_000;
     // 10 jobs of fee 1000 each want 40 µCLD of subsidy (ρ capped at 0.04), 400 in all; the budget is 100.
@@ -110,7 +111,7 @@ describe("lane-B subsidy budget, pro rata", () => {
 
   it("leaves an epoch under its budget untouched", async () => {
     const { setupV1Db } = await import("./helpers/v1-db.js");
-    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "1000", SUBSIDY_RHO: "0.04", EPOCH_SECONDS: "3600" });
+    await setupV1Db({ EPOCH_SUBSIDY_BUDGET_UCLD: "1000", SUBSIDY_RHO: "0.04", EPOCH_SECONDS: "3600", PAY_HOLD_SECONDS: "0" });
     const { recordJobRewards, fitLaneB, epochOf } = await import("../src/services/ledger.service.js");
     const now = 1_800_000_000_000;
     await recordJobRewards({ jobId: "under-1", workType: "matmul", provider: "0x" + "cd".repeat(20), feeUcld: 1000, clusterOk: true, now });

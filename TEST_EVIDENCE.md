@@ -205,6 +205,7 @@ npm ci --legacy-peer-deps && npm run check && npm run test:client && npm run bui
 # end to end on the Node runtime
 cd client/api
 JWT_SECRET=$(head -c 48 /dev/urandom | base64) DEV_MODE=true CLUSTER_N_MIN=1 EPOCH_SECONDS=10 VEST_B_SECONDS=5 \
+  PAY_HOLD_SECONDS=10 VERIFY_SAMPLE_K=1 \
   INTERNAL_API_KEY=local-internal-key-0123456789 PORT=8790 CLOUDANA_DB_PATH=/tmp/cloudana-e2e.sqlite \
   node --import tsx src/index.ts &
 sleep 8

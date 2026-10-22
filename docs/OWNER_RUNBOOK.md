@@ -98,7 +98,7 @@ Today every job's result is checked with a fast maths test (Freivalds), and the 
 every job. The replay is the expensive part.
 - ★ **Replay 1 job in 10 at random, and hold each job's pay for 24 hours.** If a sampled job fails, the provider's
   held pay is taken back (clawed) and the node is flagged. Cuts the API's checking cost about 10×. A cheater is
-  caught within about 10 jobs and loses the pay of every job still on hold.
+  caught after about 10 jobs on average (99% within 44) and loses the pay of every job still on hold.
 - **Keep replaying every job.** Safest, but costs grow with traffic, and Cloudflare bills for that CPU time.
 - **Another rate** (1 in 5, 1 in 20) or another hold time.
 
