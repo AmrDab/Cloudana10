@@ -492,8 +492,9 @@ export async function submitWork(
   const sampled = sampledForCheck(job.id, job.sigma!);
   const verdict = wt.verify({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
   // Caught: a sampled job whose answer is right (every cheap check passed) but whose transcript is not — the work was
-  // not done as proven. The verified result is kept and the fee captured (and burned), but the node's pay is clawed,
-  // this job's and every held one, and the node is suspended. Any other failure is refused and re-queued.
+  // not done as proven. The verified result is kept and the fee captured (and burned), but the provider's pay is
+  // clawed, this job's and all its held pay (wallet-wide), and this node is suspended. Any other failure is refused and
+  // re-queued.
   const caught = !verdict.ok && verdict.stage === "transcript";
 
   if (!verdict.ok && !caught) {
@@ -547,18 +548,20 @@ export async function submitWork(
         "UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ?, sample_check = ? WHERE id = ? AND status = 'assigned' AND node = ?",
       )
       .bind(JSON.stringify(input.result), input.certificate.z, now, caught ? "failed" : sampled ? "passed" : null, job.id, node),
-    // Caught: claw the node's held pay — every pending A/B entry of its other done jobs in an epoch after the open one.
-    // closeEpochs only closes epochs before the open one, so the two never race; pay already posted or settled needs
-    // the guardian veto. Only once this batch's own "done" landed with the failed check.
+    // Caught: claw the provider's held pay — every pending A/B entry, in an epoch after the open one, paid to this node's
+    // payout wallet (whichever of its nodes earned it: one operator running several modified nodes keeps none of it)
+    // or earned by this node's own done jobs (under a wallet it was bound to before). closeEpochs only closes epochs
+    // before the open one, so the two never race; pay already posted or settled needs the guardian veto. Only once this
+    // batch's own "done" landed with the failed check.
     ...(caught
       ? [
           db
             .prepare(
               "UPDATE reward_entries SET status = 'clawed' WHERE status = 'pending' AND lane IN ('A','B') AND epoch > ?1 " +
-                "AND job_id IN (SELECT id FROM work_jobs WHERE node = ?2 AND status = 'done') " +
-                "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ?3 AND sample_check = 'failed')",
+                "AND (address = ?2 OR job_id IN (SELECT id FROM work_jobs WHERE node = ?3 AND status = 'done')) " +
+                "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ?4 AND sample_check = 'failed')",
             )
-            .bind(epochOf(now), node, job.id),
+            .bind(epochOf(now), normalizeAddress(nodeRow.payout), node, job.id),
         ]
       : []),
   ]);
@@ -581,7 +584,7 @@ export async function submitWork(
     return {
       ok: false,
       code: "unprocessable",
-      message: "sampled transcript check failed: the result is kept, this node's held pay is clawed and the node is suspended",
+      message: "sampled transcript check failed: the result is kept, the payout wallet's held pay is clawed and this node is suspended",
     };
   }
   const rewards = captured ? split : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now), heldUntil: now };

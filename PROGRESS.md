@@ -465,12 +465,13 @@ that remained:
   refused at startup (the claw could not reach a job booked into the open epoch). Hosting bills are not held.
 - **Claw.** A sampled job with a right answer (every cheap check passed) and a wrong transcript: the result is kept,
   the job marked done with `sample_check = 'failed'`, the fee captured, its treasury entry written pending and its A/B
-  written clawed; in the same batch every pending A/B entry of the node's other done jobs in an epoch after the open
-  one is clawed (race-free with `closeEpochs`, which only closes earlier epochs). `jobs_failed + 1`, no `jobs_done` or
-  throughput credit; the node is suspended through the B-8 path with reason "sampled transcript check failed on job
-  <id>"; the node gets 422. Clawed jobs' fees still burn (treasury entries are never clawed), so every epoch stays
-  within the contract's bounds. A wrong C or a bad header keeps the reject-and-requeue path. Scope is the node, not
-  the payout wallet.
+  written clawed; in the same batch every pending A/B entry in an epoch after the open one that is paid to the node's
+  payout wallet (whichever of its nodes earned it) or was earned by the node's own done jobs is clawed (race-free with
+  `closeEpochs`, which only closes earlier epochs). The claw is wallet-wide: an operator running several modified
+  nodes under one wallet keeps none of their held pay. `jobs_failed + 1`, no `jobs_done` or throughput credit; only the
+  failing node is suspended, through the B-8 path with reason "sampled transcript check failed on job <id>"; it gets
+  422. Clawed jobs' fees still burn (treasury entries are never clawed), so every epoch stays within the contract's
+  bounds. A wrong C or a bad header keeps the reject-and-requeue path.
 - **Keeper.** An epoch whose provider entries were all clawed closes with `leaves = []` and fees > 0; the keeper used to
   skip it ("no leaves"; `buildTree` throws on empty). It now posts it with the zero root the API computes
   (`epochRoot([])`), finalizes it (burn + treasury mint) and settles it with no claims. The v2 contracts are unchanged.
@@ -481,23 +482,25 @@ that remained:
   Console docs, the FAQ, `ARCHITECTURE.md` and `SECURITY_AUDIT.md` §4 no longer say every job is re-executed.
 - **Schema.** `work_jobs.sample_check TEXT`; `idx_reward_entries_job` (the claw and `epochJobs`). Env:
   `VERIFY_SAMPLE_K` (10), `PAY_HOLD_SECONDS` (86400).
-- **Tests.** `sampled-verification.test.ts` (10): sampler 1/10 ± 0.3 % over 100k pairs, K = 1 samples all, the draw
+- **Tests.** `sampled-verification.test.ts` (11): sampler 1/10 ± 0.3 % over 100k pairs, K = 1 samples all, the draw
   changes with σ and with the key; a planted wrong transcript (n = 8, K = 10) caught in each of 400 runs, mean jobs
   to detection in [8, 12] (≈ 10), ≥ 96 % within 44; K = 1 catches the first job; hold (booked into epochOf(t + 24 h),
   nothing closes at t + 1 h, it closes with its fee at t + 25 h; a short hold is refused); claw path (3 held + the
   failing job clawed, a released (posted) job and an open-epoch job untouched, treasury pending, node suspended,
   payloads within T·10⁴ ≥ F·300, (A+T)·10⁴ ≤ F·9800, B ≤ budget, `epochJobs` sums = payload, all-clawed epochs with the
-  zero root, `/v1/network` deltas). `verify-cost.test.ts` measures CPU at n = 256: with the transcript ≈ 1.1 s, without
-  ≈ 22 ms (≈ 50×), a whole unsampled `submitWork` ≈ 31 ms (≈ 35×); amortised at K = 10 ≈ 8.4×. Keeper: an all-clawed
+  zero root, `/v1/network` deltas); wallet-wide claw (node 1 fails a sample: node 2 on the same payout wallet loses its
+  held A/B but stays active, node 3 on another wallet keeps everything; fails on a node-only claw).
+  `verify-cost.test.ts` measures CPU at n = 256: with the transcript ≈ 1.1 s, without ≈ 22 ms (≈ 50×), a whole
+  unsampled `submitWork` ≈ 31 ms (≈ 35×); amortised at K = 10 ≈ 8.4×. Keeper: an all-clawed
   epoch is posted with the zero root, finalized and settled. Existing ledger/replay tests that close a job's own epoch
-  run with `PAY_HOLD_SECONDS = 0`. The new tests fail on the previous behaviour (checked by restoring it). API 413
+  run with `PAY_HOLD_SECONDS = 0`. The new tests fail on the previous behaviour (checked by restoring it). API 415
   tests, keeper 29.
 
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **413** |
+| client/api vitest | 330 | **415** |
 | gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / **29** |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |

@@ -152,7 +152,7 @@ export type LedgerEntry = {
 export type Ledger = {
   address: string;
   pending: { A: number; B: number; treasury: number };
-  /** Part of pending A/B still in its check window (clawed if a sampled re-execution of the node's work fails). */
+  /** Part of pending A/B still in its check window (clawed if a sampled re-execution of work paid to this wallet fails). */
   held: { A: number; B: number };
   vesting: { B: number };
   settled: { A: number; B: number };

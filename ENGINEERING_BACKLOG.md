@@ -64,8 +64,9 @@ per minute recorded.
 **B-6 · Verification cost (gap 5).** **Done** (PROGRESS.md entry 25; owner decision 2026-10-21): Freivalds and the
 binding checks on every job (n²); the full transcript re-executed, inside `submitWork`, on a random 1 in
 `VERIFY_SAMPLE_K` = 10 (HMAC keyed from `JWT_SECRET` over job id and σ: the node cannot tell before it submits); every
-job's provider pay booked `PAY_HOLD_SECONDS` = 24 h ahead and, on a failed sampled check, clawed together with the
-node's other held pay while the fees still burn; the node is suspended. Acceptance (restated with that decision):
+job's provider pay booked `PAY_HOLD_SECONDS` = 24 h ahead and, on a failed sampled check, clawed wallet-wide (every
+held A/B entry of the node's payout wallet, whichever of its nodes earned it) while the fees still burn; the failing
+node is suspended. Acceptance (restated with that decision):
 submit-path CPU ≥ 10× lower at n = 256 in a benchmark — measured ≈ 50× (≈ 1.1 s → ≈ 22 ms; the amortised figure
 (a)/((b) + (a)/K) is ≈ 8.4× at K = 10 and can never exceed K); a planted wrong transcript is always caught, after a
 mean of ≤ k jobs and 99 % within 44 at k = 10 — probabilistic by design (a hard bound needs a predictable draw), in a

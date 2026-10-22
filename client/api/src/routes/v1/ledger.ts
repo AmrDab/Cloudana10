@@ -40,7 +40,7 @@ const ledgerRoute = createRoute({
   tags: ["Ledger"],
   description:
     "pending = earned, not yet settled on-chain; held = the part of pending A/B still in its 24 h check window " +
-    "(clawed if a sampled re-execution of the node's work fails; per entry, releasesAt says when the window ends); " +
+    "(clawed if a sampled re-execution of work paid to this wallet fails; per entry, releasesAt says when the window ends); " +
     "vesting.B = the part of pending B, not held, not yet vested; clawed = taken back.",
   request: { params: z.object({ address: EthAddressSchema }) },
   responses: responses({ 200: json(LedgerSchema, "Ledger summary") }, 400),

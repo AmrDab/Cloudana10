@@ -1,7 +1,7 @@
 /**
  * Sampled verification (ENGINEERING_BACKLOG B-6, owner decision 2026-10-21): Freivalds on every job, the transcript
  * re-executed on a random 1 in VERIFY_SAMPLE_K, every job's provider pay held PAY_HOLD_SECONDS, and a failed sampled
- * check claws that pay together with the node's other held pay and suspends the node.
+ * check claws that pay together with all held pay of the node's payout wallet and suspends the node.
  */
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
@@ -29,11 +29,9 @@ function setEnv(vars: Record<string, string>): void {
   resetEnv();
 }
 
-/** A bound node of its own payout wallet, the only one online (the file shares one in-memory database). */
-async function freshNode(): Promise<{ node: string; payout: string }> {
+/** A node bound to `payout` (default: a wallet of its own). */
+async function freshNode(payout = "0x" + randomBytes(20).toString("hex")): Promise<{ node: string; payout: string }> {
   const node = "0x" + randomBytes(20).toString("hex");
-  const payout = "0x" + randomBytes(20).toString("hex");
-  await getD1().prepare("UPDATE nodes SET last_seen = 0").run();
   await announceNode(node, { cpuThreads: 8, ramGB: 16, gpus: [], os: "test" }, 100, ["matmul"]);
   await getD1().prepare("UPDATE nodes SET payout = ? WHERE address = ?").bind(payout, node).run();
   await touchNode(node);
@@ -46,11 +44,15 @@ const forged = (c: POUWCertificate): POUWCertificate => ({
   transcriptHash: (c.transcriptHash[0] === "0" ? "1" : "0") + c.transcriptHash.slice(1),
 });
 
-/** Enqueue a job, let `node` (the only active node) draw it, and solve it; `forge` submits a wrong transcript. */
+/**
+ * Enqueue a job, let `node` draw it as the only node online (the file shares one in-memory database), and solve it;
+ * `forge` submits a wrong transcript.
+ */
 async function nextJob(node: string, forge = false) {
+  await getD1().prepare("UPDATE nodes SET last_seen = 0 WHERE address <> ?").bind(node).run();
+  await touchNode(node);
   const q = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
   if (!q.ok) throw new Error(q.message);
-  await touchNode(node);
   await runAssignment();
   const a = await getActiveAssignment(node);
   expect(a?.jobId).toBe(q.jobId);
@@ -218,7 +220,7 @@ describe("the 24 h hold", () => {
   });
 });
 
-describe("claw path: a failed sampled check claws the node's held pay", () => {
+describe("claw path: a failed sampled check claws the provider's held pay", () => {
   const t0 = Date.now() - 7 * 24 * HOUR; // its own epochs: the describes share one database
   let node = "";
   let payout = "";
@@ -317,5 +319,44 @@ describe("claw path: a failed sampled check claws the node's held pay", () => {
     const after = await network();
     expect(after.burnedUcld - before.burnedUcld).toBe(price);
     expect(after.mintedUcld - before.mintedUcld).toBe(31 - 3 * (949 + 40)); // + the failed job's treasury − 3 held jobs' A/B
+  });
+});
+
+describe("the claw is wallet-wide; the suspension is the failing node's", () => {
+  const t = Date.now() - 3 * 24 * HOUR; // its own epochs: the describes share one database
+
+  it("node 1 fails a sample: node 2 (same payout wallet) loses its held pay but keeps working; node 3 (another wallet) keeps both", async () => {
+    await setupV1Db(ENV);
+    await creditUcld(user, 1_000_000);
+    const wallet = "0x" + randomBytes(20).toString("hex");
+    const one = await freshNode(wallet);
+    const two = await freshNode(wallet);
+    const three = await freshNode();
+    const held: Record<string, string> = {};
+    for (const [name, { node }] of [["two", two], ["three", three]] as const) {
+      const s = await nextJob(node);
+      expect(await submitWork(node, s, t - HOUR)).toMatchObject({ ok: true });
+      held[name] = s.jobId;
+    }
+
+    setEnv({ VERIFY_SAMPLE_K: "1" });
+    const s = await nextJob(one.node, true);
+    let r;
+    try {
+      r = await submitWork(one.node, s, t);
+    } finally {
+      setEnv({ VERIFY_SAMPLE_K: "10" });
+    }
+    expect(r).toMatchObject({ ok: false, code: "unprocessable", message: expect.stringMatching(/payout wallet's held pay is clawed/) });
+    expect(await entryStates([held.two, held.three, s.jobId])).toEqual({
+      [held.two]: ["A:clawed", "B:clawed", "treasury:pending"],
+      [held.three]: ["A:pending", "B:pending", "treasury:pending"],
+      [s.jobId]: ["A:clawed", "B:clawed", "treasury:pending"],
+    });
+    expect(await getNode(one.node)).toMatchObject({ state: "suspended", state_reason: `sampled transcript check failed on job ${s.jobId}` });
+    expect(await getNode(two.node)).toMatchObject({ state: "active", jobs_failed: 0 });
+    expect(await getNode(three.node)).toMatchObject({ state: "active", jobs_failed: 0 });
+    expect((await ledgerSummary(wallet, t)).clawed).toEqual({ A: 2 * 949, B: 2 * 40 });
+    expect((await ledgerSummary(three.payout, t)).held).toEqual({ A: 949, B: 40 });
   });
 });

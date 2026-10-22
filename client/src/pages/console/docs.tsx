@@ -124,9 +124,9 @@ export default function DocsPage() {
             <p>
               The provider's and treasury's amounts are fixed when the job verifies; the subsidy is fixed when its epoch
               closes. A matrix job's entries are first held 24 h, and the provider's are clawed if a re-executed job of
-              the same node fails (the fee is still burned). Entries are then posted to Base in batches (one Merkle root per
-              epoch — hourly on testnet, daily at mainnet), with a veto window of the same length; the subsidy part vests
-              before it can be claimed. Batching is delivery, not the reward unit.
+              any node paying the same wallet fails (the fee is still burned). Entries are then posted to Base in
+              batches (one Merkle root per epoch — hourly on testnet, daily at mainnet), with a veto window of the same
+              length; the subsidy part vests before it can be claimed. Batching is delivery, not the reward unit.
             </p>
             <p>
               <b>Paying.</b> If you hold another asset, your own wallet swaps it into CLD at the moment you pay; Cloudana
@@ -161,7 +161,7 @@ export default function DocsPage() {
               tab. Node messages are signed with each node's secp256k1 key; bind codes work once; fleet tokens are
               stored hashed and shown once. Every matrix job is answer-checked (Freivalds) and 1 in 10, drawn at random
               after submit, is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
-              provider's pay is held 24 h and clawed if a re-executed job of its node fails. Services are probed.
+              provider's pay is held 24 h and clawed if a re-executed job of any of its nodes fails. Services are probed.
               Rate limits, CORS allow-list, TLS in transit; settlement on Base has a veto window and guardian.
             </p>
             <p>

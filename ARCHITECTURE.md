@@ -54,7 +54,7 @@ never the self-reported benchmark. Submit: assigned-to-this-node and unexpired �
 A/B hash → Freivalds (n²) → on a random 1 in `VERIFY_SAMPLE_K` (10), transcript re-execution over the API's own A, B
 (n³) → `done`, capture, rewards booked `PAY_HOLD_SECONDS` (24 h) ahead. Three failed verifications fail the job and
 release the hold. A sampled job with a right answer and a wrong transcript is kept and charged, but its A/B and every
-held A/B entry of the node are clawed and the node is suspended (B-6).
+held A/B entry of the node's payout wallet (any of its nodes) are clawed and the node is suspended (B-6).
 
 **Deployments** (`deployments.service.ts`, `deployment-duties.service.ts`): `queued → assigned → running ⇄ unreachable
 → stopped | failed`. Create validates the spec, prices it in USD at the current table, converts to µCLD once, holds the

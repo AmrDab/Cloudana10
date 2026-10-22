@@ -72,7 +72,7 @@ function Earnings({ address }: { address: string }) {
         Minted per verified job. Posted to Base in batches; subsidy vests first. The keeper claims for you once a batch is final.
       </p>
       <p className="mt-1 font-mono text-[12px] text-faint">
-        Every answer is checked, and 1 job in 10 is re-executed in full. Pay is held 24 h first and clawed if a re-executed job from the same node fails.
+        Every answer is checked, and 1 job in 10 is re-executed in full. Pay is held 24 h first and clawed if a re-executed job from any of your nodes fails.
       </p>
 
       <Panel className="mt-6">

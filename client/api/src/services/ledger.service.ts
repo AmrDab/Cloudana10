@@ -38,8 +38,8 @@ export function releasesAt(epoch: number, epochSeconds = getEnv().EPOCH_SECONDS)
 /**
  * Where a verified job's entries go (ENGINEERING_BACKLOG B-6). With a hold they are booked into the epoch
  * PAY_HOLD_SECONDS ahead — fee and rewards together, so the fee still burns in the rewards' epoch — and stay pending,
- * clawable by a failed sampled check of the same node, until that epoch ends (heldUntil); lane B vests VEST_B_SECONDS
- * after that. PAY_HOLD_SECONDS = 0: the open epoch, vesting from now, nothing held.
+ * clawable by a failed sampled check of any node paying the same wallet, until that epoch ends (heldUntil); lane B
+ * vests VEST_B_SECONDS after that. PAY_HOLD_SECONDS = 0: the open epoch, vesting from now, nothing held.
  */
 function jobBooking(now: number): { epoch: number; heldUntil: number; vestsAt: number } {
   const env = getEnv();
@@ -233,7 +233,7 @@ export async function verifyCredits(address: string): Promise<number> {
 
 export interface LedgerSummary {
   pending: { A: number; B: number; treasury: number };
-  /** The part of pending A/B still in its check window (B-6): clawed if a sampled check of the same node fails. */
+  /** The part of pending A/B still in its check window (B-6): clawed if a sampled check of a node paying it fails. */
   held: { A: number; B: number };
   vesting: { B: number };
   settled: { A: number; B: number };

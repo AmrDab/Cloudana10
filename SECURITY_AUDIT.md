@@ -248,13 +248,13 @@ Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13
   over *its own* copy of A and B (not the node's, so int32 wrap cannot bind a different matrix) and checks `z` (B-6,
   `PROGRESS.md` entry 25). The draw is an HMAC keyed from `JWT_SECRET` over (job, σ): the node cannot tell before it
   submits. Every job's provider pay is booked 24 h ahead (`PAY_HOLD_SECONDS`); a sampled job with a right answer and a
-  wrong transcript keeps its result and burns its fee, but its A/B and every held A/B entry of the node are clawed and
-  the node is suspended. Freivalds proves **the answer is A·B** on every job; the transcript proves **the node did the
+  wrong transcript keeps its result and burns its fee, but its A/B and every held A/B entry of the node's payout
+  wallet (any of its nodes) are clawed and the node is suspended. Freivalds proves **the answer is A·B** on every job; the transcript proves **the node did the
   n³ work for this σ** on the sampled ones, and the hold makes skipping it a losing bet (a cheater is caught after 10
   jobs on average, 99 % within 44, and loses up to a day of pay). Neither proves who ran it, on what hardware, or that
   anything was kept confidential. Not covered by the claw: pay in the open epoch or already posted (jobs verified more
-  than ~23 h before the detection) needs the guardian veto; a node that rotates its address escapes the cross-job claw
-  but also resets its draw weight. Submit-path CPU at n = 256: ≈ 50× lower unsampled; ≈ 8–9× amortised at K = 10. Replay: σ is
+  than ~23 h before the detection) needs the guardian veto; an operator that spreads its nodes over several payout
+  wallets keeps the other wallets' held pay (each node caught is still suspended). Submit-path CPU at n = 256: ≈ 50× lower unsampled; ≈ 8–9× amortised at K = 10. Replay: σ is
   single-use per assignment and `cert_z` is stored; a certificate for another σ fails.
 - **Hosting / containers / endpoints.** *Probed*, not proven: a content hash (sites) or a health path (endpoints)
   fetched through the node's own relay socket every 60 s. Billing is for time a probe saw working. A node can serve

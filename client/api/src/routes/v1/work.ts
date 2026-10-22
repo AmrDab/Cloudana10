@@ -2,8 +2,8 @@
  * POST /v1/work/submit (node-signed) — certificate + result for an assigned job.
  * Checks, in order: assigned to this node & not expired · node bound · σ · A/B hash binding · result bound ·
  * Freivalds on the result · on a sampled 1 in VERIFY_SAMPLE_K, transcript re-execution. Failure → 422, jobs_failed++,
- * job re-queued — except a sampled job with a right result and a wrong transcript: 422, result kept, the node's held
- * pay clawed and the node suspended (ENGINEERING_BACKLOG B-6).
+ * job re-queued — except a sampled job with a right result and a wrong transcript: 422, result kept, the held pay of
+ * the node's payout wallet clawed and the node suspended (ENGINEERING_BACKLOG B-6).
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
@@ -48,8 +48,8 @@ const submitRoute = createRoute({
     "Node-signed. Returns the µCLD earned: lane A, and lane B as the most this job's subsidy can be (scaled pro rata " +
     "with every other job in the epoch if the epoch's budget binds; vesting until vestsAt). The result is Freivalds-checked " +
     "on every job and the transcript re-executed on a random 1 in 10 (default); the pay is held until heldUntil (24 h by " +
-    "default) and clawed, " +
-    "with every other held job of the node, if a sampled check of the node fails.",
+    "default) and clawed, with all held pay of the node's payout wallet, if a sampled check of a node paying that " +
+    "wallet fails.",
   middleware: [requireNode] as const,
   request: { body: { required: true, content: { "application/json": { schema: SubmitSchema } } } },
   responses: responses(
