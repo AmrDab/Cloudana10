@@ -8,14 +8,16 @@ import { api } from "@/lib/cld";
 import { btn } from "@/components/console/primitives";
 import { errText } from "@/components/console/actions";
 import { setSealState } from "./model";
+import type { NodeFleet } from "@/components/console/data";
 
 /** A deployment or an endpoint replica: the row the secrets are PATCHed to, and the node (and key) that will open them. */
-export type SealTarget = { id: string; node: string | null; nodePubkey?: string };
+export type SealTarget = { id: string; node: string | null; nodePubkey?: string; nodeFleet?: NodeFleet | null };
 
 /** Seal `secrets` to `target`'s node and PATCH them. Records the seal state under target.id; true on success. */
 export async function sealSecretsTo(target: SealTarget, secrets: Record<string, string>): Promise<boolean> {
   const node = target.node ?? undefined;
-  setSealState(target.id, { phase: "sealing", node });
+  const fleet = target.nodeFleet ?? null;
+  setSealState(target.id, { phase: "sealing", node, fleet });
   try {
     if (!target.node || !target.nodePubkey) throw new Error("No node is assigned yet.");
     // Loaded on demand: the crypto only ships to tabs that seal something.
@@ -31,10 +33,10 @@ export async function sealSecretsTo(target: SealTarget, secrets: Record<string, 
     // `node` makes the API refuse the payload if the deployment moved since this key was fetched (a race with a
     // re-queue): the next node could never open it.
     await api(`/deployments/${target.id}/secrets`, { method: "PATCH", auth: true, body: { sealedEnv, node: target.node } });
-    setSealState(target.id, { phase: "sealed", node, at: Date.now() });
+    setSealState(target.id, { phase: "sealed", node, fleet, at: Date.now() });
     return true;
   } catch (e) {
-    setSealState(target.id, { phase: "error", node, message: errText(e) });
+    setSealState(target.id, { phase: "error", node, fleet, message: errText(e) });
     return false;
   }
 }

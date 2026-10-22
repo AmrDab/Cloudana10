@@ -86,7 +86,11 @@ same effect).
 **B-9 · Fleet pinning for sensitive deployments (gap 9).** `spec.placement.fleetId` (owner's own fleet or a partner
 fleet the owner selected by id, never a node); assignment honours it; the console shows it before secrets are
 sealed. Acceptance: a pinned deployment is never assigned outside the fleet (test), and the sealing UI shows the
-fleet name next to the node address.
+fleet name next to the node address. **Done** (owner decision 2026-10-21, PROGRESS.md entry 24): containers,
+workstations and endpoints take `placement`; create refuses an unknown or revoked fleet; heartbeat assignment,
+pre-emption and the claim itself honour it; deployments show `placement` and the node's fleet (`nodeFleet`); the
+console pins from the deploy, workstation and endpoint forms and shows the fleet beside the node wherever secrets are
+sealed. Tests in `fleet-pinning.test.ts`.
 
 **B-10 · Home-node unbind and re-bind.** **Done in this pass** (PROGRESS.md commit 10): `DELETE /v1/nodes/mine/{address}`;
 test in `v1-network-nodes.test.ts`. The agent already prints a fresh bind link when its announce comes back unbound.

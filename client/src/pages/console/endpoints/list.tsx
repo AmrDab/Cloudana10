@@ -21,6 +21,7 @@ import { errText, signInWithToast } from "@/components/console/actions";
 import { DeployChip } from "@/pages/console/deploy/deployments";
 import { autoSeal, clearPendingSecrets, getSealState, pendingSecrets, savePendingSecrets, setSealState, useSealVersion } from "@/pages/console/deploy/model";
 import { sealSecretsTo, SecretsForm } from "@/pages/console/deploy/secrets";
+import { FleetTag } from "@/pages/console/deploy/fleet";
 import { ReportProblem } from "@/components/console/report-problem";
 import { LogsPanel } from "@/components/console/logs";
 import { EndpointKeys } from "./keys";
@@ -240,6 +241,7 @@ function Detail({ e }: { e: Endpoint }) {
             <dt className="text-faint">Image</dt><dd className="min-w-0 truncate text-text" title={d.spec.image}>{d.spec.image}</dd>
             <dt className="text-faint">Health</dt><dd className="text-text">GET {d.spec.health?.path ?? "/"} on port {d.spec.port}</dd>
             <dt className="text-faint">Cost</dt><dd className="text-text"><Cost e={d} /></dd>
+            {d.placement && (<><dt className="text-faint">Pinned</dt><dd className="break-all text-text">fleet {d.placement.fleetId}</dd></>)}
             <dt className="text-faint">Check</dt><dd className="text-muted-foreground">probed every minute; a failing replica is replaced</dd>
           </dl>
           <div className="flex flex-wrap gap-2">
@@ -265,7 +267,7 @@ function ReplicaRow({ r, n }: { r: Replica; n: number }) {
         <span className="flex items-center gap-2"><DeployChip status={r.status} /><span className="font-mono text-[12px] text-faint">#{n}</span></span>
         <span className="flex items-center gap-2 font-mono text-[12px] text-muted-foreground">
           <span>
-            {r.node ? <>node <Hash value={r.node} className="text-[12px]" /></> : "no node yet"}
+            {r.node ? <>node <Hash value={r.node} className="text-[12px]" /><FleetTag fleet={r.nodeFleet} /></> : "no node yet"}
             {r.probeOk != null && <> · <span className={r.probeOk ? "text-ok" : "text-burn"}>{r.probeOk ? "healthy" : "probe failed"}</span></>}
             {r.startedAt && r.status === "running" && <> · up {ago(r.startedAt, now).replace(" ago", "")}</>}
             {r.awaitingSecrets && !isTerminal(r.status) && (

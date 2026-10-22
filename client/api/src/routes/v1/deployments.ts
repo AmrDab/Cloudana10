@@ -50,6 +50,11 @@ export const deploymentsRouter = createRouter();
 const TAGS = ["Deployments"];
 
 const Status = z.enum(["queued", "assigned", "running", "unreachable", "stopped", "failed"]);
+const NodeFleetSchema = z.object({ id: z.string().nullable(), name: z.string().nullable() }).nullable().optional().openapi({
+  description:
+    "Once on a node: that node's fleet (the name its owner gave it; the id only when the fleet is yours or the one you pinned to — " +
+    "a fleet's id is its owner's to share; null = a node in no fleet), so you see it before sealing secrets",
+});
 const ReplicaSchema = z.object({
   id: z.string(),
   status: Status,
@@ -62,6 +67,7 @@ const ReplicaSchema = z.object({
     description: "GET /deployments/{id} only, once a node with a key holds the replica: seal its secrets to this key (check it derives to `node` first)",
   }),
   logs: z.string().optional().openapi({ description: "GET /deployments/{id} only: this replica's log tail from its last failure" }),
+  nodeFleet: NodeFleetSchema,
 });
 const DeploymentSchema = z.object({
   id: z.string(),
@@ -105,6 +111,8 @@ const DeploymentSchema = z.object({
   replicas: z.array(ReplicaSchema).optional().openapi({ description: "Endpoints: one entry per replica; status is derived from them" }),
   auth: z.enum(["public", "key"]).optional(),
   logs: z.string().optional().openapi({ description: "GET /deployments/{id} only: the node's log tail from the last failure" }),
+  placement: z.object({ fleetId: z.string() }).optional().openapi({ description: "Pinned (spec.placement): only nodes of this fleet run it" }),
+  nodeFleet: NodeFleetSchema,
 });
 const EventSchema = z.object({ at: z.number(), level: z.enum(["info", "warn", "error"]), message: z.string() });
 const IdParam = z.object({ id: z.string().uuid("Invalid deployment id") });
@@ -114,7 +122,10 @@ const CreateSchema = z.object({
   name: z.string().trim().min(1).max(80),
   kind: z.enum(["static", "container", "workstation", "endpoint"]),
   spec: z.record(z.unknown()).openapi({
-    description: "StaticSpec, ContainerSpec (V3 §3), WorkstationSpec (WORKSTATIONS §1) or EndpointSpec (V4_ENDPOINTS_CONTRACT), validated per kind",
+    description:
+      "StaticSpec, ContainerSpec (V3 §3), WorkstationSpec (WORKSTATIONS §1) or EndpointSpec (V4_ENDPOINTS_CONTRACT), validated per kind. " +
+      "Containers, workstations and endpoints take an optional placement: { fleetId } (flt_ + 16 hex): only nodes of that fleet — " +
+      "your own or a partner's, by the id they gave you — run it; never a single node. Static sites cannot be pinned.",
   }),
 });
 
@@ -128,7 +139,8 @@ const createRouteDef = createRoute({
     "its tier (standard | large | h100), at least the hosting price. The first hour is held from your credits " +
     "(× replicas for an endpoint). Static sites need index.html; ≤ 2 MB decoded (and ≤ 1.9 MB encoded — D1 row limit). " +
     "Container specs ≤ 32 KB. An endpoint (your image, one port, 1–8 replicas, auth key|public) is served at " +
-    "https://{id}.{SITES_DOMAIN} through the relay; priceUcldPerHour in the answer is for all replicas.",
+    "https://{id}.{SITES_DOMAIN} through the relay; priceUcldPerHour in the answer is for all replicas. " +
+    "spec.placement.fleetId must name a fleet that exists and is not revoked (400 otherwise); a fleet revoked later fails what is pinned to it.",
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: CreateSchema } } } },
   responses: responses(

@@ -18,7 +18,7 @@ import { NODE_STATES, announceNode, bindNode, bindNodeToFleet, getNode, listNode
 import { fleetForToken } from "../../services/fleets.service.js";
 import { getActiveAssignment } from "../../services/jobs.service.js";
 import { workTypeIds } from "../../services/work-types.js";
-import { nodeActivity, requeueAwaitingSecrets, runDeploymentDuties } from "../../services/deployment-duties.service.js";
+import { nodeActivity, requeueAwaitingSecrets, requeuePinnedOffFleet, runDeploymentDuties } from "../../services/deployment-duties.service.js";
 import { endpointAllowed } from "../../services/deployment-spec.js";
 import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signInstruction } from "../../services/instruction-signing.service.js";
 import { STORAGE_CAPABILITY, recordNodeNetwork, storageCapable, storageInstructions } from "../../services/storage.service.js";
@@ -154,6 +154,9 @@ nodesRouter.openapi(announceRoute, async (c) => {
   if (fleet) {
     const r = await bindNodeToFleet(node.address, fleet);
     if (!r.ok) return fail(c, r.code, r.message);
+    // On every fleet bind, not only on a detected move: work pinned to another fleet may not stay on this node (the
+    // query finds nothing when nothing is mispinned; the cron sweep requeueMispinned catches anything missed here).
+    await requeuePinnedOffFleet(node.address, fleet.id);
     return ok(c, { bound: true, payout: fleet.owner, bindCode: null, fleetId: fleet.id });
   }
   return ok(c, {

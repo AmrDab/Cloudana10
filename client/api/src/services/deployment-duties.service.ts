@@ -296,6 +296,55 @@ export async function requeueNodeDeployments(nodes: string[], reason: string, no
   return requeueRows(rows.results ?? [], reason, now);
 }
 
+/**
+ * B-9 sweep (every cron tick): any live deployment whose node is no longer in the fleet it is pinned to goes back to
+ * the queue — whatever moved the node (a fleet move whose hand-back failed, a direct database change). Idempotent.
+ */
+export async function requeueMispinned(now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare(
+      `SELECT d.* FROM deployments d JOIN nodes n ON n.address = d.node WHERE d.status IN ${LIVE} ` +
+        "AND json_extract(d.spec_json, '$.placement.fleetId') IS NOT NULL " +
+        "AND (n.fleet_id IS NULL OR n.fleet_id <> json_extract(d.spec_json, '$.placement.fleetId'))",
+    )
+    .all<DeploymentRow>();
+  return requeueRows(rows.results ?? [], "its node is no longer in the fleet it is pinned to", now);
+}
+
+/** B-9: a node that moved into another fleet hands back what is pinned to a different one (the pin is the fleet). */
+export async function requeuePinnedOffFleet(node: string, fleetId: string, now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare(
+      `SELECT * FROM deployments WHERE node = ? AND status IN ${LIVE} ` +
+        "AND json_extract(spec_json, '$.placement.fleetId') IS NOT NULL AND json_extract(spec_json, '$.placement.fleetId') <> ?",
+    )
+    .bind(normalizeAddress(node), fleetId)
+    .all<DeploymentRow>();
+  return requeueRows(rows.results ?? [], "its node moved to another fleet; the deployment is pinned to its own", now);
+}
+
+/**
+ * B-9: once a fleet is revoked no node can ever be in it again, so what is pinned to it could never be placed. It
+ * fails instead of waiting for ever on its owner's hold: the hold comes back, a node still holding it is owed a stop,
+ * and an endpoint fails with every replica. Run after the fleet's live deployments were re-queued.
+ */
+export async function failPinnedTo(fleetId: string, now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare(
+      "SELECT * FROM deployments WHERE kind = 'container' AND parent_id IS NULL AND status IN ('queued','assigned','running','unreachable') " +
+        "AND json_extract(spec_json, '$.placement.fleetId') = ?",
+    )
+    .bind(fleetId)
+    .all<DeploymentRow>();
+  const reason = `its fleet ${fleetId} was revoked; a pinned deployment runs on no other fleet`;
+  let n = 0;
+  for (const row of rows.results ?? []) {
+    if (row.replicas > 0) n += await failEndpoint(row.id, reason, now);
+    else if (await endDeployment(row, "failed", reason, { acked: false, level: "error", now })) n++;
+  }
+  return n;
+}
+
 type Queued = Pick<DeploymentRow, "id" | "kind" | "spec_json" | "sealed_env" | "workstation" | "parent_id">;
 const QUEUED_COLS = "id, kind, spec_json, sealed_env, workstation, parent_id, status_reason";
 
@@ -355,15 +404,17 @@ function addUsage(n: NodeState, r: Pick<DeploymentRow, "workstation" | "spec_jso
 async function claim(node: string, q: Queued, now: number, relayed: boolean): Promise<boolean> {
   // Workstations need WebSockets (Jupyter kernels, terminals), which the relay does not carry yet: they stay direct.
   relayed = relayed && !q.workstation;
+  const pin = q.kind === "container" ? specOf(q).placement?.fleetId ?? null : null;
   const db = getD1();
   const r = await db
     // The node's state is checked in the same statement: a suspension or drain that landed after this heartbeat's
-    // snapshot of the node row cannot be raced into a placement.
+    // snapshot of the node row cannot be raced into a placement. So is its fleet for a pinned deployment (B-9): an
+    // eviction or revocation since the snapshot cannot either.
     .prepare(
       "UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ?, relayed = ? WHERE id = ? AND status = 'queued' " +
-        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active')",
+        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active' AND (? IS NULL OR fleet_id = ?))",
     )
-    .bind(node, now, relayed ? 1 : 0, q.id, node)
+    .bind(node, now, relayed ? 1 : 0, q.id, node, pin, pin)
     .run();
   if ((r.meta?.changes ?? 0) === 0) return false;
   // Back on the node that lost it: its "start" replaces the owed stop.
@@ -382,11 +433,19 @@ async function claim(node: string, q: Queued, now: number, relayed: boolean): Pr
 const relayRunning = () => getRelay() !== null && !!getEnv().RELAY_TICKET_SECRET;
 /** The B-13 rule, shared by assign() and preemptForOnDemand(): may this node serve `q` given how it is reached? */
 const reachableFor = (q: Pick<Queued, "workstation">, relayed: boolean) => !!q.workstation || relayed || !relayRunning();
+/**
+ * The B-9 rule, shared by assign() and preemptForOnDemand() (claim() checks it again in its statement): a deployment
+ * pinned to a fleet (spec.placement.fleetId) runs only on a node of that fleet.
+ */
+const fleetAllows = (q: Pick<Queued, "spec_json">, fleetId: string | null) => {
+  const pin = specOf(q).placement?.fleetId;
+  return !pin || pin === fleetId;
+};
 
 /**
  * N2. Static sites go to any bound hosting node. Containers and workstations go only to nodes that announced
  * `container` AND belong to a fleet (testnet: home nodes do compute + static hosting only). While the relay runs, a
- * node off the relay takes workstations only.
+ * node off the relay takes workstations only. A deployment pinned to a fleet (B-9) goes only to that fleet's nodes.
  */
 async function assign(
   node: string,
@@ -436,6 +495,7 @@ async function assign(
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
     if (q.workstation && !publicHost) continue; // workstations stay direct (WebSockets, SSH): a verified public host only
     if (!reachableFor(q, relayed)) continue; // sites and containers are served through the relay
+    if (!fleetAllows(q, fleetId)) continue; // pinned to another fleet
     if (carriesSecrets(q) && !opensSealedV2(agentVersion)) continue; // its secrets are bound to the deployment; this agent cannot open them
     if (q.parent_id && !(await replicaFits(node, q, relayed, capabilities))) continue;
     if (fits(q, state) && (await claim(node, q, now, relayed))) addUsage(state, q, 1);
@@ -474,10 +534,10 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .all<Queued>();
   if (!queued.results?.length) return 0;
   const nodes = await db
-    .prepare("SELECT address, work_types, manifest_json, public_host, agent_version FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND state = 'active' AND last_seen >= ?")
+    .prepare("SELECT address, work_types, manifest_json, public_host, agent_version, fleet_id FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND state = 'active' AND last_seen >= ?")
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
-    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null; agent_version: string | null }>();
-  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean; relayed: boolean };
+    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null; agent_version: string | null; fleet_id: string }>();
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean; relayed: boolean; fleetId: string };
   const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
@@ -488,12 +548,14 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
       publicHost: !!n.public_host,
       sealedV2: opensSealedV2(n.agent_version),
       relayed: caps.includes("relay"),
+      fleetId: n.fleet_id,
     });
   }
   // Same rules as assign(): workstations only on a verified public host; secrets only on an agent that opens them;
-  // while the relay runs, a node off it serves workstations only (so nothing is preempted for work it cannot take).
+  // while the relay runs, a node off it serves workstations only; a pinned deployment only on its fleet's nodes (so
+  // nothing is preempted for work the node cannot take).
   const canTake = (q: Queued, s: Candidate) =>
-    (!q.workstation || s.publicHost) && (!carriesSecrets(q) || s.sealedV2) && reachableFor(q, s.relayed);
+    (!q.workstation || s.publicHost) && (!carriesSecrets(q) || s.sealedV2) && reachableFor(q, s.relayed) && fleetAllows(q, s.fleetId);
   const live = await db.prepare(`SELECT * FROM deployments WHERE kind = 'container' AND status IN ${LIVE}`).all<DeploymentRow>();
   for (const r of live.results ?? []) {
     const s = r.node ? states.get(r.node) : undefined;
@@ -1017,6 +1079,8 @@ export async function runDeploymentDuties(
 
 export interface DutiesCronResult {
   requeued: number;
+  /** B-9: live deployments taken back from a node no longer in the fleet they are pinned to. */
+  mispinned: number;
   /** Assigned deployments taken back from a node that never started them (or failed after DEPLOY_START_ATTEMPTS). */
   stuck: number;
   preempted: number;
@@ -1049,9 +1113,10 @@ export async function runDutiesCron(env?: CronBindings, now = Date.now()): Promi
     if (changed) resetEnv();
     initStorage(env.DB, env.CLOUDANA_KV);
   }
-  const out: DutiesCronResult = { requeued: 0, stuck: 0, preempted: 0, assigned: 0 };
+  const out: DutiesCronResult = { requeued: 0, mispinned: 0, stuck: 0, preempted: 0, assigned: 0 };
   const steps: [keyof DutiesCronResult, () => Promise<number>][] = [
     ["requeued", () => requeueDeadNodeDeployments(now)],
+    ["mispinned", () => requeueMispinned(now)],
     ["stuck", () => requeueStuckAssigned(now)],
     ["preempted", () => preemptForOnDemand(now)],
     ["assigned", () => runAssignment(now)],

@@ -100,7 +100,9 @@ const deleteFleetRoute = createRoute({
   method: "delete",
   path: "/fleets/{id}",
   tags: TAGS,
-  description: "Revoke (idempotent). New announces with this token get 401; the fleet's nodes are unbound and their live deployments re-queued.",
+  description:
+    "Revoke (idempotent). New announces with this token get 401; the fleet's nodes are unbound and their live deployments re-queued. " +
+    "Deployments pinned to this fleet (spec.placement.fleetId, any owner's) fail and their holds are released.",
   security: BEARER_AUTH,
   request: { params: IdParam },
   responses: responses(

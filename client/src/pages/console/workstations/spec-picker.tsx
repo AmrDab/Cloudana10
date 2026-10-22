@@ -14,6 +14,7 @@ import {
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { EnvironmentCards, hasSsh, hasWeb } from "./templates";
+import { FleetPin, placementOf, useFleetPin } from "@/pages/console/deploy/fleet";
 
 // ── Options ─────────────────────────────────────────────────────────────────
 const GPU_COUNTS = [0, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -58,6 +59,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
   const [volumeOn, setVolumeOn] = useState(true);
   const [volumeGb, setVolumeGb] = useState(20);
   const [keepDays, setKeepDays] = useState(3);
+  const pin = useFleetPin();
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -83,7 +85,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
     : !Number.isFinite(hours) || hours < 1 || hours > 720 ? "Duration is 1 hour to 30 days."
     : volumeOn && (volumeGb < 1 || volumeGb > 500) ? "Volume is 1–500 GB."
     : volumeOn && (keepDays < 0 || keepDays > 30) ? "Keep the volume 0–30 days."
-    : null;
+    : pin.error;
 
   const draft: Draft = { preset, gpuCount, gpuTier, tier, volumeGb: volumeOn ? volumeGb : null };
   const price = hourly(prices, draft);
@@ -110,6 +112,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
       maxHours: Math.round(hours),
       access: { ...(webOn ? { web: tpl.access!.web! } : {}), ...(useSsh ? { ssh: { publicKey: key } } : {}) },
       ...(volumeOn ? { volume: { sizeGb: volumeGb, keepDays } } : {}),
+      ...placementOf(pin),
     };
     try {
       const r = await api<{ id: string; priceUcldPerHour: number; deploymentStatus: string }>("/deployments", {
@@ -264,6 +267,10 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
               <NumberField label="Size" unit="GB" min={1} max={500} value={volumeGb} onChange={setVolumeGb} disabled={!volumeOn} />
               <NumberField label="Keep after stop" unit="days" min={0} max={30} value={keepDays} onChange={setKeepDays} disabled={!volumeOn} />
             </div>
+          </Section>
+
+          <Section label="Run only on a fleet">
+            <div className="max-w-md"><FleetPin pin={pin} id="ws-fleet" showError={touched} /></div>
           </Section>
 
           <Section label="Name">
