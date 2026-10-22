@@ -4,6 +4,20 @@ This is the consensus of a Fable review panel: token economics, payments and dem
 `CAPABILITY_MATRIX.md` for what is live, built or still waiting on an owner step (contract deploy and keeper:
 `docs/OWNER_RUNBOOK.md`; the relay secret, gateway domain and first node are done since 2026-10-18). The text below is kept as the decision record.
 
+> **Decided (2026-10-21, owner: "go with your recommendations"; options in `docs/OWNER_RUNBOOK.md` §A):**
+> 1. **Subsidy (lane B) stays per settlement epoch (one hour)**, pro rata within the epoch, as built. No weekly pool,
+>    no contract change: the v2 contracts deploy as they are.
+> 2. **Verification sampling (B-6):** Freivalds on every job; the full transcript is re-executed on a random 1 in 10
+>    jobs; every job's provider pay is held 24 h and clawed if its sampled check fails (the node is flagged).
+> 3. **`/control/legacy` (B-3):** removed entirely; the pricing calculator and the decentralization page return later
+>    as rewritten console pages.
+> 4. **Fleet pinning (B-9):** a deployment may be pinned to the owner's own fleet or to a partner fleet chosen by its
+>    fleet id shown in the console — never to a single node.
+> 5. **Direct (public-IP) node mode (B-13):** the relay is the default for every node; direct mode stays only for GPU
+>    workstations until the relay tunnels WebSockets, then it is retired.
+> 6. **Node #1 on Azure for Students credit:** kept while CLD is test-only; moved to pay-as-you-go before CLD has any
+>    value (that subscription restricts crypto mining).
+
 ## In one paragraph
 Only one event creates CLD: a verified, paid job.
 - The customer's CLD fee goes into escrow and is burned at settlement.

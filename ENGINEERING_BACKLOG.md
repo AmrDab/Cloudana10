@@ -158,12 +158,11 @@ public reads) still count in KV (two operations per request); when the quota is 
 memory. Move them to the Workers rate-limiting binding the gateway already uses (`KEY_LIMIT`), one binding per bucket.
 Node routes and the polled read buckets already count per isolate.
 
-## Decisions needed from the owner
+## Owner decisions (decided 2026-10-21: "go with your recommendations"; `docs/DECISIONS_CONSENSUS.md` top note)
 
-1. Which `/control/legacy` pages survive (B-3). Recommendation: none; the pricing calculators and decentralization page
-   move to the main console as rewritten pages. Note (review, commit 16): several legacy hooks call API routes that
-   this branch removed (they were Node-only and never deployed), so those pages already fail on use.
-2. Fleet pinning semantics (B-9): can a customer pin to a partner fleet they do not own? Recommendation: yes, by fleet
-   id shown in the console, never by node.
-3. Whether to keep direct (public-IP) node mode at all once the relay is live (B-13). Recommendation: retire it.
-4. Weekly lane-B pool vs per-epoch (contract change) — before the v2 deploy (open in `tasks/todo.md`).
+1. `/control/legacy` (B-3): **none survive**; the pricing calculator and the decentralization page come back as
+   rewritten console pages.
+2. Fleet pinning (B-9): **yes**, to the owner's own fleet or a partner fleet by its fleet id, never to a node.
+3. Direct node mode (B-13): **relay by default; direct only for GPU workstations** until the relay tunnels WebSockets.
+4. Lane-B pool: **per epoch (one hour), as built**; no contract change before the v2 deploy.
+5. Verification (B-6): **1-in-10 sampled re-execution, 24 h pay hold, claw on a failed check.**

@@ -394,7 +394,7 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 
 ## Subsidy pro rata (owner approved 2026-10-13)
 - [x] Lane B recorded as ρF per job; closeEpochs scales an over-budget epoch pro rata (fitLaneB); tests (API 288)
-- [ ] Owner: weekly pool needs a CloudanaSettlementV2 change (per-epoch lane-B cap); decide before the contract is deployed (runbook step 4)
+- [x] Owner decided 2026-10-21: lane B stays per epoch (no contract change); the v2 contracts deploy as they are
 
 ## PoUW fixes (owner go 2026-10-13) · docs/POUW_REVIEW.md §7 "Now"
 - [x] Bound C to ±n·maxAbsEntry(n)² so mod-p Freivalds is exact (C + p·K refused)
@@ -424,3 +424,10 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [x] Agent 1.4.0 storage role (PR #42); the agent image build had failed on main since #29 (shared/gpu-tier.ts missing from the Docker context) — fixed, PRs now build the image; 1.4.0 published
 - [ ] Owner: STORAGE_KEK with the step-2 secrets; then storage nodes (CLOUDANA_STORAGE_GB) start holding copies
 - [ ] Phase 2 (buckets): after the content domain (step 8) and the DMCA agent (step 11)
+
+## Owner decisions 2026-10-21 ("go with your recommendations") · docs/DECISIONS_CONSENSUS.md top note
+- [ ] B-3: remove /control/legacy (routes, pages, hooks, links); calculator + decentralization page rewritten later
+- [ ] B-6: Freivalds every job; full re-execution on a random 1 in 10; provider pay held 24 h, clawed on a failed sample, node flagged
+- [ ] B-9: spec.placement.fleetId (own fleet or partner fleet by id); assignment honours it; console shows the fleet before sealing
+- [ ] B-13: relay is the default for every node; direct mode only for GPU workstations until relay WebSocket tunnelling
+- [ ] Owner side: runbook steps 1, 3–7, 11–13 (contracts v2, keeper, escrow, aliases, DMCA, plan, Pinata/Stripe leftovers)
