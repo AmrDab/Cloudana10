@@ -380,6 +380,8 @@ async function claim(node: string, q: Queued, now: number, relayed: boolean): Pr
  * relay (local stacks, the Node runtime) direct nodes serve everything, as before.
  */
 const relayRunning = () => getRelay() !== null && !!getEnv().RELAY_TICKET_SECRET;
+/** The B-13 rule, shared by assign() and preemptForOnDemand(): may this node serve `q` given how it is reached? */
+const reachableFor = (q: Pick<Queued, "workstation">, relayed: boolean) => !!q.workstation || relayed || !relayRunning();
 
 /**
  * N2. Static sites go to any bound hosting node. Containers and workstations go only to nodes that announced
@@ -397,8 +399,7 @@ async function assign(
   agentVersion: string | null,
 ): Promise<void> {
   const db = getD1();
-  const workstationsOnly = !relayed && relayRunning();
-  if (capabilities.includes("hosting") && !workstationsOnly) {
+  if (capabilities.includes("hosting") && reachableFor({ workstation: 0 }, relayed)) {
     const live = await db
       .prepare(`SELECT COUNT(*) AS n FROM deployments WHERE node = ? AND kind = 'static' AND status IN ${LIVE}`)
       .bind(node)
@@ -434,7 +435,7 @@ async function assign(
     if (state.containers >= NODE_CAPACITY.container) break;
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
     if (q.workstation && !publicHost) continue; // workstations stay direct (WebSockets, SSH): a verified public host only
-    if (workstationsOnly && !q.workstation) continue; // sites and containers are served through the relay
+    if (!reachableFor(q, relayed)) continue; // sites and containers are served through the relay
     if (carriesSecrets(q) && !opensSealedV2(agentVersion)) continue; // its secrets are bound to the deployment; this agent cannot open them
     if (q.parent_id && !(await replicaFits(node, q, relayed, capabilities))) continue;
     if (fits(q, state) && (await claim(node, q, now, relayed))) addUsage(state, q, 1);
@@ -476,15 +477,23 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .prepare("SELECT address, work_types, manifest_json, public_host, agent_version FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND state = 'active' AND last_seen >= ?")
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
     .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null; agent_version: string | null }>();
-  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean };
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean; relayed: boolean };
   const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
     if (!caps.includes("container")) continue;
-    states.set(n.address, { ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")), victims: [], publicHost: !!n.public_host, sealedV2: opensSealedV2(n.agent_version) });
+    states.set(n.address, {
+      ...nodeState(caps, JSON.parse(n.manifest_json ?? "{}")),
+      victims: [],
+      publicHost: !!n.public_host,
+      sealedV2: opensSealedV2(n.agent_version),
+      relayed: caps.includes("relay"),
+    });
   }
-  // Same rules as assign(): workstations only on a verified public host; secrets only on an agent that opens them.
-  const canTake = (q: Queued, s: Candidate) => (!q.workstation || s.publicHost) && (!carriesSecrets(q) || s.sealedV2);
+  // Same rules as assign(): workstations only on a verified public host; secrets only on an agent that opens them;
+  // while the relay runs, a node off it serves workstations only (so nothing is preempted for work it cannot take).
+  const canTake = (q: Queued, s: Candidate) =>
+    (!q.workstation || s.publicHost) && (!carriesSecrets(q) || s.sealedV2) && reachableFor(q, s.relayed);
   const live = await db.prepare(`SELECT * FROM deployments WHERE kind = 'container' AND status IN ${LIVE}`).all<DeploymentRow>();
   for (const r of live.results ?? []) {
     const s = r.node ? states.get(r.node) : undefined;

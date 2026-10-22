@@ -13,7 +13,7 @@ import { setRelay, type RelayFetch } from "../src/lib/relay.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld } from "../src/services/balance.service.js";
-import { reportDeploymentStatus } from "../src/services/deployment-duties.service.js";
+import { preemptForOnDemand, reportDeploymentStatus } from "../src/services/deployment-duties.service.js";
 import { verifyTicket } from "../../../shared/relay-ticket.js";
 
 const SECRET = "r".repeat(40);
@@ -333,6 +333,26 @@ describe("what goes through the relay", () => {
     expect(await depRow(site)).toMatchObject({ status: "queued" });
     expect(await depRow(box)).toMatchObject({ status: "queued" });
     expect(await depRow(ws)).toMatchObject({ status: "assigned", node: addr, relayed: 0 });
+  });
+
+  it("while the relay runs, nothing is preempted on a node off it for work that node cannot take", async () => {
+    setRelay(async () => new Response("{}", { status: 200 }));
+    const addr = await directNode();
+    await getD1().prepare("UPDATE nodes SET state = 'active', last_seen = ? WHERE address = ?").bind(Date.now(), addr).run();
+    await getD1().prepare("UPDATE deployments SET status = 'stopped', stop_acked_at = 1 WHERE status IN ('queued','running')").run();
+    // An interruptible workstation fills the direct node; an on-demand plain container waits.
+    const victim = crypto.randomUUID();
+    const big = { image: "nginx:1", ports: [{ container: 80 }], cpu: 8000, memMb: 8192, storageMb: 512, tier: "interruptible", maxHours: 5, access: { web: { port: 80 } }, gpu: { count: 0 } };
+    await getD1()
+      .prepare(
+        "INSERT INTO deployments (id, owner, name, kind, spec_json, price_ucld_per_hour, status, created_at, started_at, workstation, node) " +
+          "VALUES (?, ?, 'v', 'container', ?, 100, 'running', ?, ?, 1, ?)",
+      )
+      .bind(victim, "0x" + "d".repeat(40), JSON.stringify(big), Date.now(), Date.now(), addr)
+      .run();
+    await queueContainer(0);
+    expect(await preemptForOnDemand()).toBe(0);
+    expect(await depRow(victim)).toMatchObject({ status: "running" });
   });
 
   it("without a relay (local stacks), a direct node still serves sites and containers", async () => {
