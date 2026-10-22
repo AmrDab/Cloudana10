@@ -24,12 +24,12 @@ when the next step is ready.
 
 | ✔ | Step | Time | Needs | Tell Claude |
 |---|---|---|---|---|
-| ☐ | A. Six decisions (in chat) | 10 min | — | your answers, or "go with your recommendations" |
+| ✔ | A. Six decisions | — | decided 2026-10-21: the recommendations | — |
 | ☐ | 0. Set up PowerShell | 5 min | — | — |
 | ☐ | 1. Kill the old Alchemy key (skip if you already did) | 5 min | Alchemy login | "Alchemy done" |
 | ✔ | 2. Three API secrets | — | done 2026-10-18 | — |
 | ☐ | 3. MetaMask, five accounts, test ETH, a Safe | 30 min | Browser | the Safe and Poster addresses |
-| ☐ | 4. Deploy the contracts (after decision A1) | 15 min | Deployer key | "contracts deployed" |
+| ☐ | 4. Deploy the contracts | 15 min | Deployer key | "contracts deployed" |
 | ☐ | 5. Switch on the keeper (after Claude says ready) | 10 min | Poster key | "keeper secrets done" |
 | ☐ | 6. Fund the escrow | 10 min | Safe owners 1 and 2 | "escrow funded" |
 | ☐ | 7. Email aliases privacy@ and abuse@ | 5 min | Microsoft 365 admin | "aliases done" |
@@ -38,9 +38,10 @@ when the next step is ready.
 | ☐ | 10. A container / GPU node | later | a suitable machine | "GPU node ready" |
 | ☐ | 11. DMCA agent and dmca@ (~$6) | 20 min, before storage phase 2 | copyright.gov account, Microsoft 365 admin | "DMCA agent registered" |
 | ☐ | 12. Confirm the Cloudflare plan | 2 min | Cloudflare login | "plan is Free" or "plan is Paid" |
+| ☐ | 13. Old Pinata key and the unused Stripe keys | 10 min | Pinata and Stripe logins | "Pinata and Stripe done" |
 
-Steps 1, 7, 11 and 12 don't depend on anything else; do them whenever you have a few minutes. Steps 3 → 4 → 5 → 6
-must go in that order, and step 4 waits for your answer to decision A1.
+Steps 1, 7, 11, 12 and 13 don't depend on anything else; do them whenever you have a few minutes. Steps 3 → 4 → 5 → 6
+must go in that order.
 
 ---
 
@@ -80,10 +81,10 @@ must go in that order, and step 4 waits for your answer to decision A1.
 
 ---
 
-## A. Six decisions (answer in chat, 10 min)
+## A. Six decisions — decided 2026-10-21
 
-Claude's recommendation is marked ★. Reply with your choice for each, or just **"go with your recommendations"**.
-Only **A1** blocks anything (step 4); the rest steer what Claude builds next.
+You chose the recommendations (★) on 2026-10-21; they're recorded at the top of `docs/DECISIONS_CONSENSUS.md`. The
+options stay here for reference. A1 means step 4 can go ahead with the contracts exactly as they are.
 
 **A1. How the subsidy pool is counted — before the contracts are deployed.**
 Besides their 95 % of each fee, providers get a small subsidy ("lane B", up to 4 % of the fee) from a budget.
@@ -247,7 +248,7 @@ hourly posting.
 
 ---
 
-## Step 4: Deploy the contracts (15 min; after decision A1)
+## Step 4: Deploy the contracts (15 min)
 
 **Why:** this puts the new CLD token and the settlement contract on Base Sepolia, controlled by your Safe. They
 replace the old contracts, whose key leaked.
@@ -491,6 +492,35 @@ things.
 you can do it). Nothing is broken today.
 
 ✅ Tell Claude: **"plan is Paid"** or **"plan is Free"**.
+
+---
+
+## Step 13: The old Pinata key and the unused Stripe keys (10 min)
+
+**Why:** the review of the March leak listed a **Pinata** key (IPFS file pinning) among the exposed values. Cloudana
+doesn't use Pinata today (no `PINATA_JWT` is set; the feature is off), so the old key should simply stop working.
+Separately, the API Worker still holds three **Stripe** secrets from before (`STRIPE_SECRET_KEY`,
+`STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`). Card payments are switched off (`STRIPE_ENABLED` is unset), so
+nothing uses them, and a key nobody uses is a risk with no benefit.
+
+**Do — Pinata:**
+1. Go to **https://app.pinata.cloud** and sign in. (No account, or you can't sign in? Then there's nothing to do.)
+2. In the left menu open **API Keys**.
+3. Click **Revoke** (or the trash icon) on every key. Cloudana doesn't need any of them.
+
+**Do — Stripe:**
+1. Go to **https://dashboard.stripe.com** and sign in.
+2. Open **Developers → API keys**. If you use Stripe for **anything else**, stop here and just tell Claude; the
+   secrets on Cloudana's Worker can still be removed.
+3. If Stripe is only for Cloudana: next to the **Secret key**, click **⋯ → Roll key**, choose **Now** and confirm. The
+   old key stops working at once.
+4. Open **Developers → Webhooks**. If an endpoint points to `api.cloudana.io`, click it and choose **Delete**.
+
+**You should see:** no Pinata keys listed, and in Stripe a new secret key (don't copy it anywhere: Cloudana doesn't
+need it).
+
+✅ Tell Claude: **"Pinata and Stripe done"**. Claude then removes the three unused `STRIPE_*` secrets from the API
+Worker. When card payments are wanted one day, they go back with fresh values.
 
 ---
 
