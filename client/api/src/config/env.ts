@@ -75,6 +75,11 @@ export const envSchema = z.object({
   EPOCH_SUBSIDY_BUDGET_UCLD: int(7_300_000),
   NODE_ACTIVE_SECONDS: int(45),
   ASSIGNMENT_TTL_SECONDS: int(60),
+  // Sampled verification (ENGINEERING_BACKLOG B-6): Freivalds on every matmul job; the full transcript is re-executed
+  // on a random 1 in VERIFY_SAMPLE_K (1 = every job). A job's provider pay is booked into the epoch PAY_HOLD_SECONDS
+  // ahead and clawed if a sampled check of that node fails meanwhile (0 = no hold; else at least EPOCH_SECONDS).
+  VERIFY_SAMPLE_K: int(10),
+  PAY_HOLD_SECONDS: int(86_400),
   /** Source of the assignment seed (latest block hash). Unset → local fallback seed. */
   CHAIN_RPC_URL: z.string().url().optional(),
   /** v2 CloudanaSettlement on Base Sepolia; the Deposited watcher is inactive while unset. */
@@ -156,6 +161,12 @@ export function getEnv(): Env {
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`);
     throw new Error(`Invalid environment configuration:\n${lines.join("\n")}`);
+  }
+  // A hold shorter than one epoch could book a job into the open epoch, where the claw (epochs after the current one)
+  // never reaches it.
+  const { PAY_HOLD_SECONDS: hold, EPOCH_SECONDS: epoch } = parsed.data;
+  if (hold < 0 || (hold > 0 && hold < epoch)) {
+    throw new Error(`Invalid environment configuration:\n  PAY_HOLD_SECONDS: must be 0 or at least EPOCH_SECONDS (${epoch}), got ${hold}`);
   }
   if (parsed.data.JWT_SECRET.length < 32) {
     log.config.warn("JWT_SECRET is shorter than 32 characters — rotate to a longer random value");

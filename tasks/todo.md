@@ -427,7 +427,7 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 
 ## Owner decisions 2026-10-21 ("go with your recommendations") · docs/DECISIONS_CONSENSUS.md top note
 - [x] B-3: remove /control/legacy (routes, pages, hooks, links); calculator + decentralization page rewritten later
-- [ ] B-6: Freivalds every job; full re-execution on a random 1 in 10; provider pay held 24 h, clawed on a failed sample, node flagged
+- [x] B-6: Freivalds every job; full re-execution on a random 1 in 10; provider pay held 24 h, clawed on a failed sample, node flagged (PROGRESS 25; deploy the keeper before the API)
 - [x] B-9: spec.placement.fleetId (own fleet or partner fleet by id); assignment honours it; console shows the fleet before sealing (PROGRESS 24)
 - [x] B-13: relay is the default for every node; direct mode only for GPU workstations until relay WebSocket tunnelling (PROGRESS 23)
 - [ ] Owner side: runbook steps 1, 3–7, 11–13 (contracts v2, keeper, escrow, aliases, DMCA, plan, Pinata/Stripe leftovers)

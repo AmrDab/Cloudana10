@@ -191,6 +191,32 @@ describe("runOnce lifecycle", () => {
     expect(api.payloads.get(1000)!.status).toBe("settled");
   });
 
+  it("an all-clawed epoch (no leaves, fees to burn) is posted with the zero root, finalized and settled with no claims", async () => {
+    const { chain, api, deps } = world();
+    // What the API closes when every provider entry of an epoch was clawed (B-6): the fees still burn, the treasury
+    // still mints, and the root is epochRoot(epoch, []) = the zero root.
+    api.closeQueue = [{ epoch: 1000, root: zeroHash, leaves: [], totalLaneAUcld: 0, totalLaneBUcld: 0, treasuryUcld: 31, feesBurnedUcld: 1001, status: "closed" }];
+    let r = await runOnce(deps);
+    expect(r.epochs).toEqual([{ epoch: 1000, action: "posted", txHash: expect.any(String) }]);
+    expect(await chain.getEpoch(1000n)).toMatchObject({
+      status: EpochStatus.Posted, root: zeroHash, totalLaneA: 0n, totalLaneB: 0n, treasuryAmount: 31n * UCLD_TO_WEI, feesBurned: 1001n * UCLD_TO_WEI,
+    });
+    expect(api.payloads.get(1000)!.status).toBe("posted");
+
+    chain.time += VETO;
+    r = await runOnce(deps);
+    expect(r.epochs[0]).toMatchObject({ action: "finalized", claims: 0, settled: true });
+    expect(chain.txs.map((t) => t.fn)).toEqual(["postEpoch", "finalize"]);
+    expect(api.payloads.get(1000)!.status).toBe("settled");
+    expect(api.calls).toContain(`settled:1000:0x${"2".padStart(64, "0")}`); // the finalize tx
+
+    // Still checked against the rebuilt (zero) root: an empty epoch with any other root is not posted.
+    const other = world();
+    other.api.closeQueue = [{ ...api.payloads.get(1000)!, root: `0x${"ab".repeat(32)}` as Hex, status: "closed" }];
+    expect((await runOnce(other.deps)).epochs[0]).toMatchObject({ action: "skipped", reason: expect.stringMatching(/root mismatch/) });
+    expect(other.chain.txs).toEqual([]);
+  });
+
   it("a clawed (void) lane B counts as settled and is never claimed", async () => {
     const { chain, api, deps } = world();
     api.closeQueue = [payload(1000, [{ account: A, laneAUcld: 10, laneBUcld: 5 }, { account: B, laneAUcld: 10, laneBUcld: 5 }])];

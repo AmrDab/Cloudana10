@@ -1,10 +1,12 @@
 /**
  * End-to-end check of the v1 work pipeline against a running API (default: a local `wrangler dev --port 8790 --local`;
- * the Node runtime works too: `DEV_MODE=true CLUSTER_N_MIN=1 EPOCH_SECONDS=10 VEST_B_SECONDS=5 INTERNAL_API_KEY=… PORT=8790 npx tsx src/index.ts`).
+ * the Node runtime works too: `DEV_MODE=true CLUSTER_N_MIN=1 EPOCH_SECONDS=10 VEST_B_SECONDS=5 PAY_HOLD_SECONDS=10
+ * VERIFY_SAMPLE_K=1 INTERNAL_API_KEY=… PORT=8790 npx tsx src/index.ts`).
  *
  * Run: API=http://127.0.0.1:8790 INTERNAL_API_KEY=… npx tsx scripts/dev/e2e-v1.ts
  * (INTERNAL_API_KEY / EPOCH_SECONDS are read from .dev.vars when not in the environment.)
- * For a quick run set EPOCH_SECONDS=10 and VEST_B_SECONDS=5 on the API.
+ * For a quick run set EPOCH_SECONDS=10, VEST_B_SECONDS=5 and PAY_HOLD_SECONDS=10 on the API (the default 24 h hold would
+ * make the script wait a day for the epoch close); VERIFY_SAMPLE_K=1 re-executes every transcript.
  *
  * What it proves (TEST_EVIDENCE.md scenarios 2–7, off-chain part): wallet sign-in; test credits; a node announces
  * (signed, nonce'd requests) and binds a payout wallet with the bind code; a job is priced, held, assigned by the
@@ -91,11 +93,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Jobs this node solved honestly, with what each earned (side jobs included: the single node takes whatever the draw assigns). */
 const solved = new Map<string, { laneAUcld: number; laneBUcld: number; priceUcld: number }>();
 const prices = new Map<string, number>();
+/** The latest end of a paid job's check window (B-6): its epoch can close only after it. */
+let heldUntil = 0;
 
 async function solveAndSubmit(node: PrivateKeyAccount, assignment: any): Promise<Res> {
   const { certificate, result } = solveAssignedJob(assignment.sigma, assignment.matrixA, assignment.matrixB, assignment.n, node.address, "e2e");
   const submit = await nodeCall(node, "/v1/work/submit", { jobId: assignment.jobId, certificate, result });
-  if (submit.s === 200) solved.set(assignment.jobId, { ...submit.b.earned, priceUcld: prices.get(assignment.jobId) ?? 0 });
+  if (submit.s === 200) {
+    solved.set(assignment.jobId, { ...submit.b.earned, priceUcld: prices.get(assignment.jobId) ?? 0 });
+    heldUntil = Math.max(heldUntil, submit.b.heldUntil ?? 0);
+  }
   return submit;
 }
 
@@ -236,9 +243,9 @@ async function main() {
   });
   check(verdict.b?.correct === true && verdict.b.credits === 1, `verify task (n=${task.b.n}, truth ${truth}) → ${JSON.stringify(verdict.b)}`);
 
-  // Wait until the epoch of the last job has ended.
+  // Wait until the epoch of the last job has ended, and with it the jobs' check window (PAY_HOLD_SECONDS).
   const doneAt = Date.now();
-  const waitUntil = (Math.floor(doneAt / EPOCH_MS) + 1) * EPOCH_MS + 1000;
+  const waitUntil = Math.max((Math.floor(doneAt / EPOCH_MS) + 1) * EPOCH_MS, heldUntil) + 1000;
   console.log(`     waiting ${Math.ceil((waitUntil - Date.now()) / 1000)} s for the epoch to end…`);
   await sleep(waitUntil - Date.now());
 

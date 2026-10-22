@@ -30,6 +30,25 @@ export function epochOf(ms: number, epochSeconds = getEnv().EPOCH_SECONDS): numb
   return Math.floor(ms / (epochSeconds * 1000));
 }
 
+/** End of epoch `epoch` (ms): from then on closeEpochs may close it. */
+export function releasesAt(epoch: number, epochSeconds = getEnv().EPOCH_SECONDS): number {
+  return (epoch + 1) * epochSeconds * 1000;
+}
+
+/**
+ * Where a verified job's entries go (ENGINEERING_BACKLOG B-6). With a hold they are booked into the epoch
+ * PAY_HOLD_SECONDS ahead — fee and rewards together, so the fee still burns in the rewards' epoch — and stay pending,
+ * clawable by a failed sampled check of the same node, until that epoch ends (heldUntil); lane B vests VEST_B_SECONDS
+ * after that. PAY_HOLD_SECONDS = 0: the open epoch, vesting from now, nothing held.
+ */
+function jobBooking(now: number): { epoch: number; heldUntil: number; vestsAt: number } {
+  const env = getEnv();
+  if (env.PAY_HOLD_SECONDS === 0) return { epoch: epochOf(now), heldUntil: now, vestsAt: now + env.VEST_B_SECONDS * 1000 };
+  const epoch = epochOf(now + env.PAY_HOLD_SECONDS * 1000);
+  const heldUntil = releasesAt(epoch);
+  return { epoch, heldUntil, vestsAt: heldUntil + env.VEST_B_SECONDS * 1000 };
+}
+
 export interface LaneSplit {
   laneA: number;
   treasury: number;
@@ -81,6 +100,8 @@ export interface JobRewards {
   treasuryUcld: number;
   vestsAt: number;
   epoch: number;
+  /** When the job's pay leaves its check window (= the end of `epoch`; the submit time without a hold). */
+  heldUntil: number;
 }
 
 /** Write the reward entries for one verified job. Zero-amount entries are skipped. */
@@ -94,14 +115,13 @@ export async function recordJobRewards(input: {
 }): Promise<JobRewards> {
   const env = getEnv();
   const now = input.now ?? Date.now();
-  const epoch = epochOf(now);
+  const { epoch, heldUntil, vestsAt } = jobBooking(now);
   // The epoch budget is applied pro rata when the epoch closes (fitLaneB), not here.
   const split = splitFee(input.feeUcld, {
     rho: env.SUBSIDY_RHO,
     clusterOk: input.clusterOk,
     budgetRemaining: Number.MAX_SAFE_INTEGER,
   });
-  const vestsAt = now + env.VEST_B_SECONDS * 1000;
   await insertLanes(input.jobId, epoch, input.workType, [
     ["A", normalizeAddress(input.provider), split.laneA],
     ["treasury", TREASURY_ACCOUNT, split.treasury],
@@ -115,41 +135,42 @@ export async function recordJobRewards(input: {
       .bind(crypto.randomUUID(), input.jobId, epoch, normalizeAddress(input.provider), input.workType, split.subsidy, vestsAt, now)
       .run();
   }
-  return { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch };
+  return { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch, heldUntil };
 }
 
 /**
  * The reward entries of one verified job as prepared statements, each conditioned on the job row carrying
  * `fee_captured_at = capturedAt`: submitWork writes them in the same transaction as the capture, so they exist exactly
- * when the fee was taken and never for a fee that was not.
+ * when the fee was taken and never for a fee that was not. `clawed`: the job failed its sampled transcript check — its
+ * A/B entries are written already clawed; the treasury entry stays pending, so the fee is still burned.
  */
 export function jobRewardStatements(
   input: { jobId: string; workType: string; provider: string; feeUcld: number; clusterOk: boolean; now?: number },
-  cond: { capturedAt: number; node: string },
+  cond: { capturedAt: number; node: string; clawed?: boolean },
 ): { statements: D1PreparedStatement[]; rewards: JobRewards } {
   const env = getEnv();
   const now = input.now ?? Date.now();
-  const epoch = epochOf(now);
+  const { epoch, heldUntil, vestsAt } = jobBooking(now);
   const split = splitFee(input.feeUcld, { rho: env.SUBSIDY_RHO, clusterOk: input.clusterOk, budgetRemaining: Number.MAX_SAFE_INTEGER });
-  const vestsAt = now + env.VEST_B_SECONDS * 1000;
   const provider = normalizeAddress(input.provider);
+  const providerStatus = cond.clawed ? "clawed" : "pending";
   const db = getD1();
-  const rows: [Lane, string, number, number][] = [
-    ["A", provider, split.laneA, now],
-    ["treasury", TREASURY_ACCOUNT, split.treasury, now],
-    ["B", provider, split.subsidy, vestsAt],
+  const rows: [Lane, string, number, number, string][] = [
+    ["A", provider, split.laneA, now, providerStatus],
+    ["treasury", TREASURY_ACCOUNT, split.treasury, now, "pending"],
+    ["B", provider, split.subsidy, vestsAt, providerStatus],
   ];
   const statements = rows
     .filter(([, , amount]) => amount > 0)
-    .map(([lane, address, amount, vests]) =>
+    .map(([lane, address, amount, vests, status]) =>
       db
         .prepare(
           "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
-            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ? WHERE EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ? AND status = 'assigned' AND node = ?)",
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ? AND status = 'assigned' AND node = ?)",
         )
-        .bind(crypto.randomUUID(), input.jobId, epoch, address, lane, input.workType, amount, vests, now, input.jobId, cond.capturedAt, cond.node),
+        .bind(crypto.randomUUID(), input.jobId, epoch, address, lane, input.workType, amount, vests, status, now, input.jobId, cond.capturedAt, cond.node),
     );
-  return { statements, rewards: { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch } };
+  return { statements, rewards: { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch, heldUntil } };
 }
 
 /** Insert the non-zero A/treasury entries of one job or bill (vests_at = now: lane A has no vest). */
@@ -212,8 +233,12 @@ export async function verifyCredits(address: string): Promise<number> {
 
 export interface LedgerSummary {
   pending: { A: number; B: number; treasury: number };
+  /** The part of pending A/B still in its check window (B-6): clawed if a sampled check of the same node fails. */
+  held: { A: number; B: number };
   vesting: { B: number };
   settled: { A: number; B: number };
+  /** Taken back: by a failed sampled check, or by an operator. */
+  clawed: { A: number; B: number };
   credits: number;
   entries: {
     id: string;
@@ -223,6 +248,8 @@ export interface LedgerSummary {
     workType: string;
     amountUcld: number;
     vestsAt: number;
+    /** When a held entry leaves its check window (the end of its epoch); null when it is not held. */
+    releasesAt: number | null;
     status: string;
     createdAt: number;
   }[];
@@ -230,23 +257,30 @@ export interface LedgerSummary {
 
 /**
  * pending = earned, not yet settled on-chain (status pending or posted), per lane.
- * vesting.B = the part of pending B whose vests_at is still in the future.
+ * held = the part of pending A/B still pending in an epoch that has not ended (only while PAY_HOLD_SECONDS > 0).
+ * vesting.B = the part of pending B, not held, whose vests_at is still in the future.
  */
 export async function ledgerSummary(address: string, now = Date.now()): Promise<LedgerSummary> {
   const key = address.toLowerCase();
   const db = getD1();
+  // Entries from this epoch on are held; without a hold nothing is (the open epoch's entries are simply pending).
+  const heldFrom = getEnv().PAY_HOLD_SECONDS > 0 ? epochOf(now) : Number.MAX_SAFE_INTEGER;
+  const held = "status = 'pending' AND epoch >= ?3";
   const sums = await db
     .prepare(
-      "SELECT lane, status, SUM(amount_ucld) AS total, SUM(CASE WHEN vests_at > ? THEN amount_ucld ELSE 0 END) AS unvested " +
-        "FROM reward_entries WHERE address = ? GROUP BY lane, status",
+      `SELECT lane, status, SUM(amount_ucld) AS total, SUM(CASE WHEN ${held} THEN amount_ucld ELSE 0 END) AS held, ` +
+        `SUM(CASE WHEN vests_at > ?1 AND NOT (${held}) THEN amount_ucld ELSE 0 END) AS unvested ` +
+        "FROM reward_entries WHERE address = ?2 GROUP BY lane, status",
     )
-    .bind(now, key)
-    .all<{ lane: Lane; status: string; total: number; unvested: number }>();
+    .bind(now, key, heldFrom)
+    .all<{ lane: Lane; status: string; total: number; held: number; unvested: number }>();
 
   const out: LedgerSummary = {
     pending: { A: 0, B: 0, treasury: 0 },
+    held: { A: 0, B: 0 },
     vesting: { B: 0 },
     settled: { A: 0, B: 0 },
+    clawed: { A: 0, B: 0 },
     credits: 0,
     entries: [],
   };
@@ -255,9 +289,12 @@ export async function ledgerSummary(address: string, now = Date.now()): Promise<
       out.credits += r.total;
     } else if (r.status === "pending" || r.status === "posted") {
       out.pending[r.lane] += r.total;
+      if (r.lane === "A" || r.lane === "B") out.held[r.lane] += r.held;
       if (r.lane === "B") out.vesting.B += r.unvested;
     } else if (r.status === "settled" && (r.lane === "A" || r.lane === "B")) {
       out.settled[r.lane] += r.total;
+    } else if (r.status === "clawed" && (r.lane === "A" || r.lane === "B")) {
+      out.clawed[r.lane] += r.total;
     }
   }
 
@@ -283,6 +320,7 @@ export async function ledgerSummary(address: string, now = Date.now()): Promise<
     workType: r.work_type,
     amountUcld: r.amount_ucld,
     vestsAt: r.vests_at,
+    releasesAt: r.status === "pending" && (r.lane === "A" || r.lane === "B") && r.epoch >= heldFrom ? releasesAt(r.epoch) : null,
     status: r.status,
     createdAt: r.created_at,
   }));

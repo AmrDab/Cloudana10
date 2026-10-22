@@ -13,8 +13,10 @@ const LedgerSchema = z.object({
   status: z.literal("success"),
   address: z.string(),
   pending: z.object({ A: z.number().int(), B: z.number().int(), treasury: z.number().int() }),
+  held: z.object({ A: z.number().int(), B: z.number().int() }),
   vesting: z.object({ B: z.number().int() }),
   settled: z.object({ A: z.number().int(), B: z.number().int() }),
+  clawed: z.object({ A: z.number().int(), B: z.number().int() }),
   credits: z.number().int(),
   entries: z.array(
     z.object({
@@ -25,6 +27,7 @@ const LedgerSchema = z.object({
       workType: z.string(),
       amountUcld: z.number().int(),
       vestsAt: z.number(),
+      releasesAt: z.number().nullable(),
       status: z.string(),
       createdAt: z.number(),
     }),
@@ -35,7 +38,10 @@ const ledgerRoute = createRoute({
   method: "get",
   path: "/ledger/{address}",
   tags: ["Ledger"],
-  description: "pending = earned, not yet settled on-chain; vesting.B = the part of pending B not yet vested.",
+  description:
+    "pending = earned, not yet settled on-chain; held = the part of pending A/B still in its 24 h check window " +
+    "(clawed if a sampled re-execution of the node's work fails; per entry, releasesAt says when the window ends); " +
+    "vesting.B = the part of pending B, not held, not yet vested; clawed = taken back.",
   request: { params: z.object({ address: EthAddressSchema }) },
   responses: responses({ 200: json(LedgerSchema, "Ledger summary") }, 400),
 });

@@ -13,7 +13,7 @@ in `PROGRESS.md`.
 | 2 | ~~Nothing is publicly reachable~~ — **closed 2026-10-18**: relay secrets set, gateway on `cloudana.run`, first public node (Azure) online | Deploy flows end at a URL that does not resolve; hosting cannot be demonstrated or billed honestly | Public workloads, hosting, endpoints, storage copies | S | High | **Yes** (runbook 8–10) |
 | 3 | **Control plane = one Worker + one D1 with ~12 statements per heartbeat** | Capacity ceiling in the low hundreds of nodes; cost grows linearly; one bad query locks everyone | Scale beyond a pilot | M | Medium (unmeasured) | No |
 | 4 | **No independent verification of the orchestrator**: leaves, seeds and σ stored but not published/signed; roadmap phase 1 unmet | "Progressively decentralizing" is a claim nobody can check; litmus FAIL | Mainnet, partner datacenters | M | High | No |
-| 5 | **Verification cost = work cost** (full transcript re-execution per matmul job, in the Worker) | Orchestrator CPU scales with every paid job; large n is unaffordable; blocks raising `MATMUL_N_MAX` | Compute product growth | M | High | No |
+| 5 | ~~**Verification cost = work cost** (full transcript re-execution per matmul job, in the Worker)~~ — **closed 2026-10-21** (B-6): Freivalds on every job, the transcript on a random 1 in 10, pay held 24 h | Orchestrator CPU scales with every paid job; large n is unaffordable; blocks raising `MATMUL_N_MAX` | Compute product growth | M | High | No |
 | 6 | **Auth is a 24 h HS256 JWT with no revocation or scopes; console and SDK share it** | A leaked token is a full account for a day; no API keys for programs | Developer API, SDK/CLI | M | High | No |
 | 7 | **Containers/GPU only on fleet nodes that pass xfs-pquota + iptables; no datacenter node exists** | The AI product (endpoints, workstations) has zero capacity; home nodes cannot run it by design | AI inference, workstations | Owner hardware + S | High | **Yes** (runbook 10) |
 | 8 | ~~**Marketplace-era legacy UI still reachable under `/control/legacy`** (27 pages, 19 k lines) with vocabulary the owner rejected~~ — **closed 2026-10-21**: removed (B-3), old paths redirect to `/control` | Contradicts the product on a reachable route; maintenance drag; was the source of two tsc errors | Developer experience, honest claims | S–M (decision + delete) | High | Decision |
@@ -61,10 +61,16 @@ with a counting D1 wrapper (idle 13 → 5 statements, steady busy 13 → 5, prob
 slower dead-node detection. Acceptance for the rest: 50 simulated nodes for 10 minutes without D1 errors, statements
 per minute recorded.
 
-**B-6 · Verification cost (gap 5).** Freivalds on every job (n²), full transcript re-execution on a random 1-in-k
-with the job's earnings delayed until the check and clawed on failure (`docs/POUW_REVIEW.md` §7). Acceptance:
-orchestrator CPU per job drops ≥ 10× at n = 256 in a benchmark; a planted wrong transcript is caught within k jobs in
-a property test; claw path covered.
+**B-6 · Verification cost (gap 5).** **Done** (PROGRESS.md entry 25; owner decision 2026-10-21): Freivalds and the
+binding checks on every job (n²); the full transcript re-executed, inside `submitWork`, on a random 1 in
+`VERIFY_SAMPLE_K` = 10 (HMAC keyed from `JWT_SECRET` over job id and σ: the node cannot tell before it submits); every
+job's provider pay booked `PAY_HOLD_SECONDS` = 24 h ahead and, on a failed sampled check, clawed together with the
+node's other held pay while the fees still burn; the node is suspended. Acceptance (restated with that decision):
+submit-path CPU ≥ 10× lower at n = 256 in a benchmark — measured ≈ 50× (≈ 1.1 s → ≈ 22 ms; the amortised figure
+(a)/((b) + (a)/K) is ≈ 8.4× at K = 10 and can never exceed K); a planted wrong transcript is always caught, after a
+mean of ≤ k jobs and 99 % within 44 at k = 10 — probabilistic by design (a hard bound needs a predictable draw), in a
+property test over 400 runs; claw path covered, including the keeper posting an all-clawed epoch with the zero root
+(`tests/sampled-verification.test.ts`, `tests/verify-cost.test.ts`, `keeper/test/run.test.ts`).
 
 **B-7 · Developer auth and API keys (gap 6).** **Done in this pass** (PROGRESS.md commit 12; SECURITY_AUDIT F8):
 `POST`/`GET /v1/keys`, `DELETE /v1/keys/{id}` (`cld_sk_…`, sha256 stored, scopes `read`/`jobs`/`deployments`, optional

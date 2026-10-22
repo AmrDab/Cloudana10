@@ -452,12 +452,53 @@ that remained:
   itself (the list row lags); long fleet names are cut with the full label as tooltip. Tests 9 (the 3 new ones
   fail on the PR's first commit); API 402.
 
+### 25 · sampled verification: Freivalds every job, transcript 1 in 10, pay held 24 h, claw on a failed check (B-6, owner decision 2026-10-21)
+- **Sampling.** `submitWork` runs the cheap checks on every job (σ, n, r, A/B hashes, the C bound, Freivalds) and
+  re-executes the transcript (`cupowVerify`) only when `sampledForCheck(jobId, σ)` draws it: the first 32 bits of
+  HMAC-SHA256 over `jobId:σ`, keyed by `sha256("cloudana-sample:" + JWT_SECRET)`, are 0 mod `VERIFY_SAMPLE_K` (10;
+  1 = every job). The node knows the job and σ but not the key; σ carries a fresh nonce, so a re-queued job is drawn
+  again. Re-execution stays synchronous in the request (≈ 1.1 s CPU at n = 256, as every submit paid before). A passed
+  sample is never disclosed to the node (`work_jobs.sample_check` = NULL | 'passed' | 'failed' is internal).
+- **Hold.** A job's A, treasury and B entries are booked into `epochOf(now + PAY_HOLD_SECONDS)` (24 h), so the fee and
+  the rewards stay in one epoch and `closeEpochs` needs no change: it closes them 24–25 h after submit. Lane B vests
+  from that epoch's end. `PAY_HOLD_SECONDS` = 0 restores the previous booking exactly; 0 < hold < `EPOCH_SECONDS` is
+  refused at startup (the claw could not reach a job booked into the open epoch). Hosting bills are not held.
+- **Claw.** A sampled job with a right answer (every cheap check passed) and a wrong transcript: the result is kept,
+  the job marked done with `sample_check = 'failed'`, the fee captured, its treasury entry written pending and its A/B
+  written clawed; in the same batch every pending A/B entry of the node's other done jobs in an epoch after the open
+  one is clawed (race-free with `closeEpochs`, which only closes earlier epochs). `jobs_failed + 1`, no `jobs_done` or
+  throughput credit; the node is suspended through the B-8 path with reason "sampled transcript check failed on job
+  <id>"; the node gets 422. Clawed jobs' fees still burn (treasury entries are never clawed), so every epoch stays
+  within the contract's bounds. A wrong C or a bad header keeps the reject-and-requeue path. Scope is the node, not
+  the payout wallet.
+- **Keeper.** An epoch whose provider entries were all clawed closes with `leaves = []` and fees > 0; the keeper used to
+  skip it ("no leaves"; `buildTree` throws on empty). It now posts it with the zero root the API computes
+  (`epochRoot([])`), finalizes it (burn + treasury mint) and settles it with no claims. The v2 contracts are unchanged.
+  **Deploy the keeper before the API.**
+- **Provider view.** `POST /v1/work/submit` returns `heldUntil`; `GET /v1/ledger/{address}` adds `held {A,B}`,
+  `clawed {A,B}` and per-entry `releasesAt`, and `vesting.B` excludes held entries. Console Earnings: a "Held" tile
+  (24 h check window), "In settlement" = pending − held − vesting, rows "held until …" or "clawed", one caption line.
+  Console docs, the FAQ, `ARCHITECTURE.md` and `SECURITY_AUDIT.md` §4 no longer say every job is re-executed.
+- **Schema.** `work_jobs.sample_check TEXT`; `idx_reward_entries_job` (the claw and `epochJobs`). Env:
+  `VERIFY_SAMPLE_K` (10), `PAY_HOLD_SECONDS` (86400).
+- **Tests.** `sampled-verification.test.ts` (10): sampler 1/10 ± 0.3 % over 100k pairs, K = 1 samples all, the draw
+  changes with σ and with the key; a planted wrong transcript (n = 8, K = 10) caught in each of 400 runs, mean jobs
+  to detection in [8, 12] (≈ 10), ≥ 96 % within 44; K = 1 catches the first job; hold (booked into epochOf(t + 24 h),
+  nothing closes at t + 1 h, it closes with its fee at t + 25 h; a short hold is refused); claw path (3 held + the
+  failing job clawed, a released (posted) job and an open-epoch job untouched, treasury pending, node suspended,
+  payloads within T·10⁴ ≥ F·300, (A+T)·10⁴ ≤ F·9800, B ≤ budget, `epochJobs` sums = payload, all-clawed epochs with the
+  zero root, `/v1/network` deltas). `verify-cost.test.ts` measures CPU at n = 256: with the transcript ≈ 1.1 s, without
+  ≈ 22 ms (≈ 50×), a whole unsampled `submitWork` ≈ 31 ms (≈ 35×); amortised at K = 10 ≈ 8.4×. Keeper: an all-clawed
+  epoch is posted with the zero root, finalized and settled. Existing ledger/replay tests that close a job's own epoch
+  run with `PAY_HOLD_SECONDS = 0`. The new tests fail on the previous behaviour (checked by restoring it). API 413
+  tests, keeper 29.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
 |---|---|---|
-| client/api vitest | 330 | **402** |
-| gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / 28 |
+| client/api vitest | 330 | **413** |
+| gateway / relay / keeper | 28 / 14 / 28 | 28 / 14 / **29** |
 | node-agent selftests | 8 pass | **9 pass** (sealed 26 checks; relay e2e 27; ops 20) |
 | contracts | 224 (offline solc) | 224 |
 | repo-root tsc | 2 errors | **clean** |
@@ -472,7 +513,7 @@ that remained:
 | 2 | Nothing publicly reachable | **Closed 2026-10-18.** Relay secrets set, gateway live at `https://<id>.cloudana.run`, first node (Azure, relay; agent 1.4.1 then, 1.6.0 since 2026-10-20) online; hosting is live. |
 | 3 | D1 heartbeat cost | Measured and cut 13 → 5 statements per idle/steady beat (commit 10, pinned by a test); the architecture limit (one D1) remains. |
 | 4 | Orchestrator not independently checkable | Largely closed for phase 1: draws published with their eligible set (`GET /v1/draws/{id}`), epochs published with leaves and a signature (`GET /v1/epochs/{n}`), `/v1/network` signed, `scripts/verify/replay.ts` checks all of it from public data; seeds are block hashes once `CHAIN_RPC_URL` deploys. Left: signing individual draws, pull-based assignment (B-17). |
-| 5 | Verification cost = work cost | Open (B-6). |
+| 5 | Verification cost = work cost | **Closed 2026-10-21** (entry 25, B-6): Freivalds on every job, the transcript re-executed on a random 1 in 10 (submit-path CPU ≈ 50× lower at n = 256), pay held 24 h and clawed on a failed check. |
 | 6 | Auth without revocation/scopes | Closed for the API (commit 12): scoped API keys, logout revocation, secret rotation; a refresh-token flow is a product choice left open. |
 | 7 | No fleet/GPU node | A first public node is live (Azure VM, compute + hosting + storage over the relay, no GPU). A container/GPU fleet node is still the owner's (runbook 10). |
 | 8 | Legacy UI reachable | **Closed 2026-10-21** (entry 22): `/control/legacy` removed, old paths redirect to `/control`. |
@@ -498,9 +539,8 @@ that remained:
 
 ## Next priorities (engineering, no owner input needed)
 
-B-15 custom domains (needs the owner's Cloudflare for SaaS setup) → B-6 verification cost (Freivalds-only with
-sampled re-execution) → B-5 follow-up (liveness off D1, 30 s beats) once a real load test exists → wallet-stack and
-Hardhat-toolchain majors (SECURITY_AUDIT §3b).
+B-15 custom domains (needs the owner's Cloudflare for SaaS setup) → B-5 follow-up (liveness off D1, 30 s beats) once
+a real load test exists → wallet-stack and Hardhat-toolchain majors (SECURITY_AUDIT §3b).
 
 ## Not done, and why
 

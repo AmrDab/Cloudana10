@@ -4,7 +4,7 @@ import { ExternalLink, Wallet } from "lucide-react";
 import { Link } from "wouter";
 import { cld } from "@/lib/cld";
 import {
-  btn, Bone, Empty, Hash, MonoLabel, PageHeader, Panel, PanelHeader, Pill, RelTime, Tile, Unavailable, Updated,
+  absTime, btn, Bone, Empty, Hash, MonoLabel, PageHeader, Panel, PanelHeader, Pill, RelTime, Tile, Unavailable, Updated,
   freshRow, useDelayed, useFreshIds,
 } from "@/components/console/primitives";
 import { isUnavailable, useLedger, useSession, type LedgerEntry } from "@/components/console/data";
@@ -17,6 +17,7 @@ const LANE: Record<string, [string, "ok" | "work" | "chain" | "muted"]> = {
   verify: ["verifier credit", "chain"],
 };
 const STATUS: Record<string, "muted" | "work" | "chain" | "ok" | "burn"> = { pending: "muted", posted: "chain", settled: "ok", clawed: "burn" };
+const HELD_UNTIL = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 export default function EarningsPage() {
   const session = useSession();
@@ -41,7 +42,9 @@ function Earnings({ address }: { address: string }) {
   const ledger = useLedger(address);
   const l = ledger.data;
   const loading = ledger.isLoading;
-  const inSettlement = l ? l.pending.A + l.pending.B - l.vesting.B : null;
+  // `held` is new in the API (B-6): read it defensively while an older API is still deployed.
+  const held = l ? (l.held?.A ?? 0) + (l.held?.B ?? 0) : null;
+  const inSettlement = l ? l.pending.A + l.pending.B - (held ?? 0) - l.vesting.B : null;
   const settled = l ? l.settled.A + l.settled.B : null;
   return (
     <>
@@ -58,7 +61,8 @@ function Earnings({ address }: { address: string }) {
           </div>
         }
       />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <Tile label="Held" value={held} unit="cld" loading={loading} tone="work" caption="24 h check window" />
         <Tile label="In settlement" value={inSettlement} unit="cld" loading={loading} tone="chain" caption="Verified, batch not final" />
         <Tile label="Vesting" value={l?.vesting.B} unit="cld" loading={loading} tone="work" caption="Subsidy, before it settles" />
         <Tile label="Settled" value={settled} unit="cld" loading={loading} tone="ok" caption="Final on Base" />
@@ -66,6 +70,9 @@ function Earnings({ address }: { address: string }) {
       </div>
       <p className="mt-3 font-mono text-[12px] text-faint">
         Minted per verified job. Posted to Base in batches; subsidy vests first. The keeper claims for you once a batch is final.
+      </p>
+      <p className="mt-1 font-mono text-[12px] text-faint">
+        Every answer is checked, and 1 job in 10 is re-executed in full. Pay is held 24 h first and clawed if a re-executed job from the same node fails.
       </p>
 
       <Panel className="mt-6">
@@ -119,7 +126,15 @@ function LedgerTable({ entries, loading, error }: { entries?: LedgerEntry[]; loa
                 <td className="px-5 py-3 max-sm:p-0 max-sm:text-right"><Pill tone={tone}>{lane}</Pill></td>
                 <td className="px-5 py-3 text-right font-mono tabular-nums text-text max-sm:p-0 max-sm:text-left">{amount}</td>
                 <td className="px-5 py-3 font-mono text-[13px] tabular-nums text-muted-foreground max-sm:hidden">#{e.epoch}</td>
-                <td className="px-5 py-3 max-sm:p-0 max-sm:text-right"><Pill tone={STATUS[e.status] ?? "muted"}>{e.status}</Pill></td>
+                <td className="px-5 py-3 max-sm:p-0 max-sm:text-right">
+                  {e.releasesAt ? (
+                    <Pill tone="work">
+                      <span title={absTime(e.releasesAt)}>held<span className="max-sm:hidden"> until</span> {HELD_UNTIL.format(new Date(e.releasesAt))}</span>
+                    </Pill>
+                  ) : (
+                    <Pill tone={STATUS[e.status] ?? "muted"}>{e.status}</Pill>
+                  )}
+                </td>
                 <td className="px-5 py-3 max-sm:hidden"><RelTime ms={e.createdAt} /></td>
               </tr>
             );

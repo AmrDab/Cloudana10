@@ -144,14 +144,19 @@ export type LedgerEntry = {
   workType: string;
   amountUcld: number;
   vestsAt: number;
+  /** When a held entry leaves its 24 h check window; null when it is not held. */
+  releasesAt: number | null;
   status: string; // pending → posted → settled (or clawed)
   createdAt: number;
 };
 export type Ledger = {
   address: string;
   pending: { A: number; B: number; treasury: number };
+  /** Part of pending A/B still in its check window (clawed if a sampled re-execution of the node's work fails). */
+  held: { A: number; B: number };
   vesting: { B: number };
   settled: { A: number; B: number };
+  clawed: { A: number; B: number };
   credits: number;
   entries: LedgerEntry[];
 };

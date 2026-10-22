@@ -51,8 +51,10 @@ current quote. Assignment is a weighted random draw over eligible, bound, recent
 sha256(seed_source ‖ job id)`, `seed_source` = latest Base block hash (`CHAIN_RPC_URL`) or a flagged local fallback;
 σ binds job, node, nonce and seed; `eligible_hash` records who was eligible. Weight is verified throughput (EMA),
 never the self-reported benchmark. Submit: assigned-to-this-node and unexpired → node bound → certificate σ/n/r and
-A/B hash → Freivalds (n²) → transcript re-execution over the API's own A, B (n³) → `done`, capture, rewards.
-Three failed verifications fail the job and release the hold.
+A/B hash → Freivalds (n²) → on a random 1 in `VERIFY_SAMPLE_K` (10), transcript re-execution over the API's own A, B
+(n³) → `done`, capture, rewards booked `PAY_HOLD_SECONDS` (24 h) ahead. Three failed verifications fail the job and
+release the hold. A sampled job with a right answer and a wrong transcript is kept and charged, but its A/B and every
+held A/B entry of the node are clawed and the node is suspended (B-6).
 
 **Deployments** (`deployments.service.ts`, `deployment-duties.service.ts`): `queued → assigned → running ⇄ unreachable
 → stopped | failed`. Create validates the spec, prices it in USD at the current table, converts to µCLD once, holds the

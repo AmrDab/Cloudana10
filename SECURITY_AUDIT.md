@@ -243,13 +243,19 @@ Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13
 ## 4. Verification and settlement (what the proofs do and do not establish)
 
 - **Matmul (cuPOW).** The orchestrator issues σ bound to (job, node, nonce, seed). The node computes the noisy block
-  product with transcript hash; the API re-executes the transcript over *its own* copy of A and B (not the node's,
-  so int32 wrap cannot bind a different matrix), checks `z`, and Freivalds-checks the answer (2 rounds, exact over the
-  integers because results are bounded to ±n·bound²). The transcript proves **the node did the n³ work for this σ**;
-  Freivalds proves **the answer is A·B**. Neither proves who ran it, on what hardware, or that anything was kept
-  confidential. Verification costs the orchestrator the same n³ as the work (full re-execution) — the planned
-  "Freivalds every job, transcript 1-in-k with delayed earnings" (`docs/POUW_REVIEW.md` §7) is the cost fix and is not
-  built. Replay: σ is single-use per assignment and `cert_z` is stored; a certificate for another σ fails.
+  product with transcript hash. The API Freivalds-checks the answer of every job (2 rounds, exact over the integers
+  because results are bounded to ±n·bound²) and, on a random 1 in `VERIFY_SAMPLE_K` (10), re-executes the transcript
+  over *its own* copy of A and B (not the node's, so int32 wrap cannot bind a different matrix) and checks `z` (B-6,
+  `PROGRESS.md` entry 25). The draw is an HMAC keyed from `JWT_SECRET` over (job, σ): the node cannot tell before it
+  submits. Every job's provider pay is booked 24 h ahead (`PAY_HOLD_SECONDS`); a sampled job with a right answer and a
+  wrong transcript keeps its result and burns its fee, but its A/B and every held A/B entry of the node are clawed and
+  the node is suspended. Freivalds proves **the answer is A·B** on every job; the transcript proves **the node did the
+  n³ work for this σ** on the sampled ones, and the hold makes skipping it a losing bet (a cheater is caught after 10
+  jobs on average, 99 % within 44, and loses up to a day of pay). Neither proves who ran it, on what hardware, or that
+  anything was kept confidential. Not covered by the claw: pay in the open epoch or already posted (jobs verified more
+  than ~23 h before the detection) needs the guardian veto; a node that rotates its address escapes the cross-job claw
+  but also resets its draw weight. Submit-path CPU at n = 256: ≈ 50× lower unsampled; ≈ 8–9× amortised at K = 10. Replay: σ is
+  single-use per assignment and `cert_z` is stored; a certificate for another σ fails.
 - **Hosting / containers / endpoints.** *Probed*, not proven: a content hash (sites) or a health path (endpoints)
   fetched through the node's own relay socket every 60 s. Billing is for time a probe saw working. A node can serve
   the probe path correctly and other paths badly; nothing checks that, by design (fees only, no subsidy).
