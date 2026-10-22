@@ -154,8 +154,9 @@ nodesRouter.openapi(announceRoute, async (c) => {
   if (fleet) {
     const r = await bindNodeToFleet(node.address, fleet);
     if (!r.ok) return fail(c, r.code, r.message);
-    // Moved here from another fleet of the same wallet: work pinned to that one may not stay on it.
-    if (node.fleet_id && node.fleet_id !== fleet.id) await requeuePinnedOffFleet(node.address, fleet.id);
+    // On every fleet bind, not only on a detected move: work pinned to another fleet may not stay on this node (the
+    // query finds nothing when nothing is mispinned; the cron sweep requeueMispinned catches anything missed here).
+    await requeuePinnedOffFleet(node.address, fleet.id);
     return ok(c, { bound: true, payout: fleet.owner, bindCode: null, fleetId: fleet.id });
   }
   return ok(c, {

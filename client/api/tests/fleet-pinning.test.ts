@@ -12,7 +12,7 @@ import { getD1 } from "../src/lib/storage.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
-import { preemptForOnDemand } from "../src/services/deployment-duties.service.js";
+import { preemptForOnDemand, runDutiesCron } from "../src/services/deployment-duties.service.js";
 
 let app: ReturnType<typeof buildApp>;
 let seq = 0;
@@ -270,8 +270,9 @@ describe("what the owner sees", () => {
   });
 
   it("a node that moves to another fleet of the same wallet hands back work pinned to its old fleet", async () => {
-    const acme = await fleet(alice, "acme");
-    const created = await authed(alice.jwt, "POST", "/v1/fleets", { name: "acme2" });
+    const op = await user(); // its own fleets: an owner may hold at most 10 live ones
+    const acme = await fleet(op, "acme");
+    const created = await authed(op.jwt, "POST", "/v1/fleets", { name: "acme2" });
     const token = (await created.json()).token as string;
     const bob = await user();
     const n = await node(CONTAINER_NODE, acme);
@@ -292,13 +293,31 @@ describe("what the owner sees", () => {
     expect(await row(id)).toMatchObject({ status: "queued", node: null });
   });
 
+  it("the cron hands back pinned work from a node that left its fleet by any other route", async () => {
+    const op = await user(); // its own fleets: an owner may hold at most 10 live ones
+    const acme = await fleet(op, "acme");
+    const other = await fleet(op, "other");
+    const bob = await user();
+    const n = await node(CONTAINER_NODE, acme);
+    const id = await createId(bob.jwt, "container", CONTAINER({ fleetId: acme.id }));
+    await beat(n);
+    expect(await row(id)).toMatchObject({ status: "assigned", node: addr(n) });
+    // The node's fleet changed without the bind route's hand-back (e.g. it died half-way).
+    await getD1().prepare("UPDATE nodes SET fleet_id = ? WHERE address = ?").bind(other.id, addr(n)).run();
+    const out = await runDutiesCron();
+    expect(out.mispinned).toBe(1);
+    expect(await row(id)).toMatchObject({ status: "queued", node: null });
+    expect((await runDutiesCron()).mispinned).toBe(0); // idempotent
+  });
+
   it("a revoke retried after a half failure still fails what is pinned to the fleet", async () => {
-    const acme = await fleet(alice, "acme");
+    const op = await user(); // its own fleets: an owner may hold at most 10 live ones
+    const acme = await fleet(op, "acme");
     const bob = await user();
     const id = await createId(bob.jwt, "container", CONTAINER({ fleetId: acme.id }));
     // The first revoke set revoked_at and died before failing pinned work.
     await getD1().prepare("UPDATE fleets SET revoked_at = ? WHERE id = ?").bind(Date.now(), acme.id).run();
-    expect((await authed(alice.jwt, "DELETE", `/v1/fleets/${acme.id}`)).status).toBe(200);
+    expect((await authed(op.jwt, "DELETE", `/v1/fleets/${acme.id}`)).status).toBe(200);
     expect(await row(id)).toMatchObject({ status: "failed", held_ucld: 0 });
   });
 

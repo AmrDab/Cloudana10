@@ -296,6 +296,21 @@ export async function requeueNodeDeployments(nodes: string[], reason: string, no
   return requeueRows(rows.results ?? [], reason, now);
 }
 
+/**
+ * B-9 sweep (every cron tick): any live deployment whose node is no longer in the fleet it is pinned to goes back to
+ * the queue — whatever moved the node (a fleet move whose hand-back failed, a direct database change). Idempotent.
+ */
+export async function requeueMispinned(now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare(
+      `SELECT d.* FROM deployments d JOIN nodes n ON n.address = d.node WHERE d.status IN ${LIVE} ` +
+        "AND json_extract(d.spec_json, '$.placement.fleetId') IS NOT NULL " +
+        "AND (n.fleet_id IS NULL OR n.fleet_id <> json_extract(d.spec_json, '$.placement.fleetId'))",
+    )
+    .all<DeploymentRow>();
+  return requeueRows(rows.results ?? [], "its node is no longer in the fleet it is pinned to", now);
+}
+
 /** B-9: a node that moved into another fleet hands back what is pinned to a different one (the pin is the fleet). */
 export async function requeuePinnedOffFleet(node: string, fleetId: string, now = Date.now()): Promise<number> {
   const rows = await getD1()
@@ -1064,6 +1079,8 @@ export async function runDeploymentDuties(
 
 export interface DutiesCronResult {
   requeued: number;
+  /** B-9: live deployments taken back from a node no longer in the fleet they are pinned to. */
+  mispinned: number;
   /** Assigned deployments taken back from a node that never started them (or failed after DEPLOY_START_ATTEMPTS). */
   stuck: number;
   preempted: number;
@@ -1096,9 +1113,10 @@ export async function runDutiesCron(env?: CronBindings, now = Date.now()): Promi
     if (changed) resetEnv();
     initStorage(env.DB, env.CLOUDANA_KV);
   }
-  const out: DutiesCronResult = { requeued: 0, stuck: 0, preempted: 0, assigned: 0 };
+  const out: DutiesCronResult = { requeued: 0, mispinned: 0, stuck: 0, preempted: 0, assigned: 0 };
   const steps: [keyof DutiesCronResult, () => Promise<number>][] = [
     ["requeued", () => requeueDeadNodeDeployments(now)],
+    ["mispinned", () => requeueMispinned(now)],
     ["stuck", () => requeueStuckAssigned(now)],
     ["preempted", () => preemptForOnDemand(now)],
     ["assigned", () => runAssignment(now)],
