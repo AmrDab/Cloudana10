@@ -123,11 +123,21 @@ deployment" for each project.
 ## 6. Keeper
 
 After the owner's contract deploy: set `SETTLEMENT_ADDRESS` in `keeper/wrangler.toml` from
-`shared/addresses.baseSepolia.json` (v2 section), `wrangler secret put POSTER_PRIVATE_KEY` and `INTERNAL_API_KEY`,
-`npx wrangler deploy`. Health: `GET /health` on the workers.dev URL shows the settlement address, poster balance and
+`shared/addresses.baseSepolia.json` (v2 section) and `npx wrangler deploy`; then the owner sets `POSTER_PRIVATE_KEY`
+(`wrangler secret put` at the prompt) and runs `node scripts/set-relay-secrets.mjs`, which gives the keeper
+`INTERNAL_API_KEY` together with every other Worker (never set that one by hand: OWNER_RUNBOOK step 5). Health: `GET /health` on the workers.dev URL shows the settlement address, poster balance and
 the oldest unsettled epoch age. It is stateless: a failed run resumes from on-chain state and the API's `closed` /
 `posted` lists. Expect the first hourly epoch finalized within 2 h (1 h epoch + 1 h veto window). Rollback: `wrangler
 rollback`; nothing on-chain needs undoing because every write is idempotent against on-chain state.
+
+**Sampled-check claws (B-6).** A node caught by a sampled transcript check is suspended and the held pay of its
+payout wallet is clawed (log line `[jobs] … sampled transcript check failed`). A claw can be undone only for pay still
+held (epochs after the open one), so act within the day:
+- **False positive** (an honest node, e.g. a broken agent build): `POST /v1/admin/claws/{jobId}/reverse` with
+  `X-Internal-Key` restores what that check alone clawed; lift the suspension with
+  `DELETE /v1/admin/nodes/{address}/suspend` once the agent is fixed.
+- **A fleet node the fleet owner doesn't recognise** (a leaked fleet token): the owner revokes the fleet's token in the
+  console first (stops new rogue nodes), then reverse the claw as above.
 
 ## 7. Node agents
 

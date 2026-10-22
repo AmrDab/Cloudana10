@@ -16,6 +16,7 @@ import {
   clawEntry, closeEpochs, listEpochs, markEpochPosted, markEpochSettled, markEpochVetoed, reverseSampleClaw,
 } from "../../services/ledger.service.js";
 import { createRouter, json, responses } from "./_openapi.js";
+import { safeEqual } from "../../lib/safe-equal.js";
 
 export const adminEpochsRouter = createRouter();
 const TAGS = ["Admin"];
@@ -23,7 +24,7 @@ const TAGS = ["Admin"];
 export const requireInternalKey = createMiddleware(async (c, next) => {
   const key = getEnv().INTERNAL_API_KEY;
   if (!key) return fail(c, "not_configured", "INTERNAL_API_KEY is not set");
-  if (c.req.header("x-internal-key") !== key) return fail(c, "unauthorized", "Invalid X-Internal-Key");
+  if (!(await safeEqual(c.req.header("x-internal-key") ?? "", key))) return fail(c, "unauthorized", "Invalid X-Internal-Key");
   await next();
 });
 
@@ -157,7 +158,10 @@ const reverseClawRoute = createRoute({
     "touched. Lifting the node's suspension is DELETE /v1/admin/nodes/{address}/suspend.",
   middleware: [requireInternalKey] as const,
   request: { params: z.object({ jobId: z.string().min(1).max(64) }) },
-  responses: responses({ 200: json(z.object({ status: z.literal("success"), restored: z.number().int() }), "Reversed") }, 400, 401, 503),
+  responses: responses({ 200: json(z.object({ status: z.literal("success"), restored: z.number().int() }), "Reversed") }, 400, 401, 404, 503),
 });
 
-adminEpochsRouter.openapi(reverseClawRoute, async (c) => ok(c, { restored: await reverseSampleClaw(c.req.valid("param").jobId) }));
+adminEpochsRouter.openapi(reverseClawRoute, async (c) => {
+  const restored = await reverseSampleClaw(c.req.valid("param").jobId);
+  return restored === null ? fail(c, "not_found", "no job with a failed (or reversed) sampled check by that id") : ok(c, { restored });
+});

@@ -102,7 +102,7 @@ export interface JobRewards {
   treasuryUcld: number;
   vestsAt: number;
   epoch: number;
-  /** When the job's pay leaves its check window (= the end of `epoch`; the submit time without a hold). */
+  /** When the job's pay leaves its check window (= the start of `epoch`, when the claw can no longer reach it; the submit time without a hold). */
   heldUntil: number;
 }
 
@@ -631,8 +631,14 @@ export async function clawEntry(epoch: number, entryId: string): Promise<EpochUp
  * claw after a veto has no claw row). Lifting the node's suspension is a separate step
  * (DELETE /v1/admin/nodes/{address}/suspend). Returns the entries restored; a second call restores none.
  */
-export async function reverseSampleClaw(jobId: string, now = Date.now()): Promise<number> {
+export async function reverseSampleClaw(jobId: string, now = Date.now()): Promise<number | null> {
   const db = getD1();
+  // Only a job whose sampled check failed (or was already reversed: a repeat call restores nothing) has a claw.
+  const job = await db
+    .prepare("SELECT 1 AS x FROM work_jobs WHERE id = ? AND sample_check IN ('failed','reversed')")
+    .bind(jobId)
+    .first<{ x: number }>();
+  if (!job) return null;
   const [restored] = await db.batch([
     db
       .prepare(

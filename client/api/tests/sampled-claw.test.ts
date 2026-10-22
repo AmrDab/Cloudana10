@@ -192,6 +192,13 @@ describe("POST /v1/admin/claws/{jobId}/reverse", () => {
   const claws = async (jobId: string) =>
     (await getD1().prepare("SELECT COUNT(*) AS c FROM reward_claws WHERE job_id = ?").bind(jobId).first<{ c: number }>())!.c;
 
+  it("answers 404 for a job with no failed sampled check (and writes nothing)", async () => {
+    expect((await reverse("no-such-job")).status).toBe(404);
+    const { node } = await freshNode();
+    const honest = await heldJob(node);
+    expect((await reverse(honest)).status).toBe(404);
+  });
+
   it("puts back what one failed check clawed, held entries only; needs the internal key; lifting the suspension is separate", async () => {
     const { node } = await freshNode();
     const held = await heldJob(node);

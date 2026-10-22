@@ -278,6 +278,8 @@ export async function migrateEpochs(db = getD1()): Promise<void> {
     )
     .run();
   await db.prepare("UPDATE epochs SET status = 'void' WHERE status IN ('closed','posted')").run();
+  // Claw coverage refers to entries on the old epoch scale (just voided): a later reverse must not resurrect them.
+  await db.prepare("DELETE FROM reward_claws").run().catch(() => undefined);
   await db
     .prepare("INSERT INTO schema_meta (key, value) VALUES ('epoch_seconds', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
     .bind(epochSeconds)
