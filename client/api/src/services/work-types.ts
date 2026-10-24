@@ -8,7 +8,16 @@
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 import { verify as cupowVerify } from "../../../../pouw/src/cupow.js";
 import { chooseBlockSize, fieldHash, freivalds, maxAbsEntry, toFieldMatrix } from "../../../../pouw/src/index.js";
-import type { SegmentKernel, SegmentSpec, Tensor, Verdict } from "../../../../shared/verification.js";
+import type { SegmentKernel, SegmentSpec, Tensor, TensorSig, Verdict } from "../../../../shared/verification.js";
+import {
+  int8MlpInputs,
+  int8MlpKernel,
+  int8MlpPlan,
+  int8MlpResultSig,
+  meterInt8Mlp,
+  validateInt8Mlp,
+  type Int8MlpInput,
+} from "../../../../shared/work-int8-mlp.js";
 
 export type { Verdict };
 
@@ -57,6 +66,8 @@ export interface WorkType<J = WorkJobInput> {
   inputs?(job: J): Record<string, Tensor>;
   /** The fixed segment plan; the node never chooses kinds, ops or wiring. */
   plan?(job: J): SegmentSpec[];
+  /** The exact dtype and shape of the result (the last segment's output). */
+  resultSig?(job: J): TensorSig;
   /** Segments opened per job. */
   samples?(job: J): number;
   /** The check of one segment op, with the job's own parameters. */
@@ -152,7 +163,28 @@ export const matmul: WorkType & Pick<Required<WorkType>, "verify" | "plantedTask
   },
 };
 
-const REGISTRY = new Map<string, WorkType<any>>([[matmul.id, matmul]]);
+/**
+ * One quantized MLP block on the user's own weights (shared/work-int8-mlp.ts). Every job is challenged: 2 of its 4
+ * segments are opened, so one wrong segment is caught with probability ≥ ½ per job.
+ */
+export const int8Mlp: WorkType<Int8MlpInput> = {
+  id: "int8-mlp",
+  mode: "challenge",
+  minAgent: "1.7.0",
+  requirements: () => ({ workType: "int8-mlp" }),
+  validate: validateInt8Mlp,
+  meter: meterInt8Mlp,
+  inputs: int8MlpInputs,
+  plan: int8MlpPlan,
+  resultSig: int8MlpResultSig,
+  samples: () => 2,
+  kernel: int8MlpKernel,
+};
+
+const REGISTRY = new Map<string, WorkType<any>>([
+  [matmul.id, matmul],
+  [int8Mlp.id, int8Mlp],
+]);
 
 export function getWorkType(id: string): WorkType<any> | undefined {
   return REGISTRY.get(id);

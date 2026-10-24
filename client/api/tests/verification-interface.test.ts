@@ -48,6 +48,23 @@ describe("freivaldsRect", () => {
     }
   });
 
+  it("is exact with entries up to 2³⁰ (the split multiply), accepting the product and rejecting a ±1 change", () => {
+    const [mm, kk, nn] = [4, 3, 6];
+    const big = ints(mm * kk, -(2 ** 30), 2 ** 30);
+    const small = ints(kk * nn, -1024, 1024);
+    const prod = gemm(big, small, null, mm, kk, nn); // < 2⁴² in absolute value: exact in doubles
+    expect(freivaldsRect(big, small, prod, mm, kk, nn)).toBe(true);
+    for (const d of [1, -1, 12345]) {
+      const bad = prod.slice();
+      bad[7] += d;
+      expect(freivaldsRect(big, small, bad, mm, kk, nn), `${d}`).toBe(false);
+    }
+    // A p shift is invisible mod p: rejecting it is the caller's range bound (checkOpening, below).
+    const shifted = prod.slice();
+    shifted[7] += P;
+    expect(freivaldsRect(big, small, shifted, mm, kk, nn)).toBe(true);
+  });
+
   it("rejects mismatched shapes", () => {
     expect(freivaldsRect(A, B, C.slice(1), m, k, n)).toBe(false);
     expect(freivaldsRect(A, B, C, n, k, m)).toBe(false);
