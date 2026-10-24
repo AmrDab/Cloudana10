@@ -598,6 +598,21 @@ that remained:
   the count varies with re-queued side jobs), and a real 1.7.0 agent ran an int8-mlp job end
   to end there (submit 200 → challenge, answer 200, result equal to a local execute, pay held).
 
+### 27 · int8-model: L chained int8-mlp blocks through the general verifier (B-26 follow-up)
+- **What.** `shared/work-int8-model.ts`: 1–16 int8-mlp blocks (block ℓ's Y is block ℓ+1's X), one b, d, h for all,
+  each block with its own W1, b1, W2, b2, scales and optional table; the int8-mlp kernels unchanged. Plan 4·L segments
+  (ops `xw1@ℓ` …, inputs `W1_ℓ` …), metered 2·b·d·h·L, `2 + ⌈L/4⌉` segments opened (3 at L = 1, 6 at L = 16): one wrong
+  segment is caught with p = (2 + ⌈L/4⌉)/4L per job (¾ … 6/64); held pay plus suspension is the deterrent.
+- **Size.** d, h ≤ 64 for int8-model (not 256): at L = 16, d = h = 256 the weights are ~9 MB of JSON, over the 2 MB D1
+  row; at 64 the worst-case input is < 1 MB (test), answers stay < 1 MB.
+- **Agent 1.8.0.** `work.ts` takes the plan, inputs and executor from the work type (`CHALLENGE_TYPES`); advertises
+  `int8-model`; the API draws int8-model only among agents ≥ 1.8.0. `CURRENT_AGENT_VERSION` / `MIN_AGENT_VERSION`
+  unchanged; int8-mlp and matmul unchanged (golden snapshot passes).
+- **Tests.** `int8-model.test.ts` 11: L = 1 equals int8-mlp; chain wiring; registry, meter, samples; intake bounds;
+  the largest-input size; honest L = 4 settles; a planted wrong segment in block 1 caught (claw of held pay, suspend,
+  hold released); a middle index drawn at s/4L ± 1.5 % over 10k draws (L = 4, 16); a rewired chain refused, no claw;
+  the 1.8.0 gate; `POST /v1/jobs` accepts it, 17 blocks → 400. Agent `int8-model.selftest.ts`.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

@@ -7,23 +7,39 @@
  * API answers the same commitment with the challenge it already stored), and an answer is retried on network errors
  * and 5xx, with backoff, until the deadline.
  */
-import { makeCommitment, type Commitment, type SegmentOpening, type Tensor, type TensorRef } from "../../shared/verification.ts";
-import { executeInt8Mlp, int8MlpInputs, int8MlpPlan, validateInt8Mlp, type Int8MlpInput } from "../../shared/work-int8-mlp.ts";
+import { makeCommitment, type Commitment, type SegmentOpening, type SegmentSpec, type Tensor, type TensorRef } from "../../shared/verification.ts";
+import { executeInt8Mlp, int8MlpInputs, int8MlpPlan, validateInt8Mlp } from "../../shared/work-int8-mlp.ts";
+import { executeInt8Model, int8ModelInputs, int8ModelPlan, validateInt8Model } from "../../shared/work-int8-model.ts";
+
+/** What the agent needs of a challenge-mode work type: the same plan, inputs and executor as the API's. */
+interface ChallengeType {
+  validate(input: any): string | null;
+  execute(input: any): { outputs: Tensor[]; result: Tensor };
+  inputs(input: any): Record<string, Tensor>;
+  plan(input: any): SegmentSpec[];
+}
+export const CHALLENGE_TYPES: Record<string, ChallengeType> = {
+  "int8-mlp": { validate: validateInt8Mlp, execute: executeInt8Mlp, inputs: int8MlpInputs, plan: int8MlpPlan },
+  "int8-model": { validate: validateInt8Model, execute: executeInt8Model, inputs: int8ModelInputs, plan: int8ModelPlan },
+};
 
 export interface ChallengeWork {
   commitment: Commitment;
   result: Tensor;
   outputs: Tensor[];
+  plan: SegmentSpec[];
 }
 
-export function buildChallengeWork(input: Int8MlpInput, sigma: string): ChallengeWork {
-  const { outputs, result } = executeInt8Mlp(input);
-  return { commitment: makeCommitment(sigma, int8MlpInputs(input), int8MlpPlan(), outputs), result, outputs };
+export function buildChallengeWork(input: unknown, sigma: string, workType = "int8-mlp"): ChallengeWork {
+  const t = CHALLENGE_TYPES[workType];
+  const { outputs, result } = t.execute(input);
+  const plan = t.plan(input);
+  return { commitment: makeCommitment(sigma, t.inputs(input), plan, outputs), result, outputs, plan };
 }
 
 /** Each challenged segment's opening: the `seg:j` tensors it reads and its own output. Job inputs are never sent. */
 export function openSegments(work: ChallengeWork, segments: number[]): SegmentOpening[] {
-  const plan = int8MlpPlan();
+  const plan = work.plan;
   return segments.map((idx) => {
     const tensors: Partial<Record<TensorRef, Tensor>> = { [`seg:${idx}`]: work.outputs[idx] };
     for (const ref of plan[idx].inputs) if (ref.startsWith("seg:")) tensors[ref] = work.outputs[Number(ref.slice(4))];
@@ -46,7 +62,7 @@ export interface ChallengeAssignment {
   jobId: string;
   workType: string;
   sigma: string;
-  input: Int8MlpInput;
+  input: any;
 }
 
 export interface RetryOptions {
@@ -71,9 +87,11 @@ export async function runChallengeJob(
   const retryable = opts.retryable ?? defaultRetryable;
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const invalid = validateInt8Mlp(a.input);
+  const type = CHALLENGE_TYPES[a.workType];
+  if (!type) throw new Error(`unknown challenge work type ${a.workType}`);
+  const invalid = type.validate(a.input);
   if (invalid) throw new Error(`assignment input refused: ${invalid}`);
-  const work = buildChallengeWork(a.input, a.sigma);
+  const work = buildChallengeWork(a.input, a.sigma, a.workType);
   const body = { jobId: a.jobId, commitment: work.commitment, result: work.result };
   let submitted: any;
   try {

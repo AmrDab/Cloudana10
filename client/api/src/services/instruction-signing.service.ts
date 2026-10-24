@@ -21,8 +21,8 @@ import { privateKeyToAccount } from "viem/accounts";
 
 /**
  * Default minimum agent version (MIN_AGENT_VERSION falls back to it): the oldest agent whose protocol this API still
- * serves work to, not the newest release (node-agent/package.json is 1.7.0). Capabilities that need a newer agent are
- * gated per feature instead of raising this (storage ≥ 1.4.0, deployment-bound secrets ≥ 1.5.0, int8-mlp ≥ 1.7.0), so compute and
+ * serves work to, not the newest release (node-agent/package.json is 1.8.0). Capabilities that need a newer agent are
+ * gated per feature instead of raising this (storage ≥ 1.4.0, deployment-bound secrets ≥ 1.5.0, int8-mlp ≥ 1.7.0, int8-model ≥ 1.8.0), so compute and
  * hosting nodes on older agents keep working until the owner raises the floor.
  */
 export const CURRENT_AGENT_VERSION = "1.3.0";

@@ -42,6 +42,18 @@ console.log(JSON.stringify({ workType: "int8-mlp", input: { b, d, h,
 curl -X POST ${API_ROOT}/v1/jobs -H "Authorization: Bearer $CLOUDANA_API_KEY" \\
   -H "Content-Type: application/json" -d @job.json`;
 
+// Random weights for illustration only: Cloudana never picks a model.
+const INT8_MODEL_EXAMPLE = `node -e '
+const r = (n, lo, hi) => Array.from({ length: n }, () => lo + Math.floor(Math.random() * (hi - lo + 1)));
+const b = 4, d = 16, h = 32, L = 4;
+const block = () => ({ W1: r(d * h, -128, 127), b1: r(h, -4096, 4096),
+  W2: r(h * d, -128, 127), b2: r(d, -4096, 4096), m1: 1906, s1: 20, m2: 2528, s2: 20 });
+console.log(JSON.stringify({ workType: "int8-model", input: { b, d, h,
+  X: r(b * d, -128, 127), blocks: Array.from({ length: L }, block) } }));
+' > job.json
+curl -X POST ${API_ROOT}/v1/jobs -H "Authorization: Bearer $CLOUDANA_API_KEY" \\
+  -H "Content-Type: application/json" -d @job.json`;
+
 export default function DocsPage() {
   return (
     <>
@@ -235,6 +247,13 @@ export default function DocsPage() {
               its held pay (clawed) and suspension. The example below uses random weights.
             </p>
             <CodeBlock code={INT8_MLP_EXAMPLE} copyText={INT8_MLP_EXAMPLE} />
+            <p>
+              <b>int8 model</b> (<code className="font-mono text-[13px]">workType: "int8-model"</code>): 1 to 16 of those
+              blocks chained, each block's output the next one's input, with d and h up to 64. The node opens
+              2 + ⌈L/4⌉ of the 4·L steps, so one faked step is caught less often per job than in a single block; the
+              held pay and suspension still apply. Again random weights below — bring your own model.
+            </p>
+            <CodeBlock code={INT8_MODEL_EXAMPLE} copyText={INT8_MODEL_EXAMPLE} />
             <a href={`${API_ROOT}/v1/swagger`} target="_blank" rel="noopener noreferrer" className={linkCls}>
               Full reference <ExternalLink className="size-3.5" />
             </a>

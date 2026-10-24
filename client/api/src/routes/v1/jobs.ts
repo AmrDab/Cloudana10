@@ -9,6 +9,7 @@ import { ok, fail } from "../../lib/http.js";
 import { enqueueWorkJob, getDrawRecord, getWorkJob, jobMatrices, listWorkJobs, replayDraw, toSummary } from "../../services/jobs.service.js";
 import { MATMUL_N_MAX, MATMUL_N_MIN } from "../../services/work-types.js";
 import { INT8_MLP } from "../../../../../shared/work-int8-mlp.js";
+import { INT8_MODEL } from "../../../../../shared/work-int8-model.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 import { SignatureSchema } from "./ledger.js";
 import { signPublic } from "../../services/public-signing.service.js";
@@ -61,7 +62,35 @@ const Int8MlpJobSchema = z.object({
   public: z.boolean().optional().default(true),
   maxPriceUcld: z.number().int().positive().optional(),
 });
-const CreateAnyJobSchema = z.discriminatedUnion("workType", [CreateJobSchema, Int8MlpJobSchema]);
+/** int8-model: L int8-mlp blocks chained on your own weights; shared/work-int8-model.ts checks the exact bounds. */
+const M = INT8_MODEL.DIM_MAX;
+const Int8ModelJobSchema = z.object({
+  workType: z.literal("int8-model"),
+  input: z.object({
+    b: z.number().int(),
+    d: z.number().int(),
+    h: z.number().int(),
+    X: z.array(z.number().int()).max(INT8_MLP.B_MAX * M),
+    blocks: z
+      .array(
+        z.object({
+          W1: z.array(z.number().int()).max(M * M),
+          b1: z.array(z.number().int()).max(M),
+          W2: z.array(z.number().int()).max(M * M),
+          b2: z.array(z.number().int()).max(M),
+          m1: z.number().int(),
+          s1: z.number().int(),
+          m2: z.number().int(),
+          s2: z.number().int(),
+          lut: z.array(z.number().int()).max(256).optional(),
+        }),
+      )
+      .max(INT8_MODEL.L_MAX),
+  }),
+  public: z.boolean().optional().default(true),
+  maxPriceUcld: z.number().int().positive().optional(),
+});
+const CreateAnyJobSchema = z.discriminatedUnion("workType", [CreateJobSchema, Int8MlpJobSchema, Int8ModelJobSchema]);
 
 const createJobRoute = createRoute({
   method: "post",
@@ -71,7 +100,10 @@ const createJobRoute = createRoute({
     "Queue work. Price = baseFeeUcld + ceil(n³ × priceNcldPerTmac / 1e15) µCLD at the current quote (see /network: a dollar price converted at usdPerCld), held until the result verifies. " +
     "workType \"int8-mlp\" takes { input: { b, d, h, X, W1, b1, W2, b2, m1, s1, m2, s2, lut? } } — your own int8 weights, int32 biases, " +
     "requantization scales and optional activation table (default ReLU); it is metered at 2·b·d·h MACs, run on nodes with agent ≥ 1.7.0, " +
-    "and verified per segment (2 of its 4 segments opened on every job). Its `result` is Y, int8 b×d row-major.",
+    "and verified per segment (2 of its 4 segments opened on every job). Its `result` is Y, int8 b×d row-major. " +
+    "workType \"int8-model\" takes { input: { b, d, h, X, blocks: [{ W1, b1, W2, b2, m1, s1, m2, s2, lut? }] } }: 1–16 such blocks " +
+    "chained (block ℓ's Y is block ℓ+1's X), one d and h for all with d, h ≤ 64; metered at 2·b·d·h·L MACs, run on nodes with " +
+    "agent ≥ 1.8.0, verified per segment (2 + ceil(L/4) of its 4·L segments opened on every job). Its `result` is the last Y.",
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: CreateAnyJobSchema } } } },
   responses: responses(
