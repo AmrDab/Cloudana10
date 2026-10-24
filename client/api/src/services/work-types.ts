@@ -18,6 +18,16 @@ import {
   validateInt8Mlp,
   type Int8MlpInput,
 } from "../../../../shared/work-int8-mlp.js";
+import {
+  int8ModelInputs,
+  int8ModelKernel,
+  int8ModelPlan,
+  int8ModelResultSig,
+  meterInt8Model,
+  samplesInt8Model,
+  validateInt8Model,
+  type Int8ModelInput,
+} from "../../../../shared/work-int8-model.js";
 
 export type { Verdict };
 
@@ -181,9 +191,29 @@ export const int8Mlp: WorkType<Int8MlpInput> = {
   kernel: int8MlpKernel,
 };
 
+/**
+ * L chained int8-mlp blocks on the user's own weights (shared/work-int8-model.ts). max(3, L) of its 4·L segments are
+ * opened per job, drawn uniformly over all of them, so one wrong segment is caught with probability ≥ ¼ per job (¾ at L = 1). With
+ * d, h ≤ 64 the worst answer (16 gemm openings at b = 64) checks in ~21 ms, under the 50 ms budget.
+ */
+export const int8Model: WorkType<Int8ModelInput> = {
+  id: "int8-model",
+  mode: "challenge",
+  minAgent: "1.8.0",
+  requirements: () => ({ workType: "int8-model" }),
+  validate: validateInt8Model,
+  meter: meterInt8Model,
+  inputs: int8ModelInputs,
+  plan: int8ModelPlan,
+  resultSig: int8ModelResultSig,
+  samples: samplesInt8Model,
+  kernel: int8ModelKernel,
+};
+
 const REGISTRY = new Map<string, WorkType<any>>([
   [matmul.id, matmul],
   [int8Mlp.id, int8Mlp],
+  [int8Model.id, int8Model],
 ]);
 
 export function getWorkType(id: string): WorkType<any> | undefined {

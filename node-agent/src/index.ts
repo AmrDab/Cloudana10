@@ -17,7 +17,7 @@ import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from ".
 import { workTypes as capabilities } from "./workstation.ts";
 import { DEFAULT_INSTRUCTION_SIGNER, NonceLru, verifyInstruction } from "./instructions.ts";
 import { RELAY_CAPABILITY, RelayClient } from "./relay.ts";
-import { runChallengeJob } from "./work.ts";
+import { CHALLENGE_TYPES, runChallengeJob } from "./work.ts";
 
 interface Args {
   api: string;
@@ -326,7 +326,7 @@ async function main() {
   });
 
   async function handleAssignment(a: any): Promise<void> {
-    if (a.workType === "int8-mlp") return handleChallengeJob(a);
+    if (a.workType in CHALLENGE_TYPES) return handleChallengeJob(a);
     log(`job ${a.jobId} n=${a.n}`);
     const start = performance.now();
     const { certificate, result } = solveAssignedJob(a.sigma, a.matrixA, a.matrixB, a.n, account.address, deviceId);
@@ -345,9 +345,9 @@ async function main() {
     }
   }
 
-  /** int8-mlp (B-26): commit to every segment, then answer the segments the API draws (work.ts). */
+  /** int8-mlp, int8-model (B-26): commit to every segment, then answer the segments the API draws (work.ts). */
   async function handleChallengeJob(a: any): Promise<void> {
-    log(`job ${a.jobId} int8-mlp b=${a.input?.b} d=${a.input?.d} h=${a.input?.h}`);
+    log(`job ${a.jobId} ${a.workType} b=${a.input?.b} d=${a.input?.d} h=${a.input?.h}${a.input?.blocks ? ` L=${a.input.blocks.length}` : ""}`);
     const start = performance.now();
     try {
       const { laneAUcld, laneBUcld } = await runChallengeJob(a, (path, body) => request(account, "POST", path, body), {

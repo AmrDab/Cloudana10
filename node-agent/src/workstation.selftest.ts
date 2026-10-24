@@ -60,12 +60,12 @@ async function main() {
   check(gpus.length === 2 && gpus[0].name === "NVIDIA GeForce RTX 4090" && gpus[0].vramGB === 24, "parse nvidia-smi");
   check(gpus[1].vramGB === 80, "parse vram GB");
   check(parseNvidiaSmi("Tesla T4, [N/A]")[0].vramGB === 0, "unparseable vram → 0");
-  check(workTypes(false, []).join() === "matmul,int8-mlp,hosting", "no docker, no gpu");
-  check(workTypes(true, []).join() === "matmul,int8-mlp,hosting,container", "docker, no gpu");
-  check(workTypes(false, gpus).join() === "matmul,int8-mlp,hosting", "gpu without docker is not advertised");
-  check(workTypes(true, gpus).join() === "matmul,int8-mlp,hosting,container,gpu", "docker + gpu");
-  check(workTypes(true, gpus, true).join() === "matmul,int8-mlp,hosting,container,gpu,any-image", "any-image opt-in");
-  check(workTypes(false, gpus, true).join() === "matmul,int8-mlp,hosting", "any-image needs containers");
+  check(workTypes(false, []).join() === "matmul,int8-mlp,int8-model,hosting", "no docker, no gpu");
+  check(workTypes(true, []).join() === "matmul,int8-mlp,int8-model,hosting,container", "docker, no gpu");
+  check(workTypes(false, gpus).join() === "matmul,int8-mlp,int8-model,hosting", "gpu without docker is not advertised");
+  check(workTypes(true, gpus).join() === "matmul,int8-mlp,int8-model,hosting,container,gpu", "docker + gpu");
+  check(workTypes(true, gpus, true).join() === "matmul,int8-mlp,int8-model,hosting,container,gpu,any-image", "any-image opt-in");
+  check(workTypes(false, gpus, true).join() === "matmul,int8-mlp,int8-model,hosting", "any-image needs containers");
 
   // Token
   const token = newWebToken();
