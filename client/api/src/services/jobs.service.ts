@@ -932,7 +932,16 @@ export async function answerChallenge(
     const v = checkOpening(spec, o, commitment, inputs, wt.kernel!(jobInput, spec.op));
     if (!v.ok && v.stage) return caughtChallenge(job, node, nodeRow, v.reason, now);
     // No stage: the job's own data does not fit its plan. Not the node's fault, and validate() makes it unreachable.
-    if (!v.ok) throw new Error(`answerChallenge ${job.id}: ${v.reason}`);
+    if (!v.ok) {
+      // Not the node's fault (validate() should make it unreachable): fail the job and refund the owner, no claw.
+      const r = await getD1()
+        .prepare("UPDATE work_jobs SET status = 'failed', completed_at = ?, expires_at = NULL, challenge_expires_at = NULL WHERE id = ? AND status = 'assigned' AND node = ?")
+        .bind(now, job.id, node)
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) await release(job.owner, job.price_ucld);
+      L.error(`[work] job ${job.id} does not fit its own plan (${v.reason}): failed and refunded, node not blamed`);
+      return { ok: false, code: "conflict", message: "this job's own data does not fit its plan: it was failed and refunded" };
+    }
   }
   // Paid to the wallet the node was bound to when it committed (the one a failure would have clawed).
   const payTo = job.commit_payout ?? nodeRow?.payout;
