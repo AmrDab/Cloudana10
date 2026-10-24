@@ -231,7 +231,8 @@ export default function DocsPage() {
               <b>int8 MLP block</b> (<code className="font-mono text-[13px]">workType: "int8-mlp"</code>): one quantized
               MLP layer with a residual, on your own int8 weights, int32 biases and requantization scales — Cloudana
               picks no model. The node commits to every intermediate result, then opens two of the four steps chosen
-              after it committed; each is checked exactly. The example below uses random weights.
+              after it committed; each is checked exactly. So a node faking one step is caught on half its jobs; what deters it is
+              its held pay (clawed) and suspension. The example below uses random weights.
             </p>
             <CodeBlock code={INT8_MLP_EXAMPLE} copyText={INT8_MLP_EXAMPLE} />
             <a href={`${API_ROOT}/v1/swagger`} target="_blank" rel="noopener noreferrer" className={linkCls}>

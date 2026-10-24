@@ -138,7 +138,7 @@ reserved per container and re-read from Docker on resume.
 | Tier | What is checked | Services |
 |---|---|---|
 | **proven** | the answer on every job (Freivalds), the work behind it re-executed on a sampled 1 in `VERIFY_SAMPLE_K`, pay held 24 h and clawed wallet-wide on a failed sample | matmul |
-| **proven per segment, sampled** | the node commits to every segment's output (a hash chain bound to σ and the job's inputs); after the commitment is stored the API draws segments to open; each opened GEMM is Freivalds-checked and each elementwise step recomputed; same hold and claw | int8-mlp (2 of 4 segments per job) |
+| **proven per segment, sampled** | the node commits to every segment's output (a hash chain bound to σ and the job's inputs); after the commitment is stored the API draws segments to open; each opened GEMM is Freivalds-checked and each elementwise step recomputed; same hold and claw. Each job is checked on 2 of 4 segments: a node faking one is caught with probability ½ per job, deterred by its held pay plus suspension (a brand-new wallet with no held pay risks only suspension) | int8-mlp (2 of 4 segments per job) |
 | **spot-checked** | statistical comparison against a reference node, with tolerances | verified endpoints (B-19, planned) |
 | **attested** | reported by the node or its hardware, not re-checked | the GPU model a node reports; a TEE tier later (B-24) |
 | **probed** | a probe through the node's socket saw it working; only time between passing probes is charged | static hosting, containers, GPU endpoints, workstations |

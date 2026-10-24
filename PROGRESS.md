@@ -545,7 +545,7 @@ that remained:
   refused exactly like a matmul failure (422, re-queued, failed after 3, no claw). On pass one write stores the
   commitment, `cert_z` = chain root, the result, the draw, the deadline (`CHALLENGE_TTL_SECONDS`, 30) and the payout
   wallet (`commit_payout`), and only then is `{ challenge: { segments, deadline } }` returned. `segmentDraw` = partial
-  Fisher–Yates over the HMAC (B-6's key, domain "seg:") of job, σ and chain root. A second submit → 409: one commitment
+  Fisher–Yates over the HMAC (B-6's key, domain "seg:") of job, σ and chain root. Another commitment → 409: one commitment
   per assignment, so a node can neither see the draw before committing nor grind it. `POST /v1/work/answer` (≤ 1 MB):
   exactly the challenged openings before the deadline. Pass → `bookVerified` (`sample_check` 'passed', pay held 24 h, paid
   to the commit-time wallet). Wrong, mismatched, missing or late (`sweepChallenges` in both cron lists) → caught: B-6's
@@ -567,17 +567,35 @@ that remained:
   length check); the commit-time wallet snapshot and the unbind refusal (unbinding mid-challenge escaped the claw and
   the suspension); hono `bodyLimit` on submit (8 MB) and answer (1 MB) before the signature check and the parser, and
   tensor data capped at 64 × 256.
-- **Tests.** API 490 (new: `matmul-golden` 1, `verification-interface` 22, `int8-mlp` 7, `segment-verification` 30,
-  `int8-mlp-gate` 6): rect Freivalds accepts A·B + bias and rejects one-entry flips (a +p shift is caught by the range
+- **PR #60 review (same PR).** A lost response no longer gets an honest node clawed: the same commitment re-sent by
+  the same node gets the stored challenge and deadline back (no new draw; any other commitment is still 409), and the
+  agent re-sends a submit whose response was lost once and retries an answer on network errors and 5xx with backoff
+  until the deadline. `sweepChallenges` reads only id, owner, price, node and commit-time wallet, isolates each job and
+  waits a 10 s grace (the answer keeps the strict deadline). The commit write also requires the checked σ and an
+  unexpired assignment (the same guard on matmul's batch is a backlog follow-up, so matmul stays byte-identical). A
+  catch releases the owner's hold inside its batch. A body of the wrong kind is 400, not a failed check. The guard
+  columns are read before the full row; `/v1/work/answer` is limited to 30 per node per minute. The int8-mlp input hash
+  now covers `q` = [m1, s1, m2, s2] and the `lut`, and the agent deduplicates and caps the challenged indices. The docs
+  say plainly that each job is checked on 2 of 4 segments: a node faking one is caught with probability ½ per job, held
+  pay plus suspension is the deterrent, and a brand-new wallet risks only suspension (backlog: notify owners of jobs a
+  later-caught node settled, or a minimum held stake).
+- **Tests.** API 500 (new: `matmul-golden` 1, `verification-interface` 22, `int8-mlp` 8, `segment-verification` 30,
+  `int8-mlp-gate` 6, `challenge-robustness` 9; each robustness test fails on the PR head before the review fixes): a lost
+  submit response then a re-submit gets the same challenge and pays; answer POSTs failing with a network error and a 503
+  are retried and pay; the sweep's grace and column list, a throwing job not stopping the batch; σ replaced or the
+  assignment expired between check and write → 409, nothing stored; the hold released even when every write after the
+  batch fails; wrong-kind bodies → 400 with no penalty; the 31st answer in a minute → 429; the input hash changes with
+  each scale and the table. Rect Freivalds accepts A·B + bias and rejects one-entry flips (a +p shift is caught by the range
   bound); the chain root changes with σ, any out-hash, an op, a kind or the wiring; exact-shape refusals; the golden
   vector; intake bounds; honest job → done, paid, held 24 h, 'passed'; chain-link tamper (wrong root, swapped
   out-hashes, rewired plan, the node's own X, another σ, a result that is not the last segment) → refused, no claw;
   a planted wrong segment 0–3 → caught (claw wallet-wide, suspend, job failed, hold released); undrawn → passes; a
   given index opened at ½ ± 2 % over 10k draws; the 6 pairs uniform ± 0.5 % over 100k; opening mismatch and wrong
-  indices → caught; late answer and sweep → caught; second submit → 409; unbind mid-challenge → 409; payout cleared or
+  indices → caught; late answer and sweep → caught; a different second commitment → 409; unbind mid-challenge → 409; payout cleared or
   moved mid-challenge → the commit-time wallet is clawed and the node suspended; 413 before parsing; the gate (1.6.0
   and unversioned never drawn; matmul unchanged). Keeper 30, agent selftests incl. int8-mlp, root check/test/build.
-  `scripts/dev/e2e-v1.ts` passes (47 checks) against the local Node API, and a real 1.7.0 agent ran an int8-mlp job end
+  `scripts/dev/e2e-v1.ts` passes against the local Node API (47 checks, and 43 on the re-run after the review fixes:
+  the count varies with re-queued side jobs), and a real 1.7.0 agent ran an int8-mlp job end
   to end there (submit 200 → challenge, answer 200, result equal to a local execute, pay held).
 
 ## Evidence summary

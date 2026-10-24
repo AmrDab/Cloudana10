@@ -118,7 +118,7 @@ What each label claims:
 | Label | Means | Where |
 |---|---|---|
 | **proven** | the answer is checked on every job, and the work behind it is re-executed on a sample with a claw | matmul |
-| **proven per segment, sampled s of m** | every opened segment is checked exactly; a single wrong segment is caught with probability s/m per job (int8-mlp: ½), with the claw over 24 h of held pay making cheating negative-EV | int8-mlp |
+| **proven per segment, sampled s of m** | every opened segment is checked exactly, but only s of m per job: a node faking one segment is caught with probability s/m per job (int8-mlp: 2 of 4, so ½); deterrence is the held pay (24 h, clawed wallet-wide) plus suspension — a brand-new wallet with no held pay risks only suspension | int8-mlp |
 | **spot-checked** | a statistical comparison against a reference (tolerances), not an exact check | verified endpoints (§4) |
 | **attested** | the node or its hardware says so; nothing re-checks it | GPU model reported by the node; a TEE tier later |
 | **probed** | a probe saw it working at that moment; time is charged only between passing probes | hosting, containers, workstations |

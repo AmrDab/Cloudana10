@@ -175,6 +175,16 @@ Follow-ups:
 - Phase 1–2: per-layer plans for real models (many segments, activations of tens of MB kept on the node and opened on
   demand — the commit-then-challenge transport already fits), int4, attention; a deterministic engine on GPU.
 - Publish the measured detection rate (½ per job for one wrong segment) where the label is shown.
+- Wrong results a cheater got through: each int8-mlp job is checked on 2 of 4 segments, so a node faking one segment
+  passes half the time, and a brand-new wallet with no held pay risks only suspension. Notify the owners of jobs
+  settled by a node that is later caught (their results may be wrong), and/or require a minimum held stake (pay or a
+  bond) before a node is drawn for int8-mlp. Acceptance: a caught node's earlier jobs are listed to their owners; a
+  node below the stake is never drawn.
+- matmul's settlement batch (`bookVerified`) does not re-check σ in its writes; the int8-mlp commit write does
+  (`AND sigma = ? AND expires_at >= ?`). Add the same guard to matmul once a test shows it changes nothing on the
+  golden snapshot path (left alone in PR #60 so matmul stays byte-identical).
+- An answer whose response was lost and is retried after the first one settled gets 409 (the job is done): the node is
+  paid, but its log says the job failed. Return the settled result for a repeat of the same answer.
 
 **B-20 · Observability.** Correlation ids end to end (request id → node report → relay stream id), error-rate and
 probe-failure metrics exported (Workers Analytics Engine or Logpush), keeper and relay alerts, a status page fed by
