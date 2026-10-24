@@ -103,7 +103,7 @@ const createJobRoute = createRoute({
     "and verified per segment (2 of its 4 segments opened on every job). Its `result` is Y, int8 b×d row-major. " +
     "workType \"int8-model\" takes { input: { b, d, h, X, blocks: [{ W1, b1, W2, b2, m1, s1, m2, s2, lut? }] } }: 1–16 such blocks " +
     "chained (block ℓ's Y is block ℓ+1's X), one d and h for all with d, h ≤ 64; metered at 2·b·d·h·L MACs, run on nodes with " +
-    "agent ≥ 1.8.0, verified per segment (max(3, L) of its 4·L segments opened on every job, one per block: a wrong segment is caught with p ≥ ¼ per job). Its `result` is the last Y.",
+    "agent ≥ 1.8.0, verified per segment (max(3, L) of its 4·L segments opened on every job, drawn uniformly over all of them: a wrong segment is caught with p ≥ ¼ per job). Its `result` is the last Y.",
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: CreateAnyJobSchema } } } },
   responses: responses(

@@ -250,7 +250,7 @@ export default function DocsPage() {
             <p>
               <b>int8 model</b> (<code className="font-mono text-[13px]">workType: "int8-model"</code>): 1 to 16 of those
               blocks chained, each block's output the next one's input, with d and h up to 64. The node opens
-              max(3, L) of the 4·L steps (one per block), so one faked step is caught on at least a quarter of its jobs; the
+              max(3, L) of the 4·L steps, drawn at random across all of them, so one faked step is caught on at least a quarter of its jobs; the
               held pay and suspension still apply. Again random weights below — bring your own model.
             </p>
             <CodeBlock code={INT8_MODEL_EXAMPLE} copyText={INT8_MODEL_EXAMPLE} />
