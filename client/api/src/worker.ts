@@ -64,7 +64,7 @@ async function scheduled(_event: ScheduledController, env: Bindings, ctx: Execut
   await (await import("./lib/schema.js")).ensureSchema().catch(() => undefined);
   setRelay(env.RELAY ? relayFromBinding(env.RELAY) : null);
   setArtifactStore(env.ARTIFACTS ? r2Artifacts(env.ARTIFACTS) : null);
-  const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }, { moveJobArtifacts }, { runStorageCron }] = await Promise.all([
+  const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }, { moveJobArtifacts, sweepChallenges }, { runStorageCron }] = await Promise.all([
     import("./services/deployment-duties.service.js"),
     import("./services/pricing.service.js"),
     import("./services/deposit-watcher.service.js"),
@@ -74,6 +74,7 @@ async function scheduled(_event: ScheduledController, env: Bindings, ctx: Execut
   const jobs: Array<[string, () => Promise<unknown>]> = [
     ["duties", () => runDutiesCron(env as never)],
     ["artifacts", () => moveJobArtifacts()],
+    ["challenges", () => sweepChallenges()],
     ["storage", () => runStorageCron(env)],
     ["price", () => runPriceControllerCron(env)],
     ["deposits", () => runDepositWatcherCron(env as never)],

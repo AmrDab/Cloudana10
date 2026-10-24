@@ -258,20 +258,27 @@ export async function touchNode(address: string, opts: { relay?: boolean; agentV
     .run();
 }
 
-export type UnbindResult = { ok: true; requeued: number } | { ok: false; code: "not_found"; message: string };
+export type UnbindResult = { ok: true; requeued: number } | { ok: false; code: "not_found" | "conflict"; message: string };
 
 /**
  * The payout wallet lets a node go (B-10): payout, fleet and binding cleared, its live deployments re-queued for
  * other nodes, a fresh bind code on its next announce. Pending earnings stay with the wallet that earned them. A
- * node bound to another wallet (or unknown) is reported as not found, like every other cross-tenant read.
+ * node bound to another wallet (or unknown) is reported as not found, like every other cross-tenant read. Refused
+ * while the node has an open challenge (B-26): the answer, or its failure, settles against the wallet first.
  */
 export async function unbindOwnNode(payout: string, address: string, now = Date.now()): Promise<UnbindResult> {
   const nodeKey = normalizeAddress(address);
-  const r = await getD1()
-    .prepare("UPDATE nodes SET payout = NULL, fleet_id = NULL, bound_at = NULL, bind_code = NULL WHERE address = ? AND payout = ?")
+  const openChallenge = "EXISTS (SELECT 1 FROM work_jobs WHERE node = ?1 AND status = 'assigned' AND challenge_expires_at IS NOT NULL)";
+  const db = getD1();
+  const r = await db
+    .prepare(`UPDATE nodes SET payout = NULL, fleet_id = NULL, bound_at = NULL, bind_code = NULL WHERE address = ?1 AND payout = ?2 AND NOT ${openChallenge}`)
     .bind(nodeKey, normalizeAddress(payout))
     .run();
-  if ((r.meta?.changes ?? 0) === 0) return { ok: false, code: "not_found", message: "no such node is bound to this wallet" };
+  if ((r.meta?.changes ?? 0) === 0) {
+    const open = await db.prepare(`SELECT 1 AS x FROM nodes WHERE address = ?1 AND payout = ?2 AND ${openChallenge}`).bind(nodeKey, normalizeAddress(payout)).first();
+    if (open) return { ok: false, code: "conflict", message: "finish or forfeit the open challenge first" };
+    return { ok: false, code: "not_found", message: "no such node is bound to this wallet" };
+  }
   const { requeueNodeDeployments } = await import("./deployment-duties.service.js");
   const requeued = await requeueNodeDeployments([nodeKey], "node unbound by its owner", now);
   return { ok: true, requeued };

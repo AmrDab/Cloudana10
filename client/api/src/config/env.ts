@@ -80,6 +80,9 @@ export const envSchema = z.object({
   // PAY_HOLD_SECONDS ahead, so it stays clawable for at least PAY_HOLD_SECONDS, by a failed sampled check of any node
   // paying the same wallet (0 = no hold; else at least EPOCH_SECONDS).
   VERIFY_SAMPLE_K: int(10),
+  // Challenge-mode work (ENGINEERING_BACKLOG B-26): seconds a node has to answer the segments drawn after its commitment;
+  // a late or missing answer is a failed check (claw + suspension).
+  CHALLENGE_TTL_SECONDS: int(30),
   PAY_HOLD_SECONDS: int(86_400),
   /** Source of the assignment seed (latest block hash). Unset → local fallback seed. */
   CHAIN_RPC_URL: z.string().url().optional(),

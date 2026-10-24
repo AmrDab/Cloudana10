@@ -77,6 +77,16 @@ balances: add balance_ucld INTEGER DEFAULT 0, held_ucld INTEGER DEFAULT 0 (migra
 - `GET /account` → `{ address, balanceUcld, heldUcld }`
 - `POST /jobs` `{ workType:"matmul", n, matrixA, matrixB, public?:true }` → holds price → `{ jobId, priceUcld, balanceUcld }`
   (n ∈ [8, 256] locally; entries within `maxAbsEntry(n)`; 422 if insufficient credits)
+- `POST /jobs` `{ workType:"int8-mlp", input:{ b, d, h, X, W1, b1, W2, b2, m1, s1, m2, s2, lut? }, public?, maxPriceUcld? }`
+  (B-26) — one quantized MLP block on **your own** weights: `X` i8[b×d], `W1` i8[d×h], `b1` i32[h], `W2` i8[h×d],
+  `b2` i32[d] (row-major), b ∈ [1, 64], d, h ∈ [8, 256], |bias| ≤ 2²⁰, scales m ∈ [1, 2¹⁵), shifts s ∈ [1, 31], optional
+  activation table `lut` (256 int8, index v + 128; default ReLU). Y = clamp(requant(lut[requant(X·W1 + b1, m1, s1) + 128]·W2
+  + b2, m2, s2) + X), requant(v, m, s) = clamp(floor((v·m + 2^(s−1)) / 2^s), −128, 127). Metered at 2·b·d·h MACs; runs
+  on agents ≥ 1.7.0. `GET /jobs/:id` → `result` = Y's data (int8 b×d row-major), `n` = d, `certificate.z` = the chain
+  root. Spec: `shared/work-int8-mlp.ts`. **What is checked:** each job is checked on 2 of its 4 segments, drawn after
+  the node committed to all four. A node that fakes one segment is caught with probability ½ per job; what deters it is
+  the pay it has held (24 h, clawed wallet-wide on a catch) plus suspension. A brand-new wallet with no held pay risks
+  only the suspension, so a result can be wrong with probability up to ½ for such a node's job.
 - `GET /jobs` → `{ jobs:[summary] }` · `GET /jobs/:id` → summary + `result` (owner only) + `certificate` fields (z, sigma, node)
 
 ### Providers (node-signed requests)
@@ -85,12 +95,32 @@ Headers: `X-Node: <address>`, `X-Node-Timestamp: <ms>`, `X-Node-Signature: sign(
 - `POST /nodes/announce` (node-signed) `{ manifest:{ cpuThreads, ramGB, gpus:[{name,vramGB}], os }, benchmarkMmacPerSec, workTypes:["matmul"] }` → `{ bound, payout }`
 - `POST /nodes/bind` (NOT node-signed; payout wallet signs) `{ node, payout, message, signature }`, message exactly
   `Cloudana node binding\nNode: <node lowercase>\nPayout: <payout lowercase>\nIssued: <ISO>` (Issued within 10 min) → `{ bound:true }`
-- `POST /nodes/heartbeat` (node-signed) `{}` → `{ assignment: null | { jobId, workType, n, matrixA, matrixB, sigma, expiresAt } }`
+- `POST /nodes/heartbeat` (node-signed) `{}` → `{ assignment: null | { jobId, workType, n, matrixA, matrixB, sigma, expiresAt, input? } }`
+  (`input` only for int8-mlp, whose matrixA/matrixB are `[]`; a job with an open challenge is not sent again)
   Heartbeat updates `last_seen`, runs assignment for queued jobs, returns this node's active assignment.
 - `POST /work/submit` (node-signed) `{ jobId, certificate, result }` → checks, in order:
   job assigned to this node & not expired · `certificate.sigma === job.sigma` · `certificate.matrixAHash/BHash === fieldHash(job A/B)` ·
   `verify(certificate)` · `freivalds(A, B, result, n)` → on success: job done, ledger entries written, throughput updated →
   `{ units, earned:{ laneAUcld, laneBUcld }, vestsAt }`; on failure 422 + `jobs_failed++`, job re-queued.
+- `POST /work/submit` for challenge-mode work types (int8-mlp, B-26) `{ jobId, commitment:{ inputHash, outputHash,
+  chainRoot, segments:[{ idx, outHash }] }, result:{ dtype, shape, data } }` (body ≤ 8 MB, checked before parsing) →
+  bind check: inputHash = the job's own inputs, segments = the plan's, chainRoot recomputed over σ, the input hash, the
+  plan and the out-hashes, outputHash = tensorHash(result) = the last segment's. Failure → refused exactly like a matmul
+  failure (422, re-queued, failed after 3, no claw). Pass → one write stores the commitment, the result, the drawn
+  segments and the deadline, and only then → `{ challenge:{ segments:[i, j], deadline } }`. The same commitment again
+  from the same node (its response was lost) → the same stored challenge and deadline, nothing drawn again; any other
+  commitment for the assignment → 409. A commitment body on a matmul job, or a certificate on an int8-mlp job → 400.
+  Hashes and the fold: `shared/verification.ts`; the input hash covers the weights, biases, `q` = [m1, s1, m2, s2] and
+  the `lut`.
+- `POST /work/answer` (node-signed, ≤ 1 MB) `{ jobId, openings:[{ idx, tensors:{ "seg:j": tensor, … } }] }` — exactly the
+  challenged segments, before the deadline, each with the `seg:j` tensors it reads and its own output (job inputs are
+  never taken from the node). Every tensor must have its exact dtype and shape and hash to the commitment; a gemm
+  segment is checked by Freivalds, an elementwise one recomputed. Pass → `{ units, earned, vestsAt, heldUntil }` (settled
+  like matmul, pay held 24 h). Wrong, mismatched, missing or late → 422: job failed, owner's hold released (same batch),
+  all held pay of the wallet bound at commit time clawed, node suspended. The cron catches an unanswered challenge
+  10 s after its deadline; the answer itself must arrive by the deadline. The agent retries an answer on network errors
+  and 5xx until the deadline. ≤ 30 answers per node per minute (429). While a challenge is open the owner cannot unbind
+  the node (409).
 - `GET /ledger/:address` → `{ pending:{A,B,treasury}, vesting:{B}, settled:{A,B}, credits, entries:[latest 50] }`
 
 ### Assignment (inside heartbeat / after enqueue)

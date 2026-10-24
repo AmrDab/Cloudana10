@@ -4,7 +4,7 @@
  * Correct verdicts earn credits (points, lane "verify") — never CLD.
  */
 import { getD1 } from "../lib/storage.js";
-import { getWorkType } from "./work-types.js";
+import { matmul } from "./work-types.js";
 import { jobMatrices } from "./jobs.service.js";
 import { recordVerifyCredit, verifyCredits } from "./ledger.service.js";
 
@@ -26,7 +26,6 @@ function randomBelow(n: number): number {
 
 export async function nextVerifyTask(): Promise<VerifyTask> {
   const db = getD1();
-  const matmul = getWorkType("matmul")!;
   const job = await db
     .prepare(
       "SELECT id, n, a_json, b_json, result_json, artifact FROM work_jobs WHERE status = 'done' AND public = 1 AND work_type = 'matmul' " +

@@ -31,6 +31,17 @@ function Doc({ id, title, children }: { id: string; title: string; children: Rea
 
 const linkCls = "inline-flex items-center gap-1 font-medium text-ok underline-offset-4 hover:underline";
 
+// Random weights for illustration only: a real job carries the user's own model.
+const INT8_MLP_EXAMPLE = `node -e '
+const r = (n, lo, hi) => Array.from({ length: n }, () => lo + Math.floor(Math.random() * (hi - lo + 1)));
+const b = 4, d = 16, h = 32;
+console.log(JSON.stringify({ workType: "int8-mlp", input: { b, d, h,
+  X: r(b * d, -128, 127), W1: r(d * h, -128, 127), b1: r(h, -4096, 4096),
+  W2: r(h * d, -128, 127), b2: r(d, -4096, 4096), m1: 1906, s1: 20, m2: 2528, s2: 20 } }));
+' > job.json
+curl -X POST ${API_ROOT}/v1/jobs -H "Authorization: Bearer $CLOUDANA_API_KEY" \\
+  -H "Content-Type: application/json" -d @job.json`;
+
 export default function DocsPage() {
   return (
     <>
@@ -173,7 +184,7 @@ export default function DocsPage() {
           </Doc>
 
           <Doc id="services" title="Services and proofs">
-            <p>Status is the truth today. Only matrix jobs are proven: every answer checked (Freivalds), 1 job in 10 re-executed in full by the orchestrator. Static hosting is live and probed for reachability.</p>
+            <p>Status is the truth today. Matrix jobs are proven: every answer checked (Freivalds), 1 job in 10 re-executed in full by the orchestrator. int8 MLP blocks are proven per segment: on every job 2 of their 4 steps, drawn after the node committed to all of them, are checked exactly. Static hosting is live and probed for reachability.</p>
             <Panel className="divide-y divide-line">
               {CATALOG.map((s) => (
                 <div key={s.id} className="grid gap-1 p-4 sm:grid-cols-[180px_1fr_auto] sm:items-center sm:gap-4">
@@ -216,6 +227,14 @@ export default function DocsPage() {
                 </li>
               ))}
             </ul>
+            <p>
+              <b>int8 MLP block</b> (<code className="font-mono text-[13px]">workType: "int8-mlp"</code>): one quantized
+              MLP layer with a residual, on your own int8 weights, int32 biases and requantization scales — Cloudana
+              picks no model. The node commits to every intermediate result, then opens two of the four steps chosen
+              after it committed; each is checked exactly. So a node faking one step is caught on half its jobs; what deters it is
+              its held pay (clawed) and suspension. The example below uses random weights.
+            </p>
+            <CodeBlock code={INT8_MLP_EXAMPLE} copyText={INT8_MLP_EXAMPLE} />
             <a href={`${API_ROOT}/v1/swagger`} target="_blank" rel="noopener noreferrer" className={linkCls}>
               Full reference <ExternalLink className="size-3.5" />
             </a>

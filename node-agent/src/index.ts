@@ -17,6 +17,7 @@ import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from ".
 import { workTypes as capabilities } from "./workstation.ts";
 import { DEFAULT_INSTRUCTION_SIGNER, NonceLru, verifyInstruction } from "./instructions.ts";
 import { RELAY_CAPABILITY, RelayClient } from "./relay.ts";
+import { runChallengeJob } from "./work.ts";
 
 interface Args {
   api: string;
@@ -325,6 +326,7 @@ async function main() {
   });
 
   async function handleAssignment(a: any): Promise<void> {
+    if (a.workType === "int8-mlp") return handleChallengeJob(a);
     log(`job ${a.jobId} n=${a.n}`);
     const start = performance.now();
     const { certificate, result } = solveAssignedJob(a.sigma, a.matrixA, a.matrixB, a.n, account.address, deviceId);
@@ -337,6 +339,26 @@ async function main() {
       jobsDone++;
       earnedUcld += total;
       log(`✓ verified · earned ${laneA} + ${laneB} µCLD (≈ ${(total / 1e6).toFixed(6)} CLD) [${elapsedSec.toFixed(2)}s]`);
+    } catch (err) {
+      if (err instanceof Fatal) throw err;
+      log(`✗ job ${a.jobId} failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** int8-mlp (B-26): commit to every segment, then answer the segments the API draws (work.ts). */
+  async function handleChallengeJob(a: any): Promise<void> {
+    log(`job ${a.jobId} int8-mlp b=${a.input?.b} d=${a.input?.d} h=${a.input?.h}`);
+    const start = performance.now();
+    try {
+      const { laneAUcld, laneBUcld } = await runChallengeJob(a, (path, body) => request(account, "POST", path, body), {
+        // A lost response (the API unreachable, or a 5xx) is retried; a refusal (4xx) or a bad signature (Fatal) is not.
+        retryable: (err) => err instanceof Unreachable || ((err as { status?: number }).status ?? 0) >= 500,
+        now: serverNow,
+      });
+      const total = laneAUcld + laneBUcld;
+      jobsDone++;
+      earnedUcld += total;
+      log(`✓ verified (segments opened) · earned ${laneAUcld} + ${laneBUcld} µCLD (≈ ${(total / 1e6).toFixed(6)} CLD) [${((performance.now() - start) / 1000).toFixed(2)}s]`);
     } catch (err) {
       if (err instanceof Fatal) throw err;
       log(`✗ job ${a.jobId} failed: ${(err as Error).message}`);
