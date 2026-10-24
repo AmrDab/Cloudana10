@@ -122,11 +122,38 @@ export function makeCommitment(sigma: string, inputs: Record<string, Tensor>, pl
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
+/** A tensor's dtype and exact shape. */
+export interface TensorSig {
+  dtype: Dtype;
+  shape: number[];
+}
+/** Same dtype and exactly the same shape — [n, m] is not [m, n], and [1, m·n] is not [m, n]. */
+export const hasSig = (t: Tensor, s: TensorSig): boolean =>
+  t.dtype === s.dtype && t.shape.length === s.shape.length && t.shape.every((d, i) => d === s.shape[i]);
+
+/** Every job input well-formed and of the exact signature the job says (`expected` names the same inputs). */
+export function checkInputs(inputs: Record<string, Tensor>, expected: Record<string, TensorSig>): string | null {
+  const names = Object.keys(expected).sort();
+  if (Object.keys(inputs).sort().join(",") !== names.join(",")) return "the job's inputs do not match its signature";
+  for (const name of names) {
+    if (!validTensor(inputs[name]) || !hasSig(inputs[name], expected[name])) return `input ${name} must be ${expected[name].dtype}[${expected[name].shape.join("×")}]`;
+  }
+  return null;
+}
+
 /**
  * The bind check (no sampling): the commitment is for this job's inputs, this plan and this σ, and `result` is the
- * last segment's output. A failure is a refusal, not a catch: nothing was opened yet.
+ * last segment's output, of exactly the signature `resultSig`. A failure is a refusal, not a catch: nothing was opened
+ * yet.
  */
-export function checkCommitment(sigma: string, inputs: Record<string, Tensor>, plan: SegmentSpec[], c: Commitment, result: Tensor): Verdict {
+export function checkCommitment(
+  sigma: string,
+  inputs: Record<string, Tensor>,
+  plan: SegmentSpec[],
+  c: Commitment,
+  result: Tensor,
+  resultSig: TensorSig,
+): Verdict {
   if (!c || typeof c !== "object" || !Array.isArray(c.segments)) return { ok: false, reason: "commitment missing" };
   if (c.inputHash !== inputHash(inputs)) return { ok: false, reason: "commitment is not for this job's inputs (input hash mismatch)" };
   if (c.segments.length !== plan.length || c.segments.some((s, i) => s?.idx !== plan[i].idx || typeof s.outHash !== "string" || !HEX64.test(s.outHash))) {
@@ -136,7 +163,9 @@ export function checkCommitment(sigma: string, inputs: Record<string, Tensor>, p
   if (c.chainRoot !== chainRoot(sigma, c.inputHash, plan, outHashes)) {
     return { ok: false, reason: "commitment chain root does not match the assignment (σ, inputs, plan or segment hashes)" };
   }
-  if (!validTensor(result)) return { ok: false, reason: "result is not a well-formed tensor" };
+  if (!validTensor(result) || !hasSig(result, resultSig)) {
+    return { ok: false, reason: `result must be a well-formed ${resultSig.dtype}[${resultSig.shape.join("×")}] tensor` };
+  }
   if (c.outputHash !== tensorHash(result) || c.outputHash !== outHashes[outHashes.length - 1]) {
     return { ok: false, reason: "result does not match the commitment's output hash" };
   }
@@ -152,6 +181,11 @@ export interface GemmOperands {
   n: number;
 }
 export interface SegmentKernel {
+  /**
+   * The segment's exact signature, from the job's own parameters (never from the node): each input, in plan order,
+   * and the output. checkOpening refuses any tensor that does not have it.
+   */
+  sig: { ins: TensorSig[]; out: TensorSig };
   /** gemm: Out = A·B + 1·biasᵀ, checked by Freivalds (A from the opening or job, B/bias always the job's own). */
   gemm?(ins: Tensor[]): GemmOperands;
   /** elementwise: deterministic recompute; compared by tensorHash. */
@@ -162,33 +196,48 @@ export interface SegmentKernel {
 
 const segFail = (reason: string): Verdict => ({ ok: false, reason, stage: "segment" });
 
-/** Kind-generic opening check: hashes of served tensors vs the commitment, then the kind's check. */
+/**
+ * Kind-generic opening check: every tensor has its exact signature and the served ones hash to the commitment, then
+ * the kind's check. A failure with a stage is the node's (caught); one without is the job's own data or kernel being
+ * inconsistent (refused, never a catch).
+ */
 export function checkOpening(spec: SegmentSpec, o: SegmentOpening, c: Commitment, jobInputs: Record<string, Tensor>, kernel: SegmentKernel): Verdict {
   if (!o || o.idx !== spec.idx || !o.tensors || typeof o.tensors !== "object") return segFail(`segment ${spec.idx}: opening missing`);
+  if (kernel.sig.ins.length !== spec.inputs.length) return { ok: false, reason: `segment ${spec.idx} (${spec.op}): kernel signature does not match the plan` };
   const committed = (ref: `seg:${number}`) => c.segments[Number(ref.slice(4))]?.outHash;
-  const served = (ref: `seg:${number}`): Tensor | null => {
+  const served = (ref: `seg:${number}`, sig: TensorSig): Tensor | null => {
     const t = o.tensors[ref];
-    return validTensor(t) && tensorHash(t) === committed(ref) ? t : null;
+    return validTensor(t) && hasSig(t, sig) && tensorHash(t) === committed(ref) ? t : null;
   };
   const ins: Tensor[] = [];
-  for (const ref of spec.inputs) {
+  for (const [i, ref] of spec.inputs.entries()) {
+    const sig = kernel.sig.ins[i];
     if (ref.startsWith("in:")) {
       const t = jobInputs[ref.slice(3)];
-      if (!t) throw new Error(`checkOpening: job input ${ref} missing`); // the plan names an input the job lacks: a bug
+      if (!t || !validTensor(t) || !hasSig(t, sig)) return { ok: false, reason: `segment ${spec.idx} (${spec.op}): job input ${ref} does not have its signature` };
       ins.push(t);
     } else {
-      const t = served(ref as `seg:${number}`);
+      const t = served(ref as `seg:${number}`, sig);
       if (!t) return segFail(`segment ${spec.idx}: opening does not match the commitment (${ref})`);
       ins.push(t);
     }
   }
-  const out = served(`seg:${spec.idx}`);
+  const out = served(`seg:${spec.idx}`, kernel.sig.out);
   if (!out) return segFail(`segment ${spec.idx}: opening does not match the commitment (output)`);
 
   if (spec.kind === "gemm") {
     if (!kernel.gemm) throw new Error(`checkOpening: no gemm kernel for ${spec.op}`);
     const g = kernel.gemm(ins);
-    if (out.dtype !== "i32" || out.data.length !== g.m * g.n) return segFail(`segment ${spec.idx} (${spec.op}): output has the wrong shape`);
+    // The operands the kernel built must be the dimensions the signature says: A [m,k], B [k,n], bias [n], out [m,n].
+    if (
+      g.A.length !== g.m * g.k ||
+      g.B.length !== g.k * g.n ||
+      (g.bias !== null && g.bias.length !== g.n) ||
+      out.dtype !== "i32" ||
+      !hasSig(out, { dtype: "i32", shape: [g.m, g.n] })
+    ) {
+      return { ok: false, reason: `segment ${spec.idx} (${spec.op}): gemm operands do not have the plan's dimensions` };
+    }
     // Exact over ℤ: the true entries are within ±HALF_P (the WorkType's bounds), so a claimed one must be too.
     const C = new Array<number>(out.data.length);
     for (let i = 0; i < g.m; i++) {
@@ -202,9 +251,9 @@ export function checkOpening(spec: SegmentSpec, o: SegmentOpening, c: Commitment
   }
   if (spec.kind === "elementwise") {
     if (!kernel.elementwise) throw new Error(`checkOpening: no elementwise kernel for ${spec.op}`);
-    return tensorHash(kernel.elementwise(ins)) === committed(`seg:${spec.idx}`)
-      ? { ok: true }
-      : segFail(`segment ${spec.idx} (${spec.op}): recomputed output differs`);
+    const want = kernel.elementwise(ins);
+    if (!hasSig(want, kernel.sig.out)) return { ok: false, reason: `segment ${spec.idx} (${spec.op}): kernel output does not have its signature` };
+    return tensorHash(want) === committed(`seg:${spec.idx}`) ? { ok: true } : segFail(`segment ${spec.idx} (${spec.op}): recomputed output differs`);
   }
   if (!kernel.opaque) throw new Error(`checkOpening: no re-execution for ${spec.op}`);
   return kernel.opaque(ins, out) ? { ok: true } : segFail(`segment ${spec.idx} (${spec.op}): re-execution differs`);

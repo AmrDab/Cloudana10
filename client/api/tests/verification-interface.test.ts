@@ -8,11 +8,13 @@ import {
   P,
   chainRoot,
   checkCommitment,
+  checkInputs,
   checkOpening,
   inputHash,
   makeCommitment,
   tensorHash,
   type SegmentKernel,
+  type SegmentOpening,
   type SegmentSpec,
   type Tensor,
 } from "../../../shared/verification.js";
@@ -115,30 +117,37 @@ describe("checkCommitment and checkOpening", () => {
     { idx: 1, kind: "elementwise", op: "relu", inputs: ["seg:0"] },
   ];
   const relu = (t: Tensor): Tensor => ({ dtype: "i32", shape: t.shape, data: t.data.map((v) => Math.max(v, 0)) });
-  const kernel: SegmentKernel = {
-    gemm: ([x, w, b]) => ({ A: x.data, B: w.data, bias: b.data, m: x.shape[0], k: x.shape[1], n: w.shape[1] }),
-    elementwise: ([acc]) => relu(acc),
+  const ACC = { dtype: "i32" as const, shape: [m, n] };
+  // The kernels take their dimensions from the job (m, k, n), never from the tensors' own shapes.
+  const kernels: Record<string, SegmentKernel> = {
+    xw: {
+      sig: { ins: [{ dtype: "i8", shape: [m, k] }, { dtype: "i8", shape: [k, n] }, { dtype: "i32", shape: [n] }], out: ACC },
+      gemm: ([x, w, b]) => ({ A: x.data, B: w.data, bias: b.data, m, k, n }),
+    },
+    relu: { sig: { ins: [ACC], out: ACC }, elementwise: ([a]) => relu(a) },
   };
-  const acc: Tensor = { dtype: "i32", shape: [m, n], data: gemm(X.data, W.data, bias.data, m, k, n) };
+  const open = (spec: SegmentSpec, tensors: SegmentOpening["tensors"], cm = c, ins: Record<string, Tensor> = inputs) =>
+    checkOpening(spec, { idx: spec.idx, tensors }, cm, ins, kernels[spec.op]);
+  const acc: Tensor = { ...ACC, data: gemm(X.data, W.data, bias.data, m, k, n) };
   const Y = relu(acc);
   const sigma = "ab".repeat(32);
   const c = makeCommitment(sigma, inputs, plan, [acc, Y]);
 
   it("an honest commitment binds; σ, inputs, wiring and result are each checked", () => {
-    expect(checkCommitment(sigma, inputs, plan, c, Y)).toEqual({ ok: true });
-    expect(checkCommitment("cd".repeat(32), inputs, plan, c, Y)).toMatchObject({ ok: false });
-    expect(checkCommitment(sigma, { ...inputs, X: { ...X, data: X.data.map((v) => (v === 127 ? v : v + 1)) } }, plan, c, Y)).toMatchObject({ ok: false });
-    expect(checkCommitment(sigma, inputs, [plan[0], { ...plan[1], inputs: ["in:X"] }], c, Y)).toMatchObject({ ok: false });
-    expect(checkCommitment(sigma, inputs, plan, c, { ...Y, data: Y.data.map((v) => v + 1) })).toMatchObject({ ok: false });
+    expect(checkCommitment(sigma, inputs, plan, c, Y, ACC)).toEqual({ ok: true });
+    expect(checkCommitment("cd".repeat(32), inputs, plan, c, Y, ACC)).toMatchObject({ ok: false });
+    expect(checkCommitment(sigma, { ...inputs, X: { ...X, data: X.data.map((v) => (v === 127 ? v : v + 1)) } }, plan, c, Y, ACC)).toMatchObject({ ok: false });
+    expect(checkCommitment(sigma, inputs, [plan[0], { ...plan[1], inputs: ["in:X"] }], c, Y, ACC)).toMatchObject({ ok: false });
+    expect(checkCommitment(sigma, inputs, plan, c, { ...Y, data: Y.data.map((v) => v + 1) }, ACC)).toMatchObject({ ok: false });
     const swapped = { ...c, segments: [c.segments[0], { idx: 1, outHash: c.segments[0].outHash }] };
-    expect(checkCommitment(sigma, inputs, plan, swapped, Y)).toMatchObject({ ok: false });
+    expect(checkCommitment(sigma, inputs, plan, swapped, Y, ACC)).toMatchObject({ ok: false });
     // A refusal, never a catch: no stage.
-    expect((checkCommitment(sigma, inputs, plan, swapped, Y) as { stage?: string }).stage).toBeUndefined();
+    expect((checkCommitment(sigma, inputs, plan, swapped, Y, ACC) as { stage?: string }).stage).toBeUndefined();
   });
 
   it("an honest opening passes for each kind", () => {
-    expect(checkOpening(plan[0], { idx: 0, tensors: { "seg:0": acc } }, c, inputs, kernel)).toEqual({ ok: true });
-    expect(checkOpening(plan[1], { idx: 1, tensors: { "seg:0": acc, "seg:1": Y } }, c, inputs, kernel)).toEqual({ ok: true });
+    expect(open(plan[0], { "seg:0": acc })).toEqual({ ok: true });
+    expect(open(plan[1], { "seg:0": acc, "seg:1": Y })).toEqual({ ok: true });
   });
 
   it("a wrong gemm output committed is caught by Freivalds; a +p shift is caught by the range bound", () => {
@@ -146,15 +155,14 @@ describe("checkCommitment and checkOpening", () => {
       const bad = { ...acc, data: acc.data.slice() };
       bad.data[4] += shift;
       const cBad = makeCommitment(sigma, inputs, plan, [bad, relu(bad)]);
-      const v = checkOpening(plan[0], { idx: 0, tensors: { "seg:0": bad } }, cBad, inputs, kernel);
-      expect(v, `shift ${shift}`).toMatchObject({ ok: false, stage: "segment" });
+      expect(open(plan[0], { "seg:0": bad }, cBad), `shift ${shift}`).toMatchObject({ ok: false, stage: "segment" });
     }
   });
 
   it("a wrong elementwise output is caught", () => {
     const badY = { ...Y, data: Y.data.map((v, i) => (i === 2 ? v + 1 : v)) };
     const cBad = makeCommitment(sigma, inputs, plan, [acc, badY]);
-    expect(checkOpening(plan[1], { idx: 1, tensors: { "seg:0": acc, "seg:1": badY } }, cBad, inputs, kernel)).toMatchObject({
+    expect(open(plan[1], { "seg:0": acc, "seg:1": badY }, cBad)).toMatchObject({
       ok: false,
       stage: "segment",
       reason: expect.stringMatching(/recomputed output differs/),
@@ -163,14 +171,78 @@ describe("checkCommitment and checkOpening", () => {
 
   it("served tensors must hash to the commitment, and job inputs never come from the node", () => {
     const other = { ...acc, data: acc.data.map((v) => v + 1) };
-    expect(checkOpening(plan[1], { idx: 1, tensors: { "seg:0": other, "seg:1": Y } }, c, inputs, kernel)).toMatchObject({
+    expect(open(plan[1], { "seg:0": other, "seg:1": Y })).toMatchObject({
       ok: false,
       stage: "segment",
       reason: expect.stringMatching(/does not match the commitment/),
     });
-    expect(checkOpening(plan[1], { idx: 1, tensors: { "seg:1": Y } }, c, inputs, kernel)).toMatchObject({ ok: false, stage: "segment" });
+    expect(open(plan[1], { "seg:1": Y })).toMatchObject({ ok: false, stage: "segment" });
     // A node-served `in:X` is ignored: the job's X is used, so the honest opening still passes and a forged X changes nothing.
     const forgedX = { ...X, data: X.data.map(() => 0) };
-    expect(checkOpening(plan[0], { idx: 0, tensors: { "seg:0": acc, "in:X": forgedX } }, c, inputs, kernel)).toEqual({ ok: true });
+    expect(open(plan[0], { "seg:0": acc, "in:X": forgedX })).toEqual({ ok: true });
+  });
+
+  describe("exact shapes: a tensor whose data is right but whose shape lies is refused", () => {
+    // The node commits to the lying tensor consistently (its hash is in the commitment), so only the shape rule stops it.
+    const lying = (shape: number[]) => {
+      const t: Tensor = { ...acc, shape };
+      return { t, cm: makeCommitment(sigma, inputs, plan, [t, relu(t)]) };
+    };
+
+    it("a transposed gemm output [n, m] is caught", () => {
+      const { t, cm } = lying([n, m]);
+      expect(open(plan[0], { "seg:0": t }, cm)).toMatchObject({ ok: false, stage: "segment" });
+    });
+
+    it("a flattened gemm output [1, m·n] is caught", () => {
+      const { t, cm } = lying([1, m * n]);
+      expect(open(plan[0], { "seg:0": t }, cm)).toMatchObject({ ok: false, stage: "segment" });
+    });
+
+    it("a transposed or flattened tensor served to an elementwise segment, or as its output, is caught", () => {
+      for (const shape of [[n, m], [1, m * n], [m * n]]) {
+        const { t, cm } = lying(shape);
+        expect(open(plan[1], { "seg:0": t, "seg:1": relu(t) }, cm), `input ${shape}`).toMatchObject({ ok: false, stage: "segment" });
+        const outLie = { ...Y, shape };
+        const cm2 = makeCommitment(sigma, inputs, plan, [acc, outLie]);
+        expect(open(plan[1], { "seg:0": acc, "seg:1": outLie }, cm2), `output ${shape}`).toMatchObject({ ok: false, stage: "segment" });
+      }
+    });
+
+    it("a bias of the wrong length is refused (the job's own data: no catch)", () => {
+      for (const data of [bias.data.slice(1), [...bias.data, 0]]) {
+        const ins = { ...inputs, bias: { dtype: "i32" as const, shape: [data.length], data } };
+        const v = open(plan[0], { "seg:0": acc }, c, ins);
+        expect(v).toMatchObject({ ok: false });
+        expect((v as { stage?: string }).stage).toBeUndefined();
+      }
+      // And a kernel that builds a bias of the wrong length from a right-shaped input is refused too.
+      const badKernel: SegmentKernel = { ...kernels.xw, gemm: ([x, w, b]) => ({ A: x.data, B: w.data, bias: b.data.slice(1), m, k, n }) };
+      expect(checkOpening(plan[0], { idx: 0, tensors: { "seg:0": acc } }, c, inputs, badKernel)).toMatchObject({
+        ok: false,
+        reason: expect.stringMatching(/dimensions/),
+      });
+    });
+
+    it("operands of the wrong shape (A transposed) are refused", () => {
+      const ins = { ...inputs, X: { ...X, shape: [k, m] } };
+      expect(open(plan[0], { "seg:0": acc }, c, ins)).toMatchObject({ ok: false });
+    });
+
+    it("the committed result must have the exact result shape", () => {
+      for (const shape of [[n, m], [1, m * n]]) {
+        const lie = { ...Y, shape };
+        const cm = makeCommitment(sigma, inputs, plan, [acc, lie]);
+        expect(checkCommitment(sigma, inputs, plan, cm, lie, ACC), `${shape}`).toMatchObject({ ok: false, reason: expect.stringMatching(/i32\[3×5\]/) });
+      }
+    });
+
+    it("job inputs are checked against their signature", () => {
+      const sigs = { X: { dtype: "i8" as const, shape: [m, k] }, W: { dtype: "i8" as const, shape: [k, n] }, bias: { dtype: "i32" as const, shape: [n] } };
+      expect(checkInputs(inputs, sigs)).toBeNull();
+      expect(checkInputs({ ...inputs, X: { ...X, shape: [k, m] } }, sigs)).toMatch(/input X/);
+      expect(checkInputs({ ...inputs, W: { ...W, shape: [1, k * n] } }, sigs)).toMatch(/input W/);
+      expect(checkInputs({ X, W }, sigs)).toMatch(/signature/);
+    });
   });
 });
