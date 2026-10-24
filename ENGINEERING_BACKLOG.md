@@ -157,6 +157,25 @@ GB-month and GB downloaded reconciled in the ledger, a recovery test after a pro
 flag-only until calibrated. Acceptance: < 0.1 % false positives on 1,000 honest requests; a substituted model is
 flagged.
 
+**B-26 · General verification interface.** **Phase 0 done** (PROGRESS.md entry 26): one interface for deterministic
+work (`shared/verification.ts`) — a work-type-fixed plan of gemm / elementwise / opaque segments, a hash-chained
+commitment bound to σ and the job's own inputs, a segment draw made only after the commitment is stored (same key as
+B-6, new domain; one commitment per assignment), and a kind-generic opening check (Freivalds per GEMM with exact
+shapes and a ±(p−1)/2 bound, recompute per elementwise step). matmul (B-6) is the degenerate case, byte-identical
+(golden snapshot). First new work type: `int8-mlp` (one quantized MLP block on the user's weights; 2 of 4 segments
+opened per job; agent ≥ 1.7.0). Settlement, hold and claw are B-6's statements; a caught job fails (not re-queued),
+the owner is not charged and the wallet bound at commit time is clawed. Toward B-19's "proven inference" tier.
+Follow-ups:
+- Move `work_jobs.input_json` of finished int8-mlp jobs to the artifact store (`moveJobArtifacts` skips them today; up
+  to ~0.6 MB of D1 per job at the largest shape).
+- Re-queue a caught job for another node instead of failing it (needs claw ids distinct from job ids: `reward_claws`
+  and `reverseSampleClaw` are keyed by job id).
+- A per-work-type rate (`WorkType.fee?`) once a type's cost per MAC differs from matmul's; today `meter` in MAC
+  equivalents is the only hook.
+- Phase 1–2: per-layer plans for real models (many segments, activations of tens of MB kept on the node and opened on
+  demand — the commit-then-challenge transport already fits), int4, attention; a deterministic engine on GPU.
+- Publish the measured detection rate (½ per job for one wrong segment) where the label is shown.
+
 **B-20 · Observability.** Correlation ids end to end (request id → node report → relay stream id), error-rate and
 probe-failure metrics exported (Workers Analytics Engine or Logpush), keeper and relay alerts, a status page fed by
 `/v1/network` and keeper `/health`. Acceptance: an induced relay outage shows on the status page within 2 minutes.

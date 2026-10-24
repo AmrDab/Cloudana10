@@ -526,6 +526,60 @@ that remained:
   tried and reverted: wallet-wide for every node is what stops an operator running a modified agent on many nodes,
   and the reverse route is the remedy for a leaked fleet token.
 
+### 26 · the general verification interface, Phase 0: commit, challenge, answer; int8-mlp (B-26)
+- **Interface.** `shared/verification.ts`, imported by the API and the agent: tensors (i8/i32, exact shape), a
+  `tensorHash` that refuses malformed tensors (a wrapped encoding would let two tensors share a hash), `inputHash`, the
+  chain root (`L0 = sha256("cldc1|"+σ+"|"+inHash)`, one link per segment over idx, kind, op, wiring and out-hash),
+  `checkCommitment` (bind check) and the kind-generic `checkOpening`: every tensor must have the kernel's exact
+  signature (from the job, never the node) and hash to the commitment; job inputs come from the job; gemm → rectangular
+  Freivalds with every output entry within ±(p−1)/2 (so mod p is exact over ℤ) and operands of the plan's dimensions;
+  elementwise → recompute and compare hashes; opaque → re-execution. `pouw` gains `freivaldsRect` in plain doubles
+  (split multiply, no BigInt); the square `freivalds` is untouched.
+- **matmul unchanged.** `WorkType` gains `mode` (inline | challenge), `minAgent` and the challenge hooks; matmul is
+  inline. `submitWork` dispatches; the inline branch is the previous body with its settlement batch moved verbatim into
+  `bookVerified`. A golden snapshot (`matmul-golden.test.ts`), recorded on unmodified main before the refactor and
+  committed first, pins every response of `POST /v1/jobs` and `/v1/work/submit` (honest sampled and not, wrong C, C + p,
+  bad σ with give-up at 3, A-hash mismatch, forged transcript unsampled and sampled) and the work_jobs, reward_entries,
+  reward_claws, nodes and balances rows; it passes unchanged, as do the B-6 tests, unedited.
+- **Commit, then challenge, then answer.** `POST /v1/work/submit` with `{ commitment, result }`: the bind check, else
+  refused exactly like a matmul failure (422, re-queued, failed after 3, no claw). On pass one write stores the
+  commitment, `cert_z` = chain root, the result, the draw, the deadline (`CHALLENGE_TTL_SECONDS`, 30) and the payout
+  wallet (`commit_payout`), and only then is `{ challenge: { segments, deadline } }` returned. `segmentDraw` = partial
+  Fisher–Yates over the HMAC (B-6's key, domain "seg:") of job, σ and chain root. A second submit → 409: one commitment
+  per assignment, so a node can neither see the draw before committing nor grind it. `POST /v1/work/answer` (≤ 1 MB):
+  exactly the challenged openings before the deadline. Pass → `bookVerified` (`sample_check` 'passed', pay held 24 h, paid
+  to the commit-time wallet). Wrong, mismatched, missing or late (`sweepChallenges` in both cron lists) → caught: B-6's
+  `caughtStatements` (claw wallet-wide against the commit-time wallet, suspend — even if the node unbound or was unbound
+  meanwhile) and the job failed last, then the owner's hold released; the result is dropped and the job not re-queued
+  (owner decision for Phase 0). The job stays 'assigned' throughout, so every existing guard applies; assignment expiry
+  and the heartbeat skip open challenges; the owner cannot unbind a node with an open challenge (409).
+- **int8-mlp.** `shared/work-int8-mlp.ts`: one quantized MLP block with a residual on the user's weights, scales and
+  optional activation table (b ≤ 64, d, h ∈ [8, 256]); 4 segments (xw1 gemm, rq1_lut, aw2 gemm, rq2_res), 2 opened per job
+  (one wrong segment caught with p = ½), metered at 2·b·d·h MACs; inputs stay in D1 (`input_json`; moving them to the
+  artifact store is a B-26 follow-up). `POST /v1/jobs` takes it as a discriminated-union variant (matmul's unchanged);
+  the heartbeat assignment carries `input`; `GET /v1/jobs/{id}` returns Y. Drawn only among agents ≥ 1.7.0
+  (`WorkType.minAgent`); `CURRENT_AGENT_VERSION` / `MIN_AGENT_VERSION` unchanged. Cost at the largest shape, best of 9:
+  a gemm segment check ≈ 4–7 ms, the worst draw (both gemms) ≈ 8–15 ms, under the 50 ms budget, so the limits stay.
+- **Agent 1.7.0.** `work.ts` (execute, commit, submit, answer from memory); `handleAssignment` hands int8-mlp to it,
+  matmul lines untouched; advertises `int8-mlp` (an API that does not offer it drops it at announce, so 1.7.0 keeps
+  working against the current production API). `int8-mlp.selftest.ts` pins the golden vector shared with the API test.
+- **Security review (same PR).** Exact shapes on every segment check (a transposed or flattened gemm output passed the
+  length check); the commit-time wallet snapshot and the unbind refusal (unbinding mid-challenge escaped the claw and
+  the suspension); hono `bodyLimit` on submit (8 MB) and answer (1 MB) before the signature check and the parser, and
+  tensor data capped at 64 × 256.
+- **Tests.** API 490 (new: `matmul-golden` 1, `verification-interface` 22, `int8-mlp` 7, `segment-verification` 30,
+  `int8-mlp-gate` 6): rect Freivalds accepts A·B + bias and rejects one-entry flips (a +p shift is caught by the range
+  bound); the chain root changes with σ, any out-hash, an op, a kind or the wiring; exact-shape refusals; the golden
+  vector; intake bounds; honest job → done, paid, held 24 h, 'passed'; chain-link tamper (wrong root, swapped
+  out-hashes, rewired plan, the node's own X, another σ, a result that is not the last segment) → refused, no claw;
+  a planted wrong segment 0–3 → caught (claw wallet-wide, suspend, job failed, hold released); undrawn → passes; a
+  given index opened at ½ ± 2 % over 10k draws; the 6 pairs uniform ± 0.5 % over 100k; opening mismatch and wrong
+  indices → caught; late answer and sweep → caught; second submit → 409; unbind mid-challenge → 409; payout cleared or
+  moved mid-challenge → the commit-time wallet is clawed and the node suspended; 413 before parsing; the gate (1.6.0
+  and unversioned never drawn; matmul unchanged). Keeper 30, agent selftests incl. int8-mlp, root check/test/build.
+  `scripts/dev/e2e-v1.ts` passes (47 checks) against the local Node API, and a real 1.7.0 agent ran an int8-mlp job end
+  to end there (submit 200 → challenge, answer 200, result equal to a local execute, pay held).
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

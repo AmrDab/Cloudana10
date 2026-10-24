@@ -91,12 +91,40 @@ For users who want proof their endpoint really ran *their* model:
 | Service | Check | Label |
 |---|---|---|
 | Matmul | cuPOW + Freivalds | **proven**, lanes A+B |
+| int8 MLP block (`int8-mlp`, user's weights) | §5a: commit to 4 segments, 2 opened per job (Freivalds per GEMM, recompute per elementwise step) | **proven per segment, sampled 2 of 4**, lanes A+B |
 | Static hosting | content-hash probe (through the relay) | **probed**, fees only |
 | Containers / GPU endpoints | health probe through the relay; you pay for time a probe saw it working: an outage (since the last passing probe) is not charged; **Report a problem** probes now and, if that fails, leaves the time since the last passing probe uncharged; ≤ 5 reports/account/day | **probed**, fees only |
 | Verified endpoints | §4 | **spot-checked**, lanes A+B |
 | GPU workstations | reachability probe; report rule as above | **probed · GPU reported by node** |
 | Storage | separate spec; chunk challenges prove retrievability, never replication | **challenged** (later) |
 | Secrets | encrypted in the browser to the node; the node can read them (F4) | TEE tier planned |
+
+## 5a. Segment verification (ENGINEERING_BACKLOG B-26, Phase 0)
+
+One interface for every deterministic job (`shared/verification.ts`). The work type fixes a plan of segments — each a
+`gemm` (Out = A·B + bias), an `elementwise` step or an `opaque` one — and the node never chooses kinds, ops or wiring.
+The node commits to the hash of every segment's output, folded with σ, the hash of the job's own inputs and the plan
+into one chain root. Only after that commitment is stored does the API draw which segments to open (HMAC keyed from a
+secret the node does not hold, over job, σ and chain root; one commitment per assignment, so no grinding). The node
+then serves the tensors each drawn segment reads and writes; every one must have its exact dtype and shape and hash to
+the commitment; a gemm is checked by Freivalds (O(n²), with every entry bounded so the mod-p check is exact), an
+elementwise step is recomputed; job inputs always come from the job. A wrong, mismatched or late opening is a failed
+check: the job fails, the owner pays nothing, all held pay of the wallet bound at commit time is clawed and the node is
+suspended (the B-6 mechanism, unchanged). matmul is the degenerate case: one gemm checked on every job, its cuPOW
+transcript an opaque segment opened 1 in `VERIFY_SAMPLE_K`.
+
+What each label claims:
+
+| Label | Means | Where |
+|---|---|---|
+| **proven** | the answer is checked on every job, and the work behind it is re-executed on a sample with a claw | matmul |
+| **proven per segment, sampled s of m** | every opened segment is checked exactly; a single wrong segment is caught with probability s/m per job (int8-mlp: ½), with the claw over 24 h of held pay making cheating negative-EV | int8-mlp |
+| **spot-checked** | a statistical comparison against a reference (tolerances), not an exact check | verified endpoints (§4) |
+| **attested** | the node or its hardware says so; nothing re-checks it | GPU model reported by the node; a TEE tier later |
+| **probed** | a probe saw it working at that moment; time is charged only between passing probes | hosting, containers, workstations |
+
+"Proven" covers the integer kernel only (int8 weights and activations, int32 accumulation, fixed requantization) — not
+float engines (B-19) and not containers. Cloudana picks no model: the job carries the user's weights, scales and table.
 
 ## 6. Endpoints (complete for v1)
 

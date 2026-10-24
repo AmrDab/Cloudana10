@@ -126,11 +126,28 @@ reserved per container and re-read from Docker on resume.
 |---|---|---|
 | Price | orchestrator controller | anyone: `/v1/network` is signed by the instruction key |
 | Assignment | orchestrator draw | anyone, from the signed `GET /v1/draws/{id}` (seed, eligible set, draw); the set is attested, not committed before the seed — pull-based assignment (B-17) closes that |
-| Verification | orchestrator (transcript + Freivalds); browsers re-check planted tasks | the keeper re-verifies only the root; results are reproducible from stored A, B |
+| Verification | orchestrator (transcript + Freivalds; for int8-mlp, the drawn segments of the node's commitment); browsers re-check planted matmul tasks | the keeper re-verifies only the root; results are reproducible from stored inputs |
 | Billing of hosting | orchestrator probes through the node's socket | the owner (events, report-a-problem) |
 | Epoch root | orchestrator computes; keeper re-verifies and posts | guardian Safe (veto); anyone, from the signed `GET /v1/epochs/{n}` leaves (`scripts/verify/replay.ts`) |
 | Mint | contract, bounded by fees burned + allowance + annual ceiling | anyone on-chain |
 | Claims | permissionless with a proof | anyone |
+
+**Verification tiers.** Each service carries the label of what is actually checked (`docs/V4_VERIFIED_SERVICES.md`
+§5, §5a), never more:
+
+| Tier | What is checked | Services |
+|---|---|---|
+| **proven** | the answer on every job (Freivalds), the work behind it re-executed on a sampled 1 in `VERIFY_SAMPLE_K`, pay held 24 h and clawed wallet-wide on a failed sample | matmul |
+| **proven per segment, sampled** | the node commits to every segment's output (a hash chain bound to σ and the job's inputs); after the commitment is stored the API draws segments to open; each opened GEMM is Freivalds-checked and each elementwise step recomputed; same hold and claw | int8-mlp (2 of 4 segments per job) |
+| **spot-checked** | statistical comparison against a reference node, with tolerances | verified endpoints (B-19, planned) |
+| **attested** | reported by the node or its hardware, not re-checked | the GPU model a node reports; a TEE tier later (B-24) |
+| **probed** | a probe through the node's socket saw it working; only time between passing probes is charged | static hosting, containers, GPU endpoints, workstations |
+
+The interface (`shared/verification.ts`: tensors, hashes, the chain, the kind-generic opening check) is shared by the
+API and the agent; a work type supplies its plan, inputs and kernels (`client/api/src/services/work-types.ts`).
+Challenge-mode work is two node-initiated calls — `POST /v1/work/submit` with the commitment, then `POST
+/v1/work/answer` with the drawn openings before a deadline (`CHALLENGE_TTL_SECONDS`, 30); no relay, works behind NAT;
+D1 stores hashes, the draw and the result, never openings.
 
 Litmus test ("if Cloudana vanished tonight"): FAIL. The Node runtime lets anyone run the orchestrator software, but
 nodes pin Cloudana's instruction key and users hold credits in Cloudana's D1. The sequence that changes this is in
