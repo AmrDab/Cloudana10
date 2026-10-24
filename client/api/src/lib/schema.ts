@@ -208,6 +208,9 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE work_jobs ADD COLUMN commitment_json TEXT",
   "ALTER TABLE work_jobs ADD COLUMN challenge_json TEXT",
   "ALTER TABLE work_jobs ADD COLUMN challenge_expires_at INTEGER",
+  // The node's payout wallet when its commitment was stored: a failed challenge claws this wallet whatever the node's
+  // binding says by then (unbinding mid-challenge must not evade the claw).
+  "ALTER TABLE work_jobs ADD COLUMN commit_payout TEXT",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

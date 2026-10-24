@@ -14,7 +14,7 @@ import { getD1 } from "../src/lib/storage.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
-import { announceNode, getNode, touchNode } from "../src/services/nodes.service.js";
+import { announceNode, getNode, touchNode, unbindOwnNode } from "../src/services/nodes.service.js";
 import {
   answerChallenge,
   enqueueWorkJob,
@@ -377,6 +377,69 @@ describe("int8-mlp: commit, challenge, answer", () => {
     });
   });
 
+  describe("unbinding mid-challenge evades nothing", () => {
+    /** A node with held pay, and an open challenge on a second job. */
+    async function openChallenge() {
+      const { node, payout } = await int8Node();
+      const held = await heldJob(node);
+      const j = await nextInt8Job(node);
+      const { outputs, result } = executeInt8Mlp(j.input);
+      const s = await submitWork(node, { jobId: j.jobId, commitment: makeCommitment(j.sigma, int8MlpInputs(j.input), PLAN, outputs), result });
+      if (!s.ok || !("challenge" in s)) throw new Error();
+      expect((await getWorkJob(j.jobId))!.commit_payout).toBe(payout);
+      return { node, payout, held, j, outputs, segments: s.challenge.segments, deadline: s.challenge.deadline };
+    }
+
+    it("the owner cannot unbind a node with an open challenge (409), and can once it is settled", async () => {
+      const o = await openChallenge();
+      expect(await unbindOwnNode(o.payout, o.node)).toEqual({ ok: false, code: "conflict", message: "finish or forfeit the open challenge first" });
+      const res = await buildApp({ runtime: "node" }).request(`/v1/nodes/mine/${o.node}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${await generateToken(o.payout)}`, "cf-connecting-ip": "10.72.0.1" },
+      });
+      expect(res.status).toBe(409);
+      expect((await getNode(o.node))!.payout).toBe(o.payout);
+      expect(await answerChallenge(o.node, { jobId: o.j.jobId, openings: openings(o.outputs, o.segments) })).toMatchObject({ ok: true });
+      expect(await unbindOwnNode(o.payout, o.node)).toMatchObject({ ok: true });
+    });
+
+    it("a payout cleared by another route, then no answer: the snapshot wallet is clawed and the node suspended", async () => {
+      const o = await openChallenge();
+      await getD1().prepare("UPDATE nodes SET payout = NULL, fleet_id = NULL, bound_at = NULL WHERE address = ?").bind(o.node).run();
+      const before = await getBalanceUcld(user);
+      expect(await sweepChallenges(o.deadline + 1)).toBe(1);
+      await expectCaught(o.node, o.payout, o.j.jobId, o.held, before);
+    });
+
+    it("a payout cleared by another route, then a late answer: the same", async () => {
+      const o = await openChallenge();
+      await getD1().prepare("UPDATE nodes SET payout = NULL WHERE address = ?").bind(o.node).run();
+      const before = await getBalanceUcld(user);
+      expect(await answerChallenge(o.node, { jobId: o.j.jobId, openings: openings(o.outputs, o.segments) }, o.deadline + 1)).toMatchObject({ ok: false });
+      await expectCaught(o.node, o.payout, o.j.jobId, o.held, before);
+    });
+
+    it("a payout moved to another wallet, then a wrong answer: the snapshot wallet is clawed, not the new one", async () => {
+      const o = await openChallenge();
+      const other = "0x" + randomBytes(20).toString("hex");
+      await getD1().prepare("UPDATE nodes SET payout = ? WHERE address = ?").bind(other, o.node).run();
+      const ops = openings(o.outputs, o.segments);
+      const t = ops[0].tensors[`seg:${o.segments[0]}`]!;
+      ops[0].tensors[`seg:${o.segments[0]}`] = { ...t, data: t.data.map((v, i) => (i === 0 ? (v === 0 ? 1 : 0) : v)) };
+      const before = await getBalanceUcld(user);
+      expect(await answerChallenge(o.node, { jobId: o.j.jobId, openings: ops })).toMatchObject({ ok: false });
+      await expectCaught(o.node, o.payout, o.j.jobId, o.held, before);
+    });
+
+    it("an honest answer after the payout moved is paid to the wallet that committed", async () => {
+      const o = await openChallenge();
+      await getD1().prepare("UPDATE nodes SET payout = NULL WHERE address = ?").bind(o.node).run();
+      expect(await answerChallenge(o.node, { jobId: o.j.jobId, openings: openings(o.outputs, o.segments) })).toMatchObject({ ok: true });
+      const rows = await getD1().prepare("SELECT DISTINCT address FROM reward_entries WHERE job_id = ? AND lane = 'A'").bind(o.j.jobId).all<{ address: string }>();
+      expect(rows.results).toEqual([{ address: o.payout }]);
+    });
+  });
+
   it("matmul jobs are untouched: same node, same submit, same answer as before", async () => {
     const { node } = await int8Node();
     const s = await nextJob(node);
@@ -444,7 +507,13 @@ describe("HTTP: POST /v1/jobs (int8-mlp), /v1/work/submit with a commitment, /v1
     // A second commitment is 409; an oversized answer is 413 and changes nothing.
     expect((await signed(acct, "/v1/work/submit", { jobId: cb.jobId, commitment, result })).status).toBe(409);
     const huge = JSON.stringify({ jobId: cb.jobId, openings: [{ idx: 0, tensors: { "seg:0": { dtype: "i32", shape: [1], data: [0] } } }], pad: "x".repeat(1024 * 1024) });
-    expect((await signed(acct, "/v1/work/answer", huge)).status).toBe(413);
+    const tooBig = await signed(acct, "/v1/work/answer", huge);
+    expect(tooBig.status).toBe(413);
+    expect(((await tooBig.json()) as { error: { code: string } }).error.code).toBe("payload_too_large");
+    expect((await getWorkJob(cb.jobId))!.status).toBe("assigned");
+    // A tensor longer than the largest int8-mlp segment (64 × 256) is refused by the schema.
+    const long = await signed(acct, "/v1/work/answer", { jobId: cb.jobId, openings: [{ idx: 0, tensors: { "seg:0": { dtype: "i32", shape: [1], data: new Array(64 * 256 + 1).fill(0) } } }] });
+    expect(long.status).toBe(400);
     expect((await getWorkJob(cb.jobId))!.status).toBe("assigned");
 
     const ans = await signed(acct, "/v1/work/answer", { jobId: cb.jobId, openings: openings(outputs, sb.challenge.segments) });
@@ -455,6 +524,26 @@ describe("HTTP: POST /v1/jobs (int8-mlp), /v1/work/submit with a commitment, /v1
     const got = await call(`/v1/jobs/${cb.jobId}`, { headers: { Authorization: `Bearer ${jwt}` } });
     const gb = (await got.json()) as { job: { status: string; workType: string; n: number; result: number[]; certificate: { z: string } } };
     expect(gb.job).toMatchObject({ status: "done", workType: "int8-mlp", n: 16, result: result.data, certificate: { z: commitment.chainRoot } });
+  });
+
+  it("an oversized body is 413 before the signature check and before any parsing (submit and answer)", async () => {
+    // Unsigned, not even JSON: a 413 here means neither requireNode (401) nor the JSON parser (400) ran.
+    for (const [path, size] of [["/v1/work/answer", 1024 * 1024 + 1], ["/v1/work/submit", 8 * 1024 * 1024 + 1]] as const) {
+      const declared = await call(path, { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": String(size) }, body: "{".repeat(size) });
+      expect(declared.status, path).toBe(413);
+      // Streamed without a Content-Length: counted while reading, stopped at the cap.
+      const bytes = new TextEncoder().encode("{".repeat(size));
+      const stream = new ReadableStream<Uint8Array>({
+        start(ctl) {
+          for (let i = 0; i < bytes.length; i += 65536) ctl.enqueue(bytes.subarray(i, i + 65536));
+          ctl.close();
+        },
+      });
+      const streamed = await call(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: stream, duplex: "half" } as RequestInit);
+      expect(streamed.status, `${path} streamed`).toBe(413);
+    }
+    // Under the cap the same garbage reaches the signature check.
+    expect((await call("/v1/work/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" })).status).toBe(401);
   });
 
   it("refuses an int8-mlp job outside the bounds (400), and a matmul body still validates as before", async () => {

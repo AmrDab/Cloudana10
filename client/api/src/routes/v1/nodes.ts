@@ -383,10 +383,10 @@ const unbindRoute = createRoute({
   description:
     "Let a node go: its payout binding (and fleet) is cleared, its live deployments are re-queued for other nodes, and " +
     "it prints a fresh bind link on its next announce. Earnings already recorded stay with this wallet. 404 when no such " +
-    "node is bound to the caller.",
+    "node is bound to the caller; 409 while the node has an open int8-mlp challenge (finish or forfeit it first).",
   security: BEARER_AUTH,
   request: { params: z.object({ address: EthAddressSchema }) },
-  responses: responses({ 200: json(z.object({ status: z.literal("success"), unbound: z.string(), requeued: z.number().int() }), "Unbound") }, 400, 401, 404),
+  responses: responses({ 200: json(z.object({ status: z.literal("success"), unbound: z.string(), requeued: z.number().int() }), "Unbound") }, 400, 401, 404, 409),
 });
 
 nodesRouter.openapi(unbindRoute, async (c) => {

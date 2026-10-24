@@ -63,6 +63,8 @@ export interface WorkJobRow {
   challenge_json?: string | null;
   /** The answer deadline (ms); null for matmul and once the job left 'assigned'. */
   challenge_expires_at?: number | null;
+  /** The node's payout wallet when the commitment was stored: what a failed challenge claws. */
+  commit_payout?: string | null;
 }
 
 export interface JobMatrices {
@@ -593,7 +595,7 @@ export async function submitWork(nodeAddress: string, input: WorkSubmission, now
   if (!nodeRow?.payout) return { ok: false, code: "conflict", message: "bind this node first" };
 
   const wt = getWorkType(job.work_type)!;
-  if (wt.mode === "challenge") return submitCommitment(job, node, wt, input as Extract<WorkSubmission, { commitment: Commitment }>, now);
+  if (wt.mode === "challenge") return submitCommitment(job, node, nodeRow.payout, wt, input as Extract<WorkSubmission, { commitment: Commitment }>, now);
   return submitInline(job, node, nodeRow, wt, input as Extract<WorkSubmission, { certificate: POUWCertificate }>, now);
 }
 
@@ -782,6 +784,7 @@ function challengeJob(job: WorkJobRow, wt: WorkType<any>) {
 async function submitCommitment(
   job: WorkJobRow,
   node: string,
+  payout: string,
   wt: WorkType<any>,
   sub: { jobId: string; commitment: Commitment; result: Tensor },
   now: number,
@@ -801,10 +804,10 @@ async function submitCommitment(
   const deadline = now + getEnv().CHALLENGE_TTL_SECONDS * 1000;
   const res = await getD1()
     .prepare(
-      "UPDATE work_jobs SET commitment_json = ?, cert_z = ?, result_json = ?, challenge_json = ?, challenge_expires_at = ?, expires_at = ? " +
-        "WHERE id = ? AND status = 'assigned' AND node = ? AND commitment_json IS NULL",
+      "UPDATE work_jobs SET commitment_json = ?, cert_z = ?, result_json = ?, challenge_json = ?, challenge_expires_at = ?, expires_at = ?, " +
+        "commit_payout = ? WHERE id = ? AND status = 'assigned' AND node = ? AND commitment_json IS NULL",
     )
-    .bind(JSON.stringify(c), c.chainRoot, JSON.stringify(sub.result), JSON.stringify(segments), deadline, deadline, job.id, node)
+    .bind(JSON.stringify(c), c.chainRoot, JSON.stringify(sub.result), JSON.stringify(segments), deadline, deadline, normalizeAddress(payout), job.id, node)
     .run();
   if ((res.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "a commitment was already submitted for this assignment" };
   return { ok: true, challenge: { segments, deadline } };
@@ -819,7 +822,19 @@ async function submitCommitment(
 async function caughtChallenge(job: WorkJobRow, node: string, nodeRow: NodeRow | null, reason: string, now: number): Promise<SubmitResult> {
   const db = getD1();
   const why = segmentSuspensionReason(job.id);
-  const stmts = nodeRow?.payout ? caughtStatements(job.id, node, nodeRow, now, why) : [];
+  // The wallet snapshotted at commit time, whatever the node's binding says now: unbinding (or being unbound by any
+  // route) mid-challenge evades nothing. The suspension is part of the same statements, so it always lands.
+  const payout = job.commit_payout ?? nodeRow?.payout ?? null;
+  const stmts = payout
+    ? caughtStatements(job.id, node, { ...(nodeRow ?? ({ address: node } as NodeRow)), payout }, now, why)
+    : [
+        db
+          .prepare(
+            "UPDATE nodes SET jobs_failed = jobs_failed + 1, state = 'suspended', state_reason = ?1, state_at = ?2 WHERE address = ?3 " +
+              "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ?4 AND status = 'assigned' AND node = ?3)",
+          )
+          .bind(why, now, node, job.id),
+      ];
   const results = await db.batch([
     ...stmts,
     db
@@ -831,8 +846,8 @@ async function caughtChallenge(job: WorkJobRow, node: string, nodeRow: NodeRow |
   ]);
   if ((results[stmts.length]?.meta?.changes ?? 0) > 0) {
     await release(job.owner, job.price_ucld);
-    const clawed = stmts.length ? (results[1]?.meta?.changes ?? 0) : 0; // the UPDATE after the coverage INSERT
-    L.warn(`[work] ${why} from ${node} (${reason}): job failed, hold released, ${clawed} held entries clawed, node suspended`);
+    const clawed = payout ? (results[1]?.meta?.changes ?? 0) : 0; // the UPDATE after the coverage INSERT
+    L.warn(`[work] ${why} from ${node} (${reason}): job failed, hold released, ${clawed} held entries of ${payout ?? "no wallet"} clawed, node suspended`);
     if (nodeRow) await afterCaught(job, node, nodeRow, now, why);
   }
   return {
@@ -877,9 +892,11 @@ export async function answerChallenge(
     // No stage: the job's own data does not fit its plan. Not the node's fault, and validate() makes it unreachable.
     if (!v.ok) throw new Error(`answerChallenge ${job.id}: ${v.reason}`);
   }
-  if (!nodeRow?.payout) return { ok: false, code: "conflict", message: "bind this node first" };
+  // Paid to the wallet the node was bound to when it committed (the one a failure would have clawed).
+  const payTo = job.commit_payout ?? nodeRow?.payout;
+  if (!nodeRow || !payTo) return { ok: false, code: "conflict", message: "bind this node first" };
 
-  const booked = await bookVerified(job, node, nodeRow, now, { resultJson: job.result_json!, certZ: job.cert_z!, sampleCheck: "passed", caught: false });
+  const booked = await bookVerified(job, node, { ...nodeRow, payout: payTo }, now, { resultJson: job.result_json!, certZ: job.cert_z!, sampleCheck: "passed", caught: false });
   if (!booked.done) return { ok: false, code: "conflict", message: "job was already completed" };
   return creditNode(node, nodeRow, job, wt.meter(jobInput), booked, now);
 }

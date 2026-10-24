@@ -141,8 +141,8 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   fee_captured_at INTEGER, -- set in the same transaction that captures the fee and writes the rewards (submitWork)
   sample_check TEXT, -- sampled transcript re-execution (B-6): NULL = not sampled, 'passed', 'failed' or 'reversed' (claw undone)
   -- Challenge-mode work (B-26): a non-matmul job's input, the node's commitment, the segments drawn after it was stored,
-  -- and the answer deadline (all NULL for matmul).
-  input_json TEXT, commitment_json TEXT, challenge_json TEXT, challenge_expires_at INTEGER
+  -- the answer deadline, and the payout wallet at commit time that a failed challenge claws (all NULL for matmul).
+  input_json TEXT, commitment_json TEXT, challenge_json TEXT, challenge_expires_at INTEGER, commit_payout TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_status ON work_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_work_jobs_owner ON work_jobs(owner, created_at DESC);

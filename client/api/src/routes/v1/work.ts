@@ -9,6 +9,7 @@
  * segments to open and a deadline (drawn only after the commitment is stored); then POST /v1/work/answer opens them.
  */
 import { createRoute, z } from "@hono/zod-openapi";
+import { bodyLimit } from "hono/body-limit";
 import { ok, fail, failValidation } from "../../lib/http.js";
 import { requireNode, type NodeVariables } from "../../middleware/node-auth.js";
 import type { AuthVariables } from "../../middleware/auth.js";
@@ -16,6 +17,20 @@ import { answerChallenge, submitWork } from "../../services/jobs.service.js";
 import type { POUWCertificate } from "../../../../../pouw/src/types.js";
 import type { SegmentOpening } from "../../../../../shared/verification.js";
 import { createRouter, json, responses } from "./_openapi.js";
+import { INT8_MLP } from "../../../../../shared/work-int8-mlp.js";
+
+/**
+ * Byte caps checked before the signature check and before any parsing (Content-Length, or counted while streaming):
+ * an oversized body is 413 without being read into memory. A matmul submit at n = 256 is ~2.5 MB of JSON at most; an
+ * int8-mlp answer opens 2 segments of ≤ 64×256 entries (~0.2 MB), so 1 MB is ~5× the largest.
+ */
+const SUBMIT_MAX_BYTES = 8 * 1024 * 1024;
+const ANSWER_MAX_BYTES = 1024 * 1024;
+const tooLarge = (max: number) => bodyLimit({ maxSize: max, onError: (c) => fail(c, "payload_too_large", `the body is at most ${max / (1024 * 1024)} MB`) });
+const submitLimit = tooLarge(SUBMIT_MAX_BYTES);
+const answerLimit = tooLarge(ANSWER_MAX_BYTES);
+/** The largest tensor a node ever serves: an int8-mlp activation or result, b × max(d, h). */
+const MAX_SEGMENT_ENTRIES = INT8_MLP.B_MAX * INT8_MLP.DIM_MAX;
 
 export const workRouter = createRouter<AuthVariables & NodeVariables>();
 
@@ -47,7 +62,7 @@ const SubmitSchema = z.object({
 const TensorSchema = z.object({
   dtype: z.enum(["i8", "i32"]),
   shape: z.array(z.number().int()).min(1).max(4),
-  data: z.array(z.number()).max(MAX),
+  data: z.array(z.number()).max(MAX_SEGMENT_ENTRIES),
 });
 const Hex64 = z.string().regex(/^[0-9a-f]{64}$/);
 const CommitSubmitSchema = z.object({
@@ -74,7 +89,7 @@ const submitRoute = createRoute({
     "{ jobId, commitment: { inputHash, outputHash, chainRoot, segments: [{ idx, outHash }] }, result: tensor }; a " +
     "commitment that binds (σ, the job's inputs, the plan, the result) returns { challenge: { segments, deadline } }: " +
     "answer it with POST /v1/work/answer before the deadline. One commitment per assignment (a second is 409).",
-  middleware: [requireNode] as const,
+  middleware: [submitLimit, requireNode] as const,
   request: {
     body: {
       required: true,
@@ -110,6 +125,7 @@ const submitRoute = createRoute({
     401,
     404,
     409,
+    413,
     422,
   ),
 });
@@ -136,8 +152,7 @@ workRouter.openapi(submitRoute, async (c) => {
   return ok(c, { units: r.units, earned: r.earned, vestsAt: r.vestsAt, heldUntil: r.heldUntil });
 });
 
-/** An answer opens at most the 2 challenged segments of a 4-segment plan; 1 MB is ~5× the largest int8-mlp answer. */
-const MAX_ANSWER_BYTES = 1024 * 1024;
+/** An answer opens the challenged segments (2 of int8-mlp's 4); each opening serves at most a segment's inputs and output. */
 const AnswerSchema = z.object({
   jobId: z.string().min(1).max(64),
   openings: z
@@ -161,7 +176,7 @@ const answerRoute = createRoute({
     "elementwise one recomputed. Pass → settled like a matmul job (the pay held until heldUntil). A wrong, missing or " +
     "late opening → 422: the job fails (the owner's hold is released), all held pay of the node's payout wallet is " +
     "clawed and the node is suspended.",
-  middleware: [requireNode] as const,
+  middleware: [answerLimit, requireNode] as const,
   request: { body: { required: true, content: { "application/json": { schema: AnswerSchema } } } },
   responses: responses(
     {
@@ -186,7 +201,6 @@ const answerRoute = createRoute({
 });
 
 workRouter.openapi(answerRoute, async (c) => {
-  if ((await c.req.text()).length > MAX_ANSWER_BYTES) return fail(c, "payload_too_large", "an answer is at most 1 MB");
   const body = c.req.valid("json");
   const r = await answerChallenge(c.get("node"), { jobId: body.jobId, openings: body.openings as SegmentOpening[] });
   if (!r.ok) return fail(c, r.code, r.message);
