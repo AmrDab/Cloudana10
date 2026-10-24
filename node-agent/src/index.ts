@@ -350,7 +350,11 @@ async function main() {
     log(`job ${a.jobId} int8-mlp b=${a.input?.b} d=${a.input?.d} h=${a.input?.h}`);
     const start = performance.now();
     try {
-      const { laneAUcld, laneBUcld } = await runChallengeJob(a, (path, body) => request(account, "POST", path, body));
+      const { laneAUcld, laneBUcld } = await runChallengeJob(a, (path, body) => request(account, "POST", path, body), {
+        // A lost response (the API unreachable, or a 5xx) is retried; a refusal (4xx) or a bad signature (Fatal) is not.
+        retryable: (err) => err instanceof Unreachable || ((err as { status?: number }).status ?? 0) >= 500,
+        now: serverNow,
+      });
       const total = laneAUcld + laneBUcld;
       jobsDone++;
       earnedUcld += total;

@@ -12,6 +12,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { bodyLimit } from "hono/body-limit";
 import { ok, fail, failValidation } from "../../lib/http.js";
 import { requireNode, type NodeVariables } from "../../middleware/node-auth.js";
+import { rateLimit, verifiedNodeKey } from "../../middleware/rate-limit.js";
 import type { AuthVariables } from "../../middleware/auth.js";
 import { answerChallenge, submitWork } from "../../services/jobs.service.js";
 import type { POUWCertificate } from "../../../../../pouw/src/types.js";
@@ -29,6 +30,8 @@ const ANSWER_MAX_BYTES = 1024 * 1024;
 const tooLarge = (max: number) => bodyLimit({ maxSize: max, onError: (c) => fail(c, "payload_too_large", `the body is at most ${max / (1024 * 1024)} MB`) });
 const submitLimit = tooLarge(SUBMIT_MAX_BYTES);
 const answerLimit = tooLarge(ANSWER_MAX_BYTES);
+/** Per node (in memory, like the other node routes): an agent sends one answer per job, plus retries with backoff. */
+const answerRate = rateLimit({ bucket: "work-answer", limit: 30, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
 /** The largest tensor a node ever serves: an int8-mlp activation or result, b × max(d, h). */
 const MAX_SEGMENT_ENTRIES = INT8_MLP.B_MAX * INT8_MLP.DIM_MAX;
 
@@ -176,7 +179,7 @@ const answerRoute = createRoute({
     "elementwise one recomputed. Pass → settled like a matmul job (the pay held until heldUntil). A wrong, missing or " +
     "late opening → 422: the job fails (the owner's hold is released), all held pay of the node's payout wallet is " +
     "clawed and the node is suspended.",
-  middleware: [answerLimit, requireNode] as const,
+  middleware: [answerLimit, requireNode, answerRate] as const,
   request: { body: { required: true, content: { "application/json": { schema: AnswerSchema } } } },
   responses: responses(
     {
@@ -197,6 +200,7 @@ const answerRoute = createRoute({
     409,
     413,
     422,
+    429,
   ),
 });
 

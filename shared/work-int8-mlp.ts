@@ -68,13 +68,18 @@ const i32 = (shape: number[]): TensorSig => ({ dtype: "i32", shape });
 
 /** The exact signature of each job input. */
 export function int8MlpInputSigs({ b, d, h }: Int8MlpInput): Record<string, TensorSig> {
-  return { X: i8([b, d]), W1: i8([d, h]), b1: i32([h]), W2: i8([h, d]), b2: i32([d]) };
+  return { X: i8([b, d]), W1: i8([d, h]), b1: i32([h]), W2: i8([h, d]), b2: i32([d]), q: i32([4]), lut: i8([256]) };
 }
 
-/** The job's input tensors (`in:<name>`). Scales and the table are parameters the kernels take from the job. */
+/**
+ * The job's input tensors (`in:<name>`): the weights and biases, plus `q` = [m1, s1, m2, s2] and the activation `lut`
+ * (the default ReLU written out), so the input hash — and with it the chain root — binds every number the job is made
+ * of. The kernels take the scales and the table from the job itself.
+ */
 export function int8MlpInputs(x: Int8MlpInput): Record<string, Tensor> {
   const sigs = int8MlpInputSigs(x);
-  return Object.fromEntries(Object.entries(sigs).map(([name, s]) => [name, { ...s, data: x[name as "X" | "W1" | "b1" | "W2" | "b2"] }]));
+  const data: Record<string, number[]> = { X: x.X, W1: x.W1, b1: x.b1, W2: x.W2, b2: x.b2, q: [x.m1, x.s1, x.m2, x.s2], lut: x.lut ?? reluLut() };
+  return Object.fromEntries(Object.entries(sigs).map(([name, s]) => [name, { ...s, data: data[name] }]));
 }
 
 /** The result's signature: Y i8[b×d]. */

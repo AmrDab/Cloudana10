@@ -570,7 +570,7 @@ function caughtStatements(jobId: string, node: string, nodeRow: NodeRow, now: nu
 
 export type SubmitResult =
   | { ok: true; units: number; earned: { laneAUcld: number; laneBUcld: number }; vestsAt: number; heldUntil: number }
-  | { ok: false; code: "not_found" | "conflict" | "unprocessable"; message: string };
+  | { ok: false; code: "not_found" | "conflict" | "unprocessable" | "validation_failed"; message: string };
 
 /** A challenge-mode submit that bound: the segments to open, and by when (ms). */
 export type ChallengeResult = { ok: true; challenge: { segments: number[]; deadline: number } };
@@ -584,17 +584,42 @@ export async function submitWork(nodeAddress: string, input: { jobId: string; ce
 export async function submitWork(nodeAddress: string, input: WorkSubmission, now?: number): Promise<SubmitResult | ChallengeResult>;
 export async function submitWork(nodeAddress: string, input: WorkSubmission, now = Date.now()): Promise<SubmitResult | ChallengeResult> {
   const node = normalizeAddress(nodeAddress);
-  const job = await getWorkJob(input.jobId);
-  if (!job) return { ok: false, code: "not_found", message: "job not found" };
-  // One commitment per assignment: a second submit would let a node grind the draw.
-  if (job.commitment_json) return { ok: false, code: "conflict", message: "a commitment was already submitted for this assignment" };
-  if (job.status !== "assigned" || job.node !== node || (job.expires_at ?? 0) < now) {
+  // The guard columns first: a stray, late or repeated submit never loads the job's matrices or input.
+  const g = await getD1()
+    .prepare(
+      "SELECT status, node, expires_at, work_type, cert_z, challenge_json, challenge_expires_at, commitment_json IS NOT NULL AS committed " +
+        "FROM work_jobs WHERE id = ?",
+    )
+    .bind(input.jobId)
+    .first<Pick<WorkJobRow, "status" | "node" | "expires_at" | "work_type" | "cert_z" | "challenge_json" | "challenge_expires_at"> & { committed: number }>();
+  if (!g) return { ok: false, code: "not_found", message: "job not found" };
+  if (g.committed) {
+    // A repeat of the stored commitment by the same node — its first response was lost — gets the challenge already
+    // drawn and stored (the draw is deterministic; nothing is drawn again). The chain root binds σ, so an equal root is
+    // the same commitment under the same σ. Any other commitment: one per assignment, so a node cannot grind the draw.
+    const repeat = "commitment" in input && input.commitment?.chainRoot === g.cert_z;
+    if (repeat && g.status === "assigned" && g.node === node && g.challenge_json && g.challenge_expires_at) {
+      return { ok: true, challenge: { segments: JSON.parse(g.challenge_json) as number[], deadline: g.challenge_expires_at } };
+    }
+    return { ok: false, code: "conflict", message: "a commitment was already submitted for this assignment" };
+  }
+  if (g.status !== "assigned" || g.node !== node || (g.expires_at ?? 0) < now) {
     return { ok: false, code: "conflict", message: "job is not assigned to this node (or the assignment expired)" };
+  }
+  const wt = getWorkType(g.work_type)!;
+  // The body must be the job's kind: a refusal of the request, not a failed check of the node's work.
+  if ((wt.mode === "challenge") !== ("commitment" in input)) {
+    return {
+      ok: false,
+      code: "validation_failed",
+      message: wt.mode === "challenge" ? `this is a ${wt.id} job: submit { jobId, commitment, result }` : `this is a ${wt.id} job: submit { jobId, certificate, result }`,
+    };
   }
   const nodeRow = await getNode(node);
   if (!nodeRow?.payout) return { ok: false, code: "conflict", message: "bind this node first" };
+  const job = await getWorkJob(input.jobId);
+  if (!job) return { ok: false, code: "not_found", message: "job not found" };
 
-  const wt = getWorkType(job.work_type)!;
   if (wt.mode === "challenge") return submitCommitment(job, node, nodeRow.payout, wt, input as Extract<WorkSubmission, { commitment: Commitment }>, now);
   return submitInline(job, node, nodeRow, wt, input as Extract<WorkSubmission, { certificate: POUWCertificate }>, now);
 }
@@ -708,7 +733,7 @@ async function creditNode(
 }
 
 /** Best effort after a suspension: the fleet hint and the node's deployments (the claw and the suspension stand). */
-async function afterCaught(job: WorkJobRow, node: string, nodeRow: NodeRow, now: number, reason = suspensionReason(job.id)): Promise<void> {
+async function afterCaught(job: Pick<WorkJobRow, "id">, node: string, nodeRow: NodeRow, now: number, reason = suspensionReason(job.id)): Promise<void> {
   try {
     if (nodeRow.fleet_id) {
       // A fleet node pays the fleet owner's wallet: tell them which fleet, in case the node is not theirs (a leaked token).
@@ -768,7 +793,7 @@ async function submitInline(
   return creditNode(node, nodeRow, job, wt.meter(jobInput), booked, now);
 }
 
-// ─── Challenge mode: commit, then challenge, then answer (ENGINEERING_BACKLOG B-26) ─────────────────────────────
+/// ─── Challenge mode: commit, then challenge, then answer (ENGINEERING_BACKLOG B-26) ─────────────────────────────
 
 function challengeJob(job: WorkJobRow, wt: WorkType<any>) {
   const input = JSON.parse(job.input_json!) as unknown;
@@ -778,8 +803,10 @@ function challengeJob(job: WorkJobRow, wt: WorkType<any>) {
 /**
  * Bind the node's commitment to the job (σ, the job's own inputs, the plan, the result) and only then draw the
  * segments it must open: the commitment, the result, the draw and the deadline land in one write, before the draw is
- * returned. A commitment that does not bind is refused like any failed matmul check (re-queued, failed after
- * MAX_JOB_ATTEMPTS, no claw). The job stays 'assigned' until the answer, so every guard on 'assigned' still holds.
+ * returned. The write holds only for the σ that was checked and an assignment that has not expired, so a commitment
+ * can never bind a σ that an expire-and-reassign replaced in between. A commitment that does not bind is refused like
+ * any failed matmul check (re-queued, failed after MAX_JOB_ATTEMPTS, no claw). The job stays 'assigned' until the
+ * answer, so every guard on 'assigned' still holds.
  */
 async function submitCommitment(
   job: WorkJobRow,
@@ -805,23 +832,30 @@ async function submitCommitment(
   const res = await getD1()
     .prepare(
       "UPDATE work_jobs SET commitment_json = ?, cert_z = ?, result_json = ?, challenge_json = ?, challenge_expires_at = ?, expires_at = ?, " +
-        "commit_payout = ? WHERE id = ? AND status = 'assigned' AND node = ? AND commitment_json IS NULL",
+        "commit_payout = ? WHERE id = ? AND status = 'assigned' AND node = ? AND commitment_json IS NULL AND sigma = ? AND expires_at >= ?",
     )
-    .bind(JSON.stringify(c), c.chainRoot, JSON.stringify(sub.result), JSON.stringify(segments), deadline, deadline, normalizeAddress(payout), job.id, node)
+    .bind(JSON.stringify(c), c.chainRoot, JSON.stringify(sub.result), JSON.stringify(segments), deadline, deadline, normalizeAddress(payout), job.id, node, job.sigma, now)
     .run();
-  if ((res.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "a commitment was already submitted for this assignment" };
+  if ((res.meta?.changes ?? 0) === 0) {
+    return { ok: false, code: "conflict", message: "the assignment changed or a commitment was already submitted; nothing was stored" };
+  }
   return { ok: true, challenge: { segments, deadline } };
 }
 
+/** What a failed challenge needs of the job: no input, no result. */
+type CaughtJob = Pick<WorkJobRow, "id" | "owner" | "price_ucld" | "commit_payout">;
+
 /**
- * A failed challenge (a wrong or mismatched opening, or no answer in time): one batch claws the payout wallet's held
- * pay and suspends the node (caughtStatements, unchanged), then fails the job — last, so `stillAssigned` holds for the
- * claw. No pay was booked for this job, so the claw takes the wallet's other held pay; the owner is not charged (the
- * hold goes back) and the result is dropped (nothing proved it). Not re-queued in Phase 0.
+ * A failed challenge (a wrong or mismatched opening, or no answer in time), in one batch: the payout wallet's held pay
+ * is clawed and the node suspended (caughtStatements, unchanged), the owner's hold released, and the job failed — last,
+ * so `stillAssigned` holds for every statement before it and a second, racing catch changes nothing. No pay was booked
+ * for this job, so the claw takes the wallet's other held pay; the owner is not charged and the result is dropped
+ * (nothing proved it). Not re-queued in Phase 0.
  */
-async function caughtChallenge(job: WorkJobRow, node: string, nodeRow: NodeRow | null, reason: string, now: number): Promise<SubmitResult> {
+async function caughtChallenge(job: CaughtJob, node: string, nodeRow: NodeRow | null, reason: string, now: number): Promise<SubmitResult> {
   const db = getD1();
   const why = segmentSuspensionReason(job.id);
+  const stillAssigned = "EXISTS (SELECT 1 FROM work_jobs WHERE id = ?1 AND status = 'assigned' AND node = ?2)";
   // The wallet snapshotted at commit time, whatever the node's binding says now: unbinding (or being unbound by any
   // route) mid-challenge evades nothing. The suspension is part of the same statements, so it always lands.
   const payout = job.commit_payout ?? nodeRow?.payout ?? null;
@@ -829,14 +863,17 @@ async function caughtChallenge(job: WorkJobRow, node: string, nodeRow: NodeRow |
     ? caughtStatements(job.id, node, { ...(nodeRow ?? ({ address: node } as NodeRow)), payout }, now, why)
     : [
         db
-          .prepare(
-            "UPDATE nodes SET jobs_failed = jobs_failed + 1, state = 'suspended', state_reason = ?1, state_at = ?2 WHERE address = ?3 " +
-              "AND EXISTS (SELECT 1 FROM work_jobs WHERE id = ?4 AND status = 'assigned' AND node = ?3)",
-          )
-          .bind(why, now, node, job.id),
+          .prepare(`UPDATE nodes SET jobs_failed = jobs_failed + 1, state = 'suspended', state_reason = ?3, state_at = ?4 WHERE address = ?2 AND ${stillAssigned}`)
+          .bind(job.id, node, why, now),
       ];
   const results = await db.batch([
     ...stmts,
+    db
+      .prepare(
+        "UPDATE balances SET held_ucld = held_ucld - ?3, balance_ucld = balance_ucld + ?3, updated_at = ?4 WHERE address = ?5 AND held_ucld >= ?3 " +
+          `AND ${stillAssigned}`,
+      )
+      .bind(job.id, node, job.price_ucld, new Date(now).toISOString(), normalizeAddress(job.owner)),
     db
       .prepare(
         "UPDATE work_jobs SET status = 'failed', sample_check = 'failed', result_json = NULL, completed_at = ?, expires_at = NULL, " +
@@ -844,8 +881,7 @@ async function caughtChallenge(job: WorkJobRow, node: string, nodeRow: NodeRow |
       )
       .bind(now, job.id, node),
   ]);
-  if ((results[stmts.length]?.meta?.changes ?? 0) > 0) {
-    await release(job.owner, job.price_ucld);
+  if ((results[stmts.length + 1]?.meta?.changes ?? 0) > 0) {
     const clawed = payout ? (results[1]?.meta?.changes ?? 0) : 0; // the UPDATE after the coverage INSERT
     L.warn(`[work] ${why} from ${node} (${reason}): job failed, hold released, ${clawed} held entries of ${payout ?? "no wallet"} clawed, node suspended`);
     if (nodeRow) await afterCaught(job, node, nodeRow, now, why);
@@ -868,9 +904,15 @@ export async function answerChallenge(
   now = Date.now(),
 ): Promise<SubmitResult> {
   const node = normalizeAddress(nodeAddress);
+  // The guard columns first: a stray or replayed answer never loads the job's input and result.
+  const g = await getD1()
+    .prepare("SELECT status, node, commitment_json IS NOT NULL AND challenge_json IS NOT NULL AS open FROM work_jobs WHERE id = ?")
+    .bind(input.jobId)
+    .first<{ status: string; node: string | null; open: number }>();
+  if (!g) return { ok: false, code: "not_found", message: "job not found" };
+  if (g.status !== "assigned" || g.node !== node || !g.open) return { ok: false, code: "conflict", message: "no open challenge for this node on this job" };
   const job = await getWorkJob(input.jobId);
-  if (!job) return { ok: false, code: "not_found", message: "job not found" };
-  if (job.status !== "assigned" || job.node !== node || !job.commitment_json || !job.challenge_json) {
+  if (!job || job.status !== "assigned" || job.node !== node || !job.commitment_json || !job.challenge_json) {
     return { ok: false, code: "conflict", message: "no open challenge for this node on this job" };
   }
   const nodeRow = await getNode(node);
@@ -901,15 +943,35 @@ export async function answerChallenge(
   return creditNode(node, nodeRow, job, wt.meter(jobInput), booked, now);
 }
 
-/** Cron: a challenge not answered by its deadline is a failed check. Returns the jobs caught. */
+/**
+ * The sweep's grace after a deadline: an answer that reached the API in time but is still being checked (or a clock
+ * a few seconds apart) is not raced by the cron. The answer path itself keeps the strict deadline.
+ */
+export const SWEEP_GRACE_MS = 10_000;
+
+/**
+ * Cron: a challenge not answered by its deadline (plus SWEEP_GRACE_MS) is a failed check. Reads only the columns a
+ * catch needs; one job that throws is logged and the rest of the batch still runs. Returns the jobs caught.
+ */
 export async function sweepChallenges(now = Date.now(), limit = 50): Promise<number> {
   const rows =
     (
       await getD1()
-        .prepare("SELECT * FROM work_jobs WHERE status = 'assigned' AND challenge_expires_at < ? ORDER BY challenge_expires_at LIMIT ?")
-        .bind(now, limit)
-        .all<WorkJobRow>()
+        .prepare(
+          "SELECT id, owner, price_ucld, node, commit_payout FROM work_jobs WHERE status = 'assigned' AND challenge_expires_at < ? " +
+            "ORDER BY challenge_expires_at LIMIT ?",
+        )
+        .bind(now - SWEEP_GRACE_MS, limit)
+        .all<CaughtJob & { node: string }>()
     ).results ?? [];
-  for (const job of rows) await caughtChallenge(job, job.node!, await getNode(job.node!), "no answer before the deadline", now);
-  return rows.length;
+  let caught = 0;
+  for (const job of rows) {
+    try {
+      await caughtChallenge(job, job.node, await getNode(job.node), "no answer before the deadline", now);
+      caught++;
+    } catch (err) {
+      L.error(`[work] challenge sweep of job ${job.id} failed (the rest of the batch continues):`, err);
+    }
+  }
+  return caught;
 }

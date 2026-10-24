@@ -4,7 +4,7 @@
  * largest shape (budget: 50 ms of Worker CPU per answer).
  */
 import { describe, it, expect } from "vitest";
-import { checkOpening, makeCommitment, tensorHash, type Tensor } from "../../../shared/verification.js";
+import { checkOpening, inputHash, makeCommitment, tensorHash, type Tensor } from "../../../shared/verification.js";
 import {
   INT8_MLP,
   executeInt8Mlp,
@@ -47,6 +47,16 @@ describe("int8-mlp executor", () => {
     expect(requant(2 ** 23 - 1, 2 ** 15 - 1, 31)).toBe(127);
     expect(requant(-(2 ** 23 - 1), 1, 16)).toBe(-128);
     expect(requant(5_000_000, 3, 17)).toBe(114); // floor((15,000,000 + 65,536) / 131,072) = 114
+  });
+
+  it("the input hash binds every job input: weights, biases, the scales and the table", () => {
+    const x = randomInt8MlpInput(11);
+    const h = inputHash(int8MlpInputs(x));
+    for (const patch of [{ m1: x.m1 + 1 }, { s1: x.s1 - 1 }, { m2: x.m2 + 1 }, { s2: x.s2 - 1 }, { lut: Array.from({ length: 256 }, (_, i) => i - 128) }]) {
+      expect(inputHash(int8MlpInputs({ ...x, ...patch })), JSON.stringify(Object.keys(patch))).not.toBe(h);
+    }
+    // The default table is the explicit ReLU: same computation, same hash.
+    expect(inputHash(int8MlpInputs({ ...x, lut: Array.from({ length: 256 }, (_, i) => Math.max(i - 128, 0)) }))).toBe(h);
   });
 
   it("uses the user's table when given (default ReLU)", () => {

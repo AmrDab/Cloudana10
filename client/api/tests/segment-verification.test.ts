@@ -25,6 +25,7 @@ import {
   sha256,
   submitWork,
   sweepChallenges,
+  SWEEP_GRACE_MS,
 } from "../src/services/jobs.service.js";
 import { epochOf } from "../src/services/ledger.service.js";
 import { ENV, HOUR, entryStates, nextJob, setEnv, user } from "./helpers/sampled.js";
@@ -196,23 +197,28 @@ describe("int8-mlp: commit, challenge, answer", () => {
     void payout;
   });
 
-  it("a second submit for the same assignment is 409 (one commitment per assignment)", async () => {
+  it("one commitment per assignment: a different commitment is 409; the same one gets the stored challenge back", async () => {
     const { node } = await int8Node();
     const j = await nextInt8Job(node);
     const { outputs, result } = executeInt8Mlp(j.input);
     const c = makeCommitment(j.sigma, int8MlpInputs(j.input), PLAN, outputs);
     const s = await submitWork(node, { jobId: j.jobId, commitment: c, result });
-    expect(s).toMatchObject({ ok: true, challenge: expect.anything() });
+    if (!s.ok || !("challenge" in s)) throw new Error(JSON.stringify(s));
     const stored = (await getWorkJob(j.jobId))!.challenge_json;
-    // Re-submitting (any commitment: honest again, or ground for a better draw) changes nothing.
-    const other = { ...c, segments: c.segments.map((x, i) => (i === 0 ? { idx: 0, outHash: "0".repeat(64) } : x)) };
-    for (const again of [c, other]) {
-      expect(await submitWork(node, { jobId: j.jobId, commitment: again, result })).toEqual({
-        ok: false,
-        code: "conflict",
-        message: "a commitment was already submitted for this assignment",
-      });
-    }
+    // Another commitment (ground for a better draw: a different chain root) changes nothing.
+    const wrongA1 = plantWrong(j.input, 1, 1);
+    const other = makeCommitment(j.sigma, int8MlpInputs(j.input), PLAN, wrongA1);
+    expect(other.chainRoot).not.toBe(c.chainRoot);
+    expect(await submitWork(node, { jobId: j.jobId, commitment: other, result: wrongA1[3] })).toEqual({
+      ok: false,
+      code: "conflict",
+      message: "a commitment was already submitted for this assignment",
+    });
+    // The same commitment from another node is 409 too.
+    const { node: stranger } = await int8Node();
+    expect(await submitWork(stranger, { jobId: j.jobId, commitment: c, result })).toMatchObject({ ok: false, code: "conflict" });
+    // The same commitment again (the first response was lost): the same challenge and deadline, nothing drawn again.
+    expect(await submitWork(node, { jobId: j.jobId, commitment: c, result }, Date.now() + 5000)).toEqual(s);
     expect((await getWorkJob(j.jobId))!.challenge_json).toBe(stored);
     // The stored challenge is still answerable.
     const segments = JSON.parse(stored!) as number[];
@@ -359,7 +365,7 @@ describe("int8-mlp: commit, challenge, answer", () => {
       await expectCaught(node, payout, j.jobId, held, before);
     });
 
-    it("no answer: sweepChallenges catches it after the deadline, not before", async () => {
+    it("no answer: sweepChallenges catches it after the deadline plus the 10 s grace, not before", async () => {
       const { node, payout } = await int8Node();
       const held = await heldJob(node);
       const j = await nextInt8Job(node);
@@ -368,9 +374,10 @@ describe("int8-mlp: commit, challenge, answer", () => {
       const s = await submitWork(node, { jobId: j.jobId, commitment: makeCommitment(j.sigma, int8MlpInputs(j.input), PLAN, outputs), result }, t);
       if (!s.ok || !("challenge" in s)) throw new Error();
       expect(await sweepChallenges(s.challenge.deadline - 1)).toBe(0);
+      expect(await sweepChallenges(s.challenge.deadline + SWEEP_GRACE_MS - 1)).toBe(0);
       expect((await getWorkJob(j.jobId))!.status).toBe("assigned");
       const before = await getBalanceUcld(user);
-      expect(await sweepChallenges(s.challenge.deadline + 1)).toBe(1);
+      expect(await sweepChallenges(s.challenge.deadline + SWEEP_GRACE_MS + 1)).toBe(1);
       await expectCaught(node, payout, j.jobId, held, before);
       // A late answer then finds no open challenge.
       expect(await answerChallenge(node, { jobId: j.jobId, openings: openings(outputs, s.challenge.segments) })).toMatchObject({ ok: false, code: "conflict" });
@@ -407,7 +414,7 @@ describe("int8-mlp: commit, challenge, answer", () => {
       const o = await openChallenge();
       await getD1().prepare("UPDATE nodes SET payout = NULL, fleet_id = NULL, bound_at = NULL WHERE address = ?").bind(o.node).run();
       const before = await getBalanceUcld(user);
-      expect(await sweepChallenges(o.deadline + 1)).toBe(1);
+      expect(await sweepChallenges(o.deadline + SWEEP_GRACE_MS + 1)).toBe(1);
       await expectCaught(o.node, o.payout, o.j.jobId, o.held, before);
     });
 
@@ -504,8 +511,10 @@ describe("HTTP: POST /v1/jobs (int8-mlp), /v1/work/submit with a commitment, /v1
     expect(sub.status).toBe(200);
     expect(sb).toEqual({ status: "success", challenge: { segments: expect.any(Array), deadline: expect.any(Number) } });
 
-    // A second commitment is 409; an oversized answer is 413 and changes nothing.
-    expect((await signed(acct, "/v1/work/submit", { jobId: cb.jobId, commitment, result })).status).toBe(409);
+    // The same commitment again (a lost response) gets the same challenge; an oversized answer is 413 and changes nothing.
+    const again = await signed(acct, "/v1/work/submit", { jobId: cb.jobId, commitment, result });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual(sb);
     const huge = JSON.stringify({ jobId: cb.jobId, openings: [{ idx: 0, tensors: { "seg:0": { dtype: "i32", shape: [1], data: [0] } } }], pad: "x".repeat(1024 * 1024) });
     const tooBig = await signed(acct, "/v1/work/answer", huge);
     expect(tooBig.status).toBe(413);
