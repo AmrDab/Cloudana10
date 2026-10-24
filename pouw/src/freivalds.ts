@@ -54,3 +54,34 @@ export function freivalds(A: number[], B: number[], C: number[], n: number, roun
   }
   return true;
 }
+
+/** Multiply a rows×cols signed matrix by a field vector, mod p. */
+function matVecRect(M: number[], v: bigint[], rows: number, cols: number): bigint[] {
+  const out = new Array<bigint>(rows);
+  for (let i = 0; i < rows; i++) {
+    let s = 0n;
+    const row = i * cols;
+    for (let k = 0; k < cols; k++) {
+      const a = M[row + k];
+      if (a !== 0) s += BigInt(a) * v[k];
+    }
+    out[i] = mod(s);
+  }
+  return out;
+}
+
+/**
+ * Rectangular Freivalds: true if C = A·B (A m×k, B k×n, C m×n, row-major signed integers) with overwhelming
+ * probability — false-accept ≤ (1/p)^rounds. Exact over the integers only when every entry of A·B and of C is within
+ * ±(p−1)/2; the caller enforces that bound.
+ */
+export function freivaldsRect(A: number[], B: number[], C: number[], m: number, k: number, n: number, rounds = 2): boolean {
+  if (A.length !== m * k || B.length !== k * n || C.length !== m * n) return false;
+  for (let t = 0; t < rounds; t++) {
+    const r = randomFieldVector(n);
+    const ABr = matVecRect(A, matVecRect(B, r, k, n), m, k);
+    const Cr = matVecRect(C, r, m, n);
+    for (let i = 0; i < m; i++) if (ABr[i] !== Cr[i]) return false;
+  }
+  return true;
+}
