@@ -1,11 +1,16 @@
 /**
- * WorkType registry (STRATEGY_NOTES §11b): the shared pipeline — node identity,
- * assignment, ledger, settlement — is generic; a WorkType supplies only what
- * differs per resource. "matmul" is the only one registered in v1.
+ * WorkType registry (STRATEGY_NOTES §11b): the shared pipeline — node identity, assignment, ledger, settlement — is
+ * generic; a WorkType supplies only what differs per resource. Two modes (ENGINEERING_BACKLOG B-26):
+ *   inline     all data in the submit, checked there (matmul: Freivalds on every job, the transcript on a sampled one)
+ *   challenge  the node commits to a segment chain, the API draws segments to open, the node answers them
+ *              (shared/verification.ts; int8-mlp)
  */
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 import { verify as cupowVerify } from "../../../../pouw/src/cupow.js";
 import { chooseBlockSize, fieldHash, freivalds, maxAbsEntry, toFieldMatrix } from "../../../../pouw/src/index.js";
+import type { SegmentKernel, SegmentSpec, Tensor, Verdict } from "../../../../shared/verification.js";
+
+export type { Verdict };
 
 export interface WorkJobInput {
   n: number;
@@ -19,9 +24,6 @@ export interface Submission {
   result: number[];
 }
 
-/** stage "transcript": every cheap check passed (so C = A·B) and only the re-executed transcript failed. */
-export type Verdict = { ok: true } | { ok: false; reason: string; stage?: "transcript" };
-
 export interface PlantedTask {
   n: number;
   matrixA: number[];
@@ -30,21 +32,35 @@ export interface PlantedTask {
   expected: "valid" | "invalid";
 }
 
-export interface WorkType {
+export interface WorkType<J = WorkJobInput> {
   id: string;
-  /** What a node must advertise to be eligible (v1: the work type id in its workTypes). */
-  requirements(job: WorkJobInput): { workType: string };
+  /** inline: all data in the submit (matmul); challenge: commit, then open segments. */
+  mode: "inline" | "challenge";
+  /** Eligibility gate for this type only: nodes on an older agent are never drawn for it. */
+  minAgent?: string;
+  /** What a node must advertise to be eligible (the work type id in its workTypes). */
+  requirements(job: J): { workType: string };
   /** Input check at intake; returns an error message or null. */
-  validate(job: WorkJobInput): string | null;
-  /** Protocol-computed units — never self-reported. */
-  meter(job: WorkJobInput): number;
+  validate(job: J): string | null;
+  /** Protocol-computed units (MAC-equivalents → fee) — never self-reported. */
+  meter(job: J): number;
+  /** A known-answer task; `corrupt` flips one entry of C so the right verdict is "invalid" (matmul, verify-feed). */
+  plantedTask?(base?: { n: number; matrixA: number[]; matrixB: number[]; matrixC: number[] }, corrupt?: boolean): PlantedTask;
+  // ── inline ──
   /**
    * The proof for this resource. The cheap checks always run; `transcript: false` skips the full re-execution
    * (sampled verification, ENGINEERING_BACKLOG B-6). Default: re-execute.
    */
-  verify(submission: Submission, opts?: { transcript?: boolean }): Verdict;
-  /** A known-answer task; `corrupt` flips one entry of C so the right verdict is "invalid". */
-  plantedTask(base?: { n: number; matrixA: number[]; matrixB: number[]; matrixC: number[] }, corrupt?: boolean): PlantedTask;
+  verify?(submission: Submission, opts?: { transcript?: boolean }): Verdict;
+  // ── challenge ──
+  /** The job's input tensors, by name (`in:<name>` in the plan). */
+  inputs?(job: J): Record<string, Tensor>;
+  /** The fixed segment plan; the node never chooses kinds, ops or wiring. */
+  plan?(job: J): SegmentSpec[];
+  /** Segments opened per job. */
+  samples?(job: J): number;
+  /** The check of one segment op, with the job's own parameters. */
+  kernel?(job: J, op: string): SegmentKernel;
 }
 
 export const MATMUL_N_MIN = 8;
@@ -69,8 +85,9 @@ export function matMulSigned(A: number[], B: number[], n: number): number[] {
   return C;
 }
 
-export const matmul: WorkType = {
+export const matmul: WorkType & Pick<Required<WorkType>, "verify" | "plantedTask"> = {
   id: "matmul",
+  mode: "inline",
 
   requirements: () => ({ workType: "matmul" }),
 
@@ -135,9 +152,9 @@ export const matmul: WorkType = {
   },
 };
 
-const REGISTRY = new Map<string, WorkType>([[matmul.id, matmul]]);
+const REGISTRY = new Map<string, WorkType<any>>([[matmul.id, matmul]]);
 
-export function getWorkType(id: string): WorkType | undefined {
+export function getWorkType(id: string): WorkType<any> | undefined {
   return REGISTRY.get(id);
 }
 

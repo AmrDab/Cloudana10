@@ -13,9 +13,9 @@ import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { hold, release } from "./balance.service.js";
 import { afterNodeSuspended, getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
-import { epochOf, jobRewardStatements } from "./ledger.service.js";
+import { epochOf, jobRewardStatements, type JobRewards } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
-import { getWorkType } from "./work-types.js";
+import { getWorkType, type WorkType } from "./work-types.js";
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
 
 const L = log.api;
@@ -517,7 +517,6 @@ export async function submitWork(
   input: { jobId: string; certificate: POUWCertificate; result: number[] },
   now = Date.now(),
 ): Promise<SubmitResult> {
-  const db = getD1();
   const node = normalizeAddress(nodeAddress);
   const job = await getWorkJob(input.jobId);
   if (!job) return { ok: false, code: "not_found", message: "job not found" };
@@ -528,45 +527,54 @@ export async function submitWork(
   if (!nodeRow?.payout) return { ok: false, code: "conflict", message: "bind this node first" };
 
   const wt = getWorkType(job.work_type)!;
-  const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json!) as number[], matrixB: JSON.parse(job.b_json!) as number[] };
-  // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6).
-  const sampled = sampledForCheck(job.id, job.sigma!);
-  const verdict = wt.verify({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
-  // Caught: a sampled job whose answer is right (every cheap check passed) but whose transcript is not — the work was
-  // not done as proven. The verified result is kept and the fee captured (and burned), but the provider's pay is
-  // clawed, this job's and its held pay, and this node is suspended. Any other failure is refused and re-queued.
-  const caught = !verdict.ok && verdict.stage === "transcript";
+  return submitInline(job, node, nodeRow, wt, input, now);
+}
 
-  if (!verdict.ok && !caught) {
-    // A job that keeps failing verification stops after MAX_JOB_ATTEMPTS: it is marked failed and the owner's hold
-    // goes back to spendable, instead of re-queuing forever with the fee held.
-    const giveUp = (job.attempts ?? 0) + 1 >= MAX_JOB_ATTEMPTS;
-    // A job that failed for good keeps `node`: the public draw record then still says who was drawn and failed
-    // (nothing selects a node by `node` alone — every guard looks at status = 'assigned').
-    const next = giveUp ? "status = 'failed', expires_at = NULL, completed_at = ?" : CLEAR_ASSIGNMENT;
-    const update = db
-      .prepare(`UPDATE work_jobs SET ${next}, attempts = attempts + 1 WHERE id = ? AND status = 'assigned' AND node = ?`)
-      .bind(...(giveUp ? [now, job.id, node] : [job.id, node]));
-    const [, res] = await db.batch([
-      db.prepare("UPDATE nodes SET jobs_failed = jobs_failed + 1 WHERE address = ?").bind(node),
-      update,
-    ]);
-    if (giveUp && (res?.meta?.changes ?? 0) > 0) await release(job.owner, job.price_ucld);
-    L.warn(`[work] rejected ${job.id} from ${node.slice(0, 10)}…: ${verdict.reason}${giveUp ? " — job failed, hold released" : ""}`);
-    return { ok: false, code: "unprocessable", message: verdict.reason };
-  }
+/** A verification failure that is not a catch: refused, re-queued, failed for good after MAX_JOB_ATTEMPTS. */
+async function refuse(job: WorkJobRow, node: string, reason: string, now: number): Promise<SubmitResult> {
+  const db = getD1();
+  // A job that keeps failing verification stops after MAX_JOB_ATTEMPTS: it is marked failed and the owner's hold
+  // goes back to spendable, instead of re-queuing forever with the fee held.
+  const giveUp = (job.attempts ?? 0) + 1 >= MAX_JOB_ATTEMPTS;
+  // A job that failed for good keeps `node`: the public draw record then still says who was drawn and failed
+  // (nothing selects a node by `node` alone — every guard looks at status = 'assigned').
+  const next = giveUp ? "status = 'failed', expires_at = NULL, completed_at = ?" : CLEAR_ASSIGNMENT;
+  const update = db
+    .prepare(`UPDATE work_jobs SET ${next}, attempts = attempts + 1 WHERE id = ? AND status = 'assigned' AND node = ?`)
+    .bind(...(giveUp ? [now, job.id, node] : [job.id, node]));
+  const [, res] = await db.batch([
+    db.prepare("UPDATE nodes SET jobs_failed = jobs_failed + 1 WHERE address = ?").bind(node),
+    update,
+  ]);
+  if (giveUp && (res?.meta?.changes ?? 0) > 0) await release(job.owner, job.price_ucld);
+  L.warn(`[work] rejected ${job.id} from ${node.slice(0, 10)}…: ${reason}${giveUp ? " — job failed, hold released" : ""}`);
+  return { ok: false, code: "unprocessable", message: reason };
+}
 
-  // One transaction: the fee is authorised on the job row only while the owner's hold covers it, captured only when
-  // that authorisation happened in this very batch, the reward entries are written under the same condition, and the
-  // result lands last. A failure anywhere rolls the whole thing back, so the node's retry is a clean second attempt;
-  // a job is never done with its fee still held, and a fee is never captured without its rewards (nor minted without
-  // its capture).
+type Booked = { done: false } | { done: true; captured: boolean; split: JobRewards; clawed: number };
+
+/**
+ * Settles a verified job in one transaction: the fee is authorised on the job row only while the owner's hold covers
+ * it, captured only when that authorisation happened in this very batch, the reward entries are written under the same
+ * condition, and the result lands last. A failure anywhere rolls the whole thing back, so the node's retry is a clean
+ * second attempt; a job is never done with its fee still held, and a fee is never captured without its rewards (nor
+ * minted without its capture). `caught` (matmul's sampled transcript failure) writes the provider's entries clawed and
+ * adds the claw and the suspension.
+ */
+async function bookVerified(
+  job: WorkJobRow,
+  node: string,
+  nodeRow: NodeRow,
+  now: number,
+  out: { resultJson: string; certZ: string; sampleCheck: WorkJobRow["sample_check"]; caught: boolean },
+): Promise<Booked> {
+  const db = getD1();
   const owner = normalizeAddress(job.owner);
   const { statements: rewardStmts, rewards: split } = jobRewardStatements(
-    { jobId: job.id, workType: job.work_type, provider: nodeRow.payout, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now },
-    { capturedAt: now, node, clawed: caught },
+    { jobId: job.id, workType: job.work_type, provider: nodeRow.payout!, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now },
+    { capturedAt: now, node, clawed: out.caught },
   );
-  const caughtStmts = caught ? caughtStatements(job.id, node, nodeRow, now) : [];
+  const caughtStmts = out.caught ? caughtStatements(job.id, node, nodeRow, now) : [];
   const doneAt = 2 + rewardStmts.length + caughtStmts.length;
   const results = await db.batch([
     db
@@ -589,10 +597,10 @@ export async function submitWork(
       .prepare(
         "UPDATE work_jobs SET status = 'done', result_json = ?, cert_z = ?, completed_at = ?, sample_check = ? WHERE id = ? AND status = 'assigned' AND node = ?",
       )
-      .bind(JSON.stringify(input.result), input.certificate.z, now, caught ? "failed" : sampled ? "passed" : null, job.id, node),
+      .bind(out.resultJson, out.certZ, now, out.sampleCheck, job.id, node),
   ]);
   const done = results[doneAt];
-  if ((done?.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "job was already completed" };
+  if ((done?.meta?.changes ?? 0) === 0) return { done: false };
 
   // Invariant: nothing is minted for a fee that was not captured. The hold is taken at enqueue and released only when
   // the job fails for good, so a missing hold is a bug or tampering — the verified result still goes to the owner (the
@@ -601,34 +609,22 @@ export async function submitWork(
   if (!captured) {
     L.error(`[work] capture of ${job.price_ucld} µCLD from ${job.owner} failed for job ${job.id} (hold missing) — result accepted, no rewards recorded`);
   }
-  if (caught) {
-    // The claw, the failure count and the suspension are already committed with the result; what is left is best effort.
-    const reason = suspensionReason(job.id);
-    const clawed = results[2 + rewardStmts.length + 1]?.meta?.changes ?? 0; // the UPDATE after the coverage INSERT
-    L.warn(`[work] ${reason} from ${node}: result kept, ${clawed} held entries of payout wallet ${normalizeAddress(nodeRow.payout)} clawed, node suspended`);
-    try {
-      if (nodeRow.fleet_id) {
-        // A fleet node pays the fleet owner's wallet: tell them which fleet, in case the node is not theirs (a leaked token).
-        const fleet = await db.prepare("SELECT name FROM fleets WHERE id = ?").bind(nodeRow.fleet_id).first<{ name: string | null }>();
-        L.warn(
-          `[work] the node is in fleet "${fleet?.name ?? "?"}" (${nodeRow.fleet_id}): if this node is not yours, revoke the fleet's ` +
-            `token and ask an admin to reverse the claw (POST /v1/admin/claws/${job.id}/reverse)`,
-        );
-      }
-      await afterNodeSuspended(node, reason, now);
-    } catch (err) {
-      L.warn(`[work] after suspending ${node.slice(0, 10)}…: a best-effort step failed (the claw and the suspension stand):`, err);
-    }
-    return {
-      ok: false,
-      code: "unprocessable",
-      message: "sampled transcript check failed: the result is kept, the payout wallet's held pay is clawed and this node is suspended",
-    };
-  }
-  const rewards = captured ? split : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now), heldUntil: now };
-  const units = wt.meter(jobInput);
+  const clawed = out.caught ? (results[2 + rewardStmts.length + 1]?.meta?.changes ?? 0) : 0; // the UPDATE after the coverage INSERT
+  return { done: true, captured, split, clawed };
+}
+
+/** After a verified, uncaught job: the node's count and throughput sample, and what it earned. */
+async function creditNode(
+  node: string,
+  nodeRow: NodeRow,
+  job: WorkJobRow,
+  units: number,
+  booked: Extract<Booked, { done: true }>,
+  now: number,
+): Promise<SubmitResult> {
+  const rewards = booked.captured ? booked.split : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now), heldUntil: now };
   const seconds = (now - (job.assigned_at ?? now)) / 1000;
-  await db
+  await getD1()
     .prepare("UPDATE nodes SET jobs_done = jobs_done + 1, throughput_mmac_s = ? WHERE address = ?")
     .bind(nextThroughput(nodeRow.throughput_mmac_s, units, seconds), node)
     .run();
@@ -640,4 +636,65 @@ export async function submitWork(
     vestsAt: rewards.vestsAt,
     heldUntil: rewards.heldUntil,
   };
+}
+
+/** Best effort after a suspension: the fleet hint and the node's deployments (the claw and the suspension stand). */
+async function afterCaught(job: WorkJobRow, node: string, nodeRow: NodeRow, now: number): Promise<void> {
+  try {
+    if (nodeRow.fleet_id) {
+      // A fleet node pays the fleet owner's wallet: tell them which fleet, in case the node is not theirs (a leaked token).
+      const fleet = await getD1().prepare("SELECT name FROM fleets WHERE id = ?").bind(nodeRow.fleet_id).first<{ name: string | null }>();
+      L.warn(
+        `[work] the node is in fleet "${fleet?.name ?? "?"}" (${nodeRow.fleet_id}): if this node is not yours, revoke the fleet's ` +
+          `token and ask an admin to reverse the claw (POST /v1/admin/claws/${job.id}/reverse)`,
+      );
+    }
+    await afterNodeSuspended(node, suspensionReason(job.id), now);
+  } catch (err) {
+    L.warn(`[work] after suspending ${node.slice(0, 10)}…: a best-effort step failed (the claw and the suspension stand):`, err);
+  }
+}
+
+/** matmul: certificate and result in the submit; Freivalds on every job, the transcript on a sampled one (B-6). */
+async function submitInline(
+  job: WorkJobRow,
+  node: string,
+  nodeRow: NodeRow,
+  wt: WorkType<any>,
+  input: { jobId: string; certificate: POUWCertificate; result: number[] },
+  now: number,
+): Promise<SubmitResult> {
+  const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json!) as number[], matrixB: JSON.parse(job.b_json!) as number[] };
+  // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6).
+  const sampled = sampledForCheck(job.id, job.sigma!);
+  const verdict = wt.verify!({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
+  // Caught: a sampled job whose answer is right (every cheap check passed) but whose transcript is not — the work was
+  // not done as proven. The verified result is kept and the fee captured (and burned), but the provider's pay is
+  // clawed, this job's and its held pay, and this node is suspended. Any other failure is refused and re-queued.
+  const caught = !verdict.ok && verdict.stage === "transcript";
+
+  if (!verdict.ok && !caught) return refuse(job, node, verdict.reason, now);
+
+  const booked = await bookVerified(job, node, nodeRow, now, {
+    resultJson: JSON.stringify(input.result),
+    certZ: input.certificate.z,
+    sampleCheck: caught ? "failed" : sampled ? "passed" : null,
+    caught,
+  });
+  if (!booked.done) return { ok: false, code: "conflict", message: "job was already completed" };
+
+  if (caught) {
+    // The claw, the failure count and the suspension are already committed with the result; what is left is best effort.
+    L.warn(
+      `[work] ${suspensionReason(job.id)} from ${node}: result kept, ${booked.clawed} held entries of payout wallet ` +
+        `${normalizeAddress(nodeRow.payout!)} clawed, node suspended`,
+    );
+    await afterCaught(job, node, nodeRow, now);
+    return {
+      ok: false,
+      code: "unprocessable",
+      message: "sampled transcript check failed: the result is kept, the payout wallet's held pay is clawed and this node is suspended",
+    };
+  }
+  return creditNode(node, nodeRow, job, wt.meter(jobInput), booked, now);
 }
