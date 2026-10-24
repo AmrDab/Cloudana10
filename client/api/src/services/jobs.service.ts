@@ -16,7 +16,9 @@ import { afterNodeSuspended, getNode, nextThroughput, type NodeRow } from "./nod
 import { epochOf, jobRewardStatements, type JobRewards } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
 import { getWorkType, type WorkType } from "./work-types.js";
+import { compareVersions } from "./instruction-signing.service.js";
 import type { POUWCertificate } from "../../../../pouw/src/types.js";
+import { checkCommitment, checkOpening, type Commitment, type SegmentOpening, type Tensor } from "../../../../shared/verification.js";
 
 const L = log.api;
 
@@ -53,6 +55,14 @@ export interface WorkJobRow {
   fee_captured_at: number | null;
   /** Sampled transcript re-execution (submitWork): null = not sampled. Never shown to the node. */
   sample_check: "passed" | "failed" | "reversed" | null;
+  /** Challenge-mode jobs (B-26): the job's input (JSON; matmul keeps a_json/b_json), null for matmul. */
+  input_json?: string | null;
+  /** The node's commitment (JSON), stored before the challenge is drawn; one per assignment. */
+  commitment_json?: string | null;
+  /** The drawn segment indices (JSON number[]); never shown before the commitment is stored. */
+  challenge_json?: string | null;
+  /** The answer deadline (ms); null for matmul and once the job left 'assigned'. */
+  challenge_expires_at?: number | null;
 }
 
 export interface JobMatrices {
@@ -244,21 +254,26 @@ export type EnqueueResult =
 export async function enqueueWorkJob(input: {
   owner: string;
   workType: string;
-  n: number;
-  matrixA: number[];
-  matrixB: number[];
+  /** matmul */
+  n?: number;
+  matrixA?: number[];
+  matrixB?: number[];
+  /** Challenge-mode work types (int8-mlp): the job's input. */
+  input?: unknown;
   public?: boolean;
   /** Optional user ceiling (µCLD). The orchestrator sets the price; above the ceiling the job is not queued. */
   maxPriceUcld?: number;
 }): Promise<EnqueueResult> {
   const wt = getWorkType(input.workType);
   if (!wt) return { ok: false, code: "validation_failed", message: `unknown workType "${input.workType}"` };
-  const invalid = wt.validate(input);
+  const challenge = wt.mode === "challenge";
+  const jobInput = challenge ? input.input : input;
+  const invalid = wt.validate(jobInput);
   if (invalid) return { ok: false, code: "validation_failed", message: invalid };
 
   const owner = normalizeAddress(input.owner);
   const quote = await getPriceQuote();
-  const price = feeUcld(wt.meter(input), quote.priceNcldPerTmac, quote.baseFeeUcld);
+  const price = feeUcld(wt.meter(jobInput), quote.priceNcldPerTmac, quote.baseFeeUcld);
   if (input.maxPriceUcld !== undefined && price > input.maxPriceUcld) {
     return { ok: false, code: "unprocessable", message: `Price ${price} µCLD is above your ceiling of ${input.maxPriceUcld} µCLD` };
   }
@@ -266,13 +281,23 @@ export async function enqueueWorkJob(input: {
   if (!held) return { ok: false, code: "unprocessable", message: `Insufficient credits: job costs ${price} µCLD` };
 
   const id = crypto.randomUUID();
-  await getD1()
-    .prepare(
-      "INSERT INTO work_jobs (id, owner, work_type, n, a_json, b_json, price_ucld, public, status, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
-    )
-    .bind(id, owner, wt.id, input.n, JSON.stringify(input.matrixA), JSON.stringify(input.matrixB), price, input.public === false ? 0 : 1, Date.now())
-    .run();
+  if (challenge) {
+    // The input stays in D1 (moving it to the artifact store is a follow-up, B-26); `n` is the model width d.
+    await getD1()
+      .prepare(
+        "INSERT INTO work_jobs (id, owner, work_type, n, input_json, price_ucld, public, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
+      )
+      .bind(id, owner, wt.id, (jobInput as { d: number }).d, JSON.stringify(jobInput), price, input.public === false ? 0 : 1, Date.now())
+      .run();
+  } else {
+    await getD1()
+      .prepare(
+        "INSERT INTO work_jobs (id, owner, work_type, n, a_json, b_json, price_ucld, public, status, created_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
+      )
+      .bind(id, owner, wt.id, input.n, JSON.stringify(input.matrixA), JSON.stringify(input.matrixB), price, input.public === false ? 0 : 1, Date.now())
+      .run();
+  }
 
   try {
     await runAssignment();
@@ -311,7 +336,11 @@ export const sortedCandidates = (candidates: Candidate[]): Candidate[] =>
 export async function runAssignment(now = Date.now()): Promise<number> {
   const env = getEnv();
   const db = getD1();
-  await db.prepare(`UPDATE work_jobs SET ${CLEAR_ASSIGNMENT} WHERE status = 'assigned' AND expires_at < ?`).bind(now).run();
+  // A job with an open challenge is not re-queued: its deadline passing is a failed check (sweepChallenges).
+  await db
+    .prepare(`UPDATE work_jobs SET ${CLEAR_ASSIGNMENT} WHERE status = 'assigned' AND expires_at < ? AND challenge_expires_at IS NULL`)
+    .bind(now)
+    .run();
 
   const queued = await db
     .prepare("SELECT id, work_type FROM work_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 50")
@@ -336,6 +365,8 @@ export async function runAssignment(now = Date.now()): Promise<number> {
     const need = wt.requirements({ n: 0, matrixA: [], matrixB: [] }).workType;
     const eligible: Candidate[] = [...pool.values()]
       .filter((n) => (JSON.parse(n.work_types ?? "[]") as string[]).includes(need))
+      // A type that needs a newer agent is drawn only among nodes on it (int8-mlp ≥ 1.7.0); the network floor is unchanged.
+      .filter((n) => !wt.minAgent || (!!n.agent_version && compareVersions(n.agent_version, wt.minAgent) >= 0))
       .map((n) => ({ address: n.address, payout: n.payout!, weight: n.throughput_mmac_s }));
     if (eligible.length === 0) continue;
 
@@ -371,6 +402,8 @@ export interface Assignment {
   matrixB: number[];
   sigma: string;
   expiresAt: number;
+  /** Challenge-mode jobs only (matrixA and matrixB are then empty): the job's input. */
+  input?: unknown;
 }
 
 /**
@@ -438,10 +471,16 @@ export function replayDraw(d: Pick<DrawRecord, "jobId" | "node" | "seedSource" |
 
 export async function getActiveAssignment(node: string, now = Date.now()): Promise<Assignment | null> {
   const r = await getD1()
-    .prepare("SELECT * FROM work_jobs WHERE node = ? AND status = 'assigned' AND expires_at >= ? ORDER BY assigned_at LIMIT 1")
+    // A job with an open challenge was already submitted: the node answers it, it is not handed out again.
+    .prepare(
+      "SELECT * FROM work_jobs WHERE node = ? AND status = 'assigned' AND expires_at >= ? AND challenge_expires_at IS NULL ORDER BY assigned_at LIMIT 1",
+    )
     .bind(normalizeAddress(node), now)
     .first<WorkJobRow>();
   if (!r) return null;
+  if (r.input_json) {
+    return { jobId: r.id, workType: r.work_type, n: r.n, matrixA: [], matrixB: [], sigma: r.sigma!, expiresAt: r.expires_at!, input: JSON.parse(r.input_json) };
+  }
   return {
     jobId: r.id,
     workType: r.work_type,
@@ -467,7 +506,26 @@ export function sampledForCheck(jobId: string, sigma: string, k = getEnv().VERIF
   return createHmac("sha256", key).update(`${jobId}:${sigma}`).digest().readUInt32BE(0) % k === 0;
 }
 
+/**
+ * The segments a challenge-mode job opens (ENGINEERING_BACKLOG B-26): `s` of `0..m-1`, sorted, by a partial
+ * Fisher–Yates over the successive 32-bit words of HMAC-SHA256("seg:" + jobId + ":" + σ + ":" + chainRoot), keyed like
+ * sampledForCheck. The chain root is the node's commitment, so the draw exists only once the commitment does, and a
+ * node cannot predict it (no key) or grind it (one commitment per assignment).
+ */
+export function segmentDraw(jobId: string, sigma: string, chainRoot: string, m: number, s: number): number[] {
+  if (!Number.isInteger(m) || !Number.isInteger(s) || s < 0 || s > m || s > 8) throw new Error(`segmentDraw: cannot draw ${s} of ${m}`);
+  const key = sha256(`cloudana-sample:${getEnv().JWT_SECRET}`);
+  const mac = createHmac("sha256", key).update(`seg:${jobId}:${sigma}:${chainRoot}`).digest();
+  const idx = Array.from({ length: m }, (_, i) => i);
+  for (let i = 0; i < s; i++) {
+    const j = i + (mac.readUInt32BE(i * 4) % (m - i));
+    [idx[i], idx[j]] = [idx[j], idx[i]];
+  }
+  return idx.slice(0, s).sort((a, b) => a - b);
+}
+
 const suspensionReason = (jobId: string) => `sampled transcript check failed on job ${jobId}`;
+const segmentSuspensionReason = (jobId: string) => `sampled segment check failed on job ${jobId}`;
 
 /**
  * What a failed sampled check does, as statements for submitWork's batch, placed before its "done" update and run only
@@ -484,7 +542,7 @@ const suspensionReason = (jobId: string) => `sampled transcript check failed on 
  *  2. The node: one more failure (no jobs_done, no throughput sample, so cheating speed earns no draw weight), and
  *     suspended (the B-8 state; an admin lifts it).
  */
-function caughtStatements(jobId: string, node: string, nodeRow: NodeRow, now: number): D1PreparedStatement[] {
+function caughtStatements(jobId: string, node: string, nodeRow: NodeRow, now: number, reason = suspensionReason(jobId)): D1PreparedStatement[] {
   const db = getD1();
   const stillAssigned = "EXISTS (SELECT 1 FROM work_jobs WHERE id = ?1 AND status = 'assigned' AND node = ?2)";
   return [
@@ -504,7 +562,7 @@ function caughtStatements(jobId: string, node: string, nodeRow: NodeRow, now: nu
       .prepare(
         `UPDATE nodes SET jobs_failed = jobs_failed + 1, state = 'suspended', state_reason = ?3, state_at = ?4 WHERE address = ?2 AND ${stillAssigned}`,
       )
-      .bind(jobId, node, suspensionReason(jobId), now),
+      .bind(jobId, node, reason, now),
   ];
 }
 
@@ -512,14 +570,22 @@ export type SubmitResult =
   | { ok: true; units: number; earned: { laneAUcld: number; laneBUcld: number }; vestsAt: number; heldUntil: number }
   | { ok: false; code: "not_found" | "conflict" | "unprocessable"; message: string };
 
-export async function submitWork(
-  nodeAddress: string,
-  input: { jobId: string; certificate: POUWCertificate; result: number[] },
-  now = Date.now(),
-): Promise<SubmitResult> {
+/** A challenge-mode submit that bound: the segments to open, and by when (ms). */
+export type ChallengeResult = { ok: true; challenge: { segments: number[]; deadline: number } };
+
+/** matmul submits a certificate; challenge-mode work types submit a commitment and the result tensor. */
+export type WorkSubmission =
+  | { jobId: string; certificate: POUWCertificate; result: number[] }
+  | { jobId: string; commitment: Commitment; result: Tensor };
+
+export async function submitWork(nodeAddress: string, input: { jobId: string; certificate: POUWCertificate; result: number[] }, now?: number): Promise<SubmitResult>;
+export async function submitWork(nodeAddress: string, input: WorkSubmission, now?: number): Promise<SubmitResult | ChallengeResult>;
+export async function submitWork(nodeAddress: string, input: WorkSubmission, now = Date.now()): Promise<SubmitResult | ChallengeResult> {
   const node = normalizeAddress(nodeAddress);
   const job = await getWorkJob(input.jobId);
   if (!job) return { ok: false, code: "not_found", message: "job not found" };
+  // One commitment per assignment: a second submit would let a node grind the draw.
+  if (job.commitment_json) return { ok: false, code: "conflict", message: "a commitment was already submitted for this assignment" };
   if (job.status !== "assigned" || job.node !== node || (job.expires_at ?? 0) < now) {
     return { ok: false, code: "conflict", message: "job is not assigned to this node (or the assignment expired)" };
   }
@@ -527,7 +593,8 @@ export async function submitWork(
   if (!nodeRow?.payout) return { ok: false, code: "conflict", message: "bind this node first" };
 
   const wt = getWorkType(job.work_type)!;
-  return submitInline(job, node, nodeRow, wt, input, now);
+  if (wt.mode === "challenge") return submitCommitment(job, node, wt, input as Extract<WorkSubmission, { commitment: Commitment }>, now);
+  return submitInline(job, node, nodeRow, wt, input as Extract<WorkSubmission, { certificate: POUWCertificate }>, now);
 }
 
 /** A verification failure that is not a catch: refused, re-queued, failed for good after MAX_JOB_ATTEMPTS. */
@@ -639,7 +706,7 @@ async function creditNode(
 }
 
 /** Best effort after a suspension: the fleet hint and the node's deployments (the claw and the suspension stand). */
-async function afterCaught(job: WorkJobRow, node: string, nodeRow: NodeRow, now: number): Promise<void> {
+async function afterCaught(job: WorkJobRow, node: string, nodeRow: NodeRow, now: number, reason = suspensionReason(job.id)): Promise<void> {
   try {
     if (nodeRow.fleet_id) {
       // A fleet node pays the fleet owner's wallet: tell them which fleet, in case the node is not theirs (a leaked token).
@@ -649,7 +716,7 @@ async function afterCaught(job: WorkJobRow, node: string, nodeRow: NodeRow, now:
           `token and ask an admin to reverse the claw (POST /v1/admin/claws/${job.id}/reverse)`,
       );
     }
-    await afterNodeSuspended(node, suspensionReason(job.id), now);
+    await afterNodeSuspended(node, reason, now);
   } catch (err) {
     L.warn(`[work] after suspending ${node.slice(0, 10)}…: a best-effort step failed (the claw and the suspension stand):`, err);
   }
@@ -697,4 +764,135 @@ async function submitInline(
     };
   }
   return creditNode(node, nodeRow, job, wt.meter(jobInput), booked, now);
+}
+
+// ─── Challenge mode: commit, then challenge, then answer (ENGINEERING_BACKLOG B-26) ─────────────────────────────
+
+function challengeJob(job: WorkJobRow, wt: WorkType<any>) {
+  const input = JSON.parse(job.input_json!) as unknown;
+  return { input, plan: wt.plan!(input), inputs: wt.inputs!(input) };
+}
+
+/**
+ * Bind the node's commitment to the job (σ, the job's own inputs, the plan, the result) and only then draw the
+ * segments it must open: the commitment, the result, the draw and the deadline land in one write, before the draw is
+ * returned. A commitment that does not bind is refused like any failed matmul check (re-queued, failed after
+ * MAX_JOB_ATTEMPTS, no claw). The job stays 'assigned' until the answer, so every guard on 'assigned' still holds.
+ */
+async function submitCommitment(
+  job: WorkJobRow,
+  node: string,
+  wt: WorkType<any>,
+  sub: { jobId: string; commitment: Commitment; result: Tensor },
+  now: number,
+): Promise<SubmitResult | ChallengeResult> {
+  const { input, plan, inputs } = challengeJob(job, wt);
+  const bound = checkCommitment(job.sigma!, inputs, plan, sub.commitment, sub.result, wt.resultSig!(input));
+  if (!bound.ok) return refuse(job, node, bound.reason, now);
+
+  // Only the fields the checks read are stored.
+  const c: Commitment = {
+    inputHash: sub.commitment.inputHash,
+    outputHash: sub.commitment.outputHash,
+    chainRoot: sub.commitment.chainRoot,
+    segments: sub.commitment.segments.map((s) => ({ idx: s.idx, outHash: s.outHash })),
+  };
+  const segments = segmentDraw(job.id, job.sigma!, c.chainRoot, plan.length, wt.samples!(input));
+  const deadline = now + getEnv().CHALLENGE_TTL_SECONDS * 1000;
+  const res = await getD1()
+    .prepare(
+      "UPDATE work_jobs SET commitment_json = ?, cert_z = ?, result_json = ?, challenge_json = ?, challenge_expires_at = ?, expires_at = ? " +
+        "WHERE id = ? AND status = 'assigned' AND node = ? AND commitment_json IS NULL",
+    )
+    .bind(JSON.stringify(c), c.chainRoot, JSON.stringify(sub.result), JSON.stringify(segments), deadline, deadline, job.id, node)
+    .run();
+  if ((res.meta?.changes ?? 0) === 0) return { ok: false, code: "conflict", message: "a commitment was already submitted for this assignment" };
+  return { ok: true, challenge: { segments, deadline } };
+}
+
+/**
+ * A failed challenge (a wrong or mismatched opening, or no answer in time): one batch claws the payout wallet's held
+ * pay and suspends the node (caughtStatements, unchanged), then fails the job — last, so `stillAssigned` holds for the
+ * claw. No pay was booked for this job, so the claw takes the wallet's other held pay; the owner is not charged (the
+ * hold goes back) and the result is dropped (nothing proved it). Not re-queued in Phase 0.
+ */
+async function caughtChallenge(job: WorkJobRow, node: string, nodeRow: NodeRow | null, reason: string, now: number): Promise<SubmitResult> {
+  const db = getD1();
+  const why = segmentSuspensionReason(job.id);
+  const stmts = nodeRow?.payout ? caughtStatements(job.id, node, nodeRow, now, why) : [];
+  const results = await db.batch([
+    ...stmts,
+    db
+      .prepare(
+        "UPDATE work_jobs SET status = 'failed', sample_check = 'failed', result_json = NULL, completed_at = ?, expires_at = NULL, " +
+          "challenge_expires_at = NULL WHERE id = ? AND status = 'assigned' AND node = ?",
+      )
+      .bind(now, job.id, node),
+  ]);
+  if ((results[stmts.length]?.meta?.changes ?? 0) > 0) {
+    await release(job.owner, job.price_ucld);
+    const clawed = stmts.length ? (results[1]?.meta?.changes ?? 0) : 0; // the UPDATE after the coverage INSERT
+    L.warn(`[work] ${why} from ${node} (${reason}): job failed, hold released, ${clawed} held entries clawed, node suspended`);
+    if (nodeRow) await afterCaught(job, node, nodeRow, now, why);
+  }
+  return {
+    ok: false,
+    code: "unprocessable",
+    message: `sampled segment check failed (${reason}): the job failed, the payout wallet's held pay is clawed and this node is suspended`,
+  };
+}
+
+/**
+ * POST /v1/work/answer: the openings of exactly the challenged segments, before the deadline. Each is checked against
+ * the stored commitment (shared/verification.ts checkOpening, job inputs from the job). Pass → settled like a matmul
+ * job (bookVerified, sample_check 'passed'); anything else → caughtChallenge.
+ */
+export async function answerChallenge(
+  nodeAddress: string,
+  input: { jobId: string; openings: SegmentOpening[] },
+  now = Date.now(),
+): Promise<SubmitResult> {
+  const node = normalizeAddress(nodeAddress);
+  const job = await getWorkJob(input.jobId);
+  if (!job) return { ok: false, code: "not_found", message: "job not found" };
+  if (job.status !== "assigned" || job.node !== node || !job.commitment_json || !job.challenge_json) {
+    return { ok: false, code: "conflict", message: "no open challenge for this node on this job" };
+  }
+  const nodeRow = await getNode(node);
+  if ((job.challenge_expires_at ?? 0) < now) return caughtChallenge(job, node, nodeRow, "answered after the deadline", now);
+
+  const wt = getWorkType(job.work_type)!;
+  const { input: jobInput, plan, inputs } = challengeJob(job, wt);
+  const commitment = JSON.parse(job.commitment_json) as Commitment;
+  const drawn = JSON.parse(job.challenge_json) as number[];
+  const openings = Array.isArray(input.openings) ? input.openings : [];
+  const opened = openings.map((o) => o?.idx).sort((a, b) => a - b);
+  if (opened.length !== drawn.length || opened.some((v, i) => v !== drawn[i])) {
+    return caughtChallenge(job, node, nodeRow, "the answer must open exactly the challenged segments", now);
+  }
+  for (const o of openings) {
+    const spec = plan[o.idx];
+    const v = checkOpening(spec, o, commitment, inputs, wt.kernel!(jobInput, spec.op));
+    if (!v.ok && v.stage) return caughtChallenge(job, node, nodeRow, v.reason, now);
+    // No stage: the job's own data does not fit its plan. Not the node's fault, and validate() makes it unreachable.
+    if (!v.ok) throw new Error(`answerChallenge ${job.id}: ${v.reason}`);
+  }
+  if (!nodeRow?.payout) return { ok: false, code: "conflict", message: "bind this node first" };
+
+  const booked = await bookVerified(job, node, nodeRow, now, { resultJson: job.result_json!, certZ: job.cert_z!, sampleCheck: "passed", caught: false });
+  if (!booked.done) return { ok: false, code: "conflict", message: "job was already completed" };
+  return creditNode(node, nodeRow, job, wt.meter(jobInput), booked, now);
+}
+
+/** Cron: a challenge not answered by its deadline is a failed check. Returns the jobs caught. */
+export async function sweepChallenges(now = Date.now(), limit = 50): Promise<number> {
+  const rows =
+    (
+      await getD1()
+        .prepare("SELECT * FROM work_jobs WHERE status = 'assigned' AND challenge_expires_at < ? ORDER BY challenge_expires_at LIMIT ?")
+        .bind(now, limit)
+        .all<WorkJobRow>()
+    ).results ?? [];
+  for (const job of rows) await caughtChallenge(job, job.node!, await getNode(job.node!), "no answer before the deadline", now);
+  return rows.length;
 }

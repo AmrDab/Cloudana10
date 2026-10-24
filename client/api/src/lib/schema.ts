@@ -202,6 +202,12 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE nodes ADD COLUMN state TEXT NOT NULL DEFAULT 'active'",
   "ALTER TABLE nodes ADD COLUMN state_reason TEXT",
   "ALTER TABLE nodes ADD COLUMN state_at INTEGER",
+  // Challenge-mode work (ENGINEERING_BACKLOG B-26): a non-matmul job's input, the node's commitment, the segments drawn
+  // after it was stored and the answer deadline (NULL for matmul).
+  "ALTER TABLE work_jobs ADD COLUMN input_json TEXT",
+  "ALTER TABLE work_jobs ADD COLUMN commitment_json TEXT",
+  "ALTER TABLE work_jobs ADD COLUMN challenge_json TEXT",
+  "ALTER TABLE work_jobs ADD COLUMN challenge_expires_at INTEGER",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

@@ -8,6 +8,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
 import { enqueueWorkJob, getDrawRecord, getWorkJob, jobMatrices, listWorkJobs, replayDraw, toSummary } from "../../services/jobs.service.js";
 import { MATMUL_N_MAX, MATMUL_N_MIN } from "../../services/work-types.js";
+import { INT8_MLP } from "../../../../../shared/work-int8-mlp.js";
 import { BEARER_AUTH, createRouter, json, responses } from "./_openapi.js";
 import { SignatureSchema } from "./ledger.js";
 import { signPublic } from "../../services/public-signing.service.js";
@@ -39,14 +40,40 @@ const CreateJobSchema = z.object({
   maxPriceUcld: z.number().int().positive().optional(),
 });
 
+/** int8-mlp (B-26): one quantized MLP block on your own weights; shared/work-int8-mlp.ts checks the exact bounds. */
+const Int8MlpJobSchema = z.object({
+  workType: z.literal("int8-mlp"),
+  input: z.object({
+    b: z.number().int(),
+    d: z.number().int(),
+    h: z.number().int(),
+    X: z.array(z.number().int()).max(INT8_MLP.B_MAX * INT8_MLP.DIM_MAX),
+    W1: z.array(z.number().int()).max(INT8_MLP.DIM_MAX * INT8_MLP.DIM_MAX),
+    b1: z.array(z.number().int()).max(INT8_MLP.DIM_MAX),
+    W2: z.array(z.number().int()).max(INT8_MLP.DIM_MAX * INT8_MLP.DIM_MAX),
+    b2: z.array(z.number().int()).max(INT8_MLP.DIM_MAX),
+    m1: z.number().int(),
+    s1: z.number().int(),
+    m2: z.number().int(),
+    s2: z.number().int(),
+    lut: z.array(z.number().int()).max(256).optional(),
+  }),
+  public: z.boolean().optional().default(true),
+  maxPriceUcld: z.number().int().positive().optional(),
+});
+const CreateAnyJobSchema = z.discriminatedUnion("workType", [CreateJobSchema, Int8MlpJobSchema]);
+
 const createJobRoute = createRoute({
   method: "post",
   path: "/jobs",
   tags: TAGS,
   description:
-    "Queue work. Price = baseFeeUcld + ceil(n³ × priceNcldPerTmac / 1e15) µCLD at the current quote (see /network: a dollar price converted at usdPerCld), held until the result verifies.",
+    "Queue work. Price = baseFeeUcld + ceil(n³ × priceNcldPerTmac / 1e15) µCLD at the current quote (see /network: a dollar price converted at usdPerCld), held until the result verifies. " +
+    "workType \"int8-mlp\" takes { input: { b, d, h, X, W1, b1, W2, b2, m1, s1, m2, s2, lut? } } — your own int8 weights, int32 biases, " +
+    "requantization scales and optional activation table (default ReLU); it is metered at 2·b·d·h MACs, run on nodes with agent ≥ 1.7.0, " +
+    "and verified per segment (2 of its 4 segments opened on every job). Its `result` is Y, int8 b×d row-major.",
   security: BEARER_AUTH,
-  request: { body: { required: true, content: { "application/json": { schema: CreateJobSchema } } } },
+  request: { body: { required: true, content: { "application/json": { schema: CreateAnyJobSchema } } } },
   responses: responses(
     {
       200: json(
@@ -175,7 +202,15 @@ jobsRouter.openapi(getJobRoute, async (c) => {
   const row = await getWorkJob(c.req.valid("param").id);
   if (!row) return fail(c, "not_found", "job not found");
   const isOwner = row.owner === c.get("jwtPayload").sub.toLowerCase();
-  const result = isOwner && row.status === "done" ? (await jobMatrices(row))?.matrixC : null;
+  // int8-mlp keeps its result tensor in result_json (B-26); `result` is its data, int8 b×d row-major.
+  const result =
+    isOwner && row.status === "done"
+      ? row.input_json
+        ? row.result_json
+          ? (JSON.parse(row.result_json) as { data: number[] }).data
+          : null
+        : (await jobMatrices(row))?.matrixC
+      : null;
   return ok(c, {
     job: {
       ...toSummary(row),

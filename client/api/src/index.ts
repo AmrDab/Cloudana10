@@ -56,13 +56,15 @@ async function cronTick(): Promise<void> {
   if (cronRunning) return;
   cronRunning = true;
   try {
-    const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }] = await Promise.all([
+    const [{ runDutiesCron }, { runPriceControllerCron }, { runDepositWatcherCron }, { sweepChallenges }] = await Promise.all([
       import("./services/deployment-duties.service.js"),
       import("./services/pricing.service.js"),
       import("./services/deposit-watcher.service.js"),
+      import("./services/jobs.service.js"),
     ]);
     const jobs: Array<[string, () => Promise<unknown>]> = [
       ["duties", () => runDutiesCron()],
+      ["challenges", () => sweepChallenges()],
       ["price", () => runPriceControllerCron()],
       ["deposits", () => runDepositWatcherCron()],
     ];

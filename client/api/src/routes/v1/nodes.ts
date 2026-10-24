@@ -201,6 +201,8 @@ const AssignmentSchema = z.object({
   matrixB: z.array(z.number()),
   sigma: z.string(),
   expiresAt: z.number(),
+  /** Challenge-mode work types only (int8-mlp: matrixA and matrixB are then empty): the job's input. */
+  input: z.record(z.unknown()).optional(),
 });
 
 const NodeDeploymentSchema = z.object({
