@@ -197,6 +197,24 @@ describe("int8-mlp: commit, challenge, answer", () => {
     void payout;
   });
 
+  it("a job whose own data no longer fits its plan is failed and refunded on answer; the node is not blamed", async () => {
+    const { node } = await int8Node();
+    const j = await nextInt8Job(node);
+    const { outputs, result } = executeInt8Mlp(j.input);
+    const commitment = makeCommitment(j.sigma, int8MlpInputs(j.input), PLAN, outputs);
+    const s = await submitWork(node, { jobId: j.jobId, commitment, result });
+    if (!s.ok || !("challenge" in s)) throw new Error(JSON.stringify(s));
+    // Every pair of segments reads X, W1 or W2: cut them all short (as a later, stricter rule could leave old jobs).
+    const bad = { ...j.input, X: j.input.X.slice(1), W1: j.input.W1.slice(1), W2: j.input.W2.slice(1) };
+    await getD1().prepare("UPDATE work_jobs SET input_json = ? WHERE id = ?").bind(JSON.stringify(bad), j.jobId).run();
+    const before = await getBalanceUcld(user);
+    const r = await answerChallenge(node, { jobId: j.jobId, openings: openings(outputs, s.challenge.segments) });
+    expect(r).toMatchObject({ ok: false, code: "conflict" });
+    expect((await getWorkJob(j.jobId))!).toMatchObject({ status: "failed" });
+    expect(await getBalanceUcld(user)).toEqual({ balanceUcld: before.balanceUcld + j.priceUcld, heldUcld: before.heldUcld - j.priceUcld });
+    expect(await getNode(node)).toMatchObject({ state: "active", jobs_failed: 0 });
+  });
+
   it("one commitment per assignment: a different commitment is 409; the same one gets the stored challenge back", async () => {
     const { node } = await int8Node();
     const j = await nextInt8Job(node);
