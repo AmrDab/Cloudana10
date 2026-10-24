@@ -46,8 +46,8 @@ export function validateInt8Model(x: Int8ModelInput): string | null {
 /** MAC-equivalents: two GEMMs of b·d·h per block. */
 export const meterInt8Model = (x: Int8ModelInput): number => 2 * x.b * x.d * x.h * x.blocks.length;
 
-/** Segments opened: 2 + ceil(L/4) (3 at L = 1, 6 at L = 16), within segmentDraw's 8. */
-export const samplesInt8Model = (x: Int8ModelInput): number => Math.min(8, 2 + Math.ceil(x.blocks.length / 4));
+/** Segments opened: max(3, L), at most 16 — one per block, so one wrong segment is caught with p ≥ ¼ per job. */
+export const samplesInt8Model = (x: Int8ModelInput): number => Math.min(16, Math.max(3, x.blocks.length));
 
 /** The job's input tensors: X, then per block ℓ its W1_ℓ, b1_ℓ, W2_ℓ, b2_ℓ, q_ℓ and lut_ℓ (as in int8-mlp). */
 export function int8ModelInputs(x: Int8ModelInput): Record<string, Tensor> {

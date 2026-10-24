@@ -512,12 +512,15 @@ export function sampledForCheck(jobId: string, sigma: string, k = getEnv().VERIF
  * The segments a challenge-mode job opens (ENGINEERING_BACKLOG B-26): `s` of `0..m-1`, sorted, by a partial
  * Fisher–Yates over the successive 32-bit words of HMAC-SHA256("seg:" + jobId + ":" + σ + ":" + chainRoot), keyed like
  * sampledForCheck. The chain root is the node's commitment, so the draw exists only once the commitment does, and a
- * node cannot predict it (no key) or grind it (one commitment per assignment).
+ * node cannot predict it (no key) or grind it (one commitment per assignment). Draws of more than 8 (int8-model, up to
+ * 16) read words 8–15 from a second HMAC over the same message + ":2"; draws of up to 8 are unchanged.
  */
 export function segmentDraw(jobId: string, sigma: string, chainRoot: string, m: number, s: number): number[] {
-  if (!Number.isInteger(m) || !Number.isInteger(s) || s < 0 || s > m || s > 8) throw new Error(`segmentDraw: cannot draw ${s} of ${m}`);
+  if (!Number.isInteger(m) || !Number.isInteger(s) || s < 0 || s > m || s > 16) throw new Error(`segmentDraw: cannot draw ${s} of ${m}`);
   const key = sha256(`cloudana-sample:${getEnv().JWT_SECRET}`);
-  const mac = createHmac("sha256", key).update(`seg:${jobId}:${sigma}:${chainRoot}`).digest();
+  const msg = `seg:${jobId}:${sigma}:${chainRoot}`;
+  const first = createHmac("sha256", key).update(msg).digest();
+  const mac = s > 8 ? Buffer.concat([first, createHmac("sha256", key).update(`${msg}:2`).digest()]) : first;
   const idx = Array.from({ length: m }, (_, i) => i);
   for (let i = 0; i < s; i++) {
     const j = i + (mac.readUInt32BE(i * 4) % (m - i));

@@ -6,10 +6,11 @@
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomBytes } from "node:crypto";
-import { chainRoot, makeCommitment, tensorHash, type SegmentOpening, type SegmentSpec, type Tensor, type TensorRef } from "../../../shared/verification.js";
+import { chainRoot, checkOpening, makeCommitment, tensorHash, type SegmentOpening, type SegmentSpec, type Tensor, type TensorRef } from "../../../shared/verification.js";
 import { INT8_MLP, executeInt8Mlp, gemmBias, randomInt8MlpInput } from "../../../shared/work-int8-mlp.js";
 import { INT8_MODEL, executeInt8Model, int8ModelInputs, int8ModelKernel, int8ModelPlan, randomInt8ModelInput, validateInt8Model, type Int8ModelInput } from "../../../shared/work-int8-model.js";
 import { buildApp } from "../src/app.js";
+import { ANSWER_MAX_BYTES } from "../src/routes/v1/work.js";
 import { getD1 } from "../src/lib/storage.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
@@ -88,12 +89,12 @@ describe("int8-model executor and intake", () => {
     expect(outputs[7]).toEqual(second.result);
   });
 
-  it("registered as a challenge type gated on 1.8.0; meter 2·b·d·h·L; samples 2 + ceil(L/4)", () => {
+  it("registered as a challenge type gated on 1.8.0; meter 2·b·d·h·L; samples max(3, L)", () => {
     const x = randomInt8ModelInput(1, 5);
     expect(getWorkType("int8-model")).toBe(int8Model);
     expect(int8Model).toMatchObject({ mode: "challenge", minAgent: "1.8.0" });
     expect(int8Model.meter(x)).toBe(2 * 4 * 16 * 32 * 5);
-    expect([1, 4, 5, 8, 16].map((L) => int8Model.samples!(randomInt8ModelInput(1, L)))).toEqual([3, 3, 4, 4, 6]);
+    expect([1, 4, 5, 8, 16].map((L) => int8Model.samples!(randomInt8ModelInput(1, L)))).toEqual([3, 4, 5, 8, 16]);
   });
 
   it("refuses 0 or 17 blocks, d or h above 64, and a bad block (named)", () => {
@@ -118,6 +119,39 @@ describe("int8-model executor and intake", () => {
   });
 });
 
+describe("int8-model worst-case answer (L = 16, s = 16, b = 64, d = h = 64)", () => {
+  it("the largest answer fits the answer cap, and checking all 16 openings stays under 50 ms", () => {
+    const x = randomInt8ModelInput(21, 16, INT8_MLP.B_MAX, INT8_MODEL.DIM_MAX, INT8_MODEL.DIM_MAX);
+    expect(int8Model.samples!(x)).toBe(16);
+    const plan = int8ModelPlan(x);
+    const inputs = int8ModelInputs(x);
+    const { outputs } = executeInt8Model(x);
+    const c = makeCommitment("ab".repeat(32), inputs, plan, outputs);
+    // Size: the heaviest openings are rq2_res (an i32 and two i8 tensors); entries at their widest JSON form.
+    const widest = (t: Tensor): Tensor => ({ ...t, data: t.data.map(() => (t.dtype === "i8" ? -128 : -(2 ** 23 - 1))) });
+    const heavy = openings(plan, outputs.map(widest), plan.filter((s) => s.op.startsWith("rq2_res")).map((s) => s.idx));
+    const bytes = JSON.stringify({ jobId: "x".repeat(36), openings: heavy }).length;
+    console.log(`[B-26] largest int8-model answer: ${(bytes / 1e6).toFixed(2)} MB`);
+    expect(bytes).toBeLessThan(ANSWER_MAX_BYTES);
+    // Time: the 16 openings with the most gemms (one gemm per block), best of 25: the minimum excludes preemption under a loaded suite.
+    const drawn = plan.filter((s) => s.kind === "gemm").map((s) => s.idx).filter((_, i) => i % 2 === 0);
+    const os = openings(plan, outputs, drawn);
+    const check = () => {
+      for (const o of os) expect(checkOpening(plan[o.idx], o, c, inputs, int8ModelKernel(x, plan[o.idx].op))).toEqual({ ok: true });
+    };
+    check();
+    const ms = Math.min(
+      ...Array.from({ length: 25 }, () => {
+        const t0 = performance.now();
+        check();
+        return performance.now() - t0;
+      }),
+    );
+    console.log(`[B-26] int8-model worst answer check (16 gemm openings, b=64 d=h=64; best of 25): ${ms.toFixed(1)} ms`);
+    expect(ms).toBeLessThan(50);
+  }, 60_000);
+});
+
 describe("int8-model: commit, challenge, answer", () => {
   let app: ReturnType<typeof buildApp>;
   beforeAll(async () => {
@@ -126,7 +160,7 @@ describe("int8-model: commit, challenge, answer", () => {
     await creditUcld(user, 1_000_000_000);
   });
 
-  /** An honest L = 4 job of `node`, settled: 3 of 16 segments drawn and answered. */
+  /** An honest L = 4 job of `node`, settled: 4 of 16 segments drawn and answered. */
   async function honest(node: string) {
     const { jobId, input } = await nextJob([node], randomInt8ModelInput(11, 4));
     const a = (await getActiveAssignment(node))!;
@@ -136,13 +170,13 @@ describe("int8-model: commit, challenge, answer", () => {
     const commitment = makeCommitment(a.sigma, int8ModelInputs(input), plan, outputs);
     const s = await submitWork(node, { jobId, commitment, result });
     if (!s.ok || !("challenge" in s)) throw new Error(JSON.stringify(s));
-    expect(s.challenge.segments).toEqual(segmentDraw(jobId, a.sigma, commitment.chainRoot, 16, 3));
+    expect(s.challenge.segments).toEqual(segmentDraw(jobId, a.sigma, commitment.chainRoot, 16, 4));
     const r = await answerChallenge(node, { jobId, openings: openings(plan, outputs, s.challenge.segments) });
     expect(r).toMatchObject({ ok: true, units: 2 * 4 * 16 * 32 * 4 });
     return { jobId, result };
   }
 
-  it("honest L = 4: 3 of 16 segments drawn, then done, paid, sample_check 'passed'", async () => {
+  it("honest L = 4: 4 of 16 segments drawn, then done, paid, sample_check 'passed'", async () => {
     const { jobId, result } = await honest(await modelNode());
     expect((await getWorkJob(jobId))!).toMatchObject({ status: "done", sample_check: "passed" });
     expect(JSON.parse((await getWorkJob(jobId))!.result_json!)).toEqual(result);
@@ -160,7 +194,7 @@ describe("int8-model: commit, challenge, answer", () => {
     for (let delta = 1; delta < 400 && !c; delta++) {
       outs = plantWrong(input, bad, delta);
       const cand = makeCommitment(a.sigma, int8ModelInputs(input), plan, outs);
-      if (segmentDraw(jobId, a.sigma, cand.chainRoot, 16, 3).includes(bad)) c = cand;
+      if (segmentDraw(jobId, a.sigma, cand.chainRoot, 16, 4).includes(bad)) c = cand;
     }
     expect(c).not.toBeNull();
     const before = await getBalanceUcld(user);
@@ -179,12 +213,17 @@ describe("int8-model: commit, challenge, answer", () => {
     expect(await getBalanceUcld(user)).toEqual({ balanceUcld: before.balanceUcld + job.price_ucld, heldUcld: before.heldUcld - job.price_ucld });
   });
 
-  it("a given middle segment is drawn at s / 4L over 10,000 draws (L = 4: 3/16; L = 16: 6/64), ± 1.5 %", () => {
-    for (const [L, s] of [[4, 3], [16, 6]]) {
+  it("a given middle segment is drawn at s / 4L over 10,000 draws (L = 4: 4/16; L = 16: 16/64); up to 16 drawn, ± 1.5 %", () => {
+    for (const [L, s] of [[4, 4], [16, 16]]) {
       let hits = 0;
       for (let i = 0; i < 10_000; i++) if (segmentDraw(`j${i}`, sha256(`s${i}`), sha256(`r${L}:${i}`), 4 * L, s).includes(6)) hits++;
       expect(Math.abs(hits / 10_000 - s / (4 * L)), `L=${L}`).toBeLessThanOrEqual(0.015);
     }
+    // Up to 16 distinct sorted indices; 17 is refused.
+    const d = segmentDraw("j", "s", "r", 64, 16);
+    expect(new Set(d).size).toBe(16);
+    expect([...d].sort((a, b) => a - b)).toEqual(d);
+    expect(() => segmentDraw("j", "s", "r", 64, 17)).toThrow();
   }, 60_000);
 
   it("chain tamper is refused (422, re-queued, no claw): a block's wiring rewired to skip the previous block", async () => {

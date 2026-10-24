@@ -23,10 +23,11 @@ import { INT8_MLP } from "../../../../../shared/work-int8-mlp.js";
 /**
  * Byte caps checked before the signature check and before any parsing (Content-Length, or counted while streaming):
  * an oversized body is 413 without being read into memory. A matmul submit at n = 256 is ~2.5 MB of JSON at most; an
- * int8-mlp answer opens 2 segments of ≤ 64×256 entries (~0.2 MB), so 1 MB is ~5× the largest.
+ * int8-mlp answer opens 2 segments of ≤ 64×256 entries (~0.2 MB); the largest int8-model answer (16 openings of ≤ 64×64)
+ * is ~1.23 MB (int8-model.test.ts), so 1.5 MB.
  */
 const SUBMIT_MAX_BYTES = 8 * 1024 * 1024;
-const ANSWER_MAX_BYTES = 1024 * 1024;
+export const ANSWER_MAX_BYTES = 1.5 * 1024 * 1024;
 const tooLarge = (max: number) => bodyLimit({ maxSize: max, onError: (c) => fail(c, "payload_too_large", `the body is at most ${max / (1024 * 1024)} MB`) });
 const submitLimit = tooLarge(SUBMIT_MAX_BYTES);
 const answerLimit = tooLarge(ANSWER_MAX_BYTES);
@@ -155,7 +156,7 @@ workRouter.openapi(submitRoute, async (c) => {
   return ok(c, { units: r.units, earned: r.earned, vestsAt: r.vestsAt, heldUntil: r.heldUntil });
 });
 
-/** An answer opens the challenged segments (2 of int8-mlp's 4); each opening serves at most a segment's inputs and output. */
+/** An answer opens the challenged segments (2 of int8-mlp's 4, up to 16 of int8-model's); each opening serves at most a segment's inputs and output. */
 const AnswerSchema = z.object({
   jobId: z.string().min(1).max(64),
   openings: z
@@ -165,7 +166,7 @@ const AnswerSchema = z.object({
         tensors: z.record(z.string().max(16), TensorSchema).refine((t) => Object.keys(t).length <= 8, "at most 8 tensors per opening"),
       }),
     )
-    .max(8),
+    .max(16),
 });
 
 const answerRoute = createRoute({

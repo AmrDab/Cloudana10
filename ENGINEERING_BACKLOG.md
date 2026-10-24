@@ -166,8 +166,8 @@ shapes and a ±(p−1)/2 bound, recompute per elementwise step). matmul (B-6) is
 opened per job; agent ≥ 1.7.0). Settlement, hold and claw are B-6's statements; a caught job fails (not re-queued),
 the owner is not charged and the wallet bound at commit time is clawed. Toward B-19's "proven inference" tier.
 Follow-ups:
-- **Done:** `int8-model` (`shared/work-int8-model.ts`): 1–16 int8-mlp blocks chained, 4·L segments, 2 + ⌈L/4⌉ opened
-  per job, d, h ≤ 64 so the largest input stays < 1 MB of D1; agent ≥ 1.8.0. Larger d·h·L needs the artifact store.
+- **Done:** `int8-model` (`shared/work-int8-model.ts`): 1–16 int8-mlp blocks chained, 4·L segments, max(3, L) opened
+  per job (p ≥ ¼; segmentDraw up to 16, answer cap 1.5 MB), d, h ≤ 64 so the largest input stays < 1 MB of D1; agent ≥ 1.8.0. Larger d·h·L needs the artifact store.
 - Move `work_jobs.input_json` of finished int8-mlp jobs to the artifact store (`moveJobArtifacts` skips them today; up
   to ~0.6 MB of D1 per job at the largest shape).
 - Re-queue a caught job for another node instead of failing it (needs claw ids distinct from job ids: `reward_claws`

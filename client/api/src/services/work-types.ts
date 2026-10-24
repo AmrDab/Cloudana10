@@ -192,10 +192,9 @@ export const int8Mlp: WorkType<Int8MlpInput> = {
 };
 
 /**
- * L chained int8-mlp blocks on the user's own weights (shared/work-int8-model.ts). 2 + ceil(L/4) of its 4·L segments
- * are opened per job, so one wrong segment is caught with probability (2 + ceil(L/4)) / 4L per job: ¾ at L = 1, 6/64
- * at L = 16. The draw grows with L but stays a handful of segment checks per answer; the claw of all held pay is what
- * keeps a wrong segment negative-EV at the lower rate.
+ * L chained int8-mlp blocks on the user's own weights (shared/work-int8-model.ts). max(3, L) of its 4·L segments are
+ * opened per job (one per block), so one wrong segment is caught with probability ≥ ¼ per job (¾ at L = 1). With
+ * d, h ≤ 64 the worst answer (16 gemm openings at b = 64) checks in ~21 ms, under the 50 ms budget.
  */
 export const int8Model: WorkType<Int8ModelInput> = {
   id: "int8-model",

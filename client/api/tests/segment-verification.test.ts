@@ -533,7 +533,7 @@ describe("HTTP: POST /v1/jobs (int8-mlp), /v1/work/submit with a commitment, /v1
     const again = await signed(acct, "/v1/work/submit", { jobId: cb.jobId, commitment, result });
     expect(again.status).toBe(200);
     expect(await again.json()).toEqual(sb);
-    const huge = JSON.stringify({ jobId: cb.jobId, openings: [{ idx: 0, tensors: { "seg:0": { dtype: "i32", shape: [1], data: [0] } } }], pad: "x".repeat(1024 * 1024) });
+    const huge = JSON.stringify({ jobId: cb.jobId, openings: [{ idx: 0, tensors: { "seg:0": { dtype: "i32", shape: [1], data: [0] } } }], pad: "x".repeat(1.5 * 1024 * 1024) });
     const tooBig = await signed(acct, "/v1/work/answer", huge);
     expect(tooBig.status).toBe(413);
     expect(((await tooBig.json()) as { error: { code: string } }).error.code).toBe("payload_too_large");
@@ -555,7 +555,7 @@ describe("HTTP: POST /v1/jobs (int8-mlp), /v1/work/submit with a commitment, /v1
 
   it("an oversized body is 413 before the signature check and before any parsing (submit and answer)", async () => {
     // Unsigned, not even JSON: a 413 here means neither requireNode (401) nor the JSON parser (400) ran.
-    for (const [path, size] of [["/v1/work/answer", 1024 * 1024 + 1], ["/v1/work/submit", 8 * 1024 * 1024 + 1]] as const) {
+    for (const [path, size] of [["/v1/work/answer", 1.5 * 1024 * 1024 + 1], ["/v1/work/submit", 8 * 1024 * 1024 + 1]] as const) {
       const declared = await call(path, { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": String(size) }, body: "{".repeat(size) });
       expect(declared.status, path).toBe(413);
       // Streamed without a Content-Length: counted while reading, stopped at the cap.
