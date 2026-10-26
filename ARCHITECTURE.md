@@ -126,22 +126,24 @@ reserved per container and re-read from Docker on resume.
 |---|---|---|
 | Price | orchestrator controller | anyone: `/v1/network` is signed by the instruction key |
 | Assignment | orchestrator draw | anyone, from the signed `GET /v1/draws/{id}` (seed, eligible set, draw); the set is attested, not committed before the seed — pull-based assignment (B-17) closes that |
-| Verification | orchestrator (transcript + Freivalds; for int8-mlp, the drawn segments of the node's commitment); browsers re-check planted matmul tasks | the keeper re-verifies only the root; results are reproducible from stored inputs |
+| Verification | orchestrator (Freivalds on every matmul job, the transcript on a sampled 1 in 10; for int8-mlp and int8-model, the drawn segments of the node's commitment); browsers re-check planted matmul tasks | the keeper re-verifies only the root; results are reproducible from stored inputs |
 | Billing of hosting | orchestrator probes through the node's socket | the owner (events, report-a-problem) |
 | Epoch root | orchestrator computes; keeper re-verifies and posts | guardian Safe (veto); anyone, from the signed `GET /v1/epochs/{n}` leaves (`scripts/verify/replay.ts`) |
 | Mint | contract, bounded by fees burned + allowance + annual ceiling | anyone on-chain |
 | Claims | permissionless with a proof | anyone |
 
-**Verification tiers.** Each service carries the label of what is actually checked (`docs/V4_VERIFIED_SERVICES.md`
-§5, §5a), never more:
+**Verification tiers (2026-10-26).** Four labels; each service carries the one for what is actually checked
+(`docs/V4_VERIFIED_SERVICES.md` §5, §5a), never more:
 
 | Tier | What is checked | Services |
 |---|---|---|
-| **proven** | the answer on every job (Freivalds), the work behind it re-executed on a sampled 1 in `VERIFY_SAMPLE_K`, pay held 24 h and clawed wallet-wide on a failed sample | matmul |
-| **proven per segment, sampled** | the node commits to every segment's output (a hash chain bound to σ and the job's inputs); after the commitment is stored the API draws segments to open; each opened GEMM is Freivalds-checked and each elementwise step recomputed; same hold and claw. Each job is checked on 2 of 4 segments: a node faking one is caught with probability ½ per job, deterred by its held pay plus suspension (a brand-new wallet with no held pay risks only suspension) | int8-mlp (2 of 4 segments per job) |
-| **spot-checked** | statistical comparison against a reference node, with tolerances | verified endpoints (B-19, planned) |
-| **attested** | reported by the node or its hardware, not re-checked | the GPU model a node reports; a TEE tier later (B-24) |
-| **probed** | a probe through the node's socket saw it working; only time between passing probes is charged | static hosting, containers, GPU endpoints, workstations |
+| **Proven** | the answer is checked exactly. matmul: Freivalds on every job (C bounded, so exact over the integers); the full cuPOW transcript re-executed on a random 1 in `VERIFY_SAMPLE_K` (10). int8: commit-then-challenge — the node commits to every segment's output (a hash chain bound to σ and the job's inputs); after the commitment is stored the API draws segments to open, answered within `CHALLENGE_TTL_SECONDS` (30); each opened GEMM is Freivalds-checked and each elementwise step recomputed. Every job's provider pay is held `PAY_HOLD_SECONDS` (24 h; booked into `epochOf(now + H) + 1`); a failed check claws the wallet's held pay and suspends the node (int8: the owner is refunded); `POST /v1/admin/claws/{jobId}/reverse` undoes a claw | matmul; int8-mlp (agent ≥ 1.7.0; 2 of 4 segments, a faked one caught with probability ½ per job); int8-model (agent ≥ 1.8.0; L ≤ 16 blocks, d, h ≤ 64; max(3, L) of 4·L segments drawn uniformly, ≥ ¼ per job). Per-job probabilities: "caught within N jobs" is an average, not a guarantee; a brand-new wallet with no held pay risks only suspension |
+| **Possession proven** | AES-GCM encrypted copies answer Merkle challenges on random 64 KiB leaves, re-challenged before a failure counts, with audits and cooldowns; retrievable now, never proof of replication | storage phase 1 (copies of job artifacts; R2 stays durable) |
+| **Probed** | a probe through the node's socket saw it working; only time between passing probes is charged | static sites (content hash every minute through the relay), containers, GPU workstations, GPU endpoints running the user's own model server |
+| **Planned** | nothing yet | spot-checked inference for endpoints (B-19; needs a GPU node), a TEE tier (B-24) |
+
+Not a tier: the GPU model a node reports is attested by the node, not re-checked. Cloudana never picks or brands a
+model; a user's own model on an endpoint is probed, not verified.
 
 The interface (`shared/verification.ts`: tensors, hashes, the chain, the kind-generic opening check) is shared by the
 API and the agent; a work type supplies its plan, inputs and kernels (`client/api/src/services/work-types.ts`).
@@ -156,7 +158,8 @@ nodes pin Cloudana's instruction key and users hold credits in Cloudana's D1. Th
 ## 7. Known limits of the design
 
 - One D1 database is the write path for everything; heartbeats dominate it (B-5).
-- Verification costs the orchestrator as much CPU as the work (B-6).
+- ~~Verification costs the orchestrator as much CPU as the work (B-6).~~ Closed 2026-10-21: Freivalds on every job,
+  the transcript on a sampled 1 in 10 (≈ 50× cheaper unsampled at n = 256).
 - The relay Durable Object is a single socket per node; a relay deploy drops every node socket (deploy rarely).
 - Hosting ingress and DNS are Cloudflare-operated single points; this is disclosed, not hidden.
 - Secrets are visible to the provider's Docker daemon by construction; a TEE tier is the only real fix.

@@ -2,7 +2,8 @@
 
 Every product capability with its **verified** maturity. The homepage, the console (`client/src/lib/services.ts`),
 the docs and the waitlist must agree with this table; when they disagree, this table wins and the other is a bug.
-Updated 2026-10-19 from code, tests and the owner runbook, not from the site.
+Updated 2026-10-19 from code, tests and the owner runbook, not from the site; verification tiers and work types
+re-checked against code 2026-10-26.
 
 Maturity classes (the directive's six, in order of trust):
 
@@ -16,22 +17,26 @@ Maturity classes (the directive's six, in order of trust):
 5. **Designed, not implemented** — a spec exists; nothing runs.
 6. **Deprecated, remove** — dead or contradicting the product.
 
-How it is checked ("proof"): **proven** (transcript + answer check) · **probed** (reachability/content/health) ·
-**challenged** (retrievability) · **none**.
+How it is checked ("proof"), the four tiers (`ARCHITECTURE.md` §6): **proven** (the answer checked exactly: Freivalds
+on every matmul job + the transcript re-executed on a random 1 in 10; drawn segments for int8) · **possession proven**
+(storage: Merkle challenges on random 64 KiB leaves; retrievability, not replication) · **probed**
+(reachability/content/health; pay only for time a probe saw working) · **planned** · **—** (not a checked service).
 
 ## Compute
 
 | Capability | Class | Proof | Evidence | What blocks class 1 |
 |---|---|---|---|---|
-| Matrix compute jobs (`POST /v1/jobs`, n 8–256), USD quote settled in CLD, hold → capture | 2 | proven | e2e 43 checks; API tests `v1-submit`, `v1-assignment`, `pouw-verify`, `job-ceiling`, `pricing` | a public node (owner step 10); settlement (B-1) |
+| Matrix compute jobs (`POST /v1/jobs`, n 8–256), USD quote settled in CLD, hold → capture | 2 | proven (Freivalds every job; transcript 1 in 10; pay held 24 h, wallet-wide claw + suspend on a failed sample) | e2e 43 checks; API tests `v1-submit`, `v1-assignment`, `pouw-verify`, `job-ceiling`, `pricing`, `sampled-verification`, `sampled-claw` | settlement (B-1) |
+| int8 MLP block jobs (`workType: "int8-mlp"`, the user's own weights), agent ≥ 1.7.0 | 2 | proven per segment: commit, then 2 of 4 segments opened within 30 s (a faked one caught with p = ½ per job); fail → owner refunded, claw, suspend | `int8-mlp`, `int8-mlp-gate`, `segment-verification`, `challenge-robustness` tests; a real 1.7.0 agent ran one locally (PROGRESS entry 26) | a public node on agent ≥ 1.7.0; settlement (B-1) |
+| int8 model jobs (`workType: "int8-model"`, L ≤ 16 chained blocks, d, h ≤ 64), agent ≥ 1.8.0 | 2 | proven per segment: max(3, L) of 4·L segments drawn uniformly (p ≥ ¼ per job) | `int8-model` tests; agent `int8-model` selftest | a public node on agent ≥ 1.8.0; settlement (B-1) |
 | Assignment by weighted random draw, replayable from the signed draw record | 2 | — | `jobs.service.ts`; `public-replay` tests; `scripts/verify/replay.ts` | the eligible set is attested, not pre-committed, and an expired-and-redrawn assignment leaves no trace (B-17) |
 | Provider agent: install, identify, benchmark, bind, heartbeat, signed instructions | 2 | — | agent selftests; image built and signed by CI (1.6.0 live on the first public node since 2026-10-20) | — |
 | Browser verifier (planted tasks, points) | 2 | — | e2e; `verify-feed` tests | — |
 | Containers (curated images) on fleet nodes, hardened | 3 | probed | API tests `deployments`, `workstations`; agent security selftest 94 checks; no container-capable node exists yet (the first public node serves compute, hosting and storage) | a container-capable node (xfs pquota + Docker ≥ 28) |
 | GPU workstations (Jupyter / code-server / desktop), direct mode | 3 | probed · GPU reported by node | `workstations` tests; needs public-IP node (relay has no WebSockets) | a GPU node; relay WebSocket tunnelling |
-| GPU endpoints (bring your own model server), replicas, keys, per-replica sealed secrets from the console | 3 | probed (health) | `endpoints` tests; gateway tests | a GPU fleet node |
+| GPU endpoints (bring your own model server), replicas, keys, per-replica sealed secrets from the console | 3 | probed (health; the model itself is not verified) | `endpoints` tests; gateway tests | a GPU fleet node |
 | Container logs on demand (`GET /deployments/{id}/logs`: live through the relay, failure tail otherwise, per-deployment limit) | 2 | — | `deployment-logs` tests; agent ops selftest (20 checks) and relay e2e logs case; console panel browser-tested on the direct-node error path (TEST_EVIDENCE §4b) | a container-capable node (relay live since 2026-10-18, a 1.6.0 node since 2026-10-20) |
-| Verified inference (teacher-forced checks) | 5 | — | `docs/V4_VERIFIED_SERVICES.md` §4 | reference node, calibration |
+| Spot-checked inference for endpoints (teacher-forced checks, B-19) | 5 | planned | `docs/V4_VERIFIED_SERVICES.md` §4 | a GPU node, a reference node, calibration |
 | Edge functions | 5 | — | catalog entry only | — |
 
 ## Hosting and delivery
@@ -53,7 +58,7 @@ How it is checked ("proof"): **proven** (transcript + answer check) · **probed*
 | Capability | Class | Proof | Evidence | What blocks class 1 |
 |---|---|---|---|---|
 | Job artifacts to R2 (finished matrices leave D1) | 2 | — | `artifacts` tests; cron wired | R2 bucket exists (it does per wrangler.toml) |
-| Encrypted provider copies with Merkle challenges (storage phase 1) | 2 | challenged | `storage`, `storage-proof` tests; agent storage selftest | `STORAGE_KEK` (owner step 2) + storage nodes |
+| Encrypted provider copies with Merkle challenges (storage phase 1) | 2 | possession proven | `storage`, `storage-proof` tests; agent storage selftest | `STORAGE_KEK` (owner step 2) + storage nodes |
 | Object storage (buckets, S3 API, signed URLs, lifecycle) | 5 | — | `docs/V4_STORAGE_SPEC.md` | DMCA agent (step 11), B-18 |
 | KV, queues, databases | 5 | — | catalog entry only | — |
 

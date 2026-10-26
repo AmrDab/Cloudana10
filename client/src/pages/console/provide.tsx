@@ -43,7 +43,7 @@ export default function ProvidePage() {
       <PageHeader
         kicker="Provide"
         title="Power the network"
-        lede="Your hardware runs assigned jobs and proves them. Each proven job mints CLD to your wallet. No stake."
+        lede="Your hardware runs assigned jobs and proves them. Each job that checks out earns CLD for your wallet. No stake."
       />
       <div role="tablist" aria-label="Provider type" className="mb-6 inline-flex rounded-lg border border-line-2 bg-bg-2 p-1">
         {([
