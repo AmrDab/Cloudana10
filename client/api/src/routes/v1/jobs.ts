@@ -102,8 +102,9 @@ const createJobRoute = createRoute({
     "requantization scales and optional activation table (default ReLU); it is metered at 2·b·d·h MACs, run on nodes with agent ≥ 1.7.0, " +
     "and verified per segment (2 of its 4 segments opened on every job). Its `result` is Y, int8 b×d row-major. " +
     "workType \"int8-model\" takes { input: { b, d, h, X, blocks: [{ W1, b1, W2, b2, m1, s1, m2, s2, lut? }] } }: 1–16 such blocks " +
-    "chained (block ℓ's Y is block ℓ+1's X), one d and h for all with d, h ≤ 64; metered at 2·b·d·h·L MACs, run on nodes with " +
-    "agent ≥ 1.8.0, verified per segment (max(3, L) of its 4·L segments opened on every job, drawn uniformly over all of them: a wrong segment is caught with p ≥ ¼ per job). Its `result` is the last Y.",
+    "chained (block ℓ's Y is block ℓ+1's X), one d and h for all with d, h ≤ 256 and L·d·h ≤ 131,072 (d = h = 64 up to L = 16, " +
+    "128 up to L = 8, 256 up to L = 2; at most ~1.4 MB of JSON), the bound set by the API's check of one answer; metered at 2·b·d·h·L MACs, run on nodes with " +
+    "agent ≥ 1.9.0, verified per segment (max(3, L) of its 4·L segments opened on every job, drawn uniformly over all of them: a wrong segment is caught with p ≥ ¼ per job). Its `result` is the last Y.",
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: CreateAnyJobSchema } } } },
   responses: responses(
@@ -237,7 +238,7 @@ jobsRouter.openapi(getJobRoute, async (c) => {
   // int8-mlp keeps its result tensor in result_json (B-26); `result` is its data, int8 b×d row-major.
   const result =
     isOwner && row.status === "done"
-      ? row.input_json
+      ? row.input_json || row.input_ref
         ? row.result_json
           ? (JSON.parse(row.result_json) as { data: number[] }).data
           : null

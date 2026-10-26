@@ -7,6 +7,7 @@
  *
  * Challenge-mode work types (int8-mlp, B-26) submit a commitment + result tensor instead: bound → 200 with the
  * segments to open and a deadline (drawn only after the commitment is stored); then POST /v1/work/answer opens them.
+ * GET /v1/work/jobs/{id}/input (node-signed) serves such a job's input to the node it is assigned to (agents ≥ 1.9.0).
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { bodyLimit } from "hono/body-limit";
@@ -14,7 +15,7 @@ import { ok, fail, failValidation } from "../../lib/http.js";
 import { requireNode, type NodeVariables } from "../../middleware/node-auth.js";
 import { rateLimit, verifiedNodeKey } from "../../middleware/rate-limit.js";
 import type { AuthVariables } from "../../middleware/auth.js";
-import { answerChallenge, submitWork } from "../../services/jobs.service.js";
+import { answerChallenge, assignedJobInput, submitWork } from "../../services/jobs.service.js";
 import type { POUWCertificate } from "../../../../../pouw/src/types.js";
 import type { SegmentOpening } from "../../../../../shared/verification.js";
 import { createRouter, json, responses } from "./_openapi.js";
@@ -23,8 +24,8 @@ import { INT8_MLP } from "../../../../../shared/work-int8-mlp.js";
 /**
  * Byte caps checked before the signature check and before any parsing (Content-Length, or counted while streaming):
  * an oversized body is 413 without being read into memory. A matmul submit at n = 256 is ~2.5 MB of JSON at most; an
- * int8-mlp answer opens 2 segments of ≤ 64×256 entries (~0.2 MB); the largest int8-model answer (16 openings of ≤ 64×64)
- * is ~1.23 MB (int8-model.test.ts), so 1.5 MB.
+ * int8-mlp answer opens 2 segments of ≤ 64×256 entries (~0.2 MB); the largest int8-model answer (16 openings of ≤ 64×64,
+ * or 8 of ≤ 64×128) is ~1.23 MB (int8-model.test.ts), so 1.5 MB.
  */
 const SUBMIT_MAX_BYTES = 8 * 1024 * 1024;
 export const ANSWER_MAX_BYTES = 1.5 * 1024 * 1024;
@@ -33,6 +34,8 @@ const submitLimit = tooLarge(SUBMIT_MAX_BYTES);
 const answerLimit = tooLarge(ANSWER_MAX_BYTES);
 /** Per node (in memory, like the other node routes): an agent sends one answer per job, plus retries with backoff. */
 const answerRate = rateLimit({ bucket: "work-answer", limit: 30, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
+/** An agent fetches its assignment's input once, again on the next heartbeat if that failed. */
+const inputRate = rateLimit({ bucket: "work-input", limit: 30, windowSec: 60, keyBy: verifiedNodeKey, store: "memory" });
 /** The largest tensor a node ever serves: an int8-mlp activation or result, b × max(d, h). */
 const MAX_SEGMENT_ENTRIES = INT8_MLP.B_MAX * INT8_MLP.DIM_MAX;
 
@@ -174,7 +177,7 @@ const answerRoute = createRoute({
   path: "/work/answer",
   tags: ["Nodes"],
   description:
-    "Node-signed, body ≤ 1 MB. The openings of exactly the segments POST /v1/work/submit challenged, before its " +
+    "Node-signed, body ≤ 1.5 MB. The openings of exactly the segments POST /v1/work/submit challenged, before its " +
     "deadline: for each, the `seg:j` tensors it reads and its own output `seg:idx` (job inputs come from the job, " +
     "never the node). Every served tensor must hash to the commitment; a gemm segment is checked by Freivalds, an " +
     "elementwise one recomputed. Pass → settled like a matmul job (the pay held until heldUntil). A wrong, missing or " +
@@ -210,4 +213,12 @@ workRouter.openapi(answerRoute, async (c) => {
   const r = await answerChallenge(c.get("node"), { jobId: body.jobId, openings: body.openings as SegmentOpening[] });
   if (!r.ok) return fail(c, r.code, r.message);
   return ok(c, { units: r.units, earned: r.earned, vestsAt: r.vestsAt, heldUntil: r.heldUntil });
+});
+
+// The stored JSON as is (its sha256 is the assignment's inputHash): a plain route, like the storage copies.
+workRouter.get("/work/jobs/:id/input", requireNode, inputRate, async (c) => {
+  const id = c.req.param("id") ?? "";
+  const json = id.length <= 64 ? await assignedJobInput(c.get("node"), id) : null;
+  if (json === null) return fail(c, "not_found", "no input for this node: the job is not assigned to it (or the assignment expired)");
+  return c.body(json, 200, { "content-type": "application/json", "cache-control": "no-store" });
 });

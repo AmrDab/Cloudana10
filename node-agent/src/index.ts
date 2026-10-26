@@ -17,7 +17,7 @@ import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from ".
 import { workTypes as capabilities } from "./workstation.ts";
 import { DEFAULT_INSTRUCTION_SIGNER, NonceLru, verifyInstruction } from "./instructions.ts";
 import { RELAY_CAPABILITY, RelayClient } from "./relay.ts";
-import { CHALLENGE_TYPES, runChallengeJob } from "./work.ts";
+import { CHALLENGE_TYPES, assignmentInput, runChallengeJob } from "./work.ts";
 
 interface Args {
   api: string;
@@ -347,10 +347,16 @@ async function main() {
 
   /** int8-mlp, int8-model (B-26): commit to every segment, then answer the segments the API draws (work.ts). */
   async function handleChallengeJob(a: any): Promise<void> {
-    log(`job ${a.jobId} ${a.workType} b=${a.input?.b} d=${a.input?.d} h=${a.input?.h}${a.input?.blocks ? ` L=${a.input.blocks.length}` : ""}`);
     const start = performance.now();
     try {
-      const { laneAUcld, laneBUcld } = await runChallengeJob(a, (path, body) => request(account, "POST", path, body), {
+      // A failed fetch is retried on the next heartbeat (the assignment is re-sent until the commitment is stored).
+      const input: any = await assignmentInput(a, async (p) => {
+        const res = await fetch(`${api}${p}`, { method: "GET", headers: { ...(await signRequest(account, "GET", p, "")) }, signal: AbortSignal.timeout(60_000) });
+        if (!res.ok) throw new Error(`input fetch: HTTP ${res.status}`);
+        return res.text();
+      });
+      log(`job ${a.jobId} ${a.workType} b=${input?.b} d=${input?.d} h=${input?.h}${input?.blocks ? ` L=${input.blocks.length}` : ""}`);
+      const { laneAUcld, laneBUcld } = await runChallengeJob({ ...a, input }, (path, body) => request(account, "POST", path, body), {
         // A lost response (the API unreachable, or a 5xx) is retried; a refusal (4xx) or a bad signature (Fatal) is not.
         retryable: (err) => err instanceof Unreachable || ((err as { status?: number }).status ?? 0) >= 500,
         now: serverNow,

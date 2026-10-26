@@ -194,12 +194,13 @@ export const int8Mlp: WorkType<Int8MlpInput> = {
 /**
  * L chained int8-mlp blocks on the user's own weights (shared/work-int8-model.ts). max(3, L) of its 4·L segments are
  * opened per job, drawn uniformly over all of them, so one wrong segment is caught with probability ≥ ¼ per job (¾ at L = 1). With
- * d, h ≤ 64 the worst answer (16 gemm openings at b = 64) checks in ~21 ms, under the 50 ms budget.
+ * L·d·h ≤ 2¹⁷ the worst answer (b = 64, every opening a gemm) checks in ~14 ms, ~18–25 ms with loading the input, under
+ * the 50 ms budget. Agents ≥ 1.9.0 only: they fetch the input (up to ~1.4 MB) instead of getting it in every heartbeat.
  */
 export const int8Model: WorkType<Int8ModelInput> = {
   id: "int8-model",
   mode: "challenge",
-  minAgent: "1.8.0",
+  minAgent: "1.9.0",
   requirements: () => ({ workType: "int8-model" }),
   validate: validateInt8Model,
   meter: meterInt8Model,

@@ -211,6 +211,9 @@ const BALANCE_COLUMNS = [
   // The node's payout wallet when its commitment was stored: a failed challenge claws this wallet whatever the node's
   // binding says by then (unbinding mid-challenge must not evade the claw).
   "ALTER TABLE work_jobs ADD COLUMN commit_payout TEXT",
+  // Challenge-mode inputs in the artifact store (B-26 follow-up): the key (input_json is then NULL) and sha256 of the JSON.
+  "ALTER TABLE work_jobs ADD COLUMN input_ref TEXT",
+  "ALTER TABLE work_jobs ADD COLUMN input_hash TEXT",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

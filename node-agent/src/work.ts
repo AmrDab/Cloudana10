@@ -10,6 +10,7 @@
 import { makeCommitment, type Commitment, type SegmentOpening, type SegmentSpec, type Tensor, type TensorRef } from "../../shared/verification.ts";
 import { executeInt8Mlp, int8MlpInputs, int8MlpPlan, validateInt8Mlp } from "../../shared/work-int8-mlp.ts";
 import { executeInt8Model, int8ModelInputs, int8ModelPlan, validateInt8Model } from "../../shared/work-int8-model.ts";
+import { sha256hex } from "./signing.ts";
 
 /** What the agent needs of a challenge-mode work type: the same plan, inputs and executor as the API's. */
 interface ChallengeType {
@@ -63,6 +64,17 @@ export interface ChallengeAssignment {
   workType: string;
   sigma: string;
   input: any;
+  /** sha256 of the input's JSON (signed with the assignment); 1.9.0+ get this instead of the input itself. */
+  inputHash?: string;
+}
+
+/** The assignment's input: inline, or fetched (GET /v1/work/jobs/{id}/input) and refused unless it hashes to inputHash. */
+export async function assignmentInput(a: Omit<ChallengeAssignment, "input"> & { input?: unknown }, get: (path: string) => Promise<string>): Promise<unknown> {
+  if (a.input !== undefined) return a.input;
+  if (typeof a.inputHash !== "string") throw new Error("the assignment carries neither an input nor its hash");
+  const text = await get(`/v1/work/jobs/${encodeURIComponent(a.jobId)}/input`);
+  if (sha256hex(text) !== a.inputHash) throw new Error("the fetched input does not match the assignment's input hash");
+  return JSON.parse(text);
 }
 
 export interface RetryOptions {

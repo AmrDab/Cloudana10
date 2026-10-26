@@ -142,7 +142,9 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   sample_check TEXT, -- sampled transcript re-execution (B-6): NULL = not sampled, 'passed', 'failed' or 'reversed' (claw undone)
   -- Challenge-mode work (B-26): a non-matmul job's input, the node's commitment, the segments drawn after it was stored,
   -- the answer deadline, and the payout wallet at commit time that a failed challenge claws (all NULL for matmul).
-  input_json TEXT, commitment_json TEXT, challenge_json TEXT, challenge_expires_at INTEGER, commit_payout TEXT
+  input_json TEXT, commitment_json TEXT, challenge_json TEXT, challenge_expires_at INTEGER, commit_payout TEXT,
+  -- With an artifact store the input lives there instead (input_json NULL): its key and sha256 of its JSON.
+  input_ref TEXT, input_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_status ON work_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_work_jobs_owner ON work_jobs(owner, created_at DESC);

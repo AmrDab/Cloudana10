@@ -167,9 +167,12 @@ opened per job; agent ≥ 1.7.0). Settlement, hold and claw are B-6's statements
 the owner is not charged and the wallet bound at commit time is clawed. Toward B-19's "proven inference" tier.
 Follow-ups:
 - **Done:** `int8-model` (`shared/work-int8-model.ts`): 1–16 int8-mlp blocks chained, 4·L segments, max(3, L) opened
-  per job (p ≥ ¼; segmentDraw up to 16, answer cap 1.5 MB), d, h ≤ 64 so the largest input stays < 1 MB of D1; agent ≥ 1.8.0. Larger d·h·L needs the artifact store.
-- Move `work_jobs.input_json` of finished int8-mlp jobs to the artifact store (`moveJobArtifacts` skips them today; up
-  to ~0.6 MB of D1 per job at the largest shape).
+  per job (p ≥ ¼; segmentDraw up to 16, answer cap 1.5 MB); d, h ≤ 256 with L·d·h ≤ 2¹⁷ (PROGRESS entry 28); agent ≥ 1.9.0.
+- **Done (entry 28):** challenge-mode inputs (int8-mlp, int8-model) go to the artifact store at enqueue (D1 keeps
+  `input_ref` + `input_hash`; no store → D1 as before); agents ≥ 1.9.0 fetch them (`GET /v1/work/jobs/{id}/input`,
+  assigned node only, checked against the signed hash). The binding limit is now the API's 50 ms answer check
+  (∝ L·d·h), not storage: a cheaper check (e.g. skipping the re-validation of job inputs per opening, or loading only
+  the opened blocks) is what would let int8-model grow further.
 - Re-queue a caught job for another node instead of failing it (needs claw ids distinct from job ids: `reward_claws`
   and `reverseSampleClaw` are keyed by job id).
 - A per-work-type rate (`WorkType.fee?`) once a type's cost per MAC differs from matmul's; today `meter` in MAC
