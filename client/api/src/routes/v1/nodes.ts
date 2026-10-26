@@ -201,7 +201,9 @@ const AssignmentSchema = z.object({
   matrixB: z.array(z.number()),
   sigma: z.string(),
   expiresAt: z.number(),
-  /** Challenge-mode work types only (int8-mlp: matrixA and matrixB are then empty): the job's input. */
+  /** Challenge-mode work types only (matrixA and matrixB are then empty): sha256 of the input's JSON. */
+  inputHash: z.string().optional(),
+  /** Challenge-mode, agents below 1.9.0 only: the job's input. 1.9.0+ fetch it (GET /v1/work/jobs/{id}/input) and check inputHash. */
   input: z.record(z.unknown()).optional(),
 });
 
@@ -282,7 +284,13 @@ nodesRouter.openapi(heartbeatRoute, async (c) => {
   // Storage-capable nodes get a third signed key; others keep the exact { assignment, deployments } body 1.3.x verifies.
   const storage = row ? await storageInstructions(node, row.work_types ?? null, allowed && !suspended).catch(() => null) : null;
   const instructions = {
-    assignment: allowed && !suspended && activity && activity.assignedJobs > 0 ? await getActiveAssignment(node) : null,
+    assignment:
+      allowed && !suspended && activity && activity.assignedJobs > 0
+        ? await getActiveAssignment(node, now, version).catch((err) => {
+            log.api.warn("[nodes] assignment on heartbeat failed:", err); // e.g. an unreadable input artifact: the rest of the beat still goes out
+            return null;
+          })
+        : null,
     deployments,
     ...(storage ? { storage } : {}),
   };

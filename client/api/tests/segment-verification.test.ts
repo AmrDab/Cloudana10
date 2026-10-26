@@ -161,7 +161,7 @@ describe("int8-mlp: commit, challenge, answer", () => {
     const j = await nextInt8Job(node);
     // The assignment carries the input and nothing about the draw; the row has no draw yet.
     const a = (await getActiveAssignment(node))!;
-    expect(Object.keys(a).sort()).toEqual(["expiresAt", "input", "jobId", "matrixA", "matrixB", "n", "sigma", "workType"]);
+    expect(Object.keys(a).sort()).toEqual(["expiresAt", "input", "inputHash", "jobId", "matrixA", "matrixB", "n", "sigma", "workType"]);
     expect(a).toMatchObject({ workType: "int8-mlp", n: j.input.d, matrixA: [], matrixB: [] });
     expect((await getWorkJob(j.jobId))!).toMatchObject({ commitment_json: null, challenge_json: null, challenge_expires_at: null });
 

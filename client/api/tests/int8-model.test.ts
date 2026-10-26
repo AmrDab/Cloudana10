@@ -1,7 +1,8 @@
 /**
  * int8-model (B-26 follow-up): L int8-mlp blocks chained through the general verifier. One block equals int8-mlp; an
  * honest L = 4 job settles; a planted wrong segment in a middle block is caught when drawn, at the rate the draw says;
- * a chain tamper is refused; the type is drawn only among agents ≥ 1.8.0; the largest job fits one D1 row.
+ * a chain tamper is refused; the type is drawn only among agents ≥ 1.9.0; the largest jobs (L·d·h = 2¹⁷) are accepted
+ * and their worst answer still checks within the 50 ms budget.
  */
 import { setupV1Db } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll } from "vitest";
@@ -11,6 +12,7 @@ import { INT8_MLP, executeInt8Mlp, gemmBias, randomInt8MlpInput } from "../../..
 import { INT8_MODEL, executeInt8Model, int8ModelInputs, int8ModelKernel, int8ModelPlan, randomInt8ModelInput, validateInt8Model, type Int8ModelInput } from "../../../shared/work-int8-model.js";
 import { buildApp } from "../src/app.js";
 import { ANSWER_MAX_BYTES } from "../src/routes/v1/work.js";
+import { createHash } from "node:crypto";
 import { getD1 } from "../src/lib/storage.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
@@ -19,7 +21,7 @@ import { answerChallenge, enqueueWorkJob, getActiveAssignment, getWorkJob, runAs
 import { getWorkType, int8Model } from "../src/services/work-types.js";
 import { ENV, user } from "./helpers/sampled.js";
 
-async function modelNode(agentVersion: string | null = "1.8.0", workTypes = ["matmul", "int8-mlp", "int8-model"]) {
+async function modelNode(agentVersion: string | null = "1.9.0", workTypes = ["matmul", "int8-mlp", "int8-model"]) {
   const node = "0x" + randomBytes(20).toString("hex");
   await announceNode(node, { cpuThreads: 8, ramGB: 16, gpus: [], os: "test" }, 100, workTypes, undefined, agentVersion ? { agentVersion } : {});
   await getD1().prepare("UPDATE nodes SET payout = ? WHERE address = ?").bind("0x" + randomBytes(20).toString("hex"), node).run();
@@ -36,6 +38,9 @@ async function nextJob(nodes: string[], input: Int8ModelInput = randomInt8ModelI
   await runAssignment();
   return { jobId: q.jobId, priceUcld: q.priceUcld, job: (await getWorkJob(q.jobId))!, input };
 }
+
+/** [d = h, L] at L·d·h = LDH_MAX. */
+const CORNERS = [128, 256].map((M) => [M, Math.floor(INT8_MODEL.LDH_MAX / (M * M))]);
 
 function openings(plan: SegmentSpec[], outputs: Tensor[], segments: number[]): SegmentOpening[] {
   return segments.map((idx) => {
@@ -89,67 +94,82 @@ describe("int8-model executor and intake", () => {
     expect(outputs[7]).toEqual(second.result);
   });
 
-  it("registered as a challenge type gated on 1.8.0; meter 2·b·d·h·L; samples max(3, L)", () => {
+  it("registered as a challenge type gated on 1.9.0; meter 2·b·d·h·L; samples max(3, L)", () => {
     const x = randomInt8ModelInput(1, 5);
     expect(getWorkType("int8-model")).toBe(int8Model);
-    expect(int8Model).toMatchObject({ mode: "challenge", minAgent: "1.8.0" });
+    expect(int8Model).toMatchObject({ mode: "challenge", minAgent: "1.9.0" });
     expect(int8Model.meter(x)).toBe(2 * 4 * 16 * 32 * 5);
     expect([1, 4, 5, 8, 16].map((L) => int8Model.samples!(randomInt8ModelInput(1, L)))).toEqual([3, 4, 5, 8, 16]);
   });
 
-  it("refuses 0 or 17 blocks, d or h above 64, and a bad block (named)", () => {
+  it("refuses 0 or 17 blocks, d or h above 256, L·d·h above 2¹⁷, and a bad block (named)", () => {
     const x = randomInt8ModelInput(1, 2);
     expect(validateInt8Model(x)).toBeNull();
     expect(validateInt8Model({ ...x, blocks: [] })).toMatch(/blocks must have/);
     expect(validateInt8Model({ ...x, blocks: new Array(17).fill(x.blocks[0]) })).toMatch(/blocks must have/);
-    expect(validateInt8Model(randomInt8ModelInput(1, 1, 2, 72, 8))).toMatch(/d and h/);
+    expect(validateInt8Model(randomInt8ModelInput(1, 1, 2, 72, 8))).toBeNull(); // above the old 64
+    expect(validateInt8Model(randomInt8ModelInput(1, 1, 2, 264, 8))).toMatch(/d and h/);
+    expect(validateInt8Model({ ...x, d: 256, h: 256, blocks: new Array(3).fill({}) })).toMatch(/L·d·h must be at most 131072/);
+    expect(validateInt8Model({ ...x, d: 128, h: 136, blocks: new Array(8).fill({}) })).toMatch(/L·d·h/);
     expect(validateInt8Model({ ...x, blocks: [x.blocks[0], { ...x.blocks[1], m2: 0 }] })).toMatch(/^blocks\[1\]: m2/);
   });
 
-  it("the largest job (L = 16, b = 64, d = h = 64, extreme values) fits a D1 row (2 MB) with room to spare", () => {
-    const L = INT8_MODEL.L_MAX;
-    const M = INT8_MODEL.DIM_MAX;
+  // The corners of L·d·h = LDH_MAX: the deepest at d = h = 128 and the widest at d = h = 256.
+  it.each(CORNERS)("the largest job (d = h = %i, L = %i, b = 64, extreme values) is accepted", (M, L) => {
     const worst = (n: number) => new Array(n).fill(-128);
     const block = { W1: worst(M * M), b1: new Array(M).fill(-(2 ** 20)), W2: worst(M * M), b2: new Array(M).fill(-(2 ** 20)), m1: 32767, s1: 31, m2: 32767, s2: 31, lut: worst(256) };
     const x: Int8ModelInput = { b: INT8_MLP.B_MAX, d: M, h: M, X: worst(INT8_MLP.B_MAX * M), blocks: new Array(L).fill(block) };
     expect(validateInt8Model(x)).toBeNull();
     const bytes = JSON.stringify(x).length;
-    console.log(`[B-26] largest int8-model input: ${(bytes / 1e6).toFixed(2)} MB of JSON`);
-    expect(bytes).toBeLessThan(1_000_000);
+    console.log(`[B-26] largest int8-model input (d = h = ${M}, L = ${L}): ${(bytes / 1e6).toFixed(2)} MB of JSON`);
+    expect(bytes).toBeLessThan(1_500_000);
   });
 });
 
-describe("int8-model worst-case answer (L = 16, s = 16, b = 64, d = h = 64)", () => {
-  it("the largest answer fits the answer cap, and checking all 16 openings stays under 50 ms", () => {
-    const x = randomInt8ModelInput(21, 16, INT8_MLP.B_MAX, INT8_MODEL.DIM_MAX, INT8_MODEL.DIM_MAX);
-    expect(int8Model.samples!(x)).toBe(16);
+describe("int8-model worst-case answer at L·d·h = 2¹⁷ (b = 64)", () => {
+  it.each(CORNERS)("d = h = %i, L = %i: the largest answer fits the answer cap, and checking it stays under 50 ms", (M, L) => {
+    const x = randomInt8ModelInput(21, L, INT8_MLP.B_MAX, M, M);
+    const s = int8Model.samples!(x);
+    expect(s).toBe(Math.max(3, L));
     const plan = int8ModelPlan(x);
-    const inputs = int8ModelInputs(x);
     const { outputs } = executeInt8Model(x);
-    const c = makeCommitment("ab".repeat(32), inputs, plan, outputs);
-    // Size: the heaviest openings are rq2_res (an i32 and two i8 tensors); entries at their widest JSON form.
+    const c = makeCommitment("ab".repeat(32), int8ModelInputs(x), plan, outputs);
+    // Size: the heaviest openings are rq2_res (an i32 and two i8 tensors), then the gemms; entries at their widest JSON form.
     const widest = (t: Tensor): Tensor => ({ ...t, data: t.data.map(() => (t.dtype === "i8" ? -128 : -(2 ** 23 - 1))) });
-    const heavy = openings(plan, outputs.map(widest), plan.filter((s) => s.op.startsWith("rq2_res")).map((s) => s.idx));
-    const bytes = JSON.stringify({ jobId: "x".repeat(36), openings: heavy }).length;
-    console.log(`[B-26] largest int8-model answer: ${(bytes / 1e6).toFixed(2)} MB`);
+    const byWeight = [...plan.filter((q) => q.op.startsWith("rq2_res")), ...plan.filter((q) => q.kind === "gemm")].map((q) => q.idx).slice(0, s);
+    const bytes = JSON.stringify({ jobId: "x".repeat(36), openings: openings(plan, outputs.map(widest), byWeight) }).length;
+    console.log(`[B-26] largest int8-model answer (d = h = ${M}, L = ${L}): ${(bytes / 1e6).toFixed(2)} MB`);
     expect(bytes).toBeLessThan(ANSWER_MAX_BYTES);
-    // Time: the 16 openings with the most gemms (one gemm per block), best of 25: the minimum excludes preemption under a loaded suite.
-    const drawn = plan.filter((s) => s.kind === "gemm").map((s) => s.idx).filter((_, i) => i % 2 === 0);
+    // Time: the s openings with the most gemms, best of 25 (the minimum excludes preemption under a loaded suite). Logged
+    // too: with what answerChallenge does around them (the stored input's hash check and parse, its tensors and plan) —
+    // ~18–25 ms run alone, but a loaded suite doubles wall and CPU time alike, so only the check is asserted, as before.
+    const drawn = plan.filter((q) => q.kind === "gemm").map((q) => q.idx).slice(0, s);
     const os = openings(plan, outputs, drawn);
-    const check = () => {
-      for (const o of os) expect(checkOpening(plan[o.idx], o, c, inputs, int8ModelKernel(x, plan[o.idx].op))).toEqual({ ok: true });
+    const stored = JSON.stringify(x);
+    const inputs = int8ModelInputs(x);
+    const check = (y: Int8ModelInput, ins: Record<string, Tensor>) => {
+      for (const o of os) expect(checkOpening(plan[o.idx], o, c, ins, int8ModelKernel(y, plan[o.idx].op))).toEqual({ ok: true });
     };
-    check();
-    const ms = Math.min(
-      ...Array.from({ length: 25 }, () => {
-        const t0 = performance.now();
-        check();
-        return performance.now() - t0;
-      }),
-    );
-    console.log(`[B-26] int8-model worst answer check (16 gemm openings, b=64 d=h=64; best of 25): ${ms.toFixed(1)} ms`);
+    const withLoad = () => {
+      createHash("sha256").update(stored).digest("hex");
+      const y = JSON.parse(stored) as Int8ModelInput;
+      check(y, int8ModelInputs(y));
+    };
+    const best = (f: () => void) => {
+      f();
+      return Math.min(
+        ...Array.from({ length: 25 }, () => {
+          const t0 = performance.now();
+          f();
+          return performance.now() - t0;
+        }),
+      );
+    };
+    const ms = best(() => check(x, inputs));
+    const loaded = best(withLoad);
+    console.log(`[B-26] int8-model worst answer (${s} gemm openings, b=64 d=h=${M} L=${L}; best of 25): check ${ms.toFixed(1)} ms, with loading the input ${loaded.toFixed(1)} ms`);
     expect(ms).toBeLessThan(50);
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("int8-model: commit, challenge, answer", () => {
@@ -242,13 +262,13 @@ describe("int8-model: commit, challenge, answer", () => {
     expect(claws!.c).toBe(0);
   });
 
-  it("is drawn only among agents ≥ 1.8.0 advertising it; 1.7.0 and unversioned nodes are not", async () => {
-    const old = await modelNode("1.7.0");
+  it("is drawn only among agents ≥ 1.9.0 advertising it; 1.8.0 (inline inputs) and unversioned nodes are not", async () => {
+    const old = await modelNode("1.8.0");
     const unknown = await modelNode(null);
     for (let i = 0; i < 10; i++) expect((await nextJob([old, unknown])).job).toMatchObject({ status: "queued", node: null });
-    const notAdvertising = await modelNode("1.8.0", ["matmul", "int8-mlp"]);
+    const notAdvertising = await modelNode("1.9.0", ["matmul", "int8-mlp"]);
     expect((await nextJob([notAdvertising])).job).toMatchObject({ status: "queued", node: null });
-    const fresh = await modelNode("1.8.0");
+    const fresh = await modelNode("1.9.0");
     for (let i = 0; i < 10; i++) expect((await nextJob([old, unknown, fresh])).job).toMatchObject({ status: "assigned", node: fresh });
   });
 

@@ -55,8 +55,12 @@ export interface WorkJobRow {
   fee_captured_at: number | null;
   /** Sampled transcript re-execution (submitWork): null = not sampled. Never shown to the node. */
   sample_check: "passed" | "failed" | "reversed" | null;
-  /** Challenge-mode jobs (B-26): the job's input (JSON; matmul keeps a_json/b_json), null for matmul. */
+  /** Challenge-mode jobs (B-26): the job's input (JSON; matmul keeps a_json/b_json); null for matmul and when it is in the artifact store. */
   input_json?: string | null;
+  /** Artifact-store key of a challenge-mode job's input (stored there at enqueue when a store is configured). */
+  input_ref?: string | null;
+  /** sha256 of the input's JSON, wherever it is; the assignment carries it so an agent can check what it fetched. */
+  input_hash?: string | null;
   /** The node's commitment (JSON), stored before the challenge is drawn; one per assignment. */
   commitment_json?: string | null;
   /** The drawn segment indices (JSON number[]); never shown before the commitment is stored. */
@@ -127,6 +131,15 @@ export async function moveJobArtifacts(limit = 20): Promise<number> {
     if ((res.meta?.changes ?? 0) > 0) moved++;
   }
   return moved;
+}
+
+/** A challenge-mode job's input JSON: in D1, or from the artifact store and checked against its hash. Throws if unreadable. */
+export async function jobInputJson(row: Pick<WorkJobRow, "id" | "input_json" | "input_ref" | "input_hash">): Promise<string> {
+  if (row.input_json) return row.input_json;
+  const bytes = row.input_ref ? await getArtifactStore()?.get(row.input_ref) : null;
+  const text = bytes ? new TextDecoder().decode(bytes) : null;
+  if (text === null || sha256(text) !== row.input_hash) throw new Error(`job ${row.id}: input artifact ${row.input_ref} is missing or does not match its hash`);
+  return text;
 }
 
 export function sha256(text: string): string {
@@ -284,13 +297,24 @@ export async function enqueueWorkJob(input: {
 
   const id = crypto.randomUUID();
   if (challenge) {
-    // The input stays in D1 (moving it to the artifact store is a follow-up, B-26); `n` is the model width d.
-    await getD1()
-      .prepare(
-        "INSERT INTO work_jobs (id, owner, work_type, n, input_json, price_ucld, public, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
-      )
-      .bind(id, owner, wt.id, (jobInput as { d: number }).d, JSON.stringify(jobInput), price, input.public === false ? 0 : 1, Date.now())
-      .run();
+    // The input goes to the artifact store when there is one (a D1 row is ≤ 2 MB), else it stays in D1 (Node runtime,
+    // tests); D1 keeps its key and hash either way. `n` is the model width d.
+    const json = JSON.stringify(jobInput);
+    const store = getArtifactStore();
+    const ref = store ? `jobs/${id}.input.json` : null;
+    try {
+      if (store) await store.put(ref!, json);
+      await getD1()
+        .prepare(
+          "INSERT INTO work_jobs (id, owner, work_type, n, input_json, input_ref, input_hash, price_ucld, public, status, created_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
+        )
+        .bind(id, owner, wt.id, (jobInput as { d: number }).d, store ? null : json, ref, sha256(json), price, input.public === false ? 0 : 1, Date.now())
+        .run();
+    } catch (err) {
+      await release(owner, price); // nothing was queued: the hold goes back
+      throw err;
+    }
   } else {
     await getD1()
       .prepare(
@@ -404,9 +428,17 @@ export interface Assignment {
   matrixB: number[];
   sigma: string;
   expiresAt: number;
-  /** Challenge-mode jobs only (matrixA and matrixB are then empty): the job's input. */
+  /** Challenge-mode jobs only (matrixA and matrixB are then empty): sha256 of the input's JSON. */
+  inputHash?: string;
+  /**
+   * The job's input, inline — only for agents below INPUT_FETCH_AGENT. Newer agents fetch it from
+   * GET /v1/work/jobs/{id}/input and check it against inputHash, so a large input never rides on every heartbeat.
+   */
   input?: unknown;
 }
+
+/** From this agent version on, a challenge-mode input is fetched, not sent in the heartbeat (int8-model needs it). */
+export const INPUT_FETCH_AGENT = "1.9.0";
 
 /**
  * The public draw record of a job (DECENTRALIZATION_ROADMAP.md phase 1 "publish the draw"): everything needed to
@@ -471,7 +503,7 @@ export function replayDraw(d: Pick<DrawRecord, "jobId" | "node" | "seedSource" |
   return { seedOk, eligibleOk, drawOk, ok: seedOk && eligibleOk && drawOk };
 }
 
-export async function getActiveAssignment(node: string, now = Date.now()): Promise<Assignment | null> {
+export async function getActiveAssignment(node: string, now = Date.now(), agentVersion?: string | null): Promise<Assignment | null> {
   const r = await getD1()
     // A job with an open challenge was already submitted: the node answers it, it is not handed out again.
     .prepare(
@@ -480,8 +512,11 @@ export async function getActiveAssignment(node: string, now = Date.now()): Promi
     .bind(normalizeAddress(node), now)
     .first<WorkJobRow>();
   if (!r) return null;
-  if (r.input_json) {
-    return { jobId: r.id, workType: r.work_type, n: r.n, matrixA: [], matrixB: [], sigma: r.sigma!, expiresAt: r.expires_at!, input: JSON.parse(r.input_json) };
+  if (r.input_json || r.input_ref) {
+    const base = { jobId: r.id, workType: r.work_type, n: r.n, matrixA: [], matrixB: [], sigma: r.sigma!, expiresAt: r.expires_at! };
+    const inputHash = r.input_hash ?? sha256(r.input_json!); // rows from before input_hash
+    if (agentVersion && compareVersions(agentVersion, INPUT_FETCH_AGENT) >= 0) return { ...base, inputHash };
+    return { ...base, inputHash, input: JSON.parse(await jobInputJson(r)) };
   }
   return {
     jobId: r.id,
@@ -492,6 +527,15 @@ export async function getActiveAssignment(node: string, now = Date.now()): Promi
     sigma: r.sigma!,
     expiresAt: r.expires_at!,
   };
+}
+
+/** GET /v1/work/jobs/{id}/input: the input JSON, only to the node the job is assigned to, while it is; else null. */
+export async function assignedJobInput(node: string, jobId: string, now = Date.now()): Promise<string | null> {
+  const r = await getD1()
+    .prepare("SELECT id, input_json, input_ref, input_hash FROM work_jobs WHERE id = ? AND node = ? AND status = 'assigned' AND expires_at >= ?")
+    .bind(jobId, normalizeAddress(node), now)
+    .first<Pick<WorkJobRow, "id" | "input_json" | "input_ref" | "input_hash">>();
+  return r && (r.input_json || r.input_ref) ? jobInputJson(r) : null;
 }
 
 // ─── Submit ───────────────────────────────────────────────────────────────────
@@ -798,8 +842,8 @@ async function submitInline(
 
 /// ─── Challenge mode: commit, then challenge, then answer (ENGINEERING_BACKLOG B-26) ─────────────────────────────
 
-function challengeJob(job: WorkJobRow, wt: WorkType<any>) {
-  const input = JSON.parse(job.input_json!) as unknown;
+async function challengeJob(job: WorkJobRow, wt: WorkType<any>) {
+  const input = JSON.parse(await jobInputJson(job)) as unknown;
   return { input, plan: wt.plan!(input), inputs: wt.inputs!(input) };
 }
 
@@ -819,7 +863,7 @@ async function submitCommitment(
   sub: { jobId: string; commitment: Commitment; result: Tensor },
   now: number,
 ): Promise<SubmitResult | ChallengeResult> {
-  const { input, plan, inputs } = challengeJob(job, wt);
+  const { input, plan, inputs } = await challengeJob(job, wt);
   const bound = checkCommitment(job.sigma!, inputs, plan, sub.commitment, sub.result, wt.resultSig!(input));
   if (!bound.ok) return refuse(job, node, bound.reason, now);
 
@@ -922,7 +966,7 @@ export async function answerChallenge(
   if ((job.challenge_expires_at ?? 0) < now) return caughtChallenge(job, node, nodeRow, "answered after the deadline", now);
 
   const wt = getWorkType(job.work_type)!;
-  const { input: jobInput, plan, inputs } = challengeJob(job, wt);
+  const { input: jobInput, plan, inputs } = await challengeJob(job, wt);
   const commitment = JSON.parse(job.commitment_json) as Commitment;
   const drawn = JSON.parse(job.challenge_json) as number[];
   const openings = Array.isArray(input.openings) ? input.openings : [];

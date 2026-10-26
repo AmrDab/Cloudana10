@@ -624,6 +624,48 @@ that remained:
   endpoints as if verified. Added int8-mlp / int8-model with their per-job detection rates. Copy strings only in
   the console and homepage; no logic change.
 
+### 29 · Challenge-mode inputs in the artifact store; int8-model up to d, h = 256 (B-26 follow-up)
+- **Storage.** At enqueue an int8-mlp / int8-model input is put to the artifact store (R2 `cloudana-artifacts`,
+  key `jobs/<id>.input.json`); the row keeps `input_ref` and `input_hash` (sha256 of the JSON), `input_json` NULL.
+  With no store (Node runtime, tests) the input stays in `input_json`, with its hash; rows from before keep working.
+  Every read (heartbeat, commitment check, answer check, the fetch below) goes through `jobInputJson`, which checks the
+  hash. A failed put or insert releases the hold. Inputs are not registered for provider copies (job data, not a
+  finished artifact) and are kept after the job, like matmul's matrices.
+- **Delivery.** Agents ≥ 1.9.0 get `inputHash` in the signed heartbeat assignment and no input; they fetch
+  `GET /v1/work/jobs/{id}/input` (node-signed; only the node the job is assigned to, while assigned and unexpired,
+  else 404; 30/min) and refuse a body that does not hash to `inputHash`. Older agents still get the input inline
+  (read from the store). int8-model is drawn only among agents ≥ 1.9.0 (was 1.8.0): simpler than gating by size, which
+  would need the job's h at draw time, and 1.8.0 shipped one PR ago. int8-mlp stays at ≥ 1.7.0, inline for 1.7/1.8.
+  `CURRENT_AGENT_VERSION` / `MIN_AGENT_VERSION` unchanged; agent 1.9.0.
+- **Limits, measured** (b = 64, worst draw = every opening a gemm, best of 25, this dev machine, run alone):
+
+  | L·d·h | corner | input (widest JSON) | answer (widest) | check | with loading the input |
+  |---|---|---|---|---|---|
+  | 2¹⁶ (old max) | d = h = 64, L = 16 | 0.72 MB | 1.23 MB | ~11–16 ms | ~15–23 ms |
+  | **2¹⁷ (new)** | 128, L = 8 / 256, L = 2 | 1.38 / 1.40 MB | 1.21 / 0.69 MB | ~12–15 ms | ~17–25 ms |
+  | 3·2¹⁶ | 128, L = 12 / 256, L = 3 | 2.05 / 2.07 MB | 1.83 / 0.85 MB | — | ~21–37 ms |
+  | 2¹⁸ | 128, L = 16 / 256, L = 4 | 2.72 / 2.73 MB | 2.45 / 1.16 MB | ~27–42 ms | ~28–51 ms |
+
+  The binding limit is the 50 ms answer budget: its cost grows with s·d·h (s = max(3, L) openings) plus parsing the
+  whole input, so it is capped as L·d·h ≤ 2¹⁷ with d, h ≤ 256 (int8-mlp's own bound, which also keeps every served
+  tensor within the answer schema's 64 × 256 and the accumulator bound < 2²³) and L ≤ 16: d = h = 64 up to L = 16
+  as before, 128 up to L = 8, 256 up to L = 2; at most 262,144 weights (2× before). 3·2¹⁶ fits run alone but leaves
+  little margin for a Worker slower than this machine; 2¹⁸ does not. In a loaded suite (every core busy) the same
+  check reads 2–3× higher; the test asserts the check alone, as before. Other limits are far off: the commitment check
+  (hashing every input) ~12 ms at 2¹⁷; the answer cap stays 1.5 MB; the POST /v1/jobs body is ≤ ~1.4 MB for a valid
+  job (zod's array caps bound an invalid one at ~10 MB; parsing 10.7 MB of JSON takes ~17 MB of heap and ~40 ms, well
+  inside 128 MB and the Workers 100 MB request limit); node RAM is a few MB. At 2¹⁷ the input would still fit a D1 row
+  (2 MB): the store matters for D1 size and reads (every `getWorkJob` is `SELECT *`) and keeps heartbeats small, and
+  leaves room once the check gets cheaper (backlog B-26).
+- **Tests.** `challenge-inputs.test.ts` 5: input in the store with only key + hash in D1 (int8-mlp and int8-model); no
+  store → D1 with its hash; a failed put releases the hold; a 1.8.0 agent still gets int8-mlp inline (from the store);
+  a d = h = 128, L = 8 job end to end over HTTP on the Node runtime (POST /v1/jobs, heartbeat carries only the hash,
+  another node 404, unsigned 401, the assigned node's fetch hashes to it, submit → challenge, answer → done, result,
+  404 after done). `int8-model.test.ts`: gate 1.9.0 (1.8.0 not drawn), bounds (d = 72 accepted, 264 and L·d·h > 2¹⁷
+  refused), the two corners accepted, their worst answer under the answer cap and under 50 ms. All fail on origin/main.
+  `segment-verification.test.ts`: the assignment's keys gain `inputHash`. Agent `int8-model.selftest.ts`: the fetched
+  input is used, a tampered one refused, an inline one kept. matmul golden snapshot unchanged.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

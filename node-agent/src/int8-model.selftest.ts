@@ -5,7 +5,8 @@
 import { checkCommitment, checkOpening } from "../../shared/verification.ts";
 import { executeInt8Mlp, randomInt8MlpInput } from "../../shared/work-int8-mlp.ts";
 import { int8ModelInputs, int8ModelKernel, int8ModelResultSig, randomInt8ModelInput } from "../../shared/work-int8-model.ts";
-import { buildChallengeWork, openSegments } from "./work.ts";
+import { assignmentInput, buildChallengeWork, openSegments } from "./work.ts";
+import { sha256hex } from "./signing.ts";
 
 function fail(msg: string): never {
   console.error(`✗ int8-model selftest failed: ${msg}`);
@@ -30,3 +31,15 @@ for (const opening of openSegments(work, work.plan.map((s) => s.idx))) {
   if (!v.ok) fail(`opening of segment ${opening.idx} refused: ${v.reason}`);
 }
 console.log("✓ int8-model (L = 4) commitment and all 16 openings pass the API's checks");
+
+// 1.9.0: the input is fetched and must hash to the signed inputHash; anything else is refused before any work.
+const json = JSON.stringify(input);
+const a = { jobId: "j1", workType: "int8-model", sigma, inputHash: sha256hex(json) };
+let asked = "";
+const got = await assignmentInput(a, async (p) => ((asked = p), json));
+if (asked !== "/v1/work/jobs/j1/input" || JSON.stringify(got) !== json) fail(`fetched input not used as served (${asked})`);
+const tampered = await assignmentInput(a, async () => json.replace("[", "[1,")).then(() => null, (e: Error) => e.message);
+if (!tampered || !/does not match/.test(tampered)) fail("a fetched input that does not hash to inputHash was accepted");
+const inline = await assignmentInput({ ...a, input: { inline: true } }, async () => fail("fetched although the input was inline"));
+if ((inline as { inline?: boolean }).inline !== true) fail("an inline input was not used");
+console.log("✓ int8-model input fetched and checked against the signed inputHash (a tampered one refused; inline kept)");

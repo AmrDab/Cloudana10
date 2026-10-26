@@ -8,9 +8,11 @@
  *   4ℓ+2  gemm         aw2@ℓ      seg:4ℓ+1, in:W2_ℓ, in:b2_ℓ
  *   4ℓ+3  elementwise  rq2_res@ℓ  seg:4ℓ+2, Xℓ
  *
- * One d and one h for every block. Size: the input stays in one D1 row (≤ 2 MB). At L = 16 blocks of d = h = 256 the
- * weights alone are 16 · 2 · 65,536 = 2.1 M entries (~9 MB of JSON), so int8-model caps d and h at 64 instead:
- * 16 · 2 · 4,096 = 131 k weight entries, ~0.6 MB of JSON at most with X, biases and tables.
+ * One d and one h for every block. Size: the input lives in the artifact store, not a D1 row, so the binding limit is
+ * the API's check of one answer (50 ms of Worker CPU), which grows with L·d·h: d, h ≤ 256 (int8-mlp's own bound) and
+ * L·d·h ≤ 2¹⁷ = 131,072 — d = h = 64 up to L = 16 (as before), 128 up to L = 8, 256 up to L = 2 — so at most 262,144
+ * weights, ~1.4 MB of JSON at their widest. Measured (PROGRESS entry 28): the worst answer, with loading the input,
+ * ~17–25 ms at 2¹⁷; ~21–37 ms at 3·2¹⁶ and 28–51 ms at 2¹⁸, too close to the budget on a Worker that may be slower.
  */
 import type { SegmentKernel, SegmentSpec, Tensor, TensorRef, TensorSig } from "./verification.js";
 import { INT8_MLP, executeInt8Mlp, int8MlpInputs, int8MlpKernel, randomInt8MlpInput, validateInt8Mlp, type Int8MlpInput } from "./work-int8-mlp.js";
@@ -24,7 +26,7 @@ export interface Int8ModelInput {
   blocks: Int8Block[];
 }
 
-export const INT8_MODEL = { L_MAX: 16, DIM_MAX: 64 } as const;
+export const INT8_MODEL = { L_MAX: 16, DIM_MAX: 256, LDH_MAX: 2 ** 17 } as const;
 
 /** Block ℓ as an int8-mlp input (its X only matters for ℓ = 0; the executor feeds the previous Y). */
 const blockInput = (x: Int8ModelInput, l: number, X: number[] = x.X): Int8MlpInput => ({ b: x.b, d: x.d, h: x.h, X, ...x.blocks[l] });
@@ -35,6 +37,7 @@ export function validateInt8Model(x: Int8ModelInput): string | null {
   if (!Number.isInteger(x.d) || !Number.isInteger(x.h) || x.d > INT8_MODEL.DIM_MAX || x.h > INT8_MODEL.DIM_MAX) {
     return `d and h must be integers in [${INT8_MLP.DIM_MIN}, ${INT8_MODEL.DIM_MAX}]`;
   }
+  if (x.blocks.length * x.d * x.h > INT8_MODEL.LDH_MAX) return `L·d·h must be at most ${INT8_MODEL.LDH_MAX} (d = h = 128 up to L = 8, 256 up to L = 2)`;
   for (let l = 0; l < x.blocks.length; l++) {
     if (!x.blocks[l] || typeof x.blocks[l] !== "object") return `blocks[${l}] must be an object`;
     const err = validateInt8Mlp(blockInput(x, l));
