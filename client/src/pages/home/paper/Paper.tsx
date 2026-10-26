@@ -30,7 +30,7 @@ const STEPS = [
   ["Assign", "The orchestrator picks the hardware. No bidding."],
   ["Run", "A provider node does the work."],
   ["Prove", "A matrix job returns its own transcript; a container is probed."],
-  ["Verify", "Re-checked before anything mints."],
+  ["Verify", "Checked before anything mints."],
   ["Mint", "The fee is burned; 95% is minted to the provider."],
 ];
 
@@ -167,7 +167,7 @@ export function Paper() {
               <em>is the work.</em>
             </h1>
             <p className="pp-lede">
-              Send a job; the network picks the hardware and returns the result with its proof. Only verified work mints CLD.
+              Send a job; the network picks the hardware and returns the result with its proof. Only checked, paid work mints CLD.
             </p>
             <div className="pp-btns">
               <button type="button" onClick={() => openWaitlist()} className="pp-btn solid">Join the waitlist</button>
@@ -234,7 +234,8 @@ export function Paper() {
             </h2>
             <p className="pp-body">
               Prices are in US dollars. You pay in CLD at the rate on your quote. The fee is burned; CLD is minted for the
-              verified job and settled on Base in batches. Nothing about CLD is a promise of price or return.
+              verified job and settled on Base in batches once the testnet contract is deployed. Nothing about CLD is a
+              promise of price or return.
             </p>
           </Reveal>
           <Reveal delay={0.08} className="pp-split">

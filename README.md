@@ -13,9 +13,14 @@ is in [`CAPABILITY_MATRIX.md`](CAPABILITY_MATRIX.md); the trust model and how it
 | Product | How | Checked by |
 |---|---|---|
 | Matrix compute (PoUW) | `POST /v1/jobs` — priced in USD, settled in CLD, assigned to a node by the draw | Freivalds answer check on every job + transcript re-executed on a random 1 in 10, pay held 24 h (**proven**) |
+| int8 MLP blocks and int8 models on your own weights | `POST /v1/jobs` with `workType: "int8-mlp"` (agent ≥ 1.7.0) or `"int8-model"` (L ≤ 16 blocks, agent ≥ 1.8.0) | Commit, then drawn segments checked exactly: 2 of 4 per block job (a faked segment caught with p = ½ per job), max(3, L) of 4·L per model job (p ≥ ¼) (**proven**) |
 | Static hosting | `POST /v1/deployments` kind `static` → `https://<id>.cloudana.run` (gateway live since 2026-10-18) | Content-hash probe every minute (**probed**) |
-| Containers, GPU workstations, GPU endpoints | kind `container` / `workstation` / `endpoint` on fleet nodes; secrets sealed in the browser to the node, bound to the deployment | Health probe through the relay (**probed**) |
+| Containers, GPU workstations, GPU endpoints | kind `container` / `workstation` / `endpoint` on fleet nodes; secrets sealed in the browser to the node, bound to the deployment | Health probe through the relay (**probed**); a model on your own endpoint is not verified — spot-checked inference is **planned** (B-19) |
+| Storage copies (phase 1, job artifacts) | placed on storage-capable nodes by the orchestrator | AES-GCM encrypted copies, Merkle challenges on random 64 KiB leaves (**possession proven**) |
 | Provide | one command installs the node agent; bind a wallet; earn per verified job and per probed hour | Signed heartbeat instructions; hardened containers on opted-in nodes |
+
+Tiers: **proven** · **possession proven** · **probed** · **planned** (`ARCHITECTURE.md` §6). Not every job is
+re-executed, and settlement is not yet on-chain: the v2 contract awaits the owner's deploy (runbook steps 3–6).
 
 OpenAPI: `GET /v1/doc` on the API; Swagger UI at `/v1/swagger`. Every response uses one envelope
 (`{ status: "success", … }` / `{ status: "error", error: { code, message } }`).

@@ -18,7 +18,7 @@ in `PROGRESS.md`.
 | 7 | **Containers/GPU only on fleet nodes that pass xfs-pquota + iptables; no datacenter node exists** | The AI product (endpoints, workstations) has zero capacity; home nodes cannot run it by design | AI inference, workstations | Owner hardware + S | High | **Yes** (runbook 10) |
 | 8 | ~~**Marketplace-era legacy UI still reachable under `/control/legacy`** (27 pages, 19 k lines) with vocabulary the owner rejected~~ — **closed 2026-10-21**: removed (B-3), old paths redirect to `/control` | Contradicts the product on a reachable route; maintenance drag; was the source of two tsc errors | Developer experience, honest claims | S–M (decision + delete) | High | Decision |
 | 9 | **A compromised API can place a secret-bearing deployment on a node it controls** (secrets now bound to the deployment, not to a fleet) | Tenant secrets on an attacker's machine | Sensitive workloads | M | High | No |
-| 10 | **Docs and claims drift**: SHIP_CHECKLIST still says `*.sites.cloudana.io`; DECISIONS header says "nothing implemented"; `MIN_AGENT_VERSION` 1.3.0 vs agent 1.5.0; services list vs reality | Every reader (owner, partner, auditor) gets a different system | Trust | S | High | No |
+| 10 | **Docs and claims drift** (verification wording aligned with code 2026-10-26, PROGRESS entry 28): SHIP_CHECKLIST still says `*.sites.cloudana.io`; DECISIONS header says "nothing implemented"; `MIN_AGENT_VERSION` 1.3.0 vs agent 1.5.0; services list vs reality | Every reader (owner, partner, auditor) gets a different system | Trust | S | High | No |
 
 ## Work items
 
@@ -153,8 +153,8 @@ the set was complete. Committing the eligible hash before the seed (or publishin
 agent and abuse contact (runbook step 11). Acceptance: S3-compatible PUT/GET/DELETE with content hashes, metering per
 GB-month and GB downloaded reconciled in the ledger, a recovery test after a provider copy is lost.
 
-**B-19 · Verified inference mode** (`docs/V4_VERIFIED_SERVICES.md` §4): reference node, teacher-forced checks,
-flag-only until calibrated. Acceptance: < 0.1 % false positives on 1,000 honest requests; a substituted model is
+**B-19 · Spot-checked inference mode** (`docs/V4_VERIFIED_SERVICES.md` §4; not built — endpoints are probed only
+today, and this needs a GPU node first): reference node, teacher-forced checks, flag-only until calibrated. Acceptance: < 0.1 % false positives on 1,000 honest requests; a substituted model is
 flagged.
 
 **B-26 · General verification interface.** **Phase 0 done** (PROGRESS.md entry 26): one interface for deterministic
@@ -164,7 +164,7 @@ B-6, new domain; one commitment per assignment), and a kind-generic opening chec
 shapes and a ±(p−1)/2 bound, recompute per elementwise step). matmul (B-6) is the degenerate case, byte-identical
 (golden snapshot). First new work type: `int8-mlp` (one quantized MLP block on the user's weights; 2 of 4 segments
 opened per job; agent ≥ 1.7.0). Settlement, hold and claw are B-6's statements; a caught job fails (not re-queued),
-the owner is not charged and the wallet bound at commit time is clawed. Toward B-19's "proven inference" tier.
+the owner is not charged and the wallet bound at commit time is clawed. Toward a proven tier for integer inference on the user's own weights (B-19 stays spot-checked, for float engines).
 Follow-ups:
 - **Done:** `int8-model` (`shared/work-int8-model.ts`): 1–16 int8-mlp blocks chained, 4·L segments, max(3, L) opened
   per job (p ≥ ¼; segmentDraw up to 16, answer cap 1.5 MB); d, h ≤ 256 with L·d·h ≤ 2¹⁷ (PROGRESS entry 28); agent ≥ 1.9.0.
@@ -179,7 +179,8 @@ Follow-ups:
   equivalents is the only hook.
 - Phase 1–2: per-layer plans for real models (many segments, activations of tens of MB kept on the node and opened on
   demand — the commit-then-challenge transport already fits), int4, attention; a deterministic engine on GPU.
-- Publish the measured detection rate (½ per job for one wrong segment) where the label is shown.
+- **Done 2026-10-26** (PROGRESS entry 28): the detection rate per job (½ for int8-mlp, ≥ ¼ for int8-model) is
+  stated wherever the label is shown (console Docs, services list, litepaper, whitepaper §4.1).
 - Wrong results a cheater got through: each int8-mlp job is checked on 2 of 4 segments, so a node faking one segment
   passes half the time, and a brand-new wallet with no held pay risks only suspension. Notify the owners of jobs
   settled by a node that is later caught (their results may be wrong), and/or require a minimum held stake (pay or a

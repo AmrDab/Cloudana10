@@ -1,5 +1,9 @@
 # Cloudana PoUW Circuits — zkSNARK scaffold
 
+> **Status, 2026-10-26: superseded, kept for history.** A Groth16 proof over the transcript is not being built and is
+> not the plan (whitepaper §7.2, `docs/POUW_REVIEW.md` §7). The planned on-chain check is a Freivalds challenge
+> against a bonded poster. Nothing here runs in verification today; current tiers are in `ARCHITECTURE.md` §6.
+
 This is the path to **trustless** PoUW verification: the milestone at which the
 orchestrator leaves the critical path and "decentralized verification" becomes an
 honest claim. It is a **scaffold**, not a finished trustless layer. Read the scope.
