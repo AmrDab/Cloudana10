@@ -26,7 +26,7 @@ const COLS: { title: string; links: L[] }[] = [
       { label: "GitHub", href: GH, ext: true },
       { label: "Contracts", href: `${GH}/tree/main/contract/contracts`, ext: true },
       { label: "PoUW engine", href: `${GH}/tree/main/pouw/src`, ext: true },
-      { label: "zk circuits", href: `${GH}/tree/main/circuits`, ext: true },
+      { label: "zk circuits (stub)", href: `${GH}/tree/main/circuits`, ext: true },
       { label: "API health", href: `${API_ROOT}/health`, ext: true },
     ],
   },

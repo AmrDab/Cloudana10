@@ -266,7 +266,7 @@ Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13
   fetched through the node's own relay socket every 60 s. Billing is for time a probe saw working. A node can serve
   the probe path correctly and other paths badly; nothing checks that, by design (fees only, no subsidy).
 - **Storage phase 1.** Merkle leaf challenges prove a copy is *retrievable now*, never that it is replicated; R2 is the
-  durable copy. Correct labelling: `challenged`, not `replicated`.
+  durable copy. Correct labelling: *possession proven* (earlier `challenged`), not `replicated`.
 - **Contracts (v2, not deployed).** 224 Hardhat tests pass offline. Invariants enforced on post: treasury ≥ 3 % of
   fees, lane A + treasury ≤ 98 % of fees, lane B ≤ epoch allowance (8 % → ×0.85/yr → 1.5 % floor), fees ≤ free
   escrow; per-(epoch, account, lane) claim flags; `mintedA ≤ totalLaneA`, `mintedB ≤ totalLaneB`; token-level annual

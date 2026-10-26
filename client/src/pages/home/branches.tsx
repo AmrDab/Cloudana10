@@ -125,7 +125,7 @@ export function Branches() {
             className="h-full"
             name="Provide"
             Icon={Server}
-            description="One command. Your PC or your racks. CLD is minted to you for every job you prove."
+            description="One command. Your PC or your racks. You earn CLD for every job that checks out and every hour a probe sees you serving."
             href="/control/provide"
             cta="Start providing"
             background={<HardwareReadout className="absolute inset-0 flex flex-col justify-between p-6" />}

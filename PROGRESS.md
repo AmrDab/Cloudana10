@@ -601,7 +601,7 @@ that remained:
 ### 27 · int8-model: L chained int8-mlp blocks through the general verifier (B-26 follow-up)
 - **What.** `shared/work-int8-model.ts`: 1–16 int8-mlp blocks (block ℓ's Y is block ℓ+1's X), one b, d, h for all,
   each block with its own W1, b1, W2, b2, scales and optional table; the int8-mlp kernels unchanged. Plan 4·L segments
-  (ops `xw1@ℓ` …, inputs `W1_ℓ` …), metered 2·b·d·h·L, `max(3, L)` segments opened (one per block, at most 16): one wrong
+  (ops `xw1@ℓ` …, inputs `W1_ℓ` …), metered 2·b·d·h·L, `max(3, L)` segments opened (drawn uniformly over all 4·L, at most 16): one wrong
   segment is caught with p = max(3, L)/4L ≥ ¼ per job (¾ at L = 1); held pay plus suspension is the deterrent.
   `segmentDraw` allows up to 16 (draws over 8 read a second HMAC block; draws ≤ 8 are unchanged, int8-mlp stays at 2);
   the answer schema allows 16 openings and the answer cap is 1.5 MB (the largest answer, 16 rq2_res openings at their
@@ -615,6 +615,14 @@ that remained:
   the largest-input size; honest L = 4 settles; a planted wrong segment in block 1 caught (claw of held pay, suspend,
   hold released); a middle index drawn at s/4L ± 1.5 % over 10k draws (L = 4, 16); a rewired chain refused, no claw;
   the 1.8.0 gate; `POST /v1/jobs` accepts it, 17 blocks → 400. Agent `int8-model.selftest.ts`.
+
+### 28 · docs: verification tiers match the code (2026-10-26)
+- **What.** Public and internal documents now use four tiers — proven · possession proven · probed · planned — and
+  say what each checks, re-checked against `work-types.ts`, `env.ts`, `ledger.service.ts`, `storage.service.ts` and
+  the v2 contract. Removed overclaims: "every job is proven/re-executed", "trust-minimized", a ban on failure (it is
+  a claw and a suspension), settlement described as live (the v2 contract is not deployed), storage "not live yet",
+  endpoints as if verified. Added int8-mlp / int8-model with their per-job detection rates. Copy strings only in
+  the console and homepage; no logic change.
 
 ## Evidence summary
 
@@ -641,7 +649,7 @@ that remained:
 | 7 | No fleet/GPU node | A first public node is live (Azure VM, compute + hosting + storage over the relay, no GPU). A container/GPU fleet node is still the owner's (runbook 10). |
 | 8 | Legacy UI reachable | **Closed 2026-10-21** (entry 22): `/control/legacy` removed, old paths redirect to `/control`. |
 | 9 | Rogue API can choose the node for secrets | Mitigated (secrets bound to deployment, key verified, now per replica from the console; endpoint env no longer sent in the clear); fleet pinning (B-9) done 2026-10-21 (entry 24). |
-| 10 | Docs drift | README, API README, checklist domain, decisions header, archive README fixed; capability registry created. |
+| 10 | Docs drift | README, API README, checklist domain, decisions header, archive README fixed; capability registry created; verification tiers aligned with code 2026-10-26 (entry 28). |
 
 ## Blockers that need the owner (exactly what is required)
 

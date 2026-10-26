@@ -80,12 +80,12 @@ function Earnings({ address }: { address: string }) {
         <Tile label="Verifier credits" value={l?.credits} loading={loading} caption="Credits, not CLD" className={span(false, true)} />
       </div>
       <p className="mt-3 font-mono text-[12px] text-faint">
-        Minted per verified job. Posted to Base in batches; subsidy vests first. The keeper claims for you once a batch is final.
+        Minted per verified job. Posted to Base in batches once the testnet contract is deployed; subsidy vests first. The keeper claims for you once a batch is final.
       </p>
       {sampleK !== undefined && (
         <p className="mt-1 font-mono text-[12px] text-faint">
-          Every answer is checked, and {sampleK <= 1 ? "every job is" : `1 job in ${sampleK} is`} re-executed in full.
-          {hold && ` Pay is held ${hold} first and clawed if a re-executed job from any of your nodes fails.`}
+          Matrix jobs: every answer is checked, and {sampleK <= 1 ? "every job is" : `1 job in ${sampleK} is`} re-executed in full. int8 jobs: drawn steps are checked.
+          {hold && ` Pay is held ${hold} first and clawed if a sampled check of any of your nodes fails.`}
         </p>
       )}
       {clawed > 0 && (

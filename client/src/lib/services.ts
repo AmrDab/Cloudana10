@@ -30,7 +30,7 @@ export type Service = {
   icon: LucideIcon;
   status: ServiceStatus;
   group: ServiceGroup;
-  /** How it is checked — probed / measured / attested; "proven" only for compute. */
+  /** How it is checked — proven (compute) / possession proven (storage) / probed / planned. */
   proof: string;
   /** Whether verified units earn the capped subsidy (fees always pay). */
   subsidy: boolean;
@@ -48,9 +48,9 @@ export const GROUPS: { id: ServiceGroup; label: string }[] = [
 export const CATALOG: Service[] = [
   // Compute
   { id: "compute", group: "compute", name: "GPU / CPU compute", line: "Verified matrix jobs on assigned hardware.", icon: Cpu, status: "live",
-    proof: "Answer-checked (Freivalds) on every job; transcript re-executed on a random 1 in 10; pay held 24 h before settlement.", subsidy: true },
+    proof: "Proven. Matrix jobs: answer checked (Freivalds) on every job, transcript re-executed on a random 1 in 10. int8 MLP jobs: steps drawn after the node commits, checked exactly. Pay held 24 h.", subsidy: true },
   { id: "ai-inference", group: "compute", name: "AI inference", line: "Your own model server on assigned GPUs.", icon: Brain, status: "early",
-    proof: "Health probed through the relay; fees only.", subsidy: false },
+    proof: "Probed: health checked through the relay; the model itself is not verified. Spot-checked inference is planned. Fees only.", subsidy: false },
   { id: "containers", group: "compute", name: "Containers", line: "Docker images on assigned nodes.", icon: Container, status: "early",
     proof: "Health probed through the relay; fees only.", subsidy: false },
   // Built (docs/WORKSTATIONS.md); stays early until a Docker + GPU node runs one end to end.
@@ -76,7 +76,7 @@ export const CATALOG: Service[] = [
 
   // Storage & data
   { id: "storage", group: "storage", name: "Storage", line: "Data held by nodes, challenged at random.", icon: HardDrive, status: "early",
-    proof: "Not live yet. Planned: random chunk challenges that prove data can be retrieved (not that it is replicated), plus retrieval probes.", subsidy: false },
+    proof: "Possession proven: nodes hold encrypted copies of job results and answer Merkle challenges on random 64 KiB pieces (retrievable, not proof of replication). Your own files: not open yet.", subsidy: false },
   { id: "object-storage", interest: "storage", group: "storage", name: "Object storage", line: "Buckets on Cloudana storage.", icon: Layers, status: "planned",
     proof: "Same chunk challenges as storage, plus retrieval probes.", subsidy: false },
   { id: "kv-queues", interest: "storage", group: "storage", name: "KV & queues", line: "Small state and messages for apps.", icon: ListOrdered, status: "planned",

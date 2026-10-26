@@ -6,6 +6,13 @@ v3 follows the owner's correction: **Cloudana doesn't run AI models; it provides
 Users bring their own model, engine and image. Cloudana schedules it on GPUs, gives it an address, checks it and
 bills it. Step 1 (fixes F1, F2, F4) is merged (PR #18).
 
+> **Status, 2026-10-26.** Endpoints are built and **probed** only; verified mode (§4) is not built and is now called
+> *spot-checked inference* (B-19, **planned**, needs a GPU node). The labels are four: **proven** (matmul: Freivalds
+> every job, transcript on a random 1 in 10; int8-mlp / int8-model: drawn segments, §5a) · **possession proven**
+> (storage phase 1, live in code) · **probed** · **planned**. §0 rule 3 is superseded: pay is held 24 h
+> (`PAY_HOLD_SECONDS`), a failed check claws the wallet's held pay and suspends the node (no ban); that hold replaces
+> the 2 h delay. Current table: `ARCHITECTURE.md` §6.
+
 ---
 
 ## 0. Five rules
@@ -92,11 +99,12 @@ For users who want proof their endpoint really ran *their* model:
 |---|---|---|
 | Matmul | cuPOW + Freivalds | **proven**, lanes A+B |
 | int8 MLP block (`int8-mlp`, user's weights) | §5a: commit to 4 segments, 2 opened per job (Freivalds per GEMM, recompute per elementwise step) | **proven per segment, sampled 2 of 4**, lanes A+B |
+| int8 model (`int8-model`, L ≤ 16 chained blocks, d, h ≤ 64) | §5a: commit to 4·L segments, max(3, L) drawn uniformly per job | **proven per segment, sampled** (p ≥ ¼ per job), lanes A+B |
 | Static hosting | content-hash probe (through the relay) | **probed**, fees only |
 | Containers / GPU endpoints | health probe through the relay; you pay for time a probe saw it working: an outage (since the last passing probe) is not charged; **Report a problem** probes now and, if that fails, leaves the time since the last passing probe uncharged; ≤ 5 reports/account/day | **probed**, fees only |
-| Verified endpoints | §4 | **spot-checked**, lanes A+B |
+| Verified endpoints | §4 (not built) | **spot-checked** (planned), lanes A+B |
 | GPU workstations | reachability probe; report rule as above | **probed · GPU reported by node** |
-| Storage | separate spec; chunk challenges prove retrievability, never replication | **challenged** (later) |
+| Storage | phase 1 (`V4_STORAGE_PHASE1_CONTRACT.md`): AES-GCM copies, Merkle challenges on random 64 KiB leaves; retrievability, never replication | **possession proven** |
 | Secrets | encrypted in the browser to the node; the node can read them (F4) | TEE tier planned |
 
 ## 5a. Segment verification (ENGINEERING_BACKLOG B-26, Phase 0)
@@ -118,8 +126,8 @@ What each label claims:
 | Label | Means | Where |
 |---|---|---|
 | **proven** | the answer is checked on every job, and the work behind it is re-executed on a sample with a claw | matmul |
-| **proven per segment, sampled s of m** | every opened segment is checked exactly, but only s of m per job: a node faking one segment is caught with probability s/m per job (int8-mlp: 2 of 4, so ½); deterrence is the held pay (24 h, clawed wallet-wide) plus suspension — a brand-new wallet with no held pay risks only suspension | int8-mlp |
-| **spot-checked** | a statistical comparison against a reference (tolerances), not an exact check | verified endpoints (§4) |
+| **proven per segment, sampled s of m** | every opened segment is checked exactly, but only s of m per job: a node faking one segment is caught with probability s/m per job (int8-mlp: 2 of 4, so ½; int8-model: max(3, L) of 4·L, so ≥ ¼); deterrence is the held pay (24 h, clawed wallet-wide) plus suspension — a brand-new wallet with no held pay risks only suspension | int8-mlp, int8-model |
+| **spot-checked** | a statistical comparison against a reference (tolerances), not an exact check | verified endpoints (§4; planned) |
 | **attested** | the node or its hardware says so; nothing re-checks it | GPU model reported by the node; a TEE tier later |
 | **probed** | a probe saw it working at that moment; time is charged only between passing probes | hosting, containers, workstations |
 

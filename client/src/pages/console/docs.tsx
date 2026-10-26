@@ -77,9 +77,9 @@ export default function DocsPage() {
               and sets the price.
             </p>
             <p>
-              A matrix job comes back with a proof; hosting and containers are probed. When the work checks out, CLD is
+              A compute job comes back with a proof; hosting and containers are probed. When the work checks out, CLD is
               minted for it — like a block reward, but for useful work. No work, no CLD. Minted amounts settle on Base in
-              batches.
+              batches once the testnet settlement contract is deployed; until then they are recorded off-chain.
             </p>
             <p>Three roles: <b>users</b> pay for work, <b>providers</b> run it, <b>verifiers</b> re-check it in public.</p>
           </Doc>
@@ -146,10 +146,11 @@ export default function DocsPage() {
             </ul>
             <p>
               The provider's and treasury's amounts are fixed when the job verifies; the subsidy is fixed when its epoch
-              closes. A matrix job's entries are first held 24 h, and the provider's are clawed if a re-executed job of
-              any node paying the same wallet fails (the fee is still burned). Entries are then posted to Base in
+              closes. A compute job's entries are first held 24 h, and the provider's are clawed if a sampled check fails on
+              any node paying the same wallet (the fee is still burned). Entries are then posted to Base in
               batches (one Merkle root per epoch — hourly on testnet, daily at mainnet), with a veto window of the same
-              length; the subsidy part vests before it can be claimed. Batching is delivery, not the reward unit.
+              length; the subsidy part vests before it can be claimed. Batching is delivery, not the reward unit. The testnet
+              settlement contract is not deployed yet, so no epoch has been posted.
             </p>
             <p>
               <b>Paying.</b> If you hold another asset, your own wallet swaps it into CLD at the moment you pay; Cloudana
@@ -184,19 +185,21 @@ export default function DocsPage() {
               tab. Node messages are signed with each node's secp256k1 key; bind codes work once; fleet tokens are
               stored hashed and shown once. Every matrix job is answer-checked (Freivalds) and 1 in 10, drawn at random
               after submit, is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
-              provider's pay is held 24 h and clawed if a re-executed job of any of its nodes fails. Services are probed.
-              Rate limits, CORS allow-list, TLS in transit; settlement on Base has a veto window and guardian.
+              provider's pay is held 24 h and clawed if a sampled check of any of its nodes fails. int8 MLP jobs are
+              checked on drawn steps. Services are probed. Signed node instructions (nodes ignore anything unsigned or
+              stale); hash-checked hosting probes through the relay; sealed secrets — container env encrypted in your
+              browser to the assigned node's key (that node can read it; Cloudana can't). Rate limits, CORS allow-list,
+              TLS in transit.
             </p>
             <p>
-              <b>Building:</b> signed node instructions (nodes ignore anything unsigned or stale); hash-checked hosting
-              probes behind a Cloudana gateway; a settlement keeper that runs isolated from the API; sealed secrets —
-              container env encrypted in your browser to the assigned node's key (that node can read it; Cloudana can't).{" "}
+              <b>Building:</b> settlement on Base with a veto window and guardian, posted by a keeper that runs isolated
+              from the API (the testnet contract is not deployed yet).{" "}
               <b>Planned:</b> encrypted job data at rest, confidential VMs, browser witness probes.
             </p>
           </Doc>
 
           <Doc id="services" title="Services and proofs">
-            <p>Status is the truth today. Matrix jobs are proven: every answer checked (Freivalds), 1 job in 10 re-executed in full by the orchestrator. int8 MLP blocks are proven per segment: on every job 2 of their 4 steps, drawn after the node committed to all of them, are checked exactly. Static hosting is live and probed for reachability.</p>
+            <p>Status is the truth today. Four labels, never more than what is checked. <b>Proven</b>: matrix jobs — every answer checked (Freivalds), the full transcript re-executed on a random 1 job in 10; int8 MLP blocks — on every job 2 of their 4 steps, drawn after the node committed to all of them, are checked exactly (one faked step caught with probability ½ per job); int8 models of L ≤ 16 blocks — max(3, L) of their 4·L steps drawn the same way (at least ¼ per job). <b>Possession proven</b>: storage copies answer Merkle challenges. <b>Probed</b>: static hosting, containers, workstations and AI endpoints running your own model server — you pay only for time a probe saw working. <b>Planned</b>: spot-checked inference. Cloudana never picks or brands a model, and a model on your own endpoint is not verified today.</p>
             <Panel className="divide-y divide-line">
               {CATALOG.map((s) => (
                 <div key={s.id} className="grid gap-1 p-4 sm:grid-cols-[180px_1fr_auto] sm:items-center sm:gap-4">
@@ -228,7 +231,7 @@ export default function DocsPage() {
                 ["POST", "/v1/jobs", "queue a job (auth)"],
                 ["GET", "/v1/jobs/{id}", "result and proof (auth)"],
                 ["GET", "/v1/verify/task", "a task to check"],
-                ["GET", "/v1/ledger/{address}", "CLD minted to an address"],
+                ["GET", "/v1/ledger/{address}", "CLD earned by an address"],
                 ["POST", "/v1/fleets", "create a fleet token (auth)"],
                 ["POST", "/v1/waitlist", "join the waitlist"],
               ].map(([m, p, d]) => (
@@ -243,14 +246,14 @@ export default function DocsPage() {
               <b>int8 MLP block</b> (<code className="font-mono text-[13px]">workType: "int8-mlp"</code>): one quantized
               MLP layer with a residual, on your own int8 weights, int32 biases and requantization scales — Cloudana
               picks no model. The node commits to every intermediate result, then opens two of the four steps chosen
-              after it committed; each is checked exactly. So a node faking one step is caught on half its jobs; what deters it is
+              after it committed; each is checked exactly. So a node faking one step is caught with probability ½ on each job; what deters it is
               its held pay (clawed) and suspension. The example below uses random weights.
             </p>
             <CodeBlock code={INT8_MLP_EXAMPLE} copyText={INT8_MLP_EXAMPLE} />
             <p>
               <b>int8 model</b> (<code className="font-mono text-[13px]">workType: "int8-model"</code>): 1 to 16 of those
               blocks chained, each block's output the next one's input, with d and h up to 64. The node opens
-              max(3, L) of the 4·L steps, drawn at random across all of them, so one faked step is caught on at least a quarter of its jobs; the
+              max(3, L) of the 4·L steps, drawn at random across all of them, so one faked step is caught with probability at least ¼ on each job; the
               held pay and suspension still apply. Again random weights below — bring your own model.
             </p>
             <CodeBlock code={INT8_MODEL_EXAMPLE} copyText={INT8_MODEL_EXAMPLE} />
