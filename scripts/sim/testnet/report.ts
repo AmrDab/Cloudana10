@@ -6,7 +6,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, http, parseAbi, parseAbiItem, zeroAddress } from "viem";
 import { settlementAbi } from "../../../keeper/src/abi";
 import { PROVIDERS, RPC, RUN, addresses, wallet } from "./common.ts";
 
@@ -134,25 +134,37 @@ if (doneJobs.length) {
 const gated = doneJobs.filter((r) => r.cluster_ok === 0).length;
 out.push("## Cluster gate (lane B)", "", `${gated} of ${doneJobs.length} done jobs had cluster_ok = 0 (no subsidy): the eligible set at the draw had fewer than CLUSTER_N_MIN idle wallets.`, "");
 
-// Epochs + chain
-out.push("## Epochs (API) and the chain", "");
-out.push("| epoch | API status | fees burned | mint A | mint B | treasury | on-chain status | on-chain minted A | B | treasury | burned |");
-out.push("|---|---|---|---|---|---|---|---|---|---|---|");
+// Epochs + chain: every epoch ever posted (EpochPosted logs), the API's view where it still has one, and the token's
+// own mint/burn logs, which must account for the supply exactly.
+out.push("## Epochs and the chain", "");
+out.push("| epoch | API status | API fees / A / B / treasury | on-chain status | on-chain burned | minted A | B | treasury | net |");
+out.push("|---|---|---|---|---|---|---|---|---|");
 const a = addresses();
 const pub = createPublicClient({ transport: http(RPC) });
 const erc20 = parseAbi(["function balanceOf(address) view returns (uint256)", "function totalSupply() view returns (uint256)"]);
 const U = 10n ** 12n;
+const posted = await pub.getLogs({ address: a.CloudanaSettlementV2, event: parseAbiItem("event EpochPosted(uint256 indexed epoch, bytes32 root, uint256 totalLaneA, uint256 totalLaneB, uint256 treasuryAmount, uint256 feesBurned)"), fromBlock: 0n, toBlock: "latest" });
+const apiEpoch = new Map(epochRows.map((e) => [e.id, e]));
 let chainMinted = 0n, chainBurned = 0n;
-for (const e of epochRows) {
-  const r = (await pub.readContract({ address: a.CloudanaSettlementV2, abi: settlementAbi, functionName: "epochs", args: [BigInt(e.id)] })) as any;
+for (const id of [...new Set(posted.map((l) => Number(l.args.epoch)))].sort()) {
+  const r = (await pub.readContract({ address: a.CloudanaSettlementV2, abi: settlementAbi, functionName: "epochs", args: [BigInt(id)] })) as any;
   const [, , , treasury, burned, mA, mB, , , status] = r;
   chainMinted += mA + mB + treasury;
   chainBurned += burned;
-  out.push(`| ${e.id} | ${e.status} | ${e.fees_burned_ucld} | ${e.mint_a_ucld} | ${e.mint_b_ucld} | ${e.treasury_ucld} | ${status} | ${mA / U} | ${mB / U} | ${treasury / U} | ${burned / U} |`);
+  const e = apiEpoch.get(id);
+  out.push(`| ${id} | ${e?.status ?? "(not in this database)"} | ${e ? `${e.fees_burned_ucld} / ${e.mint_a_ucld} / ${e.mint_b_ucld} / ${e.treasury_ucld}` : "–"} | ${["none", "posted", "finalized", "settled", "vetoed"][status] ?? status} | ${burned / U} | ${mA / U} | ${mB / U} | ${treasury / U} | ${(mA + mB + treasury - burned) / U} |`);
+}
+const transfers = await pub.getLogs({ address: a.CLDTokenV2, event: parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)"), fromBlock: 0n, toBlock: "latest" });
+let mint = 0n, burn = 0n;
+for (const l of transfers) {
+  if (l.args.from === zeroAddress) mint += l.args.value!;
+  if (l.args.to === zeroAddress) burn += l.args.value!;
 }
 const supply = await pub.readContract({ address: a.CLDTokenV2, abi: erc20, functionName: "totalSupply" });
 const genesis = 1_000_000n * 10n ** 18n;
-out.push("", `Total supply ${supply} wei: Δ from genesis ${(supply - genesis) / U} µCLD; on-chain minted ${chainMinted / U} − burned ${chainBurned / U} = ${(chainMinted - chainBurned) / U} µCLD ${(supply - genesis) === chainMinted - chainBurned ? "✓ invariant holds" : "✗ MISMATCH"}.`, "");
+mint -= genesis;
+out.push("", `Token logs since genesis: minted ${mint / U} µCLD, burned ${burn / U} µCLD; supply Δ ${(supply - genesis) / U} µCLD ${supply - genesis === mint - burn ? "✓ (= minted − burned)" : "✗ MISMATCH"}. ` +
+  `Posted epochs account for minted ${chainMinted / U} − burned ${chainBurned / U} = ${(chainMinted - chainBurned) / U} µCLD${chainMinted === mint && chainBurned === burn ? " ✓ every mint and burn belongs to an epoch" : ` (${(mint - chainMinted) / U} µCLD minted / ${(burn - chainBurned) / U} µCLD burned outside posted epochs ✗)`}.`, "");
 out.push("| provider | payout | on-chain balance µCLD | ledger A+B settled | pending | clawed |", "|---|---|---|---|---|---|");
 for (const p of PROVIDERS) {
   const w = wallet(`provider-${p}`).address.toLowerCase();

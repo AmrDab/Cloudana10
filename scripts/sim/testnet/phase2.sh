@@ -30,7 +30,7 @@ run() { # cheat jobs mix [extra adversary args]
   echo "=== $cheat ==="
   $USER --jobs $((jobs + 2)) --rate 60 --mix "$mix" --user adversary-user --out "phase2-$cheat.jsonl" > "$RUN/user-phase2-$cheat.log" 2>&1 &
   local load=$!
-  $ADV --cheat "$cheat" --jobs "$jobs" --name "adv-$cheat-$RANDOM" --payout "adv-$cheat" --out "$RUN/adversary-$cheat.jsonl" "$@" 2>&1 | tail -30
+  $ADV --cheat "$cheat" --jobs "$jobs" --name "adv-$cheat-$RANDOM" --payout "adv-$cheat" --out "adversary-$cheat.jsonl" "$@" 2>&1 | tail -30
   kill $load 2>/dev/null
 }
 
