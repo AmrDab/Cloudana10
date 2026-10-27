@@ -431,3 +431,10 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [x] B-9: spec.placement.fleetId (own fleet or partner fleet by id); assignment honours it; console shows the fleet before sealing (PROGRESS 24)
 - [x] B-13: relay is the default for every node; direct mode only for GPU workstations until relay WebSocket tunnelling (PROGRESS 23)
 - [ ] Owner side: runbook steps 1, 3–7, 11–13 (contracts v2, keeper, escrow, aliases, DMCA, plan, Pinata/Stripe leftovers)
+
+## PoUW simulation (docs/POUW_SIMULATION_PLAN.md) — 2026-10-27
+- [x] Phase 0: testnet-in-a-box (scripts/sim/testnet: up/down/keeper-local/smoke) — PASS, docs/POUW_SIMULATION_REPORT.md
+- [ ] Phase 1: honest load (user.ts), report.ts → E1–E4
+- [ ] Phase 2: adversary.ts, 12 strategies, P&L after claws
+- [ ] Phase 3: 2 h run, epoch invariants, claw + veto + keeper restart
+- [ ] Report final + PROGRESS entry + PR

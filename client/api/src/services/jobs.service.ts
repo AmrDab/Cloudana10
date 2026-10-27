@@ -808,7 +808,10 @@ async function submitInline(
   const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json!) as number[], matrixB: JSON.parse(job.b_json!) as number[] };
   // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6).
   const sampled = sampledForCheck(job.id, job.sigma!);
+  const t0 = performance.now();
   const verdict = wt.verify!({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
+  // Verifier cost (scripts/sim/testnet): on Workers performance.now() does not advance during CPU work, so Node only.
+  if (getEnv().DEV_MODE) L.info(`[work] verify ${job.id} ${job.work_type} n=${job.n} ${(performance.now() - t0).toFixed(1)}ms sampled=${sampled} ok=${verdict.ok}${verdict.ok ? "" : ` stage=${verdict.stage}`}`);
   // Caught: a sampled job whose answer is right (every cheap check passed) but whose transcript is not — the work was
   // not done as proven. The verified result is kept and the fee captured (and burned), but the provider's pay is
   // clawed, this job's and its held pay, and this node is suspended. Any other failure is refused and re-queued.
@@ -974,9 +977,11 @@ export async function answerChallenge(
   if (opened.length !== drawn.length || opened.some((v, i) => v !== drawn[i])) {
     return caughtChallenge(job, node, nodeRow, "the answer must open exactly the challenged segments", now);
   }
+  const t0 = performance.now();
   for (const o of openings) {
     const spec = plan[o.idx];
     const v = checkOpening(spec, o, commitment, inputs, wt.kernel!(jobInput, spec.op));
+    if (getEnv().DEV_MODE) L.info(`[work] verify ${job.id} ${job.work_type} segment ${o.idx} (${spec.kind}) ${(performance.now() - t0).toFixed(1)}ms cumulative, ${drawn.length}/${plan.length} drawn, ok=${v.ok}${v.ok ? "" : ` ${v.reason}`}`);
     if (!v.ok && v.stage) return caughtChallenge(job, node, nodeRow, v.reason, now);
     // No stage: the job's own data does not fit its plan. Not the node's fault, and validate() makes it unreachable.
     if (!v.ok) {

@@ -39,3 +39,7 @@ client/.env.production.local
 # Wrangler local state (Miniflare SQLite, bundles) — never commit
 .wrangler/
 .smoke/
+
+# PoUW simulation (scripts/sim/testnet): local run state and the local-chain addresses
+.dev-run-sim/
+shared/addresses.localhost.json
