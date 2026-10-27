@@ -4,7 +4,7 @@
  * posted. Guardian = hardhat account #5 (the local deploy's GUARDIAN_SAFE).
  *   npx tsx scripts/sim/testnet/veto.ts
  */
-import { createPublicClient, createWalletClient, defineChain, http, parseAbiItem } from "viem";
+import { createPublicClient, createWalletClient, defineChain, http, parseAbi, parseAbiItem } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { settlementAbi } from "../../../keeper/src/abi";
 import { CHAIN_ID, RPC, addresses, log } from "./common.ts";
@@ -19,19 +19,28 @@ const posted = await pub.getLogs({
   fromBlock: 0n,
   toBlock: "latest",
 });
+// An epoch is veto-able only between the post and the finalize (30 s locally): watch the next posts until one is.
+const seen = new Set(posted.map((l) => l.args.epoch!));
+const t0 = Date.now();
 let target: bigint | null = null;
-for (const l of posted.reverse()) {
-  const e = (await pub.readContract({ address: a.CloudanaSettlementV2, abi: settlementAbi, functionName: "epochs", args: [l.args.epoch!] })) as any;
-  if (Number(e[9]) === 1) {
-    target = l.args.epoch!;
-    break;
+while (target === null && Date.now() - t0 < 10 * 60_000) {
+  const recent = await pub.getLogs({ address: a.CloudanaSettlementV2, event: parseAbiItem("event EpochPosted(uint256 indexed epoch, bytes32 root, uint256 totalLaneA, uint256 totalLaneB, uint256 treasuryAmount, uint256 feesBurned)"), fromBlock: 0n, toBlock: "latest" });
+  for (const l of recent.reverse()) {
+    const e = (await pub.readContract({ address: a.CloudanaSettlementV2, abi: settlementAbi, functionName: "epochs", args: [l.args.epoch!] })) as any;
+    if (Number(e[9]) === 1) {
+      target = l.args.epoch!;
+      break;
+    }
+    seen.add(l.args.epoch!);
   }
+  if (target === null) await new Promise((r) => setTimeout(r, 2000));
 }
 if (target === null) {
-  log("veto", "no epoch is in the posted (veto-able) state right now");
+  log("veto", "no epoch entered the posted (veto-able) state in 10 minutes");
   process.exit(2);
 }
 const guardian = privateKeyToAccount(GUARDIAN_KEY);
-const hash = await createWalletClient({ chain, transport: http(RPC), account: guardian }).writeContract({ address: a.CloudanaSettlementV2, abi: settlementAbi, functionName: "veto", args: [target] });
+// The keeper's ABI has no veto (it never vetoes): the guardian call is declared here.
+const hash = await createWalletClient({ chain, transport: http(RPC), account: guardian }).writeContract({ address: a.CloudanaSettlementV2, abi: parseAbi(["function veto(uint256 epoch)"]), functionName: "veto", args: [target] });
 await pub.waitForTransactionReceipt({ hash });
 log("veto", `guardian vetoed epoch ${target} (tx ${hash})`);
