@@ -19,7 +19,9 @@ node --import tsx scripts/sim/testnet/veto.ts 2>&1 | grep -v Warning
 
 sleep 300
 echo "--- fault 2: keeper restart mid-epoch"
-pid=$(grep '^keeper ' $RUN/pids | awk '{print $2}'); [ -n "$pid" ] && taskkill //PID "$pid" //F >/dev/null 2>&1; sed -i '/^keeper /d' $RUN/pids
+# Git Bash job pids are MSYS pids, useless to taskkill: match the Windows process by its command line instead.
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq 'node.exe' -and \$_.CommandLine -match 'keeper-local' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }"
+sed -i '/^keeper /d' $RUN/pids
 sleep 20
 nohup node --import tsx scripts/sim/testnet/keeper-local.ts >> "$RUN/keeper.log" 2>&1 &
 echo "keeper $!" >> $RUN/pids

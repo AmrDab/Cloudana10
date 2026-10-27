@@ -17,9 +17,10 @@ SIGNER=$(curl -s $API/v1/nodes/instruction-key | grep -oE '"signer":"0x[0-9a-fA-
 agents() { # start|stop
   for p in a b c; do
     if [ "$1" = stop ]; then
-      pid=$(grep "^agent-$p " "$RUN/pids" | awk '{print $2}')
-      [ -n "$pid" ] && taskkill //PID "$pid" //F >/dev/null 2>&1
-      sed -i "/^agent-$p /d" "$RUN/pids"
+      # Git Bash job pids are MSYS pids, useless to taskkill: match the Windows process by its command line instead.
+      powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq 'node.exe' -and \$_.CommandLine -match 'src/index.ts --api' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }"
+      sed -i "/^agent-/d" "$RUN/pids"
+      break
     else
       (cd "$ROOT/node-agent" && CLOUDANA_INSTRUCTION_SIGNER=$SIGNER nohup node --import tsx src/index.ts --api $API --name sim-$p --site http://127.0.0.1:7003 >> "$RUN/agent-$p.log" 2>&1 & echo "agent-$p $!" >> "$RUN/pids")
     fi
