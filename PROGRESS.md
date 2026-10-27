@@ -666,6 +666,28 @@ that remained:
   `segment-verification.test.ts`: the assignment's keys gain `inputHash`. Agent `int8-model.selftest.ts`: the fetched
   input is used, a tampered one refused, an inline one kept. matmul golden snapshot unchanged.
 
+### 30 · PoUW simulation: testnet-in-a-box, honest load, adversary, two hours with faults (2026-10-27)
+- **Why.** Owner: "the real edge was generating CLD from work, like Bitcoin mining for the internet … test if we are
+  able to measure and verify." Plan `docs/POUW_SIMULATION_PLAN.md`, results `docs/POUW_SIMULATION_REPORT.md`.
+- **What.** `scripts/sim/testnet/`: hardhat chain + the API's Node runtime + three real agents (1.9.0, CPU) + the
+  production keeper's pass on a 10 s timer (`up.ts`/`down.ts`/`keeper-local.ts`), a fake user that deposits escrow and
+  submits every work type (`user.ts`), an adversary node that speaks the real protocol and cheats one way per run
+  (`adversary.ts`, 10 strategies), a guardian veto (`veto.ts`), phase runners, and `report.ts` (E1–E4 per shape,
+  cluster gate, epoch rows API vs chain, supply invariant from token logs, provider wallets vs ledger). DEV_MODE-only
+  `[work] verify …` timing lines in `jobs.service.ts`.
+- **Results.** Phase 0 PASS (deposit → fee → verified job → minted lanes → root → claim, balances exact). Phase 1:
+  400/400, verify 1.4–6.5 % of provider compute, 0 false rejects, every job pays 1,001 µCLD (metered part is 1 µCLD
+  at the API's caps: work is verified, not priced by work), lane B on 20 % of jobs (cluster gate), draw weight is
+  heartbeat noise. Phase 2: every wrong result refused at submit or clawed with the wallet's held pay, honest nodes
+  never clawed, the persistent cheater netted 0; hit-and-run on the matmul transcript keeps pay with 0.9^N (43 % at
+  N = 8). Phase 3: 840/840 over two hours, 62 epochs API = chain, supply Δ = minted − burned to the µCLD; guardian veto
+  → re-close → corrected root → settled; keeper restart mid-epoch a no-op.
+- **Open for the owner.** D1 protocol work for idle capacity, D2 ρ / cluster gate, D3 who verifies (keep it in the
+  orchestrator), D4 matmul transcript sampling for new identities. Backlog: veto should park and alert, not loop;
+  draw weight by compute time.
+- **Not touched.** Production, Base Sepolia, the Azure node, secrets: everything ran on 127.0.0.1 with hardhat's test
+  keys and seed-derived throwaways.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

@@ -434,7 +434,9 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 
 ## PoUW simulation (docs/POUW_SIMULATION_PLAN.md) — 2026-10-27
 - [x] Phase 0: testnet-in-a-box (scripts/sim/testnet: up/down/keeper-local/smoke) — PASS, docs/POUW_SIMULATION_REPORT.md
-- [ ] Phase 1: honest load (user.ts), report.ts → E1–E4
-- [ ] Phase 2: adversary.ts, 12 strategies, P&L after claws
-- [ ] Phase 3: 2 h run, epoch invariants, claw + veto + keeper restart
+- [x] Phase 1: honest load (user.ts), report.ts → E1–E4 — 400/400, verify 1.4–6.5 % of compute, flat 1,001 µCLD fee
+- [x] Phase 2: adversary.ts, 10 strategies, P&L after claws — all refused/caught; hit-and-run keeps pay with 0.9^N
+- [x] Phase 3: 2 h run, epoch invariants, claw + veto + keeper restart — 840/840, 62 epochs, both faults PASS
+- [ ] Owner decisions D1 (protocol work), D2 (ρ / cluster gate), D3 (who verifies), D4 (matmul transcript sampling)
+- [ ] Backlog: veto should park the epoch and alert, not re-report every pass; draw weight by compute time
 - [ ] Report final + PROGRESS entry + PR
