@@ -87,3 +87,43 @@ it is closer to "whose heartbeat landed first". Fix: weigh by compute time repor
 **Environment note.** Two gaps in the run (8.5 min at 01:26, and between phases) were the laptop sleeping; the stack
 resumed on its own with no lost or failed jobs, which is itself a useful robustness result. Keep-awake is on for the
 remaining phases.
+
+## Phase 2 — the cheating provider (2026-10-27)
+
+`scripts/sim/testnet/adversary.ts` is a node that speaks the real protocol (announce, bind, heartbeat, submit, answer)
+and cheats in one chosen way per run; `phase2.sh` / `phase2b.sh` ran every strategy with the honest agents stopped so
+the adversary received every job. Each run used a fresh node key and payout wallet. `VERIFY_SAMPLE_K` = 10,
+`CHALLENGE_TTL_SECONDS` = 30, pay hold = one epoch (120 s). What the API answered, and what the wallet kept:
+
+| strategy (plan §5) | jobs cheated | API verdict | wallet kept / clawed |
+|---|---|---|---|
+| none (control) | 0 of 8 | every job `200`, paid | 7,592 µCLD settled on-chain |
+| A1 wrong result (matmul) | 4 | `422 result is not A·B (Freivalds check failed)` at submit, every time; job re-queued, node not blamed | 0 for the cheats (2 honest int8 jobs paid) |
+| A3 replay another job's certificate | 3 | `422 certificate sigma does not match the assignment` | 0 for the cheats |
+| A4 steal a job assigned elsewhere | 1 | `409` — there is no public listing of in-flight jobs; a done job is refused as not assigned to this node | 0 |
+| A5 partial transcript (half honest) | 2 | 1st accepted (unsampled); 2nd **sampled → caught**: pay of both jobs clawed, node suspended | 1,898 clawed, 0 kept |
+| A2 lazy transcript, hit-and-run | 8 | all 8 accepted — none of the 8 was sampled (P = 0.9⁸ ≈ 43 %) and the node left | **11,388 settled (8 × 949 cheated + 4 honest)** |
+| A9 rational cheater (lazy on 50 %, 60 jobs planned) | 3 of 7 | **caught on the 7th assignment** by a sampled re-run; wallet-wide claw took all 7 jobs' held pay; suspended | 6,643 clawed, **0 kept** |
+| A6 wrong opening of one drawn segment (int8) | 1 | `422 sampled segment check failed (segment 1: opening does not match the commitment (output))`; job failed, user refunded, claw + suspension | 0 |
+| A7 commit to garbage, compute only the drawn segments after seeing them | 1 | `422 … (segment 0: opening does not match the commitment)` — the commitment bound first, the openings could not hash into it | 0 |
+| A8 answer after the deadline | 1 | `422 sampled segment check failed (answered after the deadline)`; claw + suspension | 0 |
+| A8b second commitment for the same job | 3 | 2nd commit `409 conflict`; the first, honest answer paid normally | 2,847 settled (honest) |
+
+**Every strategy that produced a wrong result was refused or caught, no honest node was ever clawed, and the
+persistent cheater netted zero.** The pay hold did its job: by the time the rational cheater was sampled, all of its
+earlier pay was still inside the hold and the wallet-wide claw took it back.
+
+**The one strategy that kept money is hit-and-run.** A lazy-transcript node that cheats N jobs and leaves keeps its
+pay with probability 0.9ᴺ (43 % at N = 8 here, as observed): sampling at 1 in 10 plus a hold only makes *persistent*
+cheating unprofitable; a throw-away identity that quits before its first sampled job is paid for every job. Two
+things bound the damage: (1) the lazy transcript still has to produce the correct C — Freivalds is checked on every
+job — so what the cheater skips is the cuPOW transcript, not the useful work, and the user always gets a right answer;
+(2) the challenge-type verifier has no such window: every int8 job opens drawn segments after the commitment, and a
+wrong one is caught on the first job. For matmul, the fix is either to sample the transcript on a node's first jobs at
+a higher rate (new identities are the risk), or to drop the transcript proof where Freivalds already proves the output.
+This is a decision for the owner (it touches what "proof of useful work" means for the degenerate matmul case).
+
+Not run: A10 Sybil and A11 self-dealing. Both are decided by the fee split and the cluster gate, which phase 1 already
+measured directly: ρ = 0.04 keeps self-dealing a loss (0.95 + 0.04 < 1 of the fee comes back), and the gate's
+behaviour (lane B on 20 % of jobs with 3 operators) is in phase 1. The draw-weight finding in phase 1 is the open
+issue for Sybil resistance, not the gate.
