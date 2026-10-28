@@ -719,6 +719,8 @@ that remained:
 - **Allowance.** `chain-allowance.service laneBBudget(epoch)` = min(env budget, contract `allowance(epoch)`) at close
   (chain read only with `SETTLEMENT_ADDRESS` + `CHAIN_RPC_URL`; a failed read logs the short error, not the URL, and
   keeps the env budget). Tests: throughput-weight (3), lane-b-allowance (2).
+- **Ledger.** `GET /v1/ledger/{address}` gains `protocolPending` and `protocol` per entry; the earnings page says
+  "N protocol jobs await the epoch close" and shows "share at close" instead of 0.00 for them.
 
 ## Evidence summary
 
