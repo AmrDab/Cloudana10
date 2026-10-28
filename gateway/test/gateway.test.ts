@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { handle, deploymentIdFromHost, isPublicHttpEndpoint, ORIGIN_TIMEOUT_MS, RETRY_BODY_MAX, sha256Hex, type Deps, type Env } from "../src/index.js";
+import { handle, deploymentIdFromHost, isPublicHttpEndpoint, ORIGIN_TIMEOUT_MS, RETRY_BODY_MAX, sha256Hex, STATIC_CACHE_ORIGIN, STATIC_CACHE_TTL_SECONDS, type Deps, type Env } from "../src/index.js";
 
 const ID = "6f1c2a3e-1111-4222-8333-444455556666";
 const ENV: Env = { API_URL: "https://api.example.test", SITES_DOMAIN: "sites.example.test" };
@@ -461,5 +461,58 @@ describe("relay", () => {
     expect((await handle(req("/"), ENV, deps(m.fetch))).status).toBe(503);
     const m2 = mockFetch(relayed("static", []), () => new Response("x"));
     expect((await handle(req("/"), ENV, deps(m2.fetch))).status).toBe(503);
+  });
+});
+
+describe("static site cache (B-21)", () => {
+  const page = (body = "<h1>v1</h1>") => html(body, { etag: '"v1"' });
+
+  it("a GET of a running static site is served from the cache the second time, per path, whichever node answers", async () => {
+    const cache = memCache();
+    const m = mockFetch(running, (u) => page(`<h1>${u.pathname}</h1>`));
+    const first = await handle(req("/a"), ENV, deps(m.fetch, cache));
+    expect(first.status).toBe(200);
+    expect(first.headers.get("x-cloudana-cache")).toBe("miss");
+    expect(await first.text()).toBe("<h1>/a</h1>");
+    const originCalls = () => m.calls.filter((c) => c.url.startsWith(ORIGIN)).length;
+    expect(originCalls()).toBe(1);
+
+    const second = await handle(req("/a"), ENV, deps(m.fetch, cache));
+    expect(second.headers.get("x-cloudana-cache")).toBe("hit");
+    expect(second.headers.get("content-security-policy")).toContain("sandbox"); // the stored copy keeps the gateway's headers
+    expect(second.headers.get("etag")).toBe('"v1"');
+    expect(await second.text()).toBe("<h1>/a</h1>");
+    expect(originCalls()).toBe(1);
+
+    expect((await handle(req("/b?x=1"), ENV, deps(m.fetch, cache))).headers.get("x-cloudana-cache")).toBe("miss");
+    expect(originCalls()).toBe(2);
+    expect([...cache.store.keys()].filter((k) => k.startsWith(STATIC_CACHE_ORIGIN))).toEqual([`${STATIC_CACHE_ORIGIN}/${ID}/a`, `${STATIC_CACHE_ORIGIN}/${ID}/b?x=1`]);
+    expect(cache.store.get(`${STATIC_CACHE_ORIGIN}/${ID}/a`)!.headers.get("cache-control")).toBe(`public, max-age=${STATIC_CACHE_TTL_SECONDS}`);
+  });
+
+  it("HEAD, Range, non-200 responses and containers are not cached", async () => {
+    const cache = memCache();
+    const m = mockFetch(running, (u) => (u.pathname === "/missing" ? new Response("no", { status: 404 }) : page()));
+    await handle(req("/", { method: "HEAD" }), ENV, deps(m.fetch, cache));
+    await handle(req("/", { headers: { range: "bytes=0-1" } }), ENV, deps(m.fetch, cache));
+    await handle(req("/missing"), ENV, deps(m.fetch, cache));
+    expect([...cache.store.keys()].filter((k) => k.startsWith(STATIC_CACHE_ORIGIN))).toEqual([]);
+    const container = { status: 200, body: { ...running.body, kind: "container" } };
+    const c = mockFetch(container, () => page());
+    const res = await handle(req("/"), ENV, deps(c.fetch, memCache()));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-cloudana-cache")).toBeNull();
+  });
+
+  it("the route is checked before the cache: a site that stopped is not served from it", async () => {
+    const cache = memCache();
+    const m = mockFetch(running, () => page());
+    expect((await handle(req("/"), ENV, deps(m.fetch, cache))).status).toBe(200);
+    // Drop the cached route (its 30 s would otherwise still say running) and keep the cached page.
+    for (const k of [...cache.store.keys()]) if (k.startsWith(ENV.API_URL!)) cache.store.delete(k);
+    const stopped = mockFetch({ status: 200, body: { ...running.body, state: "stopped" } }, () => page());
+    const res = await handle(req("/"), ENV, deps(stopped.fetch, cache));
+    expect(res.status).toBe(404);
+    expect(stopped.calls.filter((c) => c.url.startsWith(ORIGIN))).toHaveLength(0);
   });
 });
