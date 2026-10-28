@@ -6,7 +6,7 @@
  *   npx tsx scripts/sim/testnet/up.ts        stop: npx tsx scripts/sim/testnet/down.ts
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -66,6 +66,9 @@ log("up", `API ready, instruction signer ${signer}`);
 
 // ── Node agents ─────────────────────────────────────────────────────────────────────────────────────────────────
 for (const p of PROVIDERS) {
+  // A fresh log per run: the bind link is read from it, and a previous run's link would be taken for this run's.
+  const old = path.join(RUN, `agent-${p}.log`);
+  if (existsSync(old)) unlinkSync(old);
   start(`agent-${p}`, ["--import", "tsx", "src/index.ts", "--api", API, "--name", `sim-${p}`, "--site", "http://127.0.0.1:7003"], path.join(ROOT, "node-agent"), {
     CLOUDANA_INSTRUCTION_SIGNER: signer,
   });
