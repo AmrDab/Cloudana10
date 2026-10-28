@@ -729,6 +729,17 @@ that remained:
   X-RateLimit-Limit but no Remaining. A failing binding, an unmatched (limit, window) and the two hourly buckets
   (keys-create, fleets-create: the binding period is 10 or 60 s) keep the KV counter, which still degrades to memory.
   Node routes and polled reads were per isolate already. Tests: rate-limit (2 new).
+- **Deployed** 2026-10-28: API version fa080615 at 100 % (preview smoke-tested: health, /v1/network with the binding's
+  Limit header and no Remaining, cron trigger redeployed). The console is not republished (the earnings copy of entry 32
+  waits for the owner's "publish").
+
+### 34 · CLI, first cut: `cloudana deploy ./dist` (B-22, 2026-10-28)
+- `cli/` (no runtime dependencies, node ≥ 20): `login --key` (stores the developer key in `~/.cloudana/config.json`,
+  0600, or `CLOUDANA_API_KEY`), `deploy <dir> [--name] [--no-wait]` (every file of the folder as a StaticSpec, index.html
+  required, 2 MB cap, waits for `running` and prints the `cloudana.run` URL), `list`, `get <id>` (with the last events
+  and the failure log tail), `stop <id>`. Exit codes 0 / 1 (API or folder refused) / 2 (usage). Responses are
+  hand-typed for these five calls; generating them from `GET /v1/doc` waits until the surface grows. Tests: the
+  folder reader (3) and the commands against a stub API (3: what is sent, printed, exit codes). CI job `cli`.
 
 ## Evidence summary
 

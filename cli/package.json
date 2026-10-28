@@ -1,0 +1,19 @@
+{
+  "name": "cloudana",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudana command line: deploy a folder as a static site on the network, list, inspect and stop deployments",
+  "bin": { "cloudana": "./dist/cli.js" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.2"
+  }
+}
