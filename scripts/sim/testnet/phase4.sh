@@ -22,7 +22,7 @@ for i in $(seq 1 60); do curl -sf -m 2 -X POST -H 'content-type: application/jso
   EPOCH_SECONDS=120 VETO_DELAY=30 VEST_B=60 npx hardhat run scripts/v2/deploy.ts --network localhost 2>&1 | grep -vE "Warning|^$" | tail -4)
 
 echo "--- fresh database (phase 0–3 data kept as sim-phase3.sqlite), stack up with protocol work on"
-[ -f "$RUN/sim.sqlite" ] && mv -f "$RUN/sim.sqlite" "$RUN/sim-phase3.sqlite"
+[ -f "$RUN/sim.sqlite" ] && { [ -f "$RUN/sim-phase3.sqlite" ] && rm -f "$RUN/sim.sqlite" || mv "$RUN/sim.sqlite" "$RUN/sim-phase3.sqlite"; }
 PROTOCOL_WORK=on node --import tsx scripts/sim/testnet/up.ts 2>&1 | grep -v Warning | tail -5
 
 echo "--- 1. zero demand for $IDLE min: protocol work only"

@@ -100,12 +100,13 @@ export async function announceNode(
       extras.agentVersion ?? null,
     )
     .run();
-  const row = (await getNode(key))!;
+  let row = (await getNode(key))!;
   if (!row.payout && !row.bind_code) {
-    // Issued to the node only (announce is node-signed), so only its operator can bind it.
+    // Issued to the node only (announce is node-signed), so only its operator can bind it. COALESCE: two first announces
+    // of a fresh node in flight together (the agent's start-up announce and its first heartbeat) must print one code.
     const code = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
-    await getD1().prepare("UPDATE nodes SET bind_code = ? WHERE address = ? AND payout IS NULL").bind(code, key).run();
-    row.bind_code = code;
+    await getD1().prepare("UPDATE nodes SET bind_code = COALESCE(bind_code, ?) WHERE address = ? AND payout IS NULL").bind(code, key).run();
+    row = (await getNode(key))!;
   }
   return row;
 }
