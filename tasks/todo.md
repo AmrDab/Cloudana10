@@ -448,6 +448,11 @@ Success = each item has a test that fails on main, `npx tsc --noEmit` + vitest g
 - [x] D1 protocol work (`issueProtocolWork`, `fitProtocolB`, cluster rule); test protocol-work
 - [x] Sim phase 4: 74/74 protocol jobs, budget minted and settled, adversary caught on job 1 (report §Phase 4)
 - [x] Report §Phase 4, PROGRESS.md entry 31
-- [ ] PR for feat/pouw-decisions; switch `PROTOCOL_WORK=on` with the contract deploy (runbook step 4)
-- [ ] Backlog: budget ≤ chain allowance startup check; draw weight by compute time; protocol issuance at heartbeat
+- [x] PR #68 merged 2026-10-28. Still to do: switch `PROTOCOL_WORK=on` with the contract deploy (runbook step 4)
+
+## PoUW follow-ups (2026-10-28, branch feat/pouw-followups, owner: "keep going")
+- [x] Draw weight by compute time (`delivered_at`; weights 1.85 / 2.34 / 2.43 vs 0.09 / 0.25 / 0.66); sample cap
+- [x] Lane-B budget never above the chain allowance (`laneBBudget`)
+- [ ] Later: protocol issuance at heartbeat (only matters once jobs are metered by work); ledger summary shows
+      protocol entries as a share.
 - [ ] Report final + PROGRESS entry + PR

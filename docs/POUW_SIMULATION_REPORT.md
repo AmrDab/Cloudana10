@@ -231,3 +231,23 @@ demand, a hit-and-run adversary, a 5 min user burst, settlement). Numbers: `.dev
   once jobs are metered by work (then the job size, not the count, carries the units).
 - The clawed protocol entry shows 0 µCLD: protocol amounts are set at close, so a claw before close claws a share,
   not a number. Correct, but the ledger summary should say so.
+
+## Follow-ups from the run (2026-10-28, branch `feat/pouw-followups`)
+
+- **Draw weight by compute time.** `work_jobs.delivered_at` is set when a heartbeat hands the job to the node, and
+  the throughput sample runs from there to the submit instead of from the assignment (which was mostly the wait for
+  that heartbeat). `weights.sh` (fresh stack, 60 × matmul n = 128 at 8/min on the three identical agents):
+
+  | | phase 1 (assigned → submit) | now (delivered → submit) |
+  |---|---|---|
+  | node weights, MMAC/s | 0.09 / 0.25 / 0.66 | 1.85 / 2.34 / 2.43 |
+  | spread, max ÷ min | 7.3× | 1.3× |
+  | what the sample measured | 8.5 s mean heartbeat wait + 0.16 s compute | 1.15 s mean (compute + the agent's submit cadence) |
+
+  A single sample is capped at `THROUGHPUT_SAMPLE_MAX_MMAC_S` (2e6, above any one machine): an operator who queues its
+  own job knows C already and can submit the moment it is delivered; the cap keeps that worth at most a top
+  machine's weight, and the share cap bounds the rest. Jobs still carry the agent's 15 s cadence in the sample, so
+  weights are low in absolute terms but comparable, which is what the draw needs.
+- **Lane B never above the chain allowance.** At close the budget is min(`EPOCH_SUBSIDY_BUDGET_UCLD`,
+  `allowance(epoch)` read from the settlement contract when `SETTLEMENT_ADDRESS` and `CHAIN_RPC_URL` are set); a
+  failed read keeps the env budget with a warning. The phase-4 misconfiguration can no longer stall settlement.

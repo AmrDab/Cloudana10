@@ -18,6 +18,7 @@ import { getEnv } from "../config/env.js";
 import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { epochRoot } from "./epoch-merkle.js";
+import { laneBBudget } from "./chain-allowance.service.js";
 
 export const LANE_A_PER_MILLE = 950;
 export const TREASURY_PER_MILLE = 30;
@@ -451,9 +452,11 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
       continue;
     }
 
-    // Lane B over the epoch's budget is scaled pro rata before anything is summed; protocol work gets what is left.
-    await fitLaneB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD);
-    await fitProtocolB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD, getEnv().CLUSTER_N_MIN, getEnv().CLUSTER_S_CAP);
+    // Lane B over the epoch's budget (never above the chain allowance) is scaled pro rata before anything is summed;
+    // protocol work gets what is left.
+    const budget = await laneBBudget(epoch);
+    await fitLaneB(epoch, budget);
+    await fitProtocolB(epoch, budget, getEnv().CLUSTER_N_MIN, getEnv().CLUSTER_S_CAP);
     const pending = "epoch = ?1 AND status = 'pending'";
     const leafRows = await db
       .prepare(

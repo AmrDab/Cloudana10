@@ -192,6 +192,9 @@ const BALANCE_COLUMNS = [
   // lane-B entry carries the verified units; the amount is set at close from what is left of the epoch's budget.
   "ALTER TABLE work_jobs ADD COLUMN protocol INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE reward_entries ADD COLUMN units INTEGER",
+  // When a heartbeat handed the assignment to the node: the node's throughput sample (the draw weight) is measured from
+  // here to the submit, so the wait for the next heartbeat is not counted as compute.
+  "ALTER TABLE work_jobs ADD COLUMN delivered_at INTEGER",
   // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
   "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN net_prefix TEXT",

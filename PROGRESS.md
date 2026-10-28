@@ -709,6 +709,17 @@ that remained:
   (the share cap on heartbeat-noise weights still withholds lane B on ~¼ of jobs); protocol issuance at heartbeat; the
   ledger summary should show protocol entries as a share, not 0.
 
+### 32 · Draw weight by compute time; lane B capped at the chain allowance (2026-10-28)
+- **Weight.** `work_jobs.delivered_at` (set by the heartbeat that hands the job over, cleared on re-assignment); the
+  throughput sample is delivered → submit. On three identical agents the weights went from 0.09 / 0.25 / 0.66 to
+  1.85 / 2.34 / 2.43 MMAC/s (`scripts/sim/testnet/weights.sh`). One sample is capped at `THROUGHPUT_SAMPLE_MAX_MMAC_S`
+  (2e6): an operator queuing its own job knows the answer and could submit at once; the cap bounds that at a top
+  machine's weight. Matrices are never served before delivery (owner-only, and only once done), so delivery is the
+  first moment a node has the material.
+- **Allowance.** `chain-allowance.service laneBBudget(epoch)` = min(env budget, contract `allowance(epoch)`) at close
+  (chain read only with `SETTLEMENT_ADDRESS` + `CHAIN_RPC_URL`; a failed read logs the short error, not the URL, and
+  keeps the env budget). Tests: throughput-weight (3), lane-b-allowance (2).
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
