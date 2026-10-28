@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   fee_captured_at INTEGER, -- set in the same transaction that captures the fee and writes the rewards (submitWork)
   sample_check TEXT, -- sampled transcript re-execution (B-6): NULL = not sampled, 'passed', 'failed' or 'reversed' (claw undone)
   protocol INTEGER NOT NULL DEFAULT 0, -- 1 = issued by the orchestrator to an idle node (D1): owner 'protocol', price 0, lane B from the epoch budget
+  delivered_at INTEGER, -- when a heartbeat handed the assignment to the node: the throughput sample runs from here, not from assigned_at
   -- Challenge-mode work (B-26): a non-matmul job's input, the node's commitment, the segments drawn after it was stored,
   -- the answer deadline, and the payout wallet at commit time that a failed challenge claws (all NULL for matmul).
   input_json TEXT, commitment_json TEXT, challenge_json TEXT, challenge_expires_at INTEGER, commit_payout TEXT,

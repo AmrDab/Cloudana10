@@ -57,6 +57,8 @@ export interface WorkJobRow {
   sample_check: "passed" | "failed" | "reversed" | null;
   /** 1 = protocol work (D1): issued by the orchestrator to an idle node, owner PROTOCOL_ACCOUNT, price 0. */
   protocol: number;
+  /** When a heartbeat handed the assignment to the node (null until then, and again after a re-assignment). */
+  delivered_at: number | null;
   /** Challenge-mode jobs (B-26): the job's input (JSON; matmul keeps a_json/b_json); null for matmul and when it is in the artifact store. */
   input_json?: string | null;
   /** Artifact-store key of a challenge-mode job's input (stored there at enqueue when a store is configured). */
@@ -354,7 +356,7 @@ export const MAX_JOB_ATTEMPTS = 3;
 
 const CLEAR_ASSIGNMENT =
   "status = 'queued', node = NULL, sigma = NULL, seed_source = NULL, draw_seed = NULL, " +
-  "eligible_hash = NULL, eligible_json = NULL, cluster_ok = NULL, assigned_at = NULL, expires_at = NULL";
+  "eligible_hash = NULL, eligible_json = NULL, cluster_ok = NULL, assigned_at = NULL, expires_at = NULL, delivered_at = NULL";
 
 /** The eligible set as it is stored and published: sorted by address, weights as drawn. */
 export const sortedCandidates = (candidates: Candidate[]): Candidate[] =>
@@ -555,6 +557,8 @@ export async function getActiveAssignment(node: string, now = Date.now(), agentV
     .bind(normalizeAddress(node), now)
     .first<WorkJobRow>();
   if (!r) return null;
+  // First delivery: the node's compute time (its draw weight) is measured from here (creditNode).
+  if (r.delivered_at === null) await getD1().prepare("UPDATE work_jobs SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL").bind(now, r.id).run();
   if (r.input_json || r.input_ref) {
     const base = { jobId: r.id, workType: r.work_type, n: r.n, matrixA: [], matrixB: [], sigma: r.sigma!, expiresAt: r.expires_at! };
     const inputHash = r.input_hash ?? sha256(r.input_json!); // rows from before input_hash
@@ -810,7 +814,10 @@ async function creditNode(
   now: number,
 ): Promise<SubmitResult> {
   const rewards = booked.captured ? booked.split : { laneAUcld: 0, laneBUcld: 0, treasuryUcld: 0, vestsAt: now, epoch: epochOf(now), heldUntil: now };
-  const seconds = (now - (job.assigned_at ?? now)) / 1000;
+  // Compute time as the orchestrator can see it: from the heartbeat that delivered the job to the submit. The wait
+  // for that heartbeat (up to 15 s) is not the node's speed; before this column the weights were heartbeat noise
+  // (docs/POUW_SIMULATION_REPORT.md, phase 1).
+  const seconds = (now - (job.delivered_at ?? job.assigned_at ?? now)) / 1000;
   await getD1()
     .prepare("UPDATE nodes SET jobs_done = jobs_done + 1, throughput_mmac_s = ? WHERE address = ?")
     .bind(nextThroughput(nodeRow.throughput_mmac_s, units, seconds), node)
