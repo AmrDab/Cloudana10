@@ -453,6 +453,16 @@ Success = each item has a test that fails on main, `npx tsc --noEmit` + vitest g
 ## PoUW follow-ups (2026-10-28, branch feat/pouw-followups, owner: "keep going")
 - [x] Draw weight by compute time (`delivered_at`; weights 1.85 / 2.34 / 2.43 vs 0.09 / 0.25 / 0.66); sample cap
 - [x] Lane-B budget never above the chain allowance (`laneBBudget`)
-- [ ] Later: protocol issuance at heartbeat (only matters once jobs are metered by work); ledger summary shows
-      protocol entries as a share.
+- [x] Ledger summary shows protocol entries as a share (PR #70)
+- [x] B-25 public rate limits in the Workers binding (PR #71)
+- [ ] Later: protocol issuance at heartbeat (only matters once jobs are metered by work)
+
+## B-22 CLI (2026-10-28, branch feat/cli): `cloudana deploy ./dist`
+Success = `cloudana login --key`, `deploy <dir> [--name]` (static site: files base64, index.html required, ≤ 2 MB),
+`list`, `get <id>`, `stop <id>`; tests for the folder reader and one end-to-end deploy against a stub API; type-check
+and tests in CI. shortcut: responses hand-typed for these five calls, generate from /v1/doc when the surface grows.
+- [x] cli/ package (no runtime deps; node:util parseArgs; ~/.cloudana/config.json 0600 or CLOUDANA_API_KEY)
+- [x] tests + CI job
+- [x] README + PROGRESS entry 34; PR
+- [ ] Later: `cloudana jobs`, containers, types generated from /v1/doc; publish to npm (owner: the npm account)
 - [ ] Report final + PROGRESS entry + PR
