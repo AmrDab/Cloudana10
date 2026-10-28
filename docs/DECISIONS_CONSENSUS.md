@@ -4,6 +4,27 @@ This is the consensus of a Fable review panel: token economics, payments and dem
 `CAPABILITY_MATRIX.md` for what is live, built or still waiting on an owner step (contract deploy and keeper:
 `docs/OWNER_RUNBOOK.md`; the relay secret, gateway domain and first node are done since 2026-10-18). The text below is kept as the decision record.
 
+> **Decided (2026-10-28, owner: "go with your recommendations on D1–D4"; the simulation behind them is
+> `docs/POUW_SIMULATION_REPORT.md`):**
+> - **D1 — protocol work for idle capacity: yes, within the existing lane-B budget.** When the queue is empty, the
+>   orchestrator issues its own small matmul jobs to idle nodes (no user, no fee, nothing burned). They are verified
+>   like any job (Freivalds, sampled transcript, claw and suspension). What is left of an epoch's lane-B budget after
+>   paid jobs' subsidies is minted to them pro rata by verified units, no wallet above `CLUSTER_S_CAP` of it. This is
+>   the Bitcoin-style lane: a bounded issuance split by verified work, nothing minted without work. Lane A stays
+>   fee-backed; the contract's `LaneAExceedsFees` and `LaneBExceedsAllowance` checks are unchanged. Off by default
+>   (`PROTOCOL_WORK=on`), to be switched on with the contract deploy.
+> - **D2 — ρ stays 0.04 (bounded by `RHO_MAX`: self-dealing must lose money); the cluster gate counts live
+>   operators, not idle ones.** The gate withheld the subsidy on 68–80 % of jobs with three operators only because a
+>   busy node was invisible to it. `CLUSTER_N_MIN` = 3 and `CLUSTER_S_CAP` = 0.5 unchanged.
+> - **D3 — the orchestrator verifies; the guardian veto is the safety net.** Verification costs 1.4–8 % of provider
+>   compute, on every job; nothing moves on chain. A vetoed epoch is parked until an operator corrects it (the keeper
+>   and the API no longer loop on the same root).
+> - **D4 — the transcript is kept for matmul; new identities are sampled every job.** A node's first
+>   `VERIFY_WARMUP_JOBS` (10) jobs have the transcript re-executed every time, then 1 in `VERIFY_SAMPLE_K`. A
+>   throw-away identity is caught on its first lazy job; after warm-up the hold and the wallet-wide claw apply as before.
+>   Dropping the transcript where Freivalds proves the output was rejected: the proof is of work done, not only of a
+>   right answer.
+
 > **Decided (2026-10-21, owner: "go with your recommendations"; options in `docs/OWNER_RUNBOOK.md` §A):**
 > 1. **Subsidy (lane B) stays per settlement epoch (one hour)**, pro rata within the epoch, as built. No weekly pool,
 >    no contract change: the v2 contracts deploy as they are.

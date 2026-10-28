@@ -373,14 +373,11 @@ export async function runAssignment(now = Date.now()): Promise<number> {
     .all<{ id: string; work_type: string }>();
   if (!queued.results?.length) return 0;
 
-  const nodes = await db
-    .prepare(
-      "SELECT * FROM nodes WHERE payout IS NOT NULL AND state = 'active' AND last_seen >= ? " +
-        "AND address NOT IN (SELECT node FROM work_jobs WHERE status = 'assigned' AND node IS NOT NULL)",
-    )
-    .bind(now - env.NODE_ACTIVE_SECONDS * 1000)
-    .all<NodeRow>();
-  const pool = new Map((nodes.results ?? []).map((n) => [n.address, n]));
+  // Every live node takes part in the cluster gate (D2: an operator busy on a job is still an operator); only the
+  // draw is among the idle ones.
+  const live = (await db.prepare("SELECT * FROM nodes WHERE payout IS NOT NULL AND state = 'active' AND last_seen >= ?").bind(now - env.NODE_ACTIVE_SECONDS * 1000).all<NodeRow>()).results ?? [];
+  const busy = new Set(((await db.prepare("SELECT DISTINCT node FROM work_jobs WHERE status = 'assigned' AND node IS NOT NULL").all<{ node: string }>()).results ?? []).map((r) => r.node));
+  const pool = new Map(live.filter((n) => !busy.has(n.address)).map((n) => [n.address, n]));
   if (pool.size === 0) return 0;
 
   const seedSource = await fetchSeedSource();
@@ -389,18 +386,19 @@ export async function runAssignment(now = Date.now()): Promise<number> {
     const wt = getWorkType(job.work_type);
     if (!wt) continue;
     const need = wt.requirements({ n: 0, matrixA: [], matrixB: [] }).workType;
-    const eligible: Candidate[] = [...pool.values()]
-      .filter((n) => (JSON.parse(n.work_types ?? "[]") as string[]).includes(need))
+    const fits = (n: NodeRow) =>
+      (JSON.parse(n.work_types ?? "[]") as string[]).includes(need) &&
       // A type that needs a newer agent is drawn only among nodes on it (int8-mlp ≥ 1.7.0); the network floor is unchanged.
-      .filter((n) => !wt.minAgent || (!!n.agent_version && compareVersions(n.agent_version, wt.minAgent) >= 0))
-      .map((n) => ({ address: n.address, payout: n.payout!, weight: n.throughput_mmac_s }));
+      (!wt.minAgent || (!!n.agent_version && compareVersions(n.agent_version, wt.minAgent) >= 0));
+    const candidate = (n: NodeRow): Candidate => ({ address: n.address, payout: n.payout!, weight: n.throughput_mmac_s });
+    const eligible = [...pool.values()].filter(fits).map(candidate);
     if (eligible.length === 0) continue;
 
     const drawSeed = sha256(seedSource + job.id);
     const node = weightedDraw(drawSeed, eligible);
     const nonce = crypto.randomUUID();
     const sigma = sha256(job.id + node + nonce + seedSource);
-    const clusterOk = clusterTest(eligible, env.CLUSTER_N_MIN, env.CLUSTER_S_CAP, pool.get(node)!.payout!) ? 1 : 0;
+    const clusterOk = clusterTest(live.filter(fits).map(candidate), env.CLUSTER_N_MIN, env.CLUSTER_S_CAP, pool.get(node)!.payout!) ? 1 : 0;
 
     const r = await db
       .prepare(
@@ -806,8 +804,9 @@ async function submitInline(
   now: number,
 ): Promise<SubmitResult> {
   const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json!) as number[], matrixB: JSON.parse(job.b_json!) as number[] };
-  // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6).
-  const sampled = sampledForCheck(job.id, job.sigma!);
+  // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6), and on every
+  // job of a node still in its warm-up (D4: a new identity cannot hit and run).
+  const sampled = nodeRow.jobs_done < getEnv().VERIFY_WARMUP_JOBS || sampledForCheck(job.id, job.sigma!);
   const t0 = performance.now();
   const verdict = wt.verify!({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
   // Verifier cost (scripts/sim/testnet): on Workers performance.now() does not advance during CPU work, so Node only.

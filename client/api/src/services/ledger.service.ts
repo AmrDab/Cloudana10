@@ -396,7 +396,7 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
 
   const closed: EpochPayload[] = [];
   for (const { epoch } of candidates.results ?? []) {
-    const exists = await db.prepare("SELECT status FROM epochs WHERE id = ?").bind(epoch).first<{ status: string }>();
+    const exists = await db.prepare("SELECT status, vetoed_root FROM epochs WHERE id = ?").bind(epoch).first<{ status: string; vetoed_root: string | null }>();
     if (exists && exists.status !== "vetoed") {
       // An epoch is posted once, unless vetoed. Entries that committed after it closed (boundary
       // race) move to the open epoch instead of staying pending forever.
@@ -439,6 +439,12 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
       leaves,
       status: "closed",
     };
+    // A vetoed epoch stays parked until an operator's claw or reverse changes its root (D3): re-closing it unchanged
+    // would only have the keeper refuse to re-post the root the guardian rejected, every pass.
+    if (exists?.vetoed_root && exists.vetoed_root.toLowerCase() === out.root.toLowerCase()) {
+      log.api.warn(`[ledger] epoch ${epoch}: vetoed and unchanged (root ${out.root}) — parked until an entry is clawed or reversed`);
+      continue;
+    }
     const cols = [now, out.feesBurnedUcld, out.totalLaneAUcld, out.totalLaneBUcld, out.treasuryUcld, JSON.stringify(leaves), out.root];
     await db.batch([
       exists
@@ -582,7 +588,8 @@ export async function markEpochVetoed(
   if (row.status === "settled") return { ok: false, code: "conflict", message: `epoch ${id} is already settled` };
   const [, reopened] = await db.batch([
     db
-      .prepare("UPDATE epochs SET status = 'vetoed', root = NULL, fees_burned_ucld = NULL, tx_hash = COALESCE(?, tx_hash) WHERE id = ? AND status IN ('closed','posted')")
+      // vetoed_root: the next close is parked while it would rebuild this same root (closeEpochs).
+      .prepare("UPDATE epochs SET status = 'vetoed', vetoed_root = root, root = NULL, fees_burned_ucld = NULL, tx_hash = COALESCE(?, tx_hash) WHERE id = ? AND status IN ('closed','posted')")
       .bind(opts.txHash ?? null, id),
     db
       .prepare("UPDATE reward_entries SET status = 'pending' WHERE epoch = ? AND status = 'posted' AND lane IN ('A','B','treasury')")

@@ -175,7 +175,8 @@ CREATE INDEX IF NOT EXISTS idx_fleets_owner ON fleets(owner, created_at);
 CREATE TABLE IF NOT EXISTS epochs (
   id INTEGER PRIMARY KEY, closed_at INTEGER, fees_burned_ucld INTEGER, mint_a_ucld INTEGER,
   mint_b_ucld INTEGER, leaves_json TEXT, root TEXT, tx_hash TEXT, status TEXT,
-  treasury_ucld INTEGER, settled_at INTEGER
+  treasury_ucld INTEGER, settled_at INTEGER,
+  vetoed_root TEXT -- the root the guardian vetoed: the epoch is parked while a close would rebuild it (D3)
 );
 
 CREATE TABLE IF NOT EXISTS verify_tasks (

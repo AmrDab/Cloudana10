@@ -80,6 +80,9 @@ export const envSchema = z.object({
   // PAY_HOLD_SECONDS ahead, so it stays clawable for at least PAY_HOLD_SECONDS, by a failed sampled check of any node
   // paying the same wallet (0 = no hold; else at least EPOCH_SECONDS).
   VERIFY_SAMPLE_K: int(10),
+  // A node's first VERIFY_WARMUP_JOBS verified jobs are re-executed every time (owner decision D4, 2026-10-28): a
+  // throw-away identity that cheats and leaves is caught on its first lazy job. 0 = no warm-up.
+  VERIFY_WARMUP_JOBS: int(10),
   // Challenge-mode work (ENGINEERING_BACKLOG B-26): seconds a node has to answer the segments drawn after its commitment;
   // a late or missing answer is a failed check (claw + suspension).
   CHALLENGE_TTL_SECONDS: int(30),

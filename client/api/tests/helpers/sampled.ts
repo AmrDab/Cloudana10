@@ -13,7 +13,8 @@ export const n = 8;
 export const A = Array.from({ length: n * n }, (_, i) => ((i * 7919) % 41) - 20);
 export const B = Array.from({ length: n * n }, (_, i) => ((i * 104_729) % 37) - 18);
 export const user = "0x" + "5e".repeat(20);
-export const ENV = { CLUSTER_N_MIN: "1", EPOCH_SECONDS: "3600", PAY_HOLD_SECONDS: "86400", VERIFY_SAMPLE_K: "10" };
+// No warm-up here: these tests measure the 1-in-K draw itself; the warm-up has its own describe.
+export const ENV = { CLUSTER_N_MIN: "1", EPOCH_SECONDS: "3600", PAY_HOLD_SECONDS: "86400", VERIFY_SAMPLE_K: "10", VERIFY_WARMUP_JOBS: "0" };
 
 export function setEnv(vars: Record<string, string>): void {
   Object.assign(process.env, vars);

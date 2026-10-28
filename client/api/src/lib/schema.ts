@@ -186,6 +186,8 @@ const BALANCE_COLUMNS = [
   "ALTER TABLE work_jobs ADD COLUMN fee_captured_at INTEGER",
   // Sampled transcript re-execution (ENGINEERING_BACKLOG B-6): NULL = not sampled, 'passed', 'failed' or 'reversed'.
   "ALTER TABLE work_jobs ADD COLUMN sample_check TEXT",
+  // The root the guardian vetoed: closeEpochs parks the epoch while a close would rebuild it (owner decision D3).
+  "ALTER TABLE epochs ADD COLUMN vetoed_root TEXT",
   // Storage phase 1 (docs/V4_STORAGE_PHASE1_CONTRACT.md §B): quota, network identity, check schedule and standing.
   "ALTER TABLE nodes ADD COLUMN storage_quota_mb INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE nodes ADD COLUMN net_prefix TEXT",

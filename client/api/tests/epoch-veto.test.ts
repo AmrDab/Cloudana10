@@ -97,9 +97,13 @@ describe("vetoed epochs", () => {
 
     const veto = await admin(`/${EPOCH}/vetoed`, { txHash: HEX("c"), reason: "bad provider" });
     expect(await veto.json()).toEqual({ status: "success", entriesReopened: 4 });
-    expect(await epochRow()).toMatchObject({ status: "vetoed", root: null, fees_burned_ucld: null });
+    expect(await epochRow()).toMatchObject({ status: "vetoed", root: null, fees_burned_ucld: null, vetoed_root: first!.root });
     expect((await entries("bill-1")).results!.map((e) => e.status)).toEqual(["pending", "pending"]);
     expect(await (await admin(`/${EPOCH}/vetoed`, {})).json()).toEqual({ status: "success", entriesReopened: 0 });
+    // Nothing corrected yet: a close would rebuild the vetoed root, so the epoch stays parked (D3), entries pending.
+    expect(await close()).toBeUndefined();
+    expect(await epochRow()).toMatchObject({ status: "vetoed", root: null });
+    expect((await entries("bill-2")).results!.map((e) => e.status)).toEqual(["pending", "pending"]);
 
     const mintedBefore = (await network()).mintedUcld;
     // The provider's share is clawed; the treasury share stays (the fee stays burned, so the
