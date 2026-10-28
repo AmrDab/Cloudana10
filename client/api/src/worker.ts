@@ -12,6 +12,7 @@ import { initStorage, getD1 } from "./lib/storage.js";
 import { resetEnv } from "./config/env.js";
 import { relayFromBinding, setRelay } from "./lib/relay.js";
 import { r2Artifacts, setArtifactStore } from "./lib/artifacts.js";
+import { setRateLimiters } from "./middleware/rate-limit.js";
 
 type Bindings = {
   DB: D1Database;
@@ -36,6 +37,7 @@ const bindBindings: MiddlewareHandler<AppEnv<Bindings>> = async (c, next) => {
   initStorage(c.env.DB, c.env.CLOUDANA_KV);
   setRelay(c.env.RELAY ? relayFromBinding(c.env.RELAY) : null);
   setArtifactStore(c.env.ARTIFACTS ? r2Artifacts(c.env.ARTIFACTS) : null);
+  setRateLimiters(c.env);
   await next();
 };
 

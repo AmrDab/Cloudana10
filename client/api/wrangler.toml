@@ -52,5 +52,51 @@ script_name = "cloudana-relay"
 binding = "ARTIFACTS"
 bucket_name = "cloudana-artifacts"
 
+# Public, IP-keyed rate limits (ENGINEERING_BACKLOG B-25; src/middleware/rate-limit.ts): one binding per (limit, period)
+# the shared buckets in src/middleware/security.ts use, named RL_<limit>_<period>; the key carries the bucket. The
+# period can only be 10 or 60 s, so the hourly buckets (keys-create, fleets-create) stay in KV. namespace_id is any
+# integer unique within this Worker.
+[[unsafe.bindings]]
+name = "RL_5_60"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_10_60"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 10, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_20_60"
+type = "ratelimit"
+namespace_id = "1003"
+simple = { limit = 20, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_30_60"
+type = "ratelimit"
+namespace_id = "1004"
+simple = { limit = 30, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_60_60"
+type = "ratelimit"
+namespace_id = "1005"
+simple = { limit = 60, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_120_60"
+type = "ratelimit"
+namespace_id = "1006"
+simple = { limit = 120, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_240_60"
+type = "ratelimit"
+namespace_id = "1007"
+simple = { limit = 240, period = 60 }
+
 [triggers]
 crons = ["* * * * *"]

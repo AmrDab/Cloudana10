@@ -722,6 +722,14 @@ that remained:
 - **Ledger.** `GET /v1/ledger/{address}` gains `protocolPending` and `protocol` per entry; the earnings page says
   "N protocol jobs await the epoch close" and shows "share at close" instead of 0.00 for them.
 
+### 33 · Public rate limits in the Workers rate-limiting binding (B-25, 2026-10-28)
+- `rate-limit.ts`: a shared bucket whose (limit, window) has a binding named `RL_<limit>_<period>` (wrangler.toml
+  `[[unsafe.bindings]]`, seven of them for the 60 s buckets; registered per request by `setRateLimiters`) counts
+  there, keyed by bucket and IP, with no KV operation; the binding reports pass/fail only, so those responses carry
+  X-RateLimit-Limit but no Remaining. A failing binding, an unmatched (limit, window) and the two hourly buckets
+  (keys-create, fleets-create: the binding period is 10 or 60 s) keep the KV counter, which still degrades to memory.
+  Node routes and polled reads were per isolate already. Tests: rate-limit (2 new).
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

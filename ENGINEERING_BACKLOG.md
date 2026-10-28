@@ -205,7 +205,7 @@ run`.
 **B-23 · Multiple independent gateway operators** (the hosting single point) and authoritative DNS, after B-15.
 **B-24 · Confidential compute tier** (TEE attestation) for secrets the provider must not see.
 
-**B-25 · Public rate limits off KV.** The IP-keyed security limiters (sign-in, bind, key and fleet creation, waitlist,
+**B-25 · Public rate limits off KV.** **Done 2026-10-28** (PROGRESS.md entry 33): the 60 s shared buckets count in `RL_<limit>_60` rate-limiting bindings, keyed by bucket and IP; only the two hourly buckets (keys, fleets) stay in KV, because the binding period is 10 or 60 s. Original text: the IP-keyed security limiters (sign-in, bind, key and fleet creation, waitlist,
 public reads) still count in KV (two operations per request); when the quota is gone they degrade to per-isolate
 memory. Move them to the Workers rate-limiting binding the gateway already uses (`KEY_LIMIT`), one binding per bucket.
 Node routes and the polled read buckets already count per isolate.
