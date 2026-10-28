@@ -200,7 +200,9 @@ probe-failure metrics exported (Workers Analytics Engine or Logpush), keeper and
 
 **B-21 · CDN caching for static sites** (cache keyed by content hash at the gateway, invalidated by redeploy), basic
 WAF rules and per-site rate limits at the gateway, request logs per deployment.
-**B-22 · SDK/CLI** generated from `GET /v1/doc` (TypeScript first), with `cloudana deploy ./dist` and `cloudana jobs
+**B-22 · SDK/CLI.** **First cut done 2026-10-28** (PROGRESS.md entry 34): `cli/` with login, deploy, list, get, stop
+(static sites), hand-typed responses; still to do: generation from `GET /v1/doc`, jobs, containers. Original text:
+generated from `GET /v1/doc` (TypeScript first), with `cloudana deploy ./dist` and `cloudana jobs
 run`.
 **B-23 · Multiple independent gateway operators** (the hosting single point) and authoritative DNS, after B-15.
 **B-24 · Confidential compute tier** (TEE attestation) for secrets the provider must not see.
