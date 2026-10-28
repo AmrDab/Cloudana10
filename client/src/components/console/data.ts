@@ -142,6 +142,8 @@ export type LedgerEntry = {
   epoch: number;
   lane: "A" | "B" | "treasury" | "verify";
   workType: string;
+  /** A protocol job (the orchestrator's own work for an idle node): its amount is a share of the epoch budget, set at close. */
+  protocol?: boolean;
   amountUcld: number;
   vestsAt: number;
   /** When a held entry leaves its 24 h check window; null when it is not held. */
@@ -162,6 +164,8 @@ export type Ledger = {
   verifySampleK: number;
   /** How long a job's provider pay stays clawable after it verifies (0 = no hold). */
   payHoldSeconds: number;
+  /** Protocol jobs verified but not yet closed; their subsidy share is set when the epoch closes. */
+  protocolPending?: number;
   entries: LedgerEntry[];
 };
 export function useLedger(address?: string | null) {

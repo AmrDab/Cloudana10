@@ -10,7 +10,7 @@ import { getD1 } from "../src/lib/storage.js";
 import { creditUcld } from "../src/services/balance.service.js";
 import { touchNode } from "../src/services/nodes.service.js";
 import { enqueueWorkJob, getActiveAssignment, getWorkJob, issueProtocolWork, runAssignment, submitWork } from "../src/services/jobs.service.js";
-import { PROTOCOL_ACCOUNT, closeEpochs, epochOf } from "../src/services/ledger.service.js";
+import { PROTOCOL_ACCOUNT, closeEpochs, epochOf, ledgerSummary } from "../src/services/ledger.service.js";
 import { A, B, HOUR, freshNode, n, setEnv, user } from "./helpers/sampled.js";
 
 const BUDGET = 1_000_000;
@@ -87,8 +87,13 @@ describe("protocol work", () => {
 
     // At close: the paid job's subsidy first (40), the rest of the budget to protocol work pro rata by units, wallet 1
     // (4 of 6 jobs) capped at half of it, wallet 2 gets its third (split evenly over its two jobs).
+    // The ledger shows them as jobs awaiting the close, not as 0 µCLD.
+    const summary = await ledgerSummary(w1.payout);
+    expect(summary.protocolPending).toBe(4);
+    expect(summary.entries.filter((e) => e.protocol).map((e) => e.amountUcld)).toEqual([0, 0, 0, 0]);
     const epoch = epochOf(T + 86_400_000) + 1;
     const closed = (await closeEpochs(Date.now())).find((e) => e.epoch === epoch)!;
+    expect((await ledgerSummary(w1.payout)).protocolPending).toBe(0);
     const left = BUDGET - 40;
     const byWallet = Object.fromEntries(closed.leaves.map((l) => [l.account, l]));
     const paidB = (w: typeof w1) => (w === taker ? 40 : 0);
