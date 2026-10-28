@@ -76,7 +76,9 @@ for (const p of PROVIDERS) {
   const logFile = path.join(RUN, `agent-${p}.log`);
   const m = await until(() => {
     const text = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-    return /node=(0x[0-9a-fA-F]{40})&code=([0-9a-f]{16})/.exec(text) ?? (/Joined fleet|earnings go to|bound to/.test(text) ? ["", "", ""] : null);
+    // The log is appended across runs and a bind code is new on every announce: the last link is the live one.
+    const links = [...text.matchAll(/node=(0x[0-9a-fA-F]{40})&code=([0-9a-f]{16})/g)];
+    return links.at(-1) ?? (/Joined fleet|earnings go to|bound to/.test(text) ? ["", "", ""] : null);
   }, `agent-${p}'s bind link`, 120_000);
   if (!m[1]) {
     log("up", `agent-${p} is already bound`);
