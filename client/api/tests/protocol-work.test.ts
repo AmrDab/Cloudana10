@@ -70,17 +70,20 @@ describe("protocol work", () => {
     expect(entries.results).toHaveLength(6); // lane B only: no fee, no lane A, no treasury
     for (const e of entries.results!) expect(e).toEqual({ lane: "B", amount_ucld: 0, units: UNITS, status: "pending" });
 
-    // A user job queued: no protocol work is issued while it waits.
+    // A user job queued: no protocol work is issued while it waits. Two operators are live (w1 and w2), so the paid
+    // job keeps its subsidy whichever of them draws it.
     await getD1().prepare("UPDATE nodes SET last_seen = 0").run();
     const q = await enqueueWorkJob({ owner: user, workType: "matmul", n, matrixA: A, matrixB: B });
     if (!q.ok) throw new Error(q.message);
+    await touchNode(w1.node);
     await touchNode(w2.node);
     expect(await issueProtocolWork()).toBe(0);
     await runAssignment();
     expect((await getWorkJob(q.jobId))!.status).toBe("assigned");
-    const a = (await getActiveAssignment(w2.node))!;
-    const { certificate, result } = solveAssignedJob(a.sigma, A, B, n, w2.node, "dev");
-    expect(await submitWork(w2.node, { jobId: a.jobId, certificate, result }, T)).toMatchObject({ ok: true, earned: { laneAUcld: 949, laneBUcld: 40 } });
+    const taker = (await getActiveAssignment(w1.node)) ? w1 : w2;
+    const a = (await getActiveAssignment(taker.node))!;
+    const { certificate, result } = solveAssignedJob(a.sigma, A, B, n, taker.node, "dev");
+    expect(await submitWork(taker.node, { jobId: a.jobId, certificate, result }, T)).toMatchObject({ ok: true, earned: { laneAUcld: 949, laneBUcld: 40 } });
 
     // At close: the paid job's subsidy first (40), the rest of the budget to protocol work pro rata by units, wallet 1
     // (4 of 6 jobs) capped at half of it, wallet 2 gets its third (split evenly over its two jobs).
@@ -88,8 +91,9 @@ describe("protocol work", () => {
     const closed = (await closeEpochs(Date.now())).find((e) => e.epoch === epoch)!;
     const left = BUDGET - 40;
     const byWallet = Object.fromEntries(closed.leaves.map((l) => [l.account, l]));
-    expect(byWallet[w1.payout.toLowerCase()].laneBUcld).toBe(Math.floor(Math.floor(left * 0.5) / 4) * 4);
-    expect(byWallet[w2.payout.toLowerCase()].laneBUcld).toBe(Math.floor(Math.floor(left / 3) / 2) * 2 + 40);
+    const paidB = (w: typeof w1) => (w === taker ? 40 : 0);
+    expect(byWallet[w1.payout.toLowerCase()].laneBUcld).toBe(Math.floor(Math.floor(left * 0.5) / 4) * 4 + paidB(w1));
+    expect(byWallet[w2.payout.toLowerCase()].laneBUcld).toBe(Math.floor(Math.floor(left / 3) / 2) * 2 + paidB(w2));
     expect(closed.totalLaneBUcld).toBeLessThanOrEqual(BUDGET);
     expect(closed.feesBurnedUcld).toBe(1001);
     expect(closed.totalLaneAUcld).toBe(949);
