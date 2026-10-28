@@ -233,6 +233,47 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
       return jsonError(429, "rate_limited", "Too many requests for this key; slow down.", {}, { "retry-after": "10" });
     }
   }
+  // A static site is immutable under its id (no update route; a redeploy is a new id), so a 200 for a GET is kept in
+  // the gateway cache keyed by id and path (B-21), whichever node serves it. The route lookup above (30 s) still runs
+  // first, so a stopped site stops being served within that; the key never names a node, so a node's address being
+  // reused by another tenant cannot surface the wrong content.
+  // Relayed sites only: a legacy direct origin is a node's host:port that another tenant may be given later.
+  const cacheKey =
+    site && route.relayed && route.state === "running" && request.method === "GET" && !request.headers.has("range") && deps.cache
+      ? new Request(`${STATIC_CACHE_ORIGIN}/${id}${url.pathname}${url.search}`)
+      : null;
+  if (cacheKey) {
+    const hit = await deps.cache!.match(cacheKey).catch(() => undefined);
+    if (hit) {
+      const h = new Headers(hit.headers);
+      h.set("x-cloudana-cache", "hit");
+      return new Response(hit.body, { status: hit.status, headers: h });
+    }
+  }
+  const response = await serve(request, url, id, route, endpoint, site, env, deps);
+  // Stored only with a declared size within the site cap, and off the request path (the tee then streams both ways).
+  const length = Number(response.headers.get("content-length"));
+  if (cacheKey && response.status === 200 && response.body && length > 0 && length <= STATIC_CACHE_MAX_BYTES) {
+    const stored = new Response(response.clone().body, { status: 200, headers: new Headers(response.headers) });
+    stored.headers.set("cache-control", `public, max-age=${STATIC_CACHE_TTL_SECONDS}`);
+    const put = deps.cache!.put(cacheKey, stored).catch(() => undefined);
+    deps.waitUntil ? deps.waitUntil(put) : await put;
+    response.headers.set("x-cloudana-cache", "miss");
+  }
+  return response;
+}
+
+/**
+ * Cached static responses live under this synthetic origin (the Cache API keys by URL), `STATIC_CACHE_TTL_SECONDS`
+ * each: short, because a site re-queued to another node after a bad one served it should recover soon, and bodies up
+ * to the static-site cap (client/api deployment-spec STATIC_MAX_BYTES).
+ */
+export const STATIC_CACHE_ORIGIN = "https://static-cache.cloudana.internal";
+export const STATIC_CACHE_TTL_SECONDS = 300;
+export const STATIC_CACHE_MAX_BYTES = 2 * 1024 * 1024;
+
+/** The response from the node: through the relay, or from a legacy direct origin. */
+async function serve(request: Request, url: URL, id: string, route: Route, endpoint: boolean, site: boolean, env: Env, deps: Deps): Promise<Response> {
   if (route.relayed) {
     if (route.state !== "running" || !route.targets?.length) return notRunning(id, route.state, endpoint);
     return viaRelay(request, url, { id, site, endpoint, keyed: route.auth === "key" }, route.targets, deps, isolatedContentDomain(env));

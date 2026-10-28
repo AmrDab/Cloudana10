@@ -198,7 +198,7 @@ probe-failure metrics exported (Workers Analytics Engine or Logpush), keeper and
 
 ### P3
 
-**B-21 · CDN caching for static sites** (cache keyed by content hash at the gateway, invalidated by redeploy), basic
+**B-21 · CDN caching for static sites.** **Caching done 2026-10-28** (PROGRESS.md entry 35): the gateway serves a running static site's GET responses from its cache keyed by deployment id and path (a site is immutable under its id), five minutes, relayed sites only; WAF rules, per-site limits and request logs still open. Original text: cache keyed by content hash at the gateway, invalidated by redeploy, basic
 WAF rules and per-site rate limits at the gateway, request logs per deployment.
 **B-22 · SDK/CLI.** **First cut done 2026-10-28** (PROGRESS.md entry 34): `cli/` with login, deploy, list, get, stop
 (static sites), hand-typed responses; still to do: generation from `GET /v1/doc`, jobs, containers. Original text:
