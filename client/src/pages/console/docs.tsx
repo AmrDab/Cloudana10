@@ -184,7 +184,7 @@ export default function DocsPage() {
               <b>Live today:</b> wallet sign-in by server nonce and EIP-191 signature; a short-lived token stays in the
               tab. Node messages are signed with each node's secp256k1 key; bind codes work once; fleet tokens are
               stored hashed and shown once. Every matrix job is answer-checked (Freivalds) and 1 in 10, drawn at random
-              after submit, is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
+              after submit (every job for a node's first 10), is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
               provider's pay is held 24 h and clawed if a sampled check of any of its nodes fails. int8 MLP jobs are
               checked on drawn steps. Services are probed. Signed node instructions (nodes ignore anything unsigned or
               stale); hash-checked hosting probes through the relay; sealed secrets — container env encrypted in your

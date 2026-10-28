@@ -9,7 +9,8 @@ This is the consensus of a Fable review panel: token economics, payments and dem
 > - **D1 — protocol work for idle capacity: yes, within the existing lane-B budget.** When the queue is empty, the
 >   orchestrator issues its own small matmul jobs to idle nodes (no user, no fee, nothing burned). They are verified
 >   like any job (Freivalds, sampled transcript, claw and suspension). What is left of an epoch's lane-B budget after
->   paid jobs' subsidies is minted to them pro rata by verified units, no wallet above `CLUSTER_S_CAP` of it. This is
+>   paid jobs' subsidies is minted to them pro rata by verified units, under the same cluster rule as the paid subsidy
+>   (nothing unless `CLUSTER_N_MIN` distinct wallets took part, no wallet above `CLUSTER_S_CAP` of it). This is
 >   the Bitcoin-style lane: a bounded issuance split by verified work, nothing minted without work. Lane A stays
 >   fee-backed; the contract's `LaneAExceedsFees` and `LaneBExceedsAllowance` checks are unchanged. Off by default
 >   (`PROTOCOL_WORK=on`), to be switched on with the contract deploy.
@@ -44,7 +45,7 @@ This is the consensus of a Fable review panel: token economics, payments and dem
 >    value (that subscription restricts crypto mining).
 
 ## In one paragraph
-Only one event creates CLD: a verified, paid job.
+CLD is created only for verified work: a paid job, or, since D1 (2026-10-28, above), a protocol job issued to an idle node and paid from the unused part of the epoch's subsidy budget.
 - The customer's CLD fee goes into escrow and is burned at settlement.
 - The provider is minted 95% of the fee, the protocol treasury gets 3%, and 2% is destroyed for good.
 - A small, capped, declining subsidy rewards providers in genuinely independent clusters.

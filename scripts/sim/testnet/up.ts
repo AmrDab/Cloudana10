@@ -86,7 +86,11 @@ for (const p of PROVIDERS) {
   const payout = wallet(`provider-${p}`);
   const message = bindingMessage(node, payout.address, new Date().toISOString());
   const signature = await payout.signMessage({ message });
-  const r = await api("/v1/nodes/bind", { json: { node, payout: payout.address, message, signature, code } });
+  // The agent prints its bind link about a second before its first announce lands: a 404 (unknown node) is retried.
+  const r = await until(async () => {
+    const r = await api("/v1/nodes/bind", { json: { node, payout: payout.address, message, signature, code } });
+    return r.status === 404 ? null : r;
+  }, `agent-${p} to be announced`, 30_000);
   if (r.status !== 200) throw new Error(`bind agent-${p}: ${r.status} ${JSON.stringify(r.body)}`);
   log("up", `agent-${p} ${node} → payout ${payout.address}`);
 }

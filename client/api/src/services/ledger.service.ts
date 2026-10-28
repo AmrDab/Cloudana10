@@ -99,10 +99,11 @@ export async function fitLaneB(epoch: number, budget: number): Promise<number> {
 
 /**
  * Protocol work (D1): what is left of the epoch's lane-B budget after the paid jobs' subsidies (run after fitLaneB) is
- * split among the epoch's pending protocol entries pro rata by verified units, no payout wallet above `sCap` of it
- * (the rest lapses, never minted). Pending protocol entries carry amount 0 until here. Returns the µCLD given out.
+ * split among the epoch's pending protocol entries pro rata by verified units, under the cluster rule the paid subsidy
+ * follows: nothing unless at least `nMin` distinct payout wallets took part, and no wallet above `sCap` of it (the rest
+ * lapses, never minted). Pending protocol entries carry amount 0 until here. Returns the µCLD given out.
  */
-export async function fitProtocolB(epoch: number, budget: number, sCap: number): Promise<number> {
+export async function fitProtocolB(epoch: number, budget: number, nMin: number, sCap: number): Promise<number> {
   const db = getD1();
   const paid = await db
     .prepare("SELECT COALESCE(SUM(amount_ucld), 0) AS total FROM reward_entries WHERE epoch = ? AND lane = 'B' AND status = 'pending' AND units IS NULL")
@@ -117,6 +118,10 @@ export async function fitProtocolB(epoch: number, budget: number, sCap: number):
   if (!rows.length || total <= 0 || left <= 0) return 0;
   const byWallet = new Map<string, number>();
   for (const r of rows) byWallet.set(r.address, (byWallet.get(r.address) ?? 0) + r.units);
+  if (byWallet.size < nMin) {
+    log.api.info(`[ledger] epoch ${epoch}: ${rows.length} protocol jobs from ${byWallet.size} wallet(s), fewer than CLUSTER_N_MIN ${nMin} — nothing minted`);
+    return 0;
+  }
   let given = 0;
   const updates = rows.map((r) => {
     const walletUnits = byWallet.get(r.address)!;
@@ -448,7 +453,7 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
 
     // Lane B over the epoch's budget is scaled pro rata before anything is summed; protocol work gets what is left.
     await fitLaneB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD);
-    await fitProtocolB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD, getEnv().CLUSTER_S_CAP);
+    await fitProtocolB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD, getEnv().CLUSTER_N_MIN, getEnv().CLUSTER_S_CAP);
     const pending = "epoch = ?1 AND status = 'pending'";
     const leafRows = await db
       .prepare(

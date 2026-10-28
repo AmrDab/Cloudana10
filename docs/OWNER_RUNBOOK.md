@@ -313,6 +313,8 @@ followed by two `npx hardhat verify …` lines. Skip those; they only publish th
 ✅ Tell Claude: **"contracts deployed"**. Claude reads the new addresses from
 `C:\Users\amr_d\Cloudana10-owner\shared\addresses.baseSepolia.json` and then:
 - points the API and the keeper at the new contracts;
+- switches on protocol work (`PROTOCOL_WORK=on`: idle nodes get the orchestrator's own jobs and the unused part of
+  each epoch's subsidy, decision D1 of 2026-10-28);
 - deploys the keeper Worker;
 - tells you **"ready for step 5"**, along with the token and settlement addresses you need in step 6.
 

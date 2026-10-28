@@ -31,7 +31,7 @@ const queuedProtocol = async () =>
 
 describe("protocol work", () => {
   beforeAll(async () => {
-    await setupV1Db({ PROTOCOL_WORK: "on", CLUSTER_N_MIN: "1", CLUSTER_S_CAP: "0.5", EPOCH_SUBSIDY_BUDGET_UCLD: String(BUDGET), VERIFY_WARMUP_JOBS: "0", PAY_HOLD_SECONDS: "86400", EPOCH_SECONDS: "3600" });
+    await setupV1Db({ PROTOCOL_WORK: "on", CLUSTER_N_MIN: "2", CLUSTER_S_CAP: "0.5", EPOCH_SUBSIDY_BUDGET_UCLD: String(BUDGET), VERIFY_WARMUP_JOBS: "0", PAY_HOLD_SECONDS: "86400", EPOCH_SECONDS: "3600" });
     await creditUcld(user, 1_000_000);
   });
 
@@ -93,6 +93,17 @@ describe("protocol work", () => {
     expect(closed.totalLaneBUcld).toBeLessThanOrEqual(BUDGET);
     expect(closed.feesBurnedUcld).toBe(1001);
     expect(closed.totalLaneAUcld).toBe(949);
+
+    // An epoch whose protocol work came from one wallet only (fewer than CLUSTER_N_MIN): nothing minted for it.
+    const T2 = T + 5 * 24 * HOUR;
+    await getD1().prepare("UPDATE nodes SET last_seen = 0").run();
+    await touchNode(w2.node);
+    expect(await issueProtocolWork()).toBe(1);
+    expect(await runAssignment()).toBe(1);
+    await solveAndSubmit(w2.node, T2);
+    const alone = (await closeEpochs(Date.now())).find((e) => e.epoch === epochOf(T2 + 86_400_000) + 1)!;
+    expect(alone.totalLaneBUcld).toBe(0);
+    expect(alone.totalLaneAUcld).toBe(0);
   });
 
   it("drops a protocol job nobody took in 10 minutes", async () => {
