@@ -47,7 +47,7 @@ export const ANY_IMAGE_CAPABILITY = "any-image";
 import { endpointAllowed, imageAllowed, type ApiKind, type ContainerSpec, type DeploymentKind, type WorkstationSpec } from "./deployment-spec.js";
 export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
-import { runAssignment } from "./jobs.service.js";
+import { issueProtocolWork, runAssignment } from "./jobs.service.js";
 import { getRelay } from "../lib/relay.js";
 import { readCapped } from "../lib/read-capped.js";
 /** Hosting probes in flight per node at once (the hub reserves PROBE_SLOTS for all of the API's checks). */
@@ -1084,6 +1084,8 @@ export interface DutiesCronResult {
   /** Assigned deployments taken back from a node that never started them (or failed after DEPLOY_START_ATTEMPTS). */
   stuck: number;
   preempted: number;
+  /** D1: protocol jobs issued to idle nodes while the queue is empty (PROTOCOL_WORK=on). */
+  protocol: number;
   assigned: number;
 }
 
@@ -1113,12 +1115,13 @@ export async function runDutiesCron(env?: CronBindings, now = Date.now()): Promi
     if (changed) resetEnv();
     initStorage(env.DB, env.CLOUDANA_KV);
   }
-  const out: DutiesCronResult = { requeued: 0, mispinned: 0, stuck: 0, preempted: 0, assigned: 0 };
+  const out: DutiesCronResult = { requeued: 0, mispinned: 0, stuck: 0, preempted: 0, protocol: 0, assigned: 0 };
   const steps: [keyof DutiesCronResult, () => Promise<number>][] = [
     ["requeued", () => requeueDeadNodeDeployments(now)],
     ["mispinned", () => requeueMispinned(now)],
     ["stuck", () => requeueStuckAssigned(now)],
     ["preempted", () => preemptForOnDemand(now)],
+    ["protocol", () => issueProtocolWork(now)],
     ["assigned", () => runAssignment(now)],
   ];
   for (const [name, step] of steps) {

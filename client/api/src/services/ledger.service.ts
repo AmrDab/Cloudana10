@@ -23,6 +23,8 @@ export const LANE_A_PER_MILLE = 950;
 export const TREASURY_PER_MILLE = 30;
 /** reward_entries.address of treasury-lane entries; the on-chain treasury address is immutable in the contract. */
 export const TREASURY_ACCOUNT = "treasury";
+/** Owner of protocol work (D1): jobs the orchestrator issues to idle nodes, with no fee. */
+export const PROTOCOL_ACCOUNT = "protocol";
 
 export type Lane = "A" | "B" | "treasury" | "verify";
 
@@ -95,6 +97,44 @@ export async function fitLaneB(epoch: number, budget: number): Promise<number> {
   return budget / total;
 }
 
+/**
+ * Protocol work (D1): what is left of the epoch's lane-B budget after the paid jobs' subsidies (run after fitLaneB) is
+ * split among the epoch's pending protocol entries pro rata by verified units, under the cluster rule the paid subsidy
+ * follows: nothing unless at least `nMin` distinct payout wallets took part, and no wallet above `sCap` of it (the rest
+ * lapses, never minted). Pending protocol entries carry amount 0 until here. Returns the µCLD given out.
+ */
+export async function fitProtocolB(epoch: number, budget: number, nMin: number, sCap: number): Promise<number> {
+  const db = getD1();
+  const paid = await db
+    .prepare("SELECT COALESCE(SUM(amount_ucld), 0) AS total FROM reward_entries WHERE epoch = ? AND lane = 'B' AND status = 'pending' AND units IS NULL")
+    .bind(epoch)
+    .first<{ total: number }>();
+  const left = Math.max(0, budget - (paid?.total ?? 0));
+  const rows = (await db
+    .prepare("SELECT id, address, units FROM reward_entries WHERE epoch = ? AND lane = 'B' AND status = 'pending' AND units IS NOT NULL")
+    .bind(epoch)
+    .all<{ id: string; address: string; units: number }>()).results ?? [];
+  const total = rows.reduce((s, r) => s + r.units, 0);
+  if (!rows.length || total <= 0 || left <= 0) return 0;
+  const byWallet = new Map<string, number>();
+  for (const r of rows) byWallet.set(r.address, (byWallet.get(r.address) ?? 0) + r.units);
+  if (byWallet.size < nMin) {
+    log.api.info(`[ledger] epoch ${epoch}: ${rows.length} protocol jobs from ${byWallet.size} wallet(s), fewer than CLUSTER_N_MIN ${nMin} — nothing minted`);
+    return 0;
+  }
+  let given = 0;
+  const updates = rows.map((r) => {
+    const walletUnits = byWallet.get(r.address)!;
+    const walletUcld = Math.min(Math.floor((left * walletUnits) / total), Math.floor(left * sCap));
+    const amount = Math.floor((walletUcld * r.units) / walletUnits);
+    given += amount;
+    return db.prepare("UPDATE reward_entries SET amount_ucld = ? WHERE id = ? AND status = 'pending'").bind(amount, r.id);
+  });
+  for (let i = 0; i < updates.length; i += 100) await db.batch(updates.slice(i, i + 100));
+  log.api.info(`[ledger] epoch ${epoch}: ${given} of ${left} µCLD left in the lane-B budget minted for ${rows.length} protocol jobs (${byWallet.size} wallets)`);
+  return given;
+}
+
 export interface JobRewards {
   laneAUcld: number;
   /** The most this job's subsidy can be (ρF): final when the epoch closes, lower if the epoch's budget binds. */
@@ -148,7 +188,7 @@ export async function recordJobRewards(input: {
  * the treasury entry stays pending, so the fee is still burned.
  */
 export function jobRewardStatements(
-  input: { jobId: string; workType: string; provider: string; feeUcld: number; clusterOk: boolean; now?: number },
+  input: { jobId: string; workType: string; provider: string; feeUcld: number; clusterOk: boolean; now?: number; protocolUnits?: number },
   cond: { capturedAt: number; node: string; clawed?: boolean },
 ): { statements: D1PreparedStatement[]; rewards: JobRewards } {
   const env = getEnv();
@@ -158,20 +198,24 @@ export function jobRewardStatements(
   const provider = normalizeAddress(input.provider);
   const providerStatus = cond.clawed ? "clawed" : "pending";
   const db = getD1();
-  const rows: [Lane, string, number, number, string][] = [
-    ["A", provider, split.laneA, now, providerStatus],
-    ["treasury", TREASURY_ACCOUNT, split.treasury, now, "pending"],
-    ["B", provider, split.subsidy, vestsAt, providerStatus],
-  ];
+  // Protocol work (D1): no fee, so no lane A and no treasury; one lane-B entry carrying the verified units, whose
+  // amount fitProtocolB sets at close from what is left of the epoch's budget.
+  const rows: [Lane, string, number, number, string, number | null][] = input.protocolUnits
+    ? [["B", provider, 0, vestsAt, providerStatus, input.protocolUnits]]
+    : [
+        ["A", provider, split.laneA, now, providerStatus, null],
+        ["treasury", TREASURY_ACCOUNT, split.treasury, now, "pending", null],
+        ["B", provider, split.subsidy, vestsAt, providerStatus, null],
+      ];
   const statements = rows
-    .filter(([, , amount]) => amount > 0)
-    .map(([lane, address, amount, vests, status]) =>
+    .filter(([, , amount, , , units]) => amount > 0 || units)
+    .map(([lane, address, amount, vests, status, units]) =>
       db
         .prepare(
-          "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at) " +
-            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ? AND status = 'assigned' AND node = ?)",
+          "INSERT INTO reward_entries (id, job_id, epoch, address, lane, work_type, amount_ucld, vests_at, status, created_at, units) " +
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM work_jobs WHERE id = ? AND fee_captured_at = ? AND status = 'assigned' AND node = ?)",
         )
-        .bind(crypto.randomUUID(), input.jobId, epoch, address, lane, input.workType, amount, vests, status, now, input.jobId, cond.capturedAt, cond.node),
+        .bind(crypto.randomUUID(), input.jobId, epoch, address, lane, input.workType, amount, vests, status, now, units, input.jobId, cond.capturedAt, cond.node),
     );
   return { statements, rewards: { laneAUcld: split.laneA, laneBUcld: split.subsidy, treasuryUcld: split.treasury, vestsAt, epoch, heldUntil } };
 }
@@ -396,7 +440,7 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
 
   const closed: EpochPayload[] = [];
   for (const { epoch } of candidates.results ?? []) {
-    const exists = await db.prepare("SELECT status FROM epochs WHERE id = ?").bind(epoch).first<{ status: string }>();
+    const exists = await db.prepare("SELECT status, vetoed_root FROM epochs WHERE id = ?").bind(epoch).first<{ status: string; vetoed_root: string | null }>();
     if (exists && exists.status !== "vetoed") {
       // An epoch is posted once, unless vetoed. Entries that committed after it closed (boundary
       // race) move to the open epoch instead of staying pending forever.
@@ -407,8 +451,9 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
       continue;
     }
 
-    // Lane B over the epoch's budget is scaled pro rata before anything is summed.
+    // Lane B over the epoch's budget is scaled pro rata before anything is summed; protocol work gets what is left.
     await fitLaneB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD);
+    await fitProtocolB(epoch, getEnv().EPOCH_SUBSIDY_BUDGET_UCLD, getEnv().CLUSTER_N_MIN, getEnv().CLUSTER_S_CAP);
     const pending = "epoch = ?1 AND status = 'pending'";
     const leafRows = await db
       .prepare(
@@ -439,6 +484,12 @@ export async function closeEpochs(now = Date.now()): Promise<EpochPayload[]> {
       leaves,
       status: "closed",
     };
+    // A vetoed epoch stays parked until an operator's claw or reverse changes its root (D3): re-closing it unchanged
+    // would only have the keeper refuse to re-post the root the guardian rejected, every pass.
+    if (exists?.vetoed_root && exists.vetoed_root.toLowerCase() === out.root.toLowerCase()) {
+      log.api.warn(`[ledger] epoch ${epoch}: vetoed and unchanged (root ${out.root}) — parked until an entry is clawed or reversed`);
+      continue;
+    }
     const cols = [now, out.feesBurnedUcld, out.totalLaneAUcld, out.totalLaneBUcld, out.treasuryUcld, JSON.stringify(leaves), out.root];
     await db.batch([
       exists
@@ -582,7 +633,8 @@ export async function markEpochVetoed(
   if (row.status === "settled") return { ok: false, code: "conflict", message: `epoch ${id} is already settled` };
   const [, reopened] = await db.batch([
     db
-      .prepare("UPDATE epochs SET status = 'vetoed', root = NULL, fees_burned_ucld = NULL, tx_hash = COALESCE(?, tx_hash) WHERE id = ? AND status IN ('closed','posted')")
+      // vetoed_root: the next close is parked while it would rebuild this same root (closeEpochs).
+      .prepare("UPDATE epochs SET status = 'vetoed', vetoed_root = root, root = NULL, fees_burned_ucld = NULL, tx_hash = COALESCE(?, tx_hash) WHERE id = ? AND status IN ('closed','posted')")
       .bind(opts.txHash ?? null, id),
     db
       .prepare("UPDATE reward_entries SET status = 'pending' WHERE epoch = ? AND status = 'posted' AND lane IN ('A','B','treasury')")

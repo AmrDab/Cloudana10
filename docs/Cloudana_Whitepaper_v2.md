@@ -58,7 +58,7 @@ Not all compute is a matrix multiply, so PoUW is not the verification method for
 
 - **Tier 1 — Standard** (static hosting today; APIs, databases, CI later). Served through a Cloudana gateway and probed every minute for reachability and a content hash of the uploaded files; the orchestrator can stop a deployment. Paid by fees only — **no subsidy**.
 - **Tier 2 — Optimistic** (containers, ETL, transcoding, batch). Health-probed today; fraud-proof windows later. Paid by fees only until a proof exists.
-- **Tier 3 — PoUW** (matrix-multiplication jobs). Answer-checked (Freivalds) on every job and re-executed by the orchestrator on a random sample (1 in 10; provider pay held 24 h and clawed on a failed sample), with the transcript bound to its assignment by σ. This is the tier where proof and product coincide, and the only tier eligible for the subsidy lane.
+- **Tier 3 — PoUW** (matrix-multiplication jobs). Answer-checked (Freivalds) on every job and re-executed by the orchestrator on a random sample (1 in 10, and every job for a node's first 10; provider pay held 24 h and clawed on a failed sample), with the transcript bound to its assignment by σ. This is the tier where proof and product coincide, and the only tier eligible for the subsidy lane.
 
 A user does not choose a tier manually. They describe what they need to run; the platform classifies the workload and routes it. The complexity is ours, not theirs. *(v2.0 described a bonded "challenger network" for Tiers 1–2; that design is superseded — see §6.4.)*
 
@@ -66,7 +66,7 @@ A user does not choose a tier manually. They describe what they need to run; the
 
 Each service is labelled by what is actually checked, never more. These labels supersede the tier numbers above where they differ.
 
-- **Proven** — the answer is checked exactly. *Matrix jobs:* Freivalds on every answer; the full cuPOW transcript re-executed on a random 1 in 10. *int8 MLP blocks* (agent ≥ 1.7.0) and *chained int8 models* (L ≤ 16 blocks, width ≤ 64 today; agent ≥ 1.8.0), both on the user's own weights: the node commits to every segment, then 2 of 4 segments (a block) or max(3, L) of 4·L, drawn uniformly (a model), are opened and checked exactly within 30 s. One faked segment is caught with probability ½ per job for a block and at least ¼ per job for a model — a per-job probability, so "caught within N jobs" is an average, not a guarantee. Provider pay is held 24 h; a failed check refunds the owner (int8), claws the node wallet's held pay and suspends the node.
+- **Proven** — the answer is checked exactly. *Matrix jobs:* Freivalds on every answer; the full cuPOW transcript re-executed on a random 1 in 10 (on every job for a node's first 10). *int8 MLP blocks* (agent ≥ 1.7.0) and *chained int8 models* (L ≤ 16 blocks, width ≤ 64 today; agent ≥ 1.8.0), both on the user's own weights: the node commits to every segment, then 2 of 4 segments (a block) or max(3, L) of 4·L, drawn uniformly (a model), are opened and checked exactly within 30 s. One faked segment is caught with probability ½ per job for a block and at least ¼ per job for a model — a per-job probability, so "caught within N jobs" is an average, not a guarantee. Provider pay is held 24 h; a failed check refunds the owner (int8), claws the node wallet's held pay and suspends the node.
 - **Possession proven** — storage. Nodes hold AES-GCM encrypted copies of job results and answer Merkle challenges on random 64 KiB leaves, with re-challenges, audits and cooldowns. It shows a copy can be retrieved, not that it is replicated.
 - **Probed** — static sites (content hash every minute through the relay), containers and GPU workstations (health and reachability), and AI endpoints running the user's own model server. Only time a probe saw working is charged.
 - **Planned** — spot-checked inference for AI endpoints (B-19), which needs a GPU node. Cloudana never picks or brands a model; a user's own model on a GPU endpoint is not verified today.
@@ -103,12 +103,13 @@ v2.0 replaced that with an 8%-per-year drip of "mining rewards" decaying to a 1.
 
 ### 6.2 The model: burn the fee, mint for the verified job
 
-Only one event creates CLD: a verified, paid job.
+CLD is created only for verified work: a paid job, or (when no paid job is queued) a protocol job the orchestrator issues to an idle node.
 
 1. The user is quoted a price in US dollars and pays a fee **F** in CLD at the rate on the quote. It is held in escrow until the job verifies.
 2. At settlement the **whole fee is burned**.
 3. For the verified job, the provider is **minted 95% of F**, the protocol treasury is **minted 3% of F**, and **2% of F is destroyed for good** (net burn).
 4. If the job is proven work, the orchestrator's random draw chose that provider *and* the cluster gate passed, a **capped subsidy** (lane B) is minted on top.
+5. With no paid job queued, idle nodes receive **protocol jobs** (no fee, so no lane A and nothing for the treasury); what is left of the epoch's lane-B budget after paid jobs is minted to them pro rata by verified units, under the subsidy's cluster rule (nothing unless three independent payout wallets took part, no wallet above half of it). Issuance is bounded by the same budget either way, and nothing is minted without verified work.
 
 Burn-then-mint rather than a plain transfer gives the contract one invariant to enforce: `minted ≤ fees burned × 98% + subsidy allowance`. The split is enforced on-chain at mainnet (treasury ≥ 3% of fees burned, provider + treasury ≤ 98%); on testnet it is applied in the ledger and checked by the settlement contract on every posted batch. The treasury share is a one-way-down knob.
 
@@ -158,7 +159,7 @@ v2.0 §6.4 and §7.1 described provider bonds, 50% slashing and a bonded challen
 
 ### 7.1 Testnet (today): orchestrator-coordinated
 
-- The orchestrator first Freivalds-checks the decoded result (entries are bounded, so the check is exact over the integers), then, on a random sample of jobs (1 in 10), verifies the PoUW certificate by re-running the block multiply over the job's own matrices and checking the transcript hash; provider pay is held 24 h and clawed if a sampled check fails.
+- The orchestrator first Freivalds-checks the decoded result (entries are bounded, so the check is exact over the integers), then, on a random sample of jobs (1 in 10, and every job for a node's first 10), verifies the PoUW certificate by re-running the block multiply over the job's own matrices and checking the transcript hash; provider pay is held 24 h and clawed if a sampled check fails.
 - Replay is blocked by σ: it is issued at assignment and bound to the job and the node, so a certificate cannot be precomputed, reused or copied.
 - Browser verifiers re-check finished public jobs, with planted wrong answers to catch careless verifiers. It is a public re-check: verdicts do not change any job's outcome. Verifier credits are points, not CLD.
 - Settlement is a Merkle root per epoch on Base Sepolia, posted by a keeper that runs isolated from the API, with a veto window and a guardian multisig. The v2 settlement contract is not deployed yet; until it is, pay is recorded off-chain.

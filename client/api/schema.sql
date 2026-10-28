@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS work_jobs (
   eligible_json TEXT, -- the eligible set the draw ran over (sorted Candidate[]), published for replay at /v1/draws/{id}
   fee_captured_at INTEGER, -- set in the same transaction that captures the fee and writes the rewards (submitWork)
   sample_check TEXT, -- sampled transcript re-execution (B-6): NULL = not sampled, 'passed', 'failed' or 'reversed' (claw undone)
+  protocol INTEGER NOT NULL DEFAULT 0, -- 1 = issued by the orchestrator to an idle node (D1): owner 'protocol', price 0, lane B from the epoch budget
   -- Challenge-mode work (B-26): a non-matmul job's input, the node's commitment, the segments drawn after it was stored,
   -- the answer deadline, and the payout wallet at commit time that a failed challenge claws (all NULL for matmul).
   input_json TEXT, commitment_json TEXT, challenge_json TEXT, challenge_expires_at INTEGER, commit_payout TEXT,
@@ -153,7 +154,8 @@ CREATE INDEX IF NOT EXISTS idx_work_jobs_completed ON work_jobs(status, complete
 
 CREATE TABLE IF NOT EXISTS reward_entries (
   id TEXT PRIMARY KEY, job_id TEXT, epoch INTEGER, address TEXT, lane TEXT, work_type TEXT,
-  amount_ucld INTEGER, vests_at INTEGER, status TEXT, created_at INTEGER
+  amount_ucld INTEGER, vests_at INTEGER, status TEXT, created_at INTEGER,
+  units INTEGER -- protocol work (D1): verified MACs; amount_ucld is set from the epoch's remaining budget at close
 );
 CREATE INDEX IF NOT EXISTS idx_reward_entries_address ON reward_entries(address, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reward_entries_epoch ON reward_entries(epoch, status);
@@ -175,7 +177,8 @@ CREATE INDEX IF NOT EXISTS idx_fleets_owner ON fleets(owner, created_at);
 CREATE TABLE IF NOT EXISTS epochs (
   id INTEGER PRIMARY KEY, closed_at INTEGER, fees_burned_ucld INTEGER, mint_a_ucld INTEGER,
   mint_b_ucld INTEGER, leaves_json TEXT, root TEXT, tx_hash TEXT, status TEXT,
-  treasury_ucld INTEGER, settled_at INTEGER
+  treasury_ucld INTEGER, settled_at INTEGER,
+  vetoed_root TEXT -- the root the guardian vetoed: the epoch is parked while a close would rebuild it (D3)
 );
 
 CREATE TABLE IF NOT EXISTS verify_tasks (

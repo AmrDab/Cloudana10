@@ -204,3 +204,30 @@ what proof); **D2** ρ and the cluster gate (the subsidy is withheld on 68–80 
 **D3** who verifies (the simulation says: keep it in the orchestrator, make the guardian path the safety net);
 **D4** (new, from phase 2) matmul transcript: sample new identities at a higher rate, or drop the transcript where
 Freivalds already proves the output.
+
+## Phase 4 — the decisions, built and run (2026-10-28)
+
+Owner, 2026-10-28: "go with your recommendations on D1–D4" (recorded in `docs/DECISIONS_CONSENSUS.md`). Built on
+branch `feat/pouw-decisions` with a test each, then run on a fresh chain and database (`phase4.sh`: 12 min of zero
+demand, a hit-and-run adversary, a 5 min user burst, settlement). Numbers: `.dev-run-sim/report-phase4.md`.
+
+| decision | what changed | what the run showed |
+|---|---|---|
+| **D1 protocol work** | with no user job queued, the cron issues one matmul (n = 64, no fee) per idle node; verified like any job; at close, what is left of the epoch's lane-B budget after paid subsidies is minted to protocol jobs pro rata by verified units, under the cluster rule (≥ `CLUSTER_N_MIN` wallets, none above `CLUSTER_S_CAP`); `PROTOCOL_WORK=on` | **74 protocol jobs issued, 74 verified, 0 failed.** Seven zero-demand epochs each minted the whole budget (243,330 of 243,333 µCLD, lane B only, 3 wallets, fees 0, lane A 0, treasury 0) and settled on chain; the paid epoch minted its paid subsidy first (440) and protocol work got the rest (242,890); two epochs whose protocol work came from only two wallets minted **0** for it. Chain = API for every epoch, supply Δ = minted − burned, wallet balances = ledger to the µCLD. A node earned ≈ 1.8 CLD/h from protocol work vs 0.14–0.23 CLD/h from paid jobs: the budget, not demand, is now the floor. |
+| **D2 gate over live operators** | the gate sees every live node of the work type, busy or not; only the draw is among idle ones | the five user jobs drawn with one or two idle nodes (three operators live) **kept their subsidy** (0 % of those passed before). 8 of 35 user jobs still lost it with all three idle: that is the share cap on the draw weight, which phase 1 showed is heartbeat noise (one node at > 50 % of "throughput"). The fix left is the backlog item: weigh by compute time. |
+| **D3 parked veto** | `markEpochVetoed` keeps the vetoed root; `closeEpochs` does not re-close an epoch whose rebuilt root is that root (one warning per pass instead of a re-close and a `/vetoed` round trip) | unit-tested (epoch-veto: veto → close parks → claw → close re-posts); not re-run live, the live veto path is phase 3's |
+| **D4 warm-up** | a node's first `VERIFY_WARMUP_JOBS` (10) jobs have the transcript re-executed every time, then 1 in K | the hit-and-run adversary (lazy transcript, 8 jobs planned, fresh identity) was **caught on job 1**, its lane-B entry clawed, the node suspended, 0 µCLD kept. The 43 % escape of phase 2 is 0 %. |
+
+**Found on the way.**
+- **The keeper refuses an epoch over the chain's lane-B allowance before posting** (`lane B … exceeds allowance`),
+  which the first phase-4 run hit: the sim's budget was the one-hour default (7.3 CLD) on 120 s epochs, so protocol
+  work filled 7.3 CLD per two minutes and every epoch was skipped, lane A included, until the budget was scaled to the
+  epoch. Correct behaviour, but a configuration invariant worth a startup check: `EPOCH_SUBSIDY_BUDGET_UCLD` ≤ the
+  contract's `allowance()` for `EPOCH_SECONDS`. Backlog.
+- **Two first announces of a fresh node could print two bind codes** (the agent's start-up announce and its first
+  heartbeat overlap): fixed with a `COALESCE` so one code wins (`nodes.service announceNode`).
+- **Protocol issuance is cron-bound**: one job per idle node per 60 s pass, 20 ms of compute each, so idle nodes are
+  idle 97 % of the time; the budget is minted either way. Issuing at heartbeat, or several per pass, is a follow-up
+  once jobs are metered by work (then the job size, not the count, carries the units).
+- The clawed protocol entry shows 0 µCLD: protocol amounts are set at close, so a claw before close claws a share,
+  not a number. Correct, but the ledger summary should say so.

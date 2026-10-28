@@ -437,6 +437,17 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 - [x] Phase 1: honest load (user.ts), report.ts → E1–E4 — 400/400, verify 1.4–6.5 % of compute, flat 1,001 µCLD fee
 - [x] Phase 2: adversary.ts, 10 strategies, P&L after claws — all refused/caught; hit-and-run keeps pay with 0.9^N
 - [x] Phase 3: 2 h run, epoch invariants, claw + veto + keeper restart — 840/840, 62 epochs, both faults PASS
-- [ ] Owner decisions D1 (protocol work), D2 (ρ / cluster gate), D3 (who verifies), D4 (matmul transcript sampling)
-- [ ] Backlog: veto should park the epoch and alert, not re-report every pass; draw weight by compute time
+- [x] Owner decisions D1–D4: "go with your recommendations" (2026-10-28), recorded in docs/DECISIONS_CONSENSUS.md
+- [ ] Backlog: draw weight by compute time
+
+## PoUW decisions D1–D4 build (2026-10-28, branch feat/pouw-decisions)
+Success = each item has a test that fails on main, `npx tsc --noEmit` + vitest green, and a short sim run shows it.
+- [x] D4 warm-up sampling (`VERIFY_WARMUP_JOBS`); test: fresh identity caught on job 1
+- [x] D3 veto parks (`epochs.vetoed_root`); test in epoch-veto
+- [x] D2 cluster gate over live operators; test cluster-gate-live
+- [x] D1 protocol work (`issueProtocolWork`, `fitProtocolB`, cluster rule); test protocol-work
+- [x] Sim phase 4: 74/74 protocol jobs, budget minted and settled, adversary caught on job 1 (report §Phase 4)
+- [x] Report §Phase 4, PROGRESS.md entry 31
+- [ ] PR for feat/pouw-decisions; switch `PROTOCOL_WORK=on` with the contract deploy (runbook step 4)
+- [ ] Backlog: budget ≤ chain allowance startup check; draw weight by compute time; protocol issuance at heartbeat
 - [ ] Report final + PROGRESS entry + PR

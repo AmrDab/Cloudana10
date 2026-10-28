@@ -6,7 +6,7 @@
  *   npx tsx scripts/sim/testnet/up.ts        stop: npx tsx scripts/sim/testnet/down.ts
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -45,6 +45,11 @@ start("api", ["--import", "tsx", "src/index.ts"], path.join(ROOT, "client/api"),
   VEST_B_SECONDS: "60",
   PAY_HOLD_SECONDS: String(EPOCH_SECONDS),
   VERIFY_SAMPLE_K: process.env.VERIFY_SAMPLE_K ?? "10",
+  VERIFY_WARMUP_JOBS: process.env.VERIFY_WARMUP_JOBS ?? "10",
+  PROTOCOL_WORK: process.env.PROTOCOL_WORK ?? "off",
+  // The default budget (7.3 CLD) is 80 % of the chain's allowance for a one-hour epoch: scale it to the local epoch, or
+  // an epoch whose protocol work takes the whole budget is refused on chain (LaneBExceedsAllowance), lane A included.
+  EPOCH_SUBSIDY_BUDGET_UCLD: String(Math.floor((7_300_000 * EPOCH_SECONDS) / 3600)),
   SUBSIDY_RHO: "0.04",
   CLUSTER_N_MIN: "3",
   USD_PER_CLD: "0.1",
@@ -64,6 +69,9 @@ log("up", `API ready, instruction signer ${signer}`);
 
 // ── Node agents ─────────────────────────────────────────────────────────────────────────────────────────────────
 for (const p of PROVIDERS) {
+  // A fresh log per run: the bind link is read from it, and a previous run's link would be taken for this run's.
+  const old = path.join(RUN, `agent-${p}.log`);
+  if (existsSync(old)) unlinkSync(old);
   start(`agent-${p}`, ["--import", "tsx", "src/index.ts", "--api", API, "--name", `sim-${p}`, "--site", "http://127.0.0.1:7003"], path.join(ROOT, "node-agent"), {
     CLOUDANA_INSTRUCTION_SIGNER: signer,
   });
@@ -74,7 +82,9 @@ for (const p of PROVIDERS) {
   const logFile = path.join(RUN, `agent-${p}.log`);
   const m = await until(() => {
     const text = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-    return /node=(0x[0-9a-fA-F]{40})&code=([0-9a-f]{16})/.exec(text) ?? (/Joined fleet|earnings go to|bound to/.test(text) ? ["", "", ""] : null);
+    // The log is appended across runs and a bind code is new on every announce: the last link is the live one.
+    const links = [...text.matchAll(/node=(0x[0-9a-fA-F]{40})&code=([0-9a-f]{16})/g)];
+    return links.at(-1) ?? (/Joined fleet|earnings go to|bound to/.test(text) ? ["", "", ""] : null);
   }, `agent-${p}'s bind link`, 120_000);
   if (!m[1]) {
     log("up", `agent-${p} is already bound`);
@@ -84,7 +94,11 @@ for (const p of PROVIDERS) {
   const payout = wallet(`provider-${p}`);
   const message = bindingMessage(node, payout.address, new Date().toISOString());
   const signature = await payout.signMessage({ message });
-  const r = await api("/v1/nodes/bind", { json: { node, payout: payout.address, message, signature, code } });
+  // The agent prints its bind link about a second before its first announce lands: a 404 (unknown node) is retried.
+  const r = await until(async () => {
+    const r = await api("/v1/nodes/bind", { json: { node, payout: payout.address, message, signature, code } });
+    return r.status === 404 ? null : r;
+  }, `agent-${p} to be announced`, 30_000);
   if (r.status !== 200) throw new Error(`bind agent-${p}: ${r.status} ${JSON.stringify(r.body)}`);
   log("up", `agent-${p} ${node} → payout ${payout.address}`);
 }

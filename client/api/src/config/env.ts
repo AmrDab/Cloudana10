@@ -73,6 +73,12 @@ export const envSchema = z.object({
   PRICE_CONTROLLER: z.enum(["on", "off"]).default("on"),
   /** Lane-B subsidy per epoch: 80 % of the chain allowance for a 1 h epoch at 1M supply, 8 %/yr. */
   EPOCH_SUBSIDY_BUDGET_UCLD: int(7_300_000),
+  /**
+   * Protocol work (owner decision D1, 2026-10-28): with the queue empty, the orchestrator issues its own matmul jobs to
+   * idle nodes; what is left of the epoch's lane-B budget after paid jobs' subsidies is minted to them pro rata by
+   * verified units (jobs.service issueProtocolWork, ledger.service fitProtocolB). Switch on with the contract deploy.
+   */
+  PROTOCOL_WORK: z.enum(["on", "off"]).default("off"),
   NODE_ACTIVE_SECONDS: int(45),
   ASSIGNMENT_TTL_SECONDS: int(60),
   // Sampled verification (ENGINEERING_BACKLOG B-6): Freivalds on every matmul job; the full transcript is re-executed
@@ -80,6 +86,9 @@ export const envSchema = z.object({
   // PAY_HOLD_SECONDS ahead, so it stays clawable for at least PAY_HOLD_SECONDS, by a failed sampled check of any node
   // paying the same wallet (0 = no hold; else at least EPOCH_SECONDS).
   VERIFY_SAMPLE_K: int(10),
+  // A node's first VERIFY_WARMUP_JOBS verified jobs are re-executed every time (owner decision D4, 2026-10-28): a
+  // throw-away identity that cheats and leaves is caught on its first lazy job. 0 = no warm-up.
+  VERIFY_WARMUP_JOBS: int(10),
   // Challenge-mode work (ENGINEERING_BACKLOG B-26): seconds a node has to answer the segments drawn after its commitment;
   // a late or missing answer is a failed check (claw + suspension).
   CHALLENGE_TTL_SECONDS: int(30),

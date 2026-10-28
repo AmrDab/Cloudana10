@@ -117,6 +117,29 @@ describe("a planted wrong transcript (acceptance: always caught, after K jobs on
   });
 });
 
+describe("warm-up: a node's first VERIFY_WARMUP_JOBS jobs are re-executed every time (D4)", () => {
+  beforeAll(async () => {
+    await setupV1Db({ ...ENV, VERIFY_WARMUP_JOBS: "3" });
+    await creditUcld(user, 1_000_000);
+  });
+
+  it("a throw-away identity is caught on its first lazy job", async () => {
+    const { node } = await freshNode();
+    const s = await nextJob(node, true);
+    expect(await submitWork(node, s)).toMatchObject({ ok: false, code: "unprocessable", message: expect.stringMatching(/sampled transcript check failed/) });
+    expect(await getNode(node)).toMatchObject({ state: "suspended" });
+  });
+
+  it("an honest node is sampled on every warm-up job, then 1 in K", async () => {
+    const { node } = await freshNode();
+    for (let i = 0; i < 6; i++) {
+      const s = await nextJob(node);
+      expect(await submitWork(node, s)).toMatchObject({ ok: true });
+      expect((await getWorkJob(s.jobId))!.sample_check).toBe(i < 3 || sampledForCheck(s.jobId, s.sigma) ? "passed" : null);
+    }
+  });
+});
+
 describe("the 24 h hold", () => {
   let node = "";
   let payout = "";

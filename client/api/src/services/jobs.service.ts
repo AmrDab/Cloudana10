@@ -13,7 +13,7 @@ import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 import { hold, release } from "./balance.service.js";
 import { afterNodeSuspended, getNode, nextThroughput, type NodeRow } from "./nodes.service.js";
-import { epochOf, jobRewardStatements, type JobRewards } from "./ledger.service.js";
+import { PROTOCOL_ACCOUNT, epochOf, jobRewardStatements, type JobRewards } from "./ledger.service.js";
 import { feeUcld, getPriceQuote } from "./pricing.service.js";
 import { getWorkType, type WorkType } from "./work-types.js";
 import { compareVersions } from "./instruction-signing.service.js";
@@ -55,6 +55,8 @@ export interface WorkJobRow {
   fee_captured_at: number | null;
   /** Sampled transcript re-execution (submitWork): null = not sampled. Never shown to the node. */
   sample_check: "passed" | "failed" | "reversed" | null;
+  /** 1 = protocol work (D1): issued by the orchestrator to an idle node, owner PROTOCOL_ACCOUNT, price 0. */
+  protocol: number;
   /** Challenge-mode jobs (B-26): the job's input (JSON; matmul keeps a_json/b_json); null for matmul and when it is in the artifact store. */
   input_json?: string | null;
   /** Artifact-store key of a challenge-mode job's input (stored there at enqueue when a store is configured). */
@@ -358,6 +360,49 @@ const CLEAR_ASSIGNMENT =
 export const sortedCandidates = (candidates: Candidate[]): Candidate[] =>
   [...candidates].sort(byAddress).map((c) => ({ address: c.address, payout: c.payout, weight: c.weight }));
 
+/** Protocol jobs are matmul n = 64: 25 KB of matrices per job, verified like any job. shortcut: one size, until jobs are metered by work. */
+const PROTOCOL_N = 64;
+
+/**
+ * Protocol work (owner decision D1, 2026-10-28): while no user job is queued, issue one matmul job per idle node, with no
+ * owner fee. It is assigned, verified, sampled and clawed exactly like paid work; its lane B is set at close from
+ * what is left of the epoch's budget (ledger.service fitProtocolB). A protocol job nobody took in 10 min is dropped.
+ * Returns the number issued. Off unless PROTOCOL_WORK=on.
+ */
+export async function issueProtocolWork(now = Date.now()): Promise<number> {
+  const env = getEnv();
+  if (env.PROTOCOL_WORK !== "on") return 0;
+  const db = getD1();
+  await db.prepare("DELETE FROM work_jobs WHERE protocol = 1 AND status = 'queued' AND created_at < ?").bind(now - 600_000).run();
+  const queued = await db
+    .prepare("SELECT SUM(protocol = 0) AS users, SUM(protocol = 1) AS protocol FROM work_jobs WHERE status = 'queued'")
+    .first<{ users: number | null; protocol: number | null }>();
+  if (queued?.users) return 0;
+  const idle = (await db
+    .prepare(
+      "SELECT work_types FROM nodes WHERE payout IS NOT NULL AND state = 'active' AND last_seen >= ? " +
+        "AND address NOT IN (SELECT node FROM work_jobs WHERE status = 'assigned' AND node IS NOT NULL)",
+    )
+    .bind(now - env.NODE_ACTIVE_SECONDS * 1000)
+    .all<{ work_types: string | null }>()).results ?? [];
+  const count = idle.filter((r) => (JSON.parse(r.work_types ?? "[]") as string[]).includes("matmul")).length - (queued?.protocol ?? 0);
+  if (count <= 0) return 0;
+  // The owner's balance row: the capture at submit debits 0 from it (bookVerified), so it has to exist.
+  await db.prepare("INSERT OR IGNORE INTO balances (address, updated_at) VALUES (?, ?)").bind(PROTOCOL_ACCOUNT, new Date(now).toISOString()).run();
+  const matrix = () => JSON.stringify(Array.from(crypto.getRandomValues(new Int8Array(PROTOCOL_N * PROTOCOL_N))));
+  await db.batch(
+    Array.from({ length: count }, () =>
+      db
+        .prepare(
+          "INSERT INTO work_jobs (id, owner, work_type, n, a_json, b_json, price_ucld, public, protocol, status, created_at) " +
+            "VALUES (?, ?, 'matmul', ?, ?, ?, 0, 1, 1, 'queued', ?)",
+        )
+        .bind(crypto.randomUUID(), PROTOCOL_ACCOUNT, PROTOCOL_N, matrix(), matrix(), now),
+    ),
+  );
+  return count;
+}
+
 /** Expire stale assignments, then assign queued jobs (oldest first) to eligible nodes. Returns the number assigned. */
 export async function runAssignment(now = Date.now()): Promise<number> {
   const env = getEnv();
@@ -373,14 +418,11 @@ export async function runAssignment(now = Date.now()): Promise<number> {
     .all<{ id: string; work_type: string }>();
   if (!queued.results?.length) return 0;
 
-  const nodes = await db
-    .prepare(
-      "SELECT * FROM nodes WHERE payout IS NOT NULL AND state = 'active' AND last_seen >= ? " +
-        "AND address NOT IN (SELECT node FROM work_jobs WHERE status = 'assigned' AND node IS NOT NULL)",
-    )
-    .bind(now - env.NODE_ACTIVE_SECONDS * 1000)
-    .all<NodeRow>();
-  const pool = new Map((nodes.results ?? []).map((n) => [n.address, n]));
+  // Every live node takes part in the cluster gate (D2: an operator busy on a job is still an operator); only the
+  // draw is among the idle ones.
+  const live = (await db.prepare("SELECT * FROM nodes WHERE payout IS NOT NULL AND state = 'active' AND last_seen >= ?").bind(now - env.NODE_ACTIVE_SECONDS * 1000).all<NodeRow>()).results ?? [];
+  const busy = new Set(((await db.prepare("SELECT DISTINCT node FROM work_jobs WHERE status = 'assigned' AND node IS NOT NULL").all<{ node: string }>()).results ?? []).map((r) => r.node));
+  const pool = new Map(live.filter((n) => !busy.has(n.address)).map((n) => [n.address, n]));
   if (pool.size === 0) return 0;
 
   const seedSource = await fetchSeedSource();
@@ -389,18 +431,19 @@ export async function runAssignment(now = Date.now()): Promise<number> {
     const wt = getWorkType(job.work_type);
     if (!wt) continue;
     const need = wt.requirements({ n: 0, matrixA: [], matrixB: [] }).workType;
-    const eligible: Candidate[] = [...pool.values()]
-      .filter((n) => (JSON.parse(n.work_types ?? "[]") as string[]).includes(need))
+    const fits = (n: NodeRow) =>
+      (JSON.parse(n.work_types ?? "[]") as string[]).includes(need) &&
       // A type that needs a newer agent is drawn only among nodes on it (int8-mlp ≥ 1.7.0); the network floor is unchanged.
-      .filter((n) => !wt.minAgent || (!!n.agent_version && compareVersions(n.agent_version, wt.minAgent) >= 0))
-      .map((n) => ({ address: n.address, payout: n.payout!, weight: n.throughput_mmac_s }));
+      (!wt.minAgent || (!!n.agent_version && compareVersions(n.agent_version, wt.minAgent) >= 0));
+    const candidate = (n: NodeRow): Candidate => ({ address: n.address, payout: n.payout!, weight: n.throughput_mmac_s });
+    const eligible = [...pool.values()].filter(fits).map(candidate);
     if (eligible.length === 0) continue;
 
     const drawSeed = sha256(seedSource + job.id);
     const node = weightedDraw(drawSeed, eligible);
     const nonce = crypto.randomUUID();
     const sigma = sha256(job.id + node + nonce + seedSource);
-    const clusterOk = clusterTest(eligible, env.CLUSTER_N_MIN, env.CLUSTER_S_CAP, pool.get(node)!.payout!) ? 1 : 0;
+    const clusterOk = clusterTest(live.filter(fits).map(candidate), env.CLUSTER_N_MIN, env.CLUSTER_S_CAP, pool.get(node)!.payout!) ? 1 : 0;
 
     const r = await db
       .prepare(
@@ -707,12 +750,15 @@ async function bookVerified(
   node: string,
   nodeRow: NodeRow,
   now: number,
-  out: { resultJson: string; certZ: string; sampleCheck: WorkJobRow["sample_check"]; caught: boolean },
+  out: { resultJson: string; certZ: string; sampleCheck: WorkJobRow["sample_check"]; caught: boolean; units?: number },
 ): Promise<Booked> {
   const db = getD1();
   const owner = normalizeAddress(job.owner);
   const { statements: rewardStmts, rewards: split } = jobRewardStatements(
-    { jobId: job.id, workType: job.work_type, provider: nodeRow.payout!, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now },
+    {
+      jobId: job.id, workType: job.work_type, provider: nodeRow.payout!, feeUcld: job.price_ucld, clusterOk: job.cluster_ok === 1, now,
+      protocolUnits: job.protocol && out.units ? out.units : undefined,
+    },
     { capturedAt: now, node, clawed: out.caught },
   );
   const caughtStmts = out.caught ? caughtStatements(job.id, node, nodeRow, now) : [];
@@ -806,8 +852,9 @@ async function submitInline(
   now: number,
 ): Promise<SubmitResult> {
   const jobInput = { n: job.n, matrixA: JSON.parse(job.a_json!) as number[], matrixB: JSON.parse(job.b_json!) as number[] };
-  // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6).
-  const sampled = sampledForCheck(job.id, job.sigma!);
+  // Freivalds and the binding checks on every job; the n³ transcript re-execution on a sampled one (B-6), and on every
+  // job of a node still in its warm-up (D4: a new identity cannot hit and run).
+  const sampled = nodeRow.jobs_done < getEnv().VERIFY_WARMUP_JOBS || sampledForCheck(job.id, job.sigma!);
   const t0 = performance.now();
   const verdict = wt.verify!({ job: { ...jobInput, sigma: job.sigma! }, certificate: input.certificate, result: input.result }, { transcript: sampled });
   // Verifier cost (scripts/sim/testnet): on Workers performance.now() does not advance during CPU work, so Node only.
@@ -824,6 +871,7 @@ async function submitInline(
     certZ: input.certificate.z,
     sampleCheck: caught ? "failed" : sampled ? "passed" : null,
     caught,
+    units: wt.meter(jobInput),
   });
   if (!booked.done) return { ok: false, code: "conflict", message: "job was already completed" };
 

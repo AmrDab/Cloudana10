@@ -48,7 +48,7 @@ export const GROUPS: { id: ServiceGroup; label: string }[] = [
 export const CATALOG: Service[] = [
   // Compute
   { id: "compute", group: "compute", name: "GPU / CPU compute", line: "Verified matrix jobs on assigned hardware.", icon: Cpu, status: "live",
-    proof: "Proven. Matrix jobs: answer checked (Freivalds) on every job, transcript re-executed on a random 1 in 10. int8 MLP jobs: steps drawn after the node commits, checked exactly. Pay held 24 h.", subsidy: true },
+    proof: "Proven. Matrix jobs: answer checked (Freivalds) on every job, transcript re-executed on a random 1 in 10 (every job for a node's first 10). int8 MLP jobs: steps drawn after the node commits, checked exactly. Pay held 24 h.", subsidy: true },
   { id: "ai-inference", group: "compute", name: "AI inference", line: "Your own model server on assigned GPUs.", icon: Brain, status: "early",
     proof: "Probed: health checked through the relay; the model itself is not verified. Spot-checked inference is planned. Fees only.", subsidy: false },
   { id: "containers", group: "compute", name: "Containers", line: "Docker images on assigned nodes.", icon: Container, status: "early",

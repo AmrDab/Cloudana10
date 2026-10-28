@@ -132,6 +132,7 @@ describe("matmul golden snapshot (responses + rows)", () => {
       EPOCH_SECONDS: "3600",
       PAY_HOLD_SECONDS: "86400",
       VERIFY_SAMPLE_K: SAMPLED,
+      VERIFY_WARMUP_JOBS: "0", // the snapshot covers the unsampled path; the warm-up has its own test (sampled-verification)
       JWT_SECRET: "golden-snapshot-secret-".padEnd(40, "g"),
       EPOCH_SUBSIDY_BUDGET_UCLD: "300000",
     });
