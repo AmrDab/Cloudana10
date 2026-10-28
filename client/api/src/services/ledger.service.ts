@@ -288,12 +288,16 @@ export interface LedgerSummary {
   /** Taken back: by a failed sampled check, or by an operator. */
   clawed: { A: number; B: number };
   credits: number;
+  /** Protocol jobs (D1) verified but not yet closed: their lane B is a share of the epoch's budget, set at close (amount 0 until then). */
+  protocolPending: number;
   entries: {
     id: string;
     jobId: string;
     epoch: number;
     lane: Lane;
     workType: string;
+    /** A protocol job's entry: its amount is a share set at close, 0 while pending. */
+    protocol: boolean;
     amountUcld: number;
     vestsAt: number;
     /** When a held entry leaves its check window (the start of its epoch); null when it is not held. */
@@ -330,8 +334,11 @@ export async function ledgerSummary(address: string, now = Date.now()): Promise<
     settled: { A: 0, B: 0 },
     clawed: { A: 0, B: 0 },
     credits: 0,
+    protocolPending: 0,
     entries: [],
   };
+  out.protocolPending =
+    (await db.prepare("SELECT COUNT(*) AS c FROM reward_entries WHERE address = ? AND status = 'pending' AND units IS NOT NULL").bind(key).first<{ c: number }>())?.c ?? 0;
   for (const r of sums.results ?? []) {
     if (r.lane === "verify") {
       out.credits += r.total;
@@ -359,6 +366,7 @@ export async function ledgerSummary(address: string, now = Date.now()): Promise<
       vests_at: number;
       status: string;
       created_at: number;
+      units: number | null;
     }>();
   out.entries = (rows.results ?? []).map((r) => ({
     id: r.id,
@@ -366,6 +374,7 @@ export async function ledgerSummary(address: string, now = Date.now()): Promise<
     epoch: r.epoch,
     lane: r.lane,
     workType: r.work_type,
+    protocol: r.units !== null,
     amountUcld: r.amount_ucld,
     vestsAt: r.vests_at,
     releasesAt: r.status === "pending" && (r.lane === "A" || r.lane === "B") && r.epoch > open ? releasesAt(r.epoch) : null,
