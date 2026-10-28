@@ -451,12 +451,8 @@ Success = each item has a test that fails on main, `npx tsc --noEmit` + vitest g
 - [x] PR #68 merged 2026-10-28. Still to do: switch `PROTOCOL_WORK=on` with the contract deploy (runbook step 4)
 
 ## PoUW follow-ups (2026-10-28, branch feat/pouw-followups, owner: "keep going")
-- [ ] Draw weight by compute time: `work_jobs.delivered_at` set when the heartbeat hands the assignment to the node;
-      the throughput sample uses submit − delivered (not submit − assigned). Test: a job delivered late gets the same
-      weight as one delivered at once.
-- [ ] Lane-B budget never above the chain allowance: at close, budget = min(`EPOCH_SUBSIDY_BUDGET_UCLD`,
-      `allowance(epoch)` read from the settlement contract when SETTLEMENT_ADDRESS + CHAIN_RPC_URL are set); a failed
-      read keeps the env budget with a warning. Test with an injected allowance.
+- [x] Draw weight by compute time (`delivered_at`; weights 1.85 / 2.34 / 2.43 vs 0.09 / 0.25 / 0.66); sample cap
+- [x] Lane-B budget never above the chain allowance (`laneBBudget`)
 - [ ] Later: protocol issuance at heartbeat (only matters once jobs are metered by work); ledger summary shows
       protocol entries as a share.
 - [ ] Report final + PROGRESS entry + PR

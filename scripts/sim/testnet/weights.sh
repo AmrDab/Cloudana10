@@ -26,7 +26,7 @@ node --import tsx scripts/sim/testnet/user.ts --jobs "$JOBS" --rate 8 --out jobs
 
 echo "--- weights (MMAC/s) and jobs per node"
 node -e "
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('$RUN/sim.sqlite',{readOnly:true});
+const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('.dev-run-sim/sim.sqlite',{readOnly:true}); // relative: a Git Bash /c/... path does not open on Windows
 for (const r of d.prepare('SELECT substr(address,1,10) node, round(throughput_mmac_s,3) weight, jobs_done FROM nodes ORDER BY address').all()) console.log(r.node, r.weight, r.jobs_done);
 const t=d.prepare(\"SELECT round(avg((completed_at-delivered_at)/1000.0),2) compute_s, round(avg((delivered_at-assigned_at)/1000.0),2) wait_s FROM work_jobs WHERE status='done' AND delivered_at IS NOT NULL\").get();
 console.log('mean delivered→done s', t.compute_s, 'mean assigned→delivered s', t.wait_s);
