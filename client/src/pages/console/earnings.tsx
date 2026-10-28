@@ -91,6 +91,11 @@ function Earnings({ address }: { address: string }) {
       {clawed > 0 && (
         <p className="mt-1 font-mono text-[12px] text-burn">Clawed: {cld(clawed)}, taken back after a failed check.</p>
       )}
+      {(l?.protocolPending ?? 0) > 0 && (
+        <p className="mt-1 font-mono text-[12px] text-faint">
+          {l!.protocolPending} protocol {l!.protocolPending === 1 ? "job awaits" : "jobs await"} the epoch close: the network's own work for your idle node, paid a share of the epoch's subsidy budget by verified work.
+        </p>
+      )}
 
       <Panel className="mt-6">
         <PanelHeader title="Ledger" kicker="Latest 50 entries · your local time" right={<Pill tone="ok">Claim · automatic</Pill>} />
@@ -136,7 +141,7 @@ function LedgerTable({ entries, loading, error }: { entries?: LedgerEntry[]; loa
         <tbody>
           {entries.map((e) => {
             const [lane, tone] = LANE[e.lane] ?? [e.lane, "muted"];
-            const amount = e.lane === "verify" ? `${e.amountUcld.toLocaleString("en-US")} pts` : cld(e.amountUcld);
+            const amount = e.lane === "verify" ? `${e.amountUcld.toLocaleString("en-US")} pts` : e.protocol && e.status === "pending" ? "share at close" : cld(e.amountUcld);
             return (
               <tr key={e.id} className={`border-b border-line last:border-0 max-sm:grid max-sm:grid-cols-2 max-sm:gap-1 max-sm:px-5 max-sm:py-3 ${freshRow(fresh.has(e.id))}`}>
                 <td className="px-5 py-3 max-sm:p-0"><Hash value={e.jobId} /></td>
