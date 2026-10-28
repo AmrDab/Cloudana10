@@ -32,7 +32,9 @@ export async function laneBBudget(epoch: number): Promise<number> {
     if (allowance < budget) log.api.warn(`[ledger] epoch ${epoch}: EPOCH_SUBSIDY_BUDGET_UCLD ${budget} is above the chain allowance ${allowance} µCLD — lane B capped at the allowance`);
     return Math.min(budget, allowance);
   } catch (err) {
-    log.api.warn(`[ledger] epoch ${epoch}: could not read the chain allowance, using the env budget ${budget}:`, err);
+    // The error's details carry the RPC URL (which may hold a provider key): log the short message only.
+    const why = (err as { shortMessage?: string })?.shortMessage ?? (err instanceof Error ? err.message.split("\n")[0] : String(err));
+    log.api.warn(`[ledger] epoch ${epoch}: could not read the chain allowance, using the env budget ${budget}: ${why}`);
     return budget;
   }
 }

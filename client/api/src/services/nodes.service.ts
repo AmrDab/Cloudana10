@@ -341,8 +341,16 @@ export async function afterNodeSuspended(nodeKey: string, reason: string | null,
 /** EMA weight for a new throughput sample. */
 export const THROUGHPUT_ALPHA = 0.2;
 
-/** Next throughput from a verified job: n³/1e6 MMAC over the seconds from assignment to submit. */
+/**
+ * The most a single sample may claim, MMAC/s: above any one machine today (an H100 is on the order of 1e6 MMAC/s at
+ * int8). A node that already knows the answer (its operator queued the job) can submit the moment the job is
+ * delivered; this keeps that trick from buying more than a top machine's weight, and the cluster share cap bounds the
+ * rest.
+ */
+export const THROUGHPUT_SAMPLE_MAX_MMAC_S = 2_000_000;
+
+/** Next throughput from a verified job: n³/1e6 MMAC over the seconds from delivery to submit, capped per sample. */
 export function nextThroughput(previous: number, units: number, seconds: number): number {
-  const sample = units / 1e6 / Math.max(seconds, 0.001);
+  const sample = Math.min(units / 1e6 / Math.max(seconds, 0.001), THROUGHPUT_SAMPLE_MAX_MMAC_S);
   return (1 - THROUGHPUT_ALPHA) * previous + THROUGHPUT_ALPHA * sample;
 }

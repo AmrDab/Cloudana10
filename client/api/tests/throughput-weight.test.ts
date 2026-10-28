@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { solveAssignedJob } from "../../../pouw/src/index.js";
 import { getD1 } from "../src/lib/storage.js";
 import { creditUcld } from "../src/services/balance.service.js";
-import { getNode, nextThroughput, touchNode } from "../src/services/nodes.service.js";
+import { getNode, nextThroughput, THROUGHPUT_SAMPLE_MAX_MMAC_S, touchNode } from "../src/services/nodes.service.js";
 import { enqueueWorkJob, getActiveAssignment, getWorkJob, runAssignment, submitWork } from "../src/services/jobs.service.js";
 import { A, B, ENV, freshNode, n, user } from "./helpers/sampled.js";
 
@@ -45,6 +45,12 @@ describe("throughput from delivery to submit", () => {
     expect(q.after).toBeCloseTo(nextThroughput(q.before, UNITS, 0.02), 12);
     expect(l.after).toBeCloseTo(nextThroughput(l.before, UNITS, 0.02), 12);
     expect(l.after).toBeCloseTo(q.after, 12);
+  });
+
+  it("an instant submit (the operator knew the answer) is worth at most a top machine's weight", () => {
+    const instant = nextThroughput(1, 256 ** 3, 0.001);
+    expect(instant).toBeLessThanOrEqual(0.8 + 0.2 * THROUGHPUT_SAMPLE_MAX_MMAC_S);
+    expect(nextThroughput(1, 256 ** 3, 1)).toBeCloseTo(0.8 + 0.2 * (256 ** 3 / 1e6), 9);
   });
 
   it("a second heartbeat does not move delivered_at; a re-assignment clears it", async () => {
