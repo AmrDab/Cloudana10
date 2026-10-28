@@ -688,6 +688,27 @@ that remained:
 - **Not touched.** Production, Base Sepolia, the Azure node, secrets: everything ran on 127.0.0.1 with hardhat's test
   keys and seed-derived throwaways.
 
+### 31 · PoUW decisions D1–D4 built and run (owner: "go with your recommendations", 2026-10-28)
+- **D1 protocol work** (`PROTOCOL_WORK=on`, default off until the contract deploy): `issueProtocolWork` on the duties
+  cron issues one matmul n = 64 per idle node while no user job is queued (owner `protocol`, price 0,
+  `work_jobs.protocol = 1`; a job nobody took in 10 min is dropped). Verified, sampled and clawed like paid work. Its
+  one lane-B entry carries the verified units (`reward_entries.units`, amount 0); at close `fitProtocolB` gives the
+  epoch's protocol entries what is left of the budget after paid subsidies, pro rata by units, nothing unless
+  `CLUSTER_N_MIN` wallets took part and no wallet above `CLUSTER_S_CAP`. No lane A, no treasury, nothing burned.
+- **D2** the cluster gate counts every live node of the work type (busy ones too); the draw stays among idle ones.
+- **D3** `epochs.vetoed_root`: a vetoed epoch is parked (one warning per pass) until a claw or reverse changes its root.
+- **D4** `VERIFY_WARMUP_JOBS` (10): a node's first jobs have the transcript re-executed every time, then 1 in K.
+- **Run** (`scripts/sim/testnet/phase4.sh`, report §Phase 4): 74 protocol jobs, 74 verified; zero-demand epochs minted
+  exactly the budget to three wallets and settled on chain; the paid subsidy came first; a two-wallet epoch minted 0;
+  the hit-and-run adversary was caught on job 1; chain = API, supply Δ = minted − burned. Also fixed: one bind code
+  per fresh node when its first announces overlap (`announceNode`, found by the sim).
+- **Docs** say what the code does (litepaper, whitepaper §6.2, README, POUW_REVIEW, V4_VERIFIED_SERVICES, console copy,
+  runbook step 4). Tests: cluster-gate-live, protocol-work, warm-up in sampled-verification, parked close in
+  epoch-veto; golden snapshot gains the two columns.
+- **Backlog from the run:** startup check `EPOCH_SUBSIDY_BUDGET_UCLD` ≤ chain allowance; draw weight by compute time
+  (the share cap on heartbeat-noise weights still withholds lane B on ~¼ of jobs); protocol issuance at heartbeat; the
+  ledger summary should show protocol entries as a share, not 0.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

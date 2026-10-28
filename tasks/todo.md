@@ -442,17 +442,12 @@ Quote in USD, settle in CLD; testnet reference $0.10/CLD; ledger, split, subsidy
 
 ## PoUW decisions D1–D4 build (2026-10-28, branch feat/pouw-decisions)
 Success = each item has a test that fails on main, `npx tsc --noEmit` + vitest green, and a short sim run shows it.
-- [ ] D4 warm-up sampling: a node's first `VERIFY_WARMUP_JOBS` (10) jobs have the transcript re-executed every time
-      (`submitInline`: `jobs_done < warmup || sampledForCheck`). Test: new node sampled on job 1; hit-and-run caught.
-- [ ] D3 veto parks: `epochs.vetoed_root`; `closeEpochs` does not re-close a vetoed epoch whose rebuilt root equals the
-      vetoed one (warn "waiting for a correction"); after a claw the root differs and it re-closes. Test in epoch-veto.
-- [ ] D2 cluster gate counts live operators: the gate runs over every active node of the work type (busy ones too);
-      only the draw excludes busy nodes. ρ stays 0.04. Test: 3 wallets, 2 busy → lane B still on.
-- [ ] D1 protocol work: `issueProtocolWork` cron step (queue empty → one matmul n=64 per idle eligible node, owner
-      `protocol`, price 0, `work_jobs.protocol = 1`; off unless `PROTOCOL_WORK=on`); rewards: lane A/treasury 0, lane B
-      provisional = verified MMAC; at close `fitLaneB` gives protocol entries what is left of the budget after paid
-      subsidies, pro rata by units, per-wallet share ≤ CLUSTER_S_CAP. Tests: zero-demand epoch mints lane B only
-      (≤ budget), paid subsidy first, wallet cap, nothing when off.
-- [ ] Sim phase 4 (20 min): zero demand → protocol jobs + lane B minted; gate pass rate; lazy hit-and-run caught on job 1.
-- [ ] Report §Phase 4, PROGRESS.md entry 31, PR.
+- [x] D4 warm-up sampling (`VERIFY_WARMUP_JOBS`); test: fresh identity caught on job 1
+- [x] D3 veto parks (`epochs.vetoed_root`); test in epoch-veto
+- [x] D2 cluster gate over live operators; test cluster-gate-live
+- [x] D1 protocol work (`issueProtocolWork`, `fitProtocolB`, cluster rule); test protocol-work
+- [x] Sim phase 4: 74/74 protocol jobs, budget minted and settled, adversary caught on job 1 (report §Phase 4)
+- [x] Report §Phase 4, PROGRESS.md entry 31
+- [ ] PR for feat/pouw-decisions; switch `PROTOCOL_WORK=on` with the contract deploy (runbook step 4)
+- [ ] Backlog: budget ≤ chain allowance startup check; draw weight by compute time; protocol issuance at heartbeat
 - [ ] Report final + PROGRESS entry + PR
