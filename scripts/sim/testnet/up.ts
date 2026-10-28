@@ -47,6 +47,9 @@ start("api", ["--import", "tsx", "src/index.ts"], path.join(ROOT, "client/api"),
   VERIFY_SAMPLE_K: process.env.VERIFY_SAMPLE_K ?? "10",
   VERIFY_WARMUP_JOBS: process.env.VERIFY_WARMUP_JOBS ?? "10",
   PROTOCOL_WORK: process.env.PROTOCOL_WORK ?? "off",
+  // The default budget (7.3 CLD) is 80 % of the chain's allowance for a one-hour epoch: scale it to the local epoch, or
+  // an epoch whose protocol work takes the whole budget is refused on chain (LaneBExceedsAllowance), lane A included.
+  EPOCH_SUBSIDY_BUDGET_UCLD: String(Math.floor((7_300_000 * EPOCH_SECONDS) / 3600)),
   SUBSIDY_RHO: "0.04",
   CLUSTER_N_MIN: "3",
   USD_PER_CLD: "0.1",

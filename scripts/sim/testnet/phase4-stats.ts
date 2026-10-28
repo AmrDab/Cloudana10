@@ -5,7 +5,7 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import { RUN } from "./common.ts";
+import { RUN, wallet } from "./common.ts";
 
 const db = new DatabaseSync(path.join(RUN, "sim.sqlite"), { readOnly: true });
 const one = <T>(sql: string) => db.prepare(sql).get() as T;
@@ -43,9 +43,11 @@ for (const w of all<{ address: string; jobs: number; ucld: number }>(
 }
 
 console.log("\n## Adversary (hit-and-run with a lazy transcript, warm-up on)\n");
-for (const n of all<{ address: string; name: string; state: string; reason: string; done: number; failed: number }>(
-  "SELECT address, name, state, state_reason AS reason, jobs_done AS done, jobs_failed AS failed FROM nodes WHERE name LIKE 'adv-%' ORDER BY state_at",
+const adv = wallet("adv-phase4-lazy").address.toLowerCase();
+for (const n of all<{ address: string; state: string; reason: string; done: number; failed: number }>(
+  `SELECT address, state, state_reason AS reason, jobs_done AS done, jobs_failed AS failed FROM nodes WHERE payout = '${adv}' ORDER BY state_at`,
 )) {
-  const claws = one<{ c: number; ucld: number }>(`SELECT COUNT(*) AS c, COALESCE(SUM(amount_ucld), 0) AS ucld FROM reward_entries WHERE status = 'clawed' AND address = (SELECT payout FROM nodes WHERE address = '${n.address}')`);
-  console.log(`- ${n.name} (${n.address.slice(0, 10)}…): ${n.state}${n.reason ? ` — ${n.reason}` : ""}; jobs done ${n.done}, failed ${n.failed}; entries clawed ${claws.c} (${claws.ucld} µCLD)`);
+  const claws = one<{ c: number; ucld: number }>(`SELECT COUNT(*) AS c, COALESCE(SUM(amount_ucld), 0) AS ucld FROM reward_entries WHERE status = 'clawed' AND address = '${adv}'`);
+  const jobs = all<{ id: string; status: string; sample_check: string | null; protocol: number }>(`SELECT id, status, sample_check, protocol FROM work_jobs WHERE node = '${n.address}'`);
+  console.log(`- node ${n.address.slice(0, 10)}… (payout ${adv.slice(0, 10)}…): ${n.state}${n.reason ? ` — ${n.reason}` : ""}; jobs taken ${jobs.length} (${jobs.map((j) => `${j.protocol ? "protocol" : "user"}:${j.status}:${j.sample_check ?? "unsampled"}`).join(", ")}); entries clawed ${claws.c} (${claws.ucld} µCLD)`);
 }
