@@ -8,9 +8,14 @@
  * `store: "memory"` keeps a limit per isolate on purpose: signed node traffic
  * (announce, heartbeat, tickets, storage reports) is bounded by the protocol
  * itself, and two KV operations per heartbeat would spend the free tier's KV
- * write quota (1 000 a day) within minutes of midnight UTC. Public, IP-keyed
- * limits stay in KV; when its quota is gone they degrade to per-isolate memory
- * (the catch below), never to an outage.
+ * write quota (1 000 a day) within minutes of midnight UTC.
+ *
+ * Public, IP-keyed limits count in the Workers rate-limiting binding when one
+ * is bound for their (limit, window) — wrangler.toml `[[unsafe.bindings]]`
+ * named `RL_<limit>_<period>`, registered by setRateLimiters (B-25) — else in
+ * KV; when KV's quota is gone they degrade to per-isolate memory (the catch
+ * below), never to an outage. The binding's period is 10 or 60 s, so the
+ * hourly buckets (keys, fleets) stay in KV.
  */
 import type { Context, Next } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -37,6 +42,22 @@ export interface RateLimitOptions {
  */
 export function verifiedNodeKey(c: Context): string {
   return c.get("node") as string;
+}
+
+/** The Workers rate-limiting binding: `limit({ key })` → success within its fixed (limit, period). */
+export interface RateLimiter {
+  limit(opts: { key: string }): Promise<{ success: boolean }>;
+}
+
+const limiters = new Map<string, RateLimiter>();
+
+/** Worker start-up: every binding named `RL_<limit>_<period>` serves the shared buckets with that limit and window. */
+export function setRateLimiters(env: Record<string, unknown>): void {
+  limiters.clear();
+  for (const [name, value] of Object.entries(env)) {
+    const m = /^RL_(\d+)_(\d+)$/.exec(name);
+    if (m && value && typeof (value as RateLimiter).limit === "function") limiters.set(`${m[1]}/${m[2]}`, value as RateLimiter);
+  }
 }
 
 const memory = new Map<string, { count: number; resetAt: number }>();
@@ -90,12 +111,20 @@ async function bump(key: string, windowSec: number, store: "shared" | "memory"):
 
 export function rateLimit(opts: RateLimitOptions) {
   return createMiddleware(async (c: Context, next: Next) => {
-    const window = Math.floor(Date.now() / 1000 / opts.windowSec);
-    const key = `rl:${opts.bucket}:${(opts.keyBy ?? clientIp)(c)}:${window}`;
-    const count = await bump(key, opts.windowSec, opts.store ?? "shared");
+    const id = (opts.keyBy ?? clientIp)(c);
     c.header("X-RateLimit-Limit", String(opts.limit));
-    c.header("X-RateLimit-Remaining", String(Math.max(0, opts.limit - count)));
-    if (count > opts.limit) {
+    // The binding keeps its own window and reports only pass/fail (no Remaining header); a failing binding falls
+    // through to the KV / memory counter below.
+    const limiter = (opts.store ?? "shared") === "shared" ? limiters.get(`${opts.limit}/${opts.windowSec}`) : undefined;
+    const verdict = limiter ? await limiter.limit({ key: `${opts.bucket}:${id}` }).then((r) => r.success, () => null) : null;
+    let over = verdict === false;
+    if (verdict === null) {
+      const window = Math.floor(Date.now() / 1000 / opts.windowSec);
+      const count = await bump(`rl:${opts.bucket}:${id}:${window}`, opts.windowSec, opts.store ?? "shared");
+      c.header("X-RateLimit-Remaining", String(Math.max(0, opts.limit - count)));
+      over = count > opts.limit;
+    }
+    if (over) {
       c.header("Retry-After", String(opts.windowSec));
       return fail(c, "rate_limited", "Too many requests", { retryAfterSec: opts.windowSec });
     }
