@@ -465,4 +465,5 @@ and tests in CI. shortcut: responses hand-typed for these five calls, generate f
 - [x] tests + CI job
 - [x] README + PROGRESS entry 34; PR
 - [ ] Later: `cloudana jobs`, containers, types generated from /v1/doc; publish to npm (owner: the npm account)
+- [x] B-21 static sites cached at the gateway (PR feat/gateway-static-cache)
 - [ ] Report final + PROGRESS entry + PR

@@ -741,6 +741,16 @@ that remained:
   hand-typed for these five calls; generating them from `GET /v1/doc` waits until the surface grows. Tests: the
   folder reader (3) and the commands against a stub API (3: what is sent, printed, exit codes). CI job `cli`.
 
+### 35 · Static sites cached at the gateway (B-21, 2026-10-28)
+- A static site is immutable under its id (no update route; a redeploy is a new id), so the gateway keeps a running
+  site's 200 GET responses in `caches.default` under `https://static-cache.cloudana.internal/{id}{path}{query}` for
+  an hour (`STATIC_CACHE_TTL_SECONDS`), whichever node served them, with the gateway's own headers; `x-cloudana-cache:
+  hit|miss`. The route lookup (30 s) runs first and the cache is used only while the route says running, so a stopped
+  site stops within 30 s; the key never names a node, so a node address reused by another tenant cannot surface the
+  wrong content (the reason origin fetches stay `cacheTtl: 0`). Not cached: HEAD, Range, non-200, containers,
+  endpoints. Tests: gateway (3 new: hit per path and node, exclusions, stopped site). Deployed with `wrangler deploy`
+  from `gateway/` after merge.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |
