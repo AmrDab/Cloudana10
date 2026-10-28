@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { handle, deploymentIdFromHost, isPublicHttpEndpoint, ORIGIN_TIMEOUT_MS, RETRY_BODY_MAX, sha256Hex, STATIC_CACHE_ORIGIN, STATIC_CACHE_TTL_SECONDS, type Deps, type Env } from "../src/index.js";
+import { handle, deploymentIdFromHost, isPublicHttpEndpoint, ORIGIN_TIMEOUT_MS, RETRY_BODY_MAX, sha256Hex, STATIC_CACHE_MAX_BYTES, STATIC_CACHE_ORIGIN, STATIC_CACHE_TTL_SECONDS, type Deps, type Env } from "../src/index.js";
 
 const ID = "6f1c2a3e-1111-4222-8333-444455556666";
 const ENV: Env = { API_URL: "https://api.example.test", SITES_DOMAIN: "sites.example.test" };
@@ -465,54 +465,84 @@ describe("relay", () => {
 });
 
 describe("static site cache (B-21)", () => {
-  const page = (body = "<h1>v1</h1>") => html(body, { etag: '"v1"' });
+  const NODE = "0x" + "c".repeat(40);
+  const relayedStatic = (extra: Record<string, unknown> = {}) => ({
+    status: 200,
+    body: { status: "success", id: ID, state: "running", kind: "static", workstation: false, relayed: true, targets: [{ node: NODE, dep: ID }], endpoint: null, ...extra },
+  });
+  const page = (body: string, headers: Record<string, string> = {}) =>
+    new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "content-length": String(Buffer.byteLength(body)), etag: "\"v1\"", ...headers } });
+  function relayStub(answer: (init: RequestInit) => Response) {
+    const asked: RequestInit[] = [];
+    return { asked, relay: () => ({ fetch: async (_u: string, init?: RequestInit) => { asked.push(init ?? {}); return answer(init ?? {}); } }) };
+  }
+  const noOrigin = () => { throw new Error("no direct origin for a relayed site"); };
+  const relayPath = (init: RequestInit) => new Headers(init.headers).get("x-relay-path") ?? "";
 
-  it("a GET of a running static site is served from the cache the second time, per path, whichever node answers", async () => {
+  it("a hit per path while the route says running, with the gateway headers; the put runs off the request path", async () => {
     const cache = memCache();
-    const m = mockFetch(running, (u) => page(`<h1>${u.pathname}</h1>`));
-    const first = await handle(req("/a"), ENV, deps(m.fetch, cache));
+    const waits: Promise<unknown>[] = [];
+    const m = mockFetch(relayedStatic(), noOrigin);
+    const r = relayStub((init) => page(`<h1>${relayPath(init)}</h1>`));
+    const d: Deps = { ...deps(m.fetch, cache), relay: r.relay, waitUntil: (p) => void waits.push(p) };
+    const first = await handle(req("/a"), ENV, d);
     expect(first.status).toBe(200);
     expect(first.headers.get("x-cloudana-cache")).toBe("miss");
     expect(await first.text()).toBe("<h1>/a</h1>");
-    const originCalls = () => m.calls.filter((c) => c.url.startsWith(ORIGIN)).length;
-    expect(originCalls()).toBe(1);
-
-    const second = await handle(req("/a"), ENV, deps(m.fetch, cache));
+    await Promise.all(waits);
+    const second = await handle(req("/a"), ENV, d);
     expect(second.headers.get("x-cloudana-cache")).toBe("hit");
-    expect(second.headers.get("content-security-policy")).toContain("sandbox"); // the stored copy keeps the gateway's headers
-    expect(second.headers.get("etag")).toBe('"v1"');
+    expect(second.headers.get("content-security-policy")).toContain("sandbox");
+    expect(second.headers.get("etag")).toBe("\"v1\"");
     expect(await second.text()).toBe("<h1>/a</h1>");
-    expect(originCalls()).toBe(1);
-
-    expect((await handle(req("/b?x=1"), ENV, deps(m.fetch, cache))).headers.get("x-cloudana-cache")).toBe("miss");
-    expect(originCalls()).toBe(2);
+    expect(r.asked).toHaveLength(1);
+    expect((await handle(req("/b?x=1"), ENV, d)).headers.get("x-cloudana-cache")).toBe("miss");
+    await Promise.all(waits);
+    expect(r.asked).toHaveLength(2);
     expect([...cache.store.keys()].filter((k) => k.startsWith(STATIC_CACHE_ORIGIN))).toEqual([`${STATIC_CACHE_ORIGIN}/${ID}/a`, `${STATIC_CACHE_ORIGIN}/${ID}/b?x=1`]);
     expect(cache.store.get(`${STATIC_CACHE_ORIGIN}/${ID}/a`)!.headers.get("cache-control")).toBe(`public, max-age=${STATIC_CACHE_TTL_SECONDS}`);
   });
 
-  it("HEAD, Range, non-200 responses and containers are not cached", async () => {
+  it("not cached: HEAD, Range, non-200, a body without or over the size cap, containers, legacy direct origins", async () => {
     const cache = memCache();
-    const m = mockFetch(running, (u) => (u.pathname === "/missing" ? new Response("no", { status: 404 }) : page()));
-    await handle(req("/", { method: "HEAD" }), ENV, deps(m.fetch, cache));
-    await handle(req("/", { headers: { range: "bytes=0-1" } }), ENV, deps(m.fetch, cache));
-    await handle(req("/missing"), ENV, deps(m.fetch, cache));
+    const m = mockFetch(relayedStatic(), noOrigin);
+    const r = relayStub((init) => {
+      const p = relayPath(init);
+      if (p === "/missing") return new Response("no", { status: 404 });
+      if (p === "/nolen") return new Response("x", { headers: { "content-type": "text/plain" } });
+      if (p === "/big") return page("x", { "content-length": String(STATIC_CACHE_MAX_BYTES + 1) });
+      return page("ok");
+    });
+    const d: Deps = { ...deps(m.fetch, cache), relay: r.relay };
+    expect((await handle(req("/", { method: "HEAD" }), ENV, d)).status).toBe(200);
+    await handle(req("/", { headers: { range: "bytes=0-1" } }), ENV, d);
+    await handle(req("/missing"), ENV, d);
+    await handle(req("/nolen"), ENV, d);
+    await handle(req("/big"), ENV, d);
     expect([...cache.store.keys()].filter((k) => k.startsWith(STATIC_CACHE_ORIGIN))).toEqual([]);
-    const container = { status: 200, body: { ...running.body, kind: "container" } };
-    const c = mockFetch(container, () => page());
-    const res = await handle(req("/"), ENV, deps(c.fetch, memCache()));
+    // Other routes (their own caches: the route above is cached 30 s under this id).
+    const containerCache = memCache();
+    const c = mockFetch(relayedStatic({ kind: "container" }), noOrigin);
+    expect((await handle(req("/"), ENV, { ...deps(c.fetch, containerCache), relay: r.relay })).status).toBe(200);
+    expect([...containerCache.store.keys()].filter((k) => k.startsWith(STATIC_CACHE_ORIGIN))).toEqual([]);
+    const directCache = memCache();
+    const direct = mockFetch(running, () => page("direct"));
+    const res = await handle(req("/"), ENV, deps(direct.fetch, directCache));
     expect(res.status).toBe(200);
     expect(res.headers.get("x-cloudana-cache")).toBeNull();
+    expect([...directCache.store.keys()].filter((k) => k.startsWith(STATIC_CACHE_ORIGIN))).toEqual([]);
   });
 
   it("the route is checked before the cache: a site that stopped is not served from it", async () => {
     const cache = memCache();
-    const m = mockFetch(running, () => page());
-    expect((await handle(req("/"), ENV, deps(m.fetch, cache))).status).toBe(200);
+    const r = relayStub(() => page("v1"));
+    const m = mockFetch(relayedStatic(), noOrigin);
+    expect((await handle(req("/"), ENV, { ...deps(m.fetch, cache), relay: r.relay })).status).toBe(200);
     // Drop the cached route (its 30 s would otherwise still say running) and keep the cached page.
     for (const k of [...cache.store.keys()]) if (k.startsWith(ENV.API_URL!)) cache.store.delete(k);
-    const stopped = mockFetch({ status: 200, body: { ...running.body, state: "stopped" } }, () => page());
-    const res = await handle(req("/"), ENV, deps(stopped.fetch, cache));
+    const stopped = mockFetch(relayedStatic({ state: "stopped" }), noOrigin);
+    const res = await handle(req("/"), ENV, { ...deps(stopped.fetch, cache), relay: r.relay });
     expect(res.status).toBe(404);
-    expect(stopped.calls.filter((c) => c.url.startsWith(ORIGIN))).toHaveLength(0);
+    expect(r.asked).toHaveLength(1);
   });
 });

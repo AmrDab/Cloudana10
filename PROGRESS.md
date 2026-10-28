@@ -743,12 +743,13 @@ that remained:
 
 ### 35 · Static sites cached at the gateway (B-21, 2026-10-28)
 - A static site is immutable under its id (no update route; a redeploy is a new id), so the gateway keeps a running
-  site's 200 GET responses in `caches.default` under `https://static-cache.cloudana.internal/{id}{path}{query}` for
-  an hour (`STATIC_CACHE_TTL_SECONDS`), whichever node served them, with the gateway's own headers; `x-cloudana-cache:
+  relayed site's 200 GET responses in `caches.default` under `https://static-cache.cloudana.internal/{id}{path}{query}`
+  for five minutes (`STATIC_CACHE_TTL_SECONDS`: a site re-queued after a bad node recovers soon), whichever node served
+  them, with the gateway's own headers, only with a declared size within the 2 MB site cap, the write off the request path; `x-cloudana-cache:
   hit|miss`. The route lookup (30 s) runs first and the cache is used only while the route says running, so a stopped
   site stops within 30 s; the key never names a node, so a node address reused by another tenant cannot surface the
-  wrong content (the reason origin fetches stay `cacheTtl: 0`). Not cached: HEAD, Range, non-200, containers,
-  endpoints. Tests: gateway (3 new: hit per path and node, exclusions, stopped site). Deployed with `wrangler deploy`
+  wrong content (the reason origin fetches stay `cacheTtl: 0`). Not cached: HEAD, Range, non-200, bodies without a size,
+  containers, endpoints, legacy direct origins (a node's host:port another tenant may be given later). Tests: gateway (3 new: hit per path and node, exclusions, stopped site). Deployed with `wrangler deploy`
   from `gateway/` after merge.
 
 ## Evidence summary
