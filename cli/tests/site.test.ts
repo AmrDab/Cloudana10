@@ -14,10 +14,14 @@ async function site(files: Record<string, string | Buffer>): Promise<string> {
 }
 
 describe("readSite", () => {
-  it("lists every file with a forward-slash path and base64 content, sorted", async () => {
-    const dir = await site({ "index.html": "<h1>hi</h1>", "assets/app.js": "console.log(1)", "assets/img/a.png": Buffer.from([137, 80, 78, 71]) });
+  it("lists every file with a forward-slash path and base64 content, sorted; dot-entries and node_modules are left out", async () => {
+    const dir = await site({
+      "index.html": "<h1>hi</h1>", "assets/app.js": "console.log(1)", "assets/img/a.png": Buffer.from([137, 80, 78, 71]),
+      ".env": "SECRET=1", ".git/HEAD": "ref", "node_modules/x/index.js": "x", "assets/.DS_Store": "junk",
+    });
     const s = await readSite(dir);
     expect(s.files.map((f) => f.path)).toEqual(["assets/app.js", "assets/img/a.png", "index.html"]);
+    expect(s.skipped).toEqual([".env", ".git", "assets/.DS_Store", "node_modules"]);
     expect(Buffer.from(s.files[2].contentBase64, "base64").toString()).toBe("<h1>hi</h1>");
     expect(Buffer.from(s.files[1].contentBase64, "base64")).toEqual(Buffer.from([137, 80, 78, 71]));
     expect(s.bytes).toBe(11 + 14 + 4);

@@ -12,15 +12,20 @@ export interface SiteFile {
   contentBase64: string;
 }
 
-export async function readSite(dir: string): Promise<{ files: SiteFile[]; bytes: number }> {
+/** Never published: dot-entries (.git, .env, .DS_Store, …) and node_modules — a built site has none it needs. */
+const skipped = (name: string) => name.startsWith(".") || name === "node_modules";
+
+export async function readSite(dir: string): Promise<{ files: SiteFile[]; bytes: number; skipped: string[] }> {
   const root = path.resolve(dir);
   if (!(await stat(root).catch(() => null))?.isDirectory()) throw new Error(`${dir} is not a directory`);
   const files: SiteFile[] = [];
+  const left: string[] = [];
   let bytes = 0;
   async function walk(rel: string): Promise<void> {
     for (const e of await readdir(path.join(root, rel), { withFileTypes: true })) {
       const p = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isDirectory()) await walk(p);
+      if (skipped(e.name)) left.push(p);
+      else if (e.isDirectory()) await walk(p);
       else if (e.isFile()) {
         const body = await readFile(path.join(root, p));
         bytes += body.byteLength;
@@ -32,5 +37,5 @@ export async function readSite(dir: string): Promise<{ files: SiteFile[]; bytes:
   await walk("");
   if (!files.some((f) => f.path === "index.html")) throw new Error(`${dir} has no index.html at its root`);
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, bytes };
+  return { files, bytes, skipped: left.sort() };
 }

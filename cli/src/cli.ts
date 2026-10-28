@@ -32,7 +32,9 @@ const USAGE = `usage: cloudana <command>
   get <id>                                 one deployment and its latest events
   stop <id>                                stop and remove a deployment`;
 
-const line = (d: Deployment) => `${d.id}  ${d.status.padEnd(11)} ${d.kind.padEnd(11)} ${d.name}${d.url ? `  ${d.url}` : ""}`;
+/** Server text goes to a terminal: no control characters but newline and tab (escape sequences could rewrite the screen). */
+const clean = (s: string) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
+const line = (d: Deployment) => clean(`${d.id}  ${d.status.padEnd(11)} ${d.kind.padEnd(11)} ${d.name}${d.url ? `  ${d.url}` : ""}`);
 
 /** Runs one command; returns the exit code. */
 export async function run(argv: string[], io: Io): Promise<number> {
@@ -72,8 +74,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
         if (!arg) return usage(io, "get needs an id");
         const { deployment, events } = await c.get(arg);
         io.log(line(deployment));
-        for (const e of events.slice(-10)) io.log(`  ${new Date(e.at).toISOString()} ${e.level} ${e.message}`);
-        if (deployment.logs) io.log(`  logs:\n${deployment.logs}`);
+        for (const e of events.slice(-10)) io.log(clean(`  ${new Date(e.at).toISOString()} ${e.level} ${e.message}`));
+        if (deployment.logs) io.log(`  logs:\n${clean(deployment.logs)}`);
         return 0;
       }
       case "stop":
@@ -83,8 +85,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
         return 0;
     }
   } catch (err) {
-    if (err instanceof ApiError) io.error(`${err.code}: ${err.message}`);
-    else io.error(err instanceof Error ? err.message : String(err));
+    if (err instanceof ApiError) io.error(clean(`${err.code}: ${err.message}`));
+    else io.error(clean(err instanceof Error ? err.message : String(err)));
     return 1;
   }
   return usage(io);
@@ -92,7 +94,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
 async function deploy(c: Client, dir: string, name: string | undefined, wait: boolean, io: Io): Promise<number> {
   const site = await readSite(dir);
-  io.log(`${site.files.length} files, ${(site.bytes / 1024).toFixed(0)} KB`);
+  io.log(`${site.files.length} files, ${(site.bytes / 1024).toFixed(0)} KB${site.skipped.length ? ` (not published: ${site.skipped.join(", ")})` : ""}`);
   const created = await c.create({ name: name ?? path.basename(path.resolve(dir)), kind: "static", spec: { files: site.files } });
   io.log(`deployment ${created.id} queued, $${created.priceUsdPerHour.toFixed(4)}/h`);
   if (!wait) return 0;
@@ -104,7 +106,7 @@ async function deploy(c: Client, dir: string, name: string | undefined, wait: bo
       return 0;
     }
     if (deployment.status === "failed" || deployment.status === "stopped") {
-      io.error(`deployment ${deployment.status}${deployment.logs ? `:\n${deployment.logs}` : ""}`);
+      io.error(clean(`deployment ${deployment.status}${deployment.logs ? `:\n${deployment.logs}` : ""}`));
       return 1;
     }
     await sleep(3000);

@@ -28,7 +28,7 @@ beforeAll(async () => {
       if (req.method === "GET" && req.url === "/v1/deployments/dep-1") {
         polls++;
         const status = polls < 3 ? "queued" : "running";
-        return json(200, { status: "success", deployment: { id: "dep-1", name: "site", kind: "static", status, url: status === "running" ? "https://dep-1.cloudana.run" : null }, events: [{ at: 1, level: "info", message: "queued" }] });
+        return json(200, { status: "success", deployment: { id: "dep-1", name: "site", kind: "static", status, url: status === "running" ? "https://dep-1.cloudana.run" : null }, events: [{ at: 1, level: "info", message: "queued\u001b[2J\u0007" }] });
       }
       if (req.method === "GET" && req.url === "/v1/deployments") return json(200, { status: "success", deployments: [{ id: "dep-1", name: "site", kind: "static", status: "running", url: "https://dep-1.cloudana.run" }] });
       if (req.method === "DELETE" && req.url === "/v1/deployments/dep-1") return json(200, { status: "success", id: "dep-1", deploymentStatus: "stopped" });
@@ -66,7 +66,7 @@ describe("cloudana", () => {
     expect(await run(["list"], t.io)).toBe(0);
     expect(t.out[0]).toMatch(/^dep-1 {2}running {5}static {6}site {2}https:\/\/dep-1\.cloudana\.run$/);
     expect(await run(["get", "dep-1"], t.io)).toBe(0);
-    expect(t.out.at(-1)).toMatch(/info queued$/);
+    expect(t.out.at(-1)).toMatch(/info queued\[2J$/); // the escape and bell bytes from the server are gone
     expect(await run(["stop", "dep-1"], t.io)).toBe(0);
     expect(t.out.at(-1)).toBe("stopped dep-1");
     expect(await run(["get", "nope"], t.io)).toBe(1);
