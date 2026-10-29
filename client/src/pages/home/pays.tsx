@@ -68,7 +68,7 @@ export function HowItPays() {
     <Section
       id="pays"
       kicker="How it pays"
-      title="No bidding. No idle emission."
+      title="No bidding. No emission without work."
       lede="You pay a fee in CLD. The orchestrator assigns the job; the provider computes and proves it. The fee is burned; the provider is minted 95 % of it, the treasury 3 %, and 2 % is gone for good — plus a capped, declining subsidy when the random draw picks them."
     >
       <Reveal>

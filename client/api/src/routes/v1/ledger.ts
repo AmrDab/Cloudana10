@@ -21,6 +21,8 @@ const LedgerSchema = z.object({
   credits: z.number().int(),
   verifySampleK: z.number().int().openapi({ description: "One matrix job in this many has its transcript re-executed (1 = every job)." }),
   payHoldSeconds: z.number().int().openapi({ description: "How long a job's provider pay stays clawable after it verifies (0 = no hold)." }),
+  verifyWarmupJobs: z.number().int().openapi({ description: "A node's first this-many matrix jobs all have their transcript re-executed (0 = none)." }),
+  protocolPending: z.number().int().openapi({ description: "Protocol jobs verified but not yet closed: their subsidy share is set when the epoch closes." }),
   entries: z.array(
     z.object({
       id: z.string(),
@@ -28,6 +30,7 @@ const LedgerSchema = z.object({
       epoch: z.number().int(),
       lane: z.enum(["A", "B", "treasury", "verify"]),
       workType: z.string(),
+      protocol: z.boolean().openapi({ description: "A protocol job's entry: its amount is a share set at close, 0 while pending." }),
       amountUcld: z.number().int(),
       vestsAt: z.number(),
       releasesAt: z.number().nullable(),
@@ -53,7 +56,7 @@ const ledgerRoute = createRoute({
 ledgerRouter.openapi(ledgerRoute, async (c) => {
   const address = c.req.valid("param").address.toLowerCase();
   const env = getEnv();
-  return ok(c, { address, ...(await ledgerSummary(address)), verifySampleK: env.VERIFY_SAMPLE_K, payHoldSeconds: env.PAY_HOLD_SECONDS });
+  return ok(c, { address, ...(await ledgerSummary(address)), verifySampleK: env.VERIFY_SAMPLE_K, payHoldSeconds: env.PAY_HOLD_SECONDS, verifyWarmupJobs: env.VERIFY_WARMUP_JOBS });
 });
 
 // ── GET /v1/epochs/{id} — public, signed ────────────────────────────────────

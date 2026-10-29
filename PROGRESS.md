@@ -752,6 +752,20 @@ that remained:
   containers, endpoints, legacy direct origins (a node's host:port another tenant may be given later). Tests: gateway (3 new: hit per path and node, exclusions, stopped site). Deployed with `wrangler deploy`
   from `gateway/` after merge.
 
+### 36 · Site and docs follow the week's changes (2026-10-29)
+- **Homepage**: the "How it pays" title is "No bidding. No emission without work." (true with protocol work off or on;
+  the old "No idle emission" would be false once it is on); the FAQ states the warm-up (every job of a new node's
+  first 10 is re-executed).
+- **Console**: docs page: the warm-up in the proven label, edge caching of static sites, the CLI, protocol work in
+  "How CLD is minted" (built, on with the testnet contract), `GET /v1/draws/{id}` in the API list; earnings: the
+  warm-up sentence from the new `verifyWarmupJobs` field of `GET /v1/ledger/{address}` (which also documents
+  `protocolPending` and `protocol` per entry in its OpenAPI schema).
+- **Docs**: litepaper (page and Markdown): warm-up, minting "only for real, verified computation", a protocol-work
+  bullet, the edge cache in the planned list; README: CLI, simulation report, AGENTS.md, the CLI test command;
+  ARCHITECTURE: warm-up and the edge cache; CAPABILITY_MATRIX: draw weight, ledger rules, protocol work (class 2,
+  waits on #85), edge cache (class 2), CLI (class 2).
+- Not changed: the positioning line ("A decentralized datacenter"), an open owner decision (issue #95).
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

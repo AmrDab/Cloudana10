@@ -107,7 +107,7 @@ The gateway resolves `<uuid>.cloudana.run` → `GET /v1/deployments/{id}/route` 
 allow-popups`. Containers and endpoints on the separate user-content domain: all methods, cookies kept host-only,
 `Location` rewritten so the node's loopback never leaks. Endpoints: `Authorization: Bearer cld_ek_…` checked
 against the route's key hashes, per-key rate limit, random replica with retry when nothing reached an app. Legacy
-direct nodes: proxy to the verified public endpoint with `cacheTtl 0`. Not built: custom domains, CDN cache,
+direct nodes: proxy to the verified public endpoint with `cacheTtl 0`. Relayed static sites are cached at the edge (gateway `caches.default`, keyed by deployment id and path, 5 min, PROGRESS entry 35). Not built: custom domains, a general CDN cache,
 WAF, request logs (B-15, B-21).
 
 ## 5. Provider side
@@ -126,7 +126,7 @@ reserved per container and re-read from Docker on resume.
 |---|---|---|
 | Price | orchestrator controller | anyone: `/v1/network` is signed by the instruction key |
 | Assignment | orchestrator draw | anyone, from the signed `GET /v1/draws/{id}` (seed, eligible set, draw); the set is attested, not committed before the seed — pull-based assignment (B-17) closes that |
-| Verification | orchestrator (Freivalds on every matmul job, the transcript on a sampled 1 in 10; for int8-mlp and int8-model, the drawn segments of the node's commitment); browsers re-check planted matmul tasks | the keeper re-verifies only the root; results are reproducible from stored inputs |
+| Verification | orchestrator (Freivalds on every matmul job, the transcript on a sampled 1 in 10 and on every job of a node's first 10; for int8-mlp and int8-model, the drawn segments of the node's commitment); browsers re-check planted matmul tasks | the keeper re-verifies only the root; results are reproducible from stored inputs |
 | Billing of hosting | orchestrator probes through the node's socket | the owner (events, report-a-problem) |
 | Epoch root | orchestrator computes; keeper re-verifies and posts | guardian Safe (veto); anyone, from the signed `GET /v1/epochs/{n}` leaves (`scripts/verify/replay.ts`) |
 | Mint | contract, bounded by fees burned + allowance + annual ceiling | anyone on-chain |

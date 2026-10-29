@@ -164,6 +164,8 @@ export type Ledger = {
   verifySampleK: number;
   /** How long a job's provider pay stays clawable after it verifies (0 = no hold). */
   payHoldSeconds: number;
+  /** A node's first this-many matrix jobs are all re-executed (0 = none). */
+  verifyWarmupJobs?: number;
   /** Protocol jobs verified but not yet closed; their subsidy share is set when the epoch closes. */
   protocolPending?: number;
   entries: LedgerEntry[];

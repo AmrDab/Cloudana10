@@ -2,7 +2,7 @@
 
 Every product capability with its **verified** maturity. The homepage, the console (`client/src/lib/services.ts`),
 the docs and the waitlist must agree with this table; when they disagree, this table wins and the other is a bug.
-Updated 2026-10-19 from code, tests and the owner runbook, not from the site; verification tiers and work types
+Updated 2026-10-19 from code, tests and the owner runbook, not from the site (rows touched 2026-10-29: draw weight, ledger, protocol work, edge cache, CLI); verification tiers and work types
 re-checked against code 2026-10-26.
 
 Maturity classes (the directive's six, in order of trust):
@@ -18,7 +18,7 @@ Maturity classes (the directive's six, in order of trust):
 6. **Deprecated, remove** — dead or contradicting the product.
 
 How it is checked ("proof"), the four tiers (`ARCHITECTURE.md` §6): **proven** (the answer checked exactly: Freivalds
-on every matmul job + the transcript re-executed on a random 1 in 10; drawn segments for int8) · **possession proven**
+on every matmul job + the transcript re-executed on a random 1 in 10 and on every job of a node's first 10; drawn segments for int8) · **possession proven**
 (storage: Merkle challenges on random 64 KiB leaves; retrievability, not replication) · **probed**
 (reachability/content/health; pay only for time a probe saw working) · **planned** · **—** (not a checked service).
 
@@ -29,7 +29,7 @@ on every matmul job + the transcript re-executed on a random 1 in 10; drawn segm
 | Matrix compute jobs (`POST /v1/jobs`, n 8–256), USD quote settled in CLD, hold → capture | 2 | proven (Freivalds every job; transcript 1 in 10; pay held 24 h, wallet-wide claw + suspend on a failed sample) | e2e 43 checks; API tests `v1-submit`, `v1-assignment`, `pouw-verify`, `job-ceiling`, `pricing`, `sampled-verification`, `sampled-claw` | settlement (B-1) |
 | int8 MLP block jobs (`workType: "int8-mlp"`, the user's own weights), agent ≥ 1.7.0 | 2 | proven per segment: commit, then 2 of 4 segments opened within 30 s (a faked one caught with p = ½ per job); fail → owner refunded, claw, suspend | `int8-mlp`, `int8-mlp-gate`, `segment-verification`, `challenge-robustness` tests; a real 1.7.0 agent ran one locally (PROGRESS entry 26) | a public node on agent ≥ 1.7.0; settlement (B-1) |
 | int8 model jobs (`workType: "int8-model"`, L ≤ 16 chained blocks, d, h ≤ 64), agent ≥ 1.8.0 | 2 | proven per segment: max(3, L) of 4·L segments drawn uniformly (p ≥ ¼ per job) | `int8-model` tests; agent `int8-model` selftest | a public node on agent ≥ 1.8.0; settlement (B-1) |
-| Assignment by weighted random draw, replayable from the signed draw record | 2 | — | `jobs.service.ts`; `public-replay` tests; `scripts/verify/replay.ts` | the eligible set is attested, not pre-committed, and an expired-and-redrawn assignment leaves no trace (B-17) |
+| Assignment by weighted random draw, replayable from the signed draw record; weight = verified units per second from delivery to submit (one sample capped) | 2 | — | `jobs.service.ts`; `public-replay`, `throughput-weight` tests; `client/api/scripts/verify/replay.ts` | the eligible set is attested, not pre-committed, and an expired-and-redrawn assignment leaves no trace (B-17, issue #84) |
 | Provider agent: install, identify, benchmark, bind, heartbeat, signed instructions | 2 | — | agent selftests; image built and signed by CI (1.6.0 live on the first public node since 2026-10-20) | — |
 | Browser verifier (planted tasks, points) | 2 | — | e2e; `verify-feed` tests | — |
 | Containers (curated images) on fleet nodes, hardened | 3 | probed | API tests `deployments`, `workstations`; agent security selftest 94 checks; no container-capable node exists yet (the first public node serves compute, hosting and storage) | a container-capable node (xfs pquota + Docker ≥ 28) |
@@ -48,7 +48,8 @@ on every matmul job + the transcript re-executed on a random 1 in 10; drawn segm
 | Outbound tunnels for nodes behind NAT (relay) | 2 | — | relay 14 tests + agent relay selftests 69 + e2e 27 | — (set 2026-10-18) |
 | Report a problem → immediate probe → forgiven time | 2 | probed | `deployments` tests | — |
 | Custom domains, TLS for them | 5 | — | — | B-15 |
-| CDN / edge cache, cache invalidation, ETag beyond origin headers | 5 | — | gateway passes origin cache headers only | B-21 |
+| Edge cache for relayed static sites (by deployment id and path, 5 min, route checked first) | 2 | — | gateway tests (31) | — (gateway deployed 2026-10-28) |
+| CDN beyond static sites, cache invalidation, ETag beyond origin headers | 5 | — | gateway passes origin cache headers | B-21 |
 | WAF, DDoS beyond Cloudflare defaults, per-site rate limits, request logs | 5 | — | — | B-21 |
 | Authoritative DNS | 5 | — | — | B-23 |
 | Bandwidth billing | 5 | — | — | — |
@@ -81,7 +82,8 @@ on every matmul job + the transcript re-executed on a random 1 in 10; drawn segm
 
 | Capability | Class | Proof | Evidence | What blocks class 1 |
 |---|---|---|---|---|
-| Off-chain ledger: 95/3/2 split, lane B ρ ≤ 0.04 pro rata, per-operator cluster gate, hourly epochs, Merkle roots | 2 | — | `v1-ledger`, `fee-split-bounds`, `epoch-merkle`, `epoch-veto`, `epoch-migration` tests; e2e | — |
+| Off-chain ledger: 95/3/2 split, lane B ρ ≤ 0.04 pro rata and never above the chain allowance, per-operator cluster gate over live operators, hourly epochs, Merkle roots, vetoed epochs parked until corrected | 2 | — | `v1-ledger`, `fee-split-bounds`, `epoch-merkle`, `epoch-veto`, `epoch-migration` tests; e2e | — |
+| Protocol work for idle capacity (D1): the orchestrator's own matmul jobs to idle nodes, lane B from the unused epoch budget by verified units, cluster rule | 2 | proven (as paid matmul) | `protocol-work` tests; simulation phase 4 (`docs/POUW_SIMULATION_REPORT.md`) | `PROTOCOL_WORK=on` with the contract deploy (issue #85) |
 | Price controller (utilization, ±2 %/h, 5-min quote lock) | 2 | — | `pricing` tests | — |
 | Testnet credits (10 CLD/day per wallet and IP, ASN cap) | 2 | — | `dev-credits` tests | remove before value |
 | CLDTokenV2 + CloudanaSettlementV2 (post/veto/finalize/claim/claw, invariants, mint ceiling) | 2 | — | 224 Hardhat tests (offline solc) | **owner deploy (B-1)** |
@@ -97,7 +99,7 @@ on every matmul job + the transcript re-executed on a random 1 in 10; drawn segm
 | OpenAPI generated from the routes (`/v1/doc`, `/v1/swagger`), one response envelope, stable error codes | 2 | Node runtime probe in this pass |
 | Console: Run (jobs), Deploy (sites, containers), Workstations, Endpoints, Provide, Verify, Earnings, Economics, Docs | 3 | builds; re-verified in headless Chromium on the local stack in this pass: 29 checks across Run, Deploy, Provide and Docs (TEST_EVIDENCE §4b); Workstations and Endpoints tabs not exercised |
 | ~~`/control/legacy/*` marketplace-era pages~~ | removed | B-3 done 2026-10-21; `/control/legacy/*` → `/control` (301) |
-| SDK / CLI | 5 | B-22 |
+| CLI (`cli/`): login, deploy a folder as a static site, list, get, stop | 2 | `cli` tests against a stub API; not on npm (owner); jobs, containers and generated types: issue #83 |
 | Pagination and filtering on list endpoints | 3 | `epochs/{n}/jobs` paginates; `GET /jobs`, `GET /deployments` take a limit only |
 | Idempotency keys on writes | 5 | create endpoints are not idempotent; holds make double-submits cost money |
 

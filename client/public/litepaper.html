@@ -174,7 +174,7 @@
     <div class="steps">
       <div class="step card"><span class="n">01</span><p><b>Flash and go.</b> A provider installs the node agent once. It detects CPU, RAM, disk, and GPU, runs a benchmark, and binds to the provider's wallet with a one-time code. No spec forms, no price lists.</p></div>
       <div class="step card"><span class="n">02</span><p><b>You say what to run; the orchestrator places it.</b> Submit a job or a site. The orchestrator picks a node that fits by a random draw, sets the price, and handles placement. You never choose a provider.</p></div>
-      <div class="step card"><span class="n">03</span><p><b>Proof = product.</b> For matrix jobs, the provider proves the work by computing it. The proof is the full transcript of the computation, and the decoded result is the answer you paid for. The orchestrator checks every answer with Freivalds and re-executes the <span class="nt">σ</span>-bound transcript of a random 1 in 10 jobs; pay is held 24 h and clawed if a sampled check fails.</p></div>
+      <div class="step card"><span class="n">03</span><p><b>Proof = product.</b> For matrix jobs, the provider proves the work by computing it. The proof is the full transcript of the computation, and the decoded result is the answer you paid for. The orchestrator checks every answer with Freivalds and re-executes the <span class="nt">σ</span>-bound transcript of a random 1 in 10 jobs (every job for a new node's first 10); pay is held 24 h and clawed if a sampled check fails.</p></div>
     </div>
   </section>
 
@@ -211,10 +211,10 @@
     <h2 id="h-svc">What runs today, and how it is checked</h2>
     <p>Every service carries the label of what is actually checked, never more:</p>
     <ul>
-      <li><b>Proven</b> &mdash; the answer is checked exactly. <i>Matrix jobs:</i> every answer is Freivalds-checked; the full transcript is re-executed on a random 1 in 10. <i>int8 MLP blocks and chained int8 models (on your own weights):</i> the node commits to every step, then 2 of 4 steps (a block) or max(3, L) of 4&middot;L (a model of L blocks) are drawn and checked exactly within 30 s. One faked step is caught with probability &frac12; per job for a block and at least &frac14; per job for a model. Provider pay is held 24 h. Any failed check claws the node's held pay and suspends the node; a failed int8 check also refunds the user.</li>
+      <li><b>Proven</b> &mdash; the answer is checked exactly. <i>Matrix jobs:</i> every answer is Freivalds-checked; the full transcript is re-executed on a random 1 in 10, and on every job for a new node's first 10. <i>int8 MLP blocks and chained int8 models (on your own weights):</i> the node commits to every step, then 2 of 4 steps (a block) or max(3, L) of 4&middot;L (a model of L blocks) are drawn and checked exactly within 30 s. One faked step is caught with probability &frac12; per job for a block and at least &frac14; per job for a model. Provider pay is held 24 h. Any failed check claws the node's held pay and suspends the node; a failed int8 check also refunds the user.</li>
       <li><b>Possession proven</b> &mdash; storage. Today nodes hold AES-GCM encrypted copies of job results and answer Merkle challenges on random 64 KiB pieces; this shows a copy can be retrieved, not that it is replicated.</li>
       <li><b>Probed</b> &mdash; static sites (content hash checked every minute through the relay), containers, GPU workstations and AI endpoints running your own model server (health and reachability). You pay only for time a probe saw it working. Fees only, no subsidy.</li>
-      <li><b>Planned</b> &mdash; spot-checked inference for AI endpoints (needs a GPU node), plus CDN, DNS, TLS, DDoS shielding, WAF, edge functions, object storage, KV &amp; queues, tunnels, zero-trust access, databases, confidential VMs, a website builder, an AI gateway, and desktops for agents.</li>
+      <li><b>Planned</b> &mdash; spot-checked inference for AI endpoints (needs a GPU node), plus a full CDN (static sites are already cached at the edge for five minutes), DNS, TLS, DDoS shielding, WAF, edge functions, object storage, KV &amp; queues, tunnels, zero-trust access, databases, confidential VMs, a website builder, an AI gateway, and desktops for agents.</li>
     </ul>
     <p>Cloudana never picks or brands a model: an AI endpoint is your own server, and today it is probed, not verified. Live on testnet: compute jobs and static hosting. Early access: containers (hardened fleet nodes only), GPU workstations, AI endpoints, storage.</p>
   </section>
@@ -222,7 +222,7 @@
   <section class="sec" aria-labelledby="h-token">
     <div class="kicker w">05 · The token</div>
     <h2 id="h-token">How CLD is issued</h2>
-    <p>Prices are in US dollars. You pay in CLD at the rate on your quote. When a verified job is paid for, the fee is burned and the provider who did the work is minted most of it &mdash; so new CLD exists only because someone paid for real, verified computation:</p>
+    <p>Prices are in US dollars. You pay in CLD at the rate on your quote. When a verified job is paid for, the fee is burned and the provider who did the work is minted most of it &mdash; so new CLD exists only for real, verified computation:</p>
     <div class="params">
       <div class="param"><div class="v" style="color:var(--work)">95%</div><div class="l">of the fee minted to the provider</div></div>
       <div class="param"><div class="v">3%</div><div class="l">minted to the treasury</div></div>
@@ -242,7 +242,7 @@
   <section class="sec" aria-labelledby="h-status">
     <div class="kicker w">06 · Status</div>
     <h2 id="h-status">Status, stated plainly</h2>
-    <p>Cloudana today is an <b>orchestrator-coordinated testnet</b>. Verification is a Freivalds check of every matrix job's answer plus the orchestrator's re-execution of the transcript on a random sample (1 in 10), with provider pay held 24 h and clawed on a failed sample; int8 jobs are checked on drawn steps; storage answers Merkle challenges; hosting, containers and AI endpoints are probed. Browser verifiers can re-check public jobs, but their verdicts don't change outcomes. The planned next step is an on-chain Freivalds challenge against a bonded poster; until it ships, the orchestrator stays in the critical path, and we say so.</p>
+    <p>Cloudana today is an <b>orchestrator-coordinated testnet</b>. Verification is a Freivalds check of every matrix job's answer plus the orchestrator's re-execution of the transcript on a random sample (1 in 10, and every job for a new node's first 10), with provider pay held 24 h and clawed on a failed sample; int8 jobs are checked on drawn steps; storage answers Merkle challenges; hosting, containers and AI endpoints are probed. Browser verifiers can re-check public jobs, but their verdicts don't change outcomes. The planned next step is an on-chain Freivalds challenge against a bonded poster; until it ships, the orchestrator stays in the critical path, and we say so.</p>
     <div class="card warn">
       <p>We'll claim decentralized verification when it's true, not before. Before CLD carries value, the contracts, the issuance rules, and these pages will be reviewed and versioned in the public repository.</p>
     </div>
