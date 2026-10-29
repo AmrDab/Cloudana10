@@ -48,7 +48,7 @@ const ledgerRoute = createRoute({
     "pending = earned, not yet settled on-chain; held = the part of pending A/B still in its check window, at least " +
     "payHoldSeconds after the job verified (clawed if a sampled re-execution fails on any node paying this wallet; per " +
     "entry, releasesAt says when the window ends); vesting.B = the part of pending B, not held, not yet vested; " +
-    "clawed = taken back. verifySampleK and payHoldSeconds are the orchestrator's current settings.",
+    "clawed = taken back. verifySampleK, verifyWarmupJobs and payHoldSeconds are the orchestrator's current settings.",
   request: { params: z.object({ address: EthAddressSchema }) },
   responses: responses({ 200: json(LedgerSchema, "Ledger summary") }, 400),
 });

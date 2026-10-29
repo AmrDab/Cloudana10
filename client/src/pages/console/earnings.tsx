@@ -84,7 +84,7 @@ function Earnings({ address }: { address: string }) {
       </p>
       {sampleK !== undefined && (
         <p className="mt-1 font-mono text-[12px] text-faint">
-          Matrix jobs: every answer is checked, and {sampleK <= 1 ? "every job is" : `1 job in ${sampleK} is`} re-executed in full{(l?.verifyWarmupJobs ?? 0) > 0 && sampleK > 1 ? `, and every job of a node's first ${l!.verifyWarmupJobs}` : ""}. int8 jobs: drawn steps are checked.
+          Matrix jobs: every answer is checked, and {sampleK <= 1 ? "every job is" : `1 job in ${sampleK} is`} re-executed in full.{(l?.verifyWarmupJobs ?? 0) > 0 && sampleK > 1 ? ` A new node's first ${l!.verifyWarmupJobs} jobs are all re-executed.` : ""} int8 jobs: drawn steps are checked.
           {hold && ` Pay is held ${hold} first and clawed if a sampled check of any of your nodes fails.`}
         </p>
       )}

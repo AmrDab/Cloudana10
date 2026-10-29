@@ -95,13 +95,13 @@ export default function DocsPage() {
             </p>
             <p>
               Or deploy a <b>static site</b> from Run → Deploy: a node serves it, the orchestrator probes it every minute,
-              and you pay by the hour. Pages are cached at Cloudflare's edge for five minutes, so a visit seldom reaches the
-              node. Containers run on hardened fleet nodes (early access).
+              and you pay by the hour. Repeat visits to a page are usually served from the edge cache for five minutes.
+              Containers run on hardened fleet nodes (early access).
             </p>
             <p>
-              <b>From a terminal.</b> The <code className="font-mono text-[13px]">cloudana</code> command line (in the
-              repository's <code className="font-mono text-[13px]">cli/</code> folder, not on npm yet) deploys a folder with an
-              API key: <code className="font-mono text-[13px]">cloudana login --key cld_sk_…</code>, then{" "}
+              <b>From a terminal.</b> The <code className="font-mono text-[13px]">cloudana</code> command line deploys a folder with an
+              API key. It is not on npm yet: build it from the repository's <code className="font-mono text-[13px]">cli/</code>{" "}
+              folder (see its README). Then: <code className="font-mono text-[13px]">cloudana login --key cld_sk_…</code>, then{" "}
               <code className="font-mono text-[13px]">cloudana deploy ./dist</code>. Files starting with a dot and{" "}
               <code className="font-mono text-[13px]">node_modules</code> are never uploaded.
             </p>
@@ -154,8 +154,8 @@ export default function DocsPage() {
             </ul>
             <p>
               <b>Protocol work.</b> When no paid job is waiting, the orchestrator gives idle nodes its own small matrix jobs,
-              checked exactly like paid ones. What is left of an epoch's subsidy budget after paid jobs is split among them by
-              verified work, under the same cluster rule; no fee is burned and nothing goes to the treasury. It is built and
+              checked exactly like paid ones. What is left of the subsidy pool after paid jobs is shared among them by verified
+              work, only among independent operators; no fee is burned and nothing goes to the treasury. It is built and
               switches on with the testnet contract.
             </p>
             <p>
@@ -198,7 +198,7 @@ export default function DocsPage() {
               <b>Live today:</b> wallet sign-in by server nonce and EIP-191 signature; a short-lived token stays in the
               tab. Node messages are signed with each node's secp256k1 key; bind codes work once; fleet tokens are
               stored hashed and shown once. Every matrix job is answer-checked (Freivalds) and 1 in 10, drawn at random
-              after submit (every job for a node's first 10), is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
+              after submit (every job for a new node's first 10), is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
               provider's pay is held 24 h and clawed if a sampled check of any of its nodes fails. int8 MLP jobs are
               checked on drawn steps. Services are probed. Signed node instructions (nodes ignore anything unsigned or
               stale); hash-checked hosting probes through the relay; sealed secrets — container env encrypted in your

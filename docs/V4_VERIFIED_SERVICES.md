@@ -8,7 +8,7 @@ bills it. Step 1 (fixes F1, F2, F4) is merged (PR #18).
 
 > **Status, 2026-10-26.** Endpoints are built and **probed** only; verified mode (§4) is not built and is now called
 > *spot-checked inference* (B-19, **planned**, needs a GPU node). The labels are four: **proven** (matmul: Freivalds
-> every job, transcript on a random 1 in 10 and on every job for a node's first 10; int8-mlp / int8-model: drawn segments, §5a) · **possession proven**
+> every job, transcript on a random 1 in 10 and on every job for a new node's first 10; int8-mlp / int8-model: drawn segments, §5a) · **possession proven**
 > (storage phase 1, live in code) · **probed** · **planned**. §0 rule 3 is superseded: pay is held 24 h
 > (`PAY_HOLD_SECONDS`), a failed check claws the wallet's held pay and suspends the node (no ban); that hold replaces
 > the 2 h delay. Current table: `ARCHITECTURE.md` §6.

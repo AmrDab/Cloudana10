@@ -222,7 +222,7 @@
   <section class="sec" aria-labelledby="h-token">
     <div class="kicker w">05 · The token</div>
     <h2 id="h-token">How CLD is issued</h2>
-    <p>Prices are in US dollars. You pay in CLD at the rate on your quote. When a verified job is paid for, the fee is burned and the provider who did the work is minted most of it &mdash; so new CLD exists only for real, verified computation:</p>
+    <p>Prices are in US dollars. You pay in CLD at the rate on your quote. When a verified job is paid for, the fee is burned and the provider who did the work is minted most of it &mdash; so new CLD exists only for verified computation:</p>
     <div class="params">
       <div class="param"><div class="v" style="color:var(--work)">95%</div><div class="l">of the fee minted to the provider</div></div>
       <div class="param"><div class="v">3%</div><div class="l">minted to the treasury</div></div>
@@ -231,6 +231,7 @@
     </div>
     <ul>
       <li><b>Burn the fee, mint for the verified job.</b> The whole fee is burned at settlement; the provider is minted 95 % of it and the treasury 3 %. A small, capped, declining subsidy of up to 4 % of the fee is added, for proven work only, when the orchestrator's random draw picked a provider in a genuinely independent cluster &mdash; so routing a job to yourself doesn't pay. If a settlement period's budget runs short, it is shared pro rata.</li>
+      <li><b>Protocol work for idle nodes.</b> When no paid job is waiting, the orchestrator gives idle nodes its own small matrix jobs, checked like paid ones; what is left of each settlement period's subsidy budget after paid jobs is shared among them by verified work, only among independent operators. No fee is burned for them and the treasury gets nothing. Built; it switches on with the testnet contract.</li>
       <li><b>Priced in US dollars, settled in CLD.</b> The rate is a fixed $0.10 per CLD on testnet and, after listing, a one-hour average of the public CLD/USDC pool. Compute jobs are priced per tera-multiply-add plus a small base fee, moving with utilization; hosting, containers, workstations and GPUs have hourly prices. There is no oracle in settlement. Testnet prices are shown in dollars for reference; test CLD has no value.</li>
       <li><b>Minted per verified job, settled on Base in batches.</b> Each epoch (hourly on testnet, daily at mainnet) is posted as a Merkle root, with a veto window and a guardian before claims open. The testnet settlement contract is not deployed yet; until it is, pay is recorded off-chain.</li>
       <li><b>Paying.</b> If you hold another asset, your own wallet can swap it into CLD at the moment you pay; Cloudana never holds it. Cards are off during testnet. One static site per verified identity is free, paid for by the ecosystem treasury at normal fees.</li>

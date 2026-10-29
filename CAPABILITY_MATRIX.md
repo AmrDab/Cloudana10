@@ -18,7 +18,7 @@ Maturity classes (the directive's six, in order of trust):
 6. **Deprecated, remove** — dead or contradicting the product.
 
 How it is checked ("proof"), the four tiers (`ARCHITECTURE.md` §6): **proven** (the answer checked exactly: Freivalds
-on every matmul job + the transcript re-executed on a random 1 in 10 and on every job of a node's first 10; drawn segments for int8) · **possession proven**
+on every matmul job + the transcript re-executed on a random 1 in 10 and on every job of a new node's first 10; drawn segments for int8) · **possession proven**
 (storage: Merkle challenges on random 64 KiB leaves; retrievability, not replication) · **probed**
 (reachability/content/health; pay only for time a probe saw working) · **planned** · **—** (not a checked service).
 
@@ -26,7 +26,7 @@ on every matmul job + the transcript re-executed on a random 1 in 10 and on ever
 
 | Capability | Class | Proof | Evidence | What blocks class 1 |
 |---|---|---|---|---|
-| Matrix compute jobs (`POST /v1/jobs`, n 8–256), USD quote settled in CLD, hold → capture | 2 | proven (Freivalds every job; transcript 1 in 10; pay held 24 h, wallet-wide claw + suspend on a failed sample) | e2e 43 checks; API tests `v1-submit`, `v1-assignment`, `pouw-verify`, `job-ceiling`, `pricing`, `sampled-verification`, `sampled-claw` | settlement (B-1) |
+| Matrix compute jobs (`POST /v1/jobs`, n 8–256), USD quote settled in CLD, hold → capture | 2 | proven (Freivalds every job; transcript 1 in 10 and every job of a new node's first 10; pay held 24 h, wallet-wide claw + suspend on a failed sample) | e2e 43 checks; API tests `v1-submit`, `v1-assignment`, `pouw-verify`, `job-ceiling`, `pricing`, `sampled-verification`, `sampled-claw` | settlement (B-1) |
 | int8 MLP block jobs (`workType: "int8-mlp"`, the user's own weights), agent ≥ 1.7.0 | 2 | proven per segment: commit, then 2 of 4 segments opened within 30 s (a faked one caught with p = ½ per job); fail → owner refunded, claw, suspend | `int8-mlp`, `int8-mlp-gate`, `segment-verification`, `challenge-robustness` tests; a real 1.7.0 agent ran one locally (PROGRESS entry 26) | a public node on agent ≥ 1.7.0; settlement (B-1) |
 | int8 model jobs (`workType: "int8-model"`, L ≤ 16 chained blocks, d, h ≤ 64), agent ≥ 1.8.0 | 2 | proven per segment: max(3, L) of 4·L segments drawn uniformly (p ≥ ¼ per job) | `int8-model` tests; agent `int8-model` selftest | a public node on agent ≥ 1.8.0; settlement (B-1) |
 | Assignment by weighted random draw, replayable from the signed draw record; weight = verified units per second from delivery to submit (one sample capped) | 2 | — | `jobs.service.ts`; `public-replay`, `throughput-weight` tests; `client/api/scripts/verify/replay.ts` | the eligible set is attested, not pre-committed, and an expired-and-redrawn assignment leaves no trace (B-17, issue #84) |

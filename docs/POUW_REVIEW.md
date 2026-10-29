@@ -4,7 +4,7 @@
 > the C + p bug is fixed (C is bounded to ±n·bound², so Freivalds is exact over the integers) and the transcript is
 > re-executed over the API's own A and B, so the 2³² binding bug no longer reaches a verdict. The orchestrator no
 > longer re-executes every job: Freivalds runs on every matmul job and the full cuPOW transcript is re-executed on a
-> random 1 in `VERIFY_SAMPLE_K` (10) and on every job for a node's first `VERIFY_WARMUP_JOBS` (10), with every job's provider pay held `PAY_HOLD_SECONDS` (24 h) and clawed
+> random 1 in `VERIFY_SAMPLE_K` (10) and on every job for a new node's first `VERIFY_WARMUP_JOBS` (10), with every job's provider pay held `PAY_HOLD_SECONDS` (24 h) and clawed
 > wallet-wide on a failed sample, and the node suspended (B-6; undo: `POST /v1/admin/claws/{jobId}/reverse`). So
 > "detection is 100 %" below now holds for a wrong answer, not for skipped transcript work: that is caught on a
 > sampled job, on average after 10 jobs, never as a guarantee. New work types `int8-mlp` and `int8-model` are
