@@ -125,7 +125,8 @@ const evictRoute = createRoute({
   tags: TAGS,
   description:
     "Evict a node from your fleet: it is unbound (no payout, no fleet; a fresh bind code on its next announce) " +
-    "and its live deployments are re-queued for other nodes. 404 when the fleet is not yours or the node is not in it.",
+    "and its live deployments are re-queued for other nodes. The fleet token no longer binds it; binding it to your " +
+    "wallet with its bind link re-admits it. 404 when the fleet is not yours or the node is not in it.",
   security: BEARER_AUTH,
   request: { params: IdParam.extend({ address: EthAddressSchema }) },
   responses: responses(
