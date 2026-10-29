@@ -2,7 +2,8 @@
  * Hardware scan service: calls GET /hardware-scan on a provider node, validates
  * the response, and persists it to KV. Used for provider capacity verification.
  */
-import { getKV } from "../lib/storage.js";
+import { getD1, getKV } from "../lib/storage.js";
+import { normalizeAddress } from "../lib/eth.js";
 import { log } from "../lib/logger.js";
 
 const L = log.api;
@@ -29,10 +30,13 @@ export interface HardwareScanResult {
   computeScore: number;
   tier: string;
   signature: string;
-  // Added by orchestrator
-  verifiedAt: number;
+  // Added by orchestrator. null: nothing checks the provider's signature yet, so the scan is self-reported.
+  verifiedAt: number | null;
   endpoint: string;
 }
+
+/** The caller may not store this scan: its deviceId is not a node bound to the caller's wallet. */
+export class ScanRefused extends Error {}
 
 function kvKey(deviceId: string): string {
   return `hardware:${deviceId}`;
@@ -112,9 +116,11 @@ function isPrivateHost(host: string): boolean {
 
 /**
  * Trigger a hardware scan by calling the provider's /hardware-scan endpoint.
- * Validates the response structure and persists to KV.
+ * Validates the response structure and persists to KV. The record is public and
+ * keyed by the deviceId the endpoint names, so it must be the address of a node
+ * bound to `owner` (the caller's wallet); otherwise ScanRefused and nothing is stored.
  */
-export async function scanProviderHardware(endpoint: string): Promise<HardwareScanResult> {
+export async function scanProviderHardware(endpoint: string, owner: string): Promise<HardwareScanResult> {
   const url = `${endpoint.replace(/\/+$/, "")}/hardware-scan`;
   await assertResolvesPublic(new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase());
   L.info(`[HardwareScan] Fetching ${url}`);
@@ -128,6 +134,11 @@ export async function scanProviderHardware(endpoint: string): Promise<HardwareSc
   if (!data.deviceId || typeof data.computeScore !== "number" || !Array.isArray(data.gpus)) {
     throw new Error("Invalid hardware-scan response: missing required fields");
   }
+  const bound = await getD1()
+    .prepare("SELECT 1 AS x FROM nodes WHERE address = ? AND payout = ?")
+    .bind(normalizeAddress(String(data.deviceId)), normalizeAddress(owner))
+    .first();
+  if (!bound) throw new ScanRefused("deviceId must be the address of a node bound to your wallet");
 
   const record: HardwareScanResult = {
     deviceId: data.deviceId,
@@ -140,7 +151,7 @@ export async function scanProviderHardware(endpoint: string): Promise<HardwareSc
     computeScore: data.computeScore,
     tier: data.tier ?? "T1",
     signature: data.signature ?? "",
-    verifiedAt: Date.now(),
+    verifiedAt: null,
     endpoint,
   };
 
@@ -162,6 +173,6 @@ export async function getHardwareScan(deviceId: string): Promise<HardwareScanRes
 /** Return true if a fresh scan exists (scanned within the last 24 h). */
 export async function isHardwareScanFresh(deviceId: string): Promise<boolean> {
   const scan = await getHardwareScan(deviceId);
-  if (!scan) return false;
+  if (!scan?.verifiedAt) return false;
   return Date.now() - scan.verifiedAt < SCAN_STALE_MS;
 }
