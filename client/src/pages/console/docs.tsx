@@ -95,7 +95,15 @@ export default function DocsPage() {
             </p>
             <p>
               Or deploy a <b>static site</b> from Run → Deploy: a node serves it, the orchestrator probes it every minute,
-              and you pay by the hour. Containers run on hardened fleet nodes (early access).
+              and you pay by the hour. Repeat visits to a page are usually served from the edge cache for five minutes.
+              Containers run on hardened fleet nodes (early access).
+            </p>
+            <p>
+              <b>From a terminal.</b> The <code className="font-mono text-[13px]">cloudana</code> command line deploys a folder with an
+              API key. It is not on npm yet: build it from the repository's <code className="font-mono text-[13px]">cli/</code>{" "}
+              folder (see its README). Then: <code className="font-mono text-[13px]">cloudana login --key cld_sk_…</code>, then{" "}
+              <code className="font-mono text-[13px]">cloudana deploy ./dist</code>. Files starting with a dot and{" "}
+              <code className="font-mono text-[13px]">node_modules</code> are never uploaded.
             </p>
             <Link href="/run" className={linkCls}>Run a job <ArrowRight className="size-3.5" /></Link>
           </Doc>
@@ -131,7 +139,7 @@ export default function DocsPage() {
           <Doc id="cld" title="How CLD is minted">
             <p>
               Prices are in US dollars. You pay in CLD at the rate on your quote, and every fee settles in CLD. New CLD
-              exists only because someone paid for real, verified computation. For each verified job with fee F:
+              exists only for verified work. For each verified, paid job with fee F:
             </p>
             <ul className="grid gap-2 pl-5 [list-style:disc]">
               <li>F is burned at settlement.</li>
@@ -144,6 +152,12 @@ export default function DocsPage() {
                 entry in it is scaled down by the same factor.
               </li>
             </ul>
+            <p>
+              <b>Protocol work.</b> When no paid job is waiting, the orchestrator gives idle nodes its own small matrix jobs,
+              checked exactly like paid ones. What is left of the subsidy pool after paid jobs is shared among them by verified
+              work, only among independent operators; no fee is burned and nothing goes to the treasury. It is built and
+              switches on with the testnet contract.
+            </p>
             <p>
               The provider's and treasury's amounts are fixed when the job verifies; the subsidy is fixed when its epoch
               closes. A compute job's entries are first held 24 h, and the provider's are clawed if a sampled check fails on
@@ -184,7 +198,7 @@ export default function DocsPage() {
               <b>Live today:</b> wallet sign-in by server nonce and EIP-191 signature; a short-lived token stays in the
               tab. Node messages are signed with each node's secp256k1 key; bind codes work once; fleet tokens are
               stored hashed and shown once. Every matrix job is answer-checked (Freivalds) and 1 in 10, drawn at random
-              after submit (every job for a node's first 10), is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
+              after submit (every job for a new node's first 10), is re-executed by the orchestrator, each transcript bound to its assignment by σ; a
               provider's pay is held 24 h and clawed if a sampled check of any of its nodes fails. int8 MLP jobs are
               checked on drawn steps. Services are probed. Signed node instructions (nodes ignore anything unsigned or
               stale); hash-checked hosting probes through the relay; sealed secrets — container env encrypted in your
@@ -199,7 +213,7 @@ export default function DocsPage() {
           </Doc>
 
           <Doc id="services" title="Services and proofs">
-            <p>Status is the truth today. Four labels, never more than what is checked. <b>Proven</b>: matrix jobs — every answer checked (Freivalds), the full transcript re-executed on a random 1 job in 10; int8 MLP blocks — on every job 2 of their 4 steps, drawn after the node committed to all of them, are checked exactly (one faked step caught with probability ½ per job); int8 models of L ≤ 16 blocks — max(3, L) of their 4·L steps drawn the same way (at least ¼ per job). <b>Possession proven</b>: storage copies answer Merkle challenges. <b>Probed</b>: static hosting, containers, workstations and AI endpoints running your own model server — you pay only for time a probe saw working. <b>Planned</b>: spot-checked inference. Cloudana never picks or brands a model, and a model on your own endpoint is not verified today.</p>
+            <p>Status is the truth today. Four labels, never more than what is checked. <b>Proven</b>: matrix jobs — every answer checked (Freivalds), the full transcript re-executed on a random 1 job in 10 (every job for a new node's first 10); int8 MLP blocks — on every job 2 of their 4 steps, drawn after the node committed to all of them, are checked exactly (one faked step caught with probability ½ per job); int8 models of L ≤ 16 blocks — max(3, L) of their 4·L steps drawn the same way (at least ¼ per job). <b>Possession proven</b>: storage copies answer Merkle challenges. <b>Probed</b>: static hosting, containers, workstations and AI endpoints running your own model server — you pay only for time a probe saw working. <b>Planned</b>: spot-checked inference. Cloudana never picks or brands a model, and a model on your own endpoint is not verified today.</p>
             <Panel className="divide-y divide-line">
               {CATALOG.map((s) => (
                 <div key={s.id} className="grid gap-1 p-4 sm:grid-cols-[180px_1fr_auto] sm:items-center sm:gap-4">
@@ -232,6 +246,7 @@ export default function DocsPage() {
                 ["GET", "/v1/jobs/{id}", "result and proof (auth)"],
                 ["GET", "/v1/verify/task", "a task to check"],
                 ["GET", "/v1/ledger/{address}", "CLD earned by an address"],
+                ["GET", "/v1/draws/{id}", "replay how a job's node was drawn"],
                 ["POST", "/v1/fleets", "create a fleet token (auth)"],
                 ["POST", "/v1/waitlist", "join the waitlist"],
               ].map(([m, p, d]) => (

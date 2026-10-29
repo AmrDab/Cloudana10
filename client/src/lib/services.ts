@@ -48,7 +48,7 @@ export const GROUPS: { id: ServiceGroup; label: string }[] = [
 export const CATALOG: Service[] = [
   // Compute
   { id: "compute", group: "compute", name: "GPU / CPU compute", line: "Verified matrix jobs on assigned hardware.", icon: Cpu, status: "live",
-    proof: "Proven. Matrix jobs: answer checked (Freivalds) on every job, transcript re-executed on a random 1 in 10 (every job for a node's first 10). int8 MLP jobs: steps drawn after the node commits, checked exactly. Pay held 24 h.", subsidy: true },
+    proof: "Proven. Matrix jobs: answer checked (Freivalds) on every job, transcript re-executed on a random 1 in 10 (every job for a new node's first 10). int8 MLP jobs: steps drawn after the node commits, checked exactly. Pay held 24 h.", subsidy: true },
   { id: "ai-inference", group: "compute", name: "AI inference", line: "Your own model server on assigned GPUs.", icon: Brain, status: "early",
     proof: "Probed: health checked through the relay; the model itself is not verified. Spot-checked inference is planned. Fees only.", subsidy: false },
   { id: "containers", group: "compute", name: "Containers", line: "Docker images on assigned nodes.", icon: Container, status: "early",
@@ -63,7 +63,7 @@ export const CATALOG: Service[] = [
   // Live: the gateway serves https://<id>.cloudana.run (2026-10-18) and a public node (Azure, relay) serves sites.
   { id: "hosting", group: "hosting", name: "Static hosting", line: "Sites served by nodes through the relay, content-hash probed every minute.", icon: Globe, status: "live",
     proof: "Content-hash probed by the orchestrator every minute through the relay; served at https://<id>.cloudana.run.", subsidy: false },
-  { id: "cdn", interest: "hosting", group: "hosting", name: "CDN & edge cache", line: "Cached copies close to every reader.", icon: Network, status: "planned",
+  { id: "cdn", interest: "hosting", group: "hosting", name: "Full CDN", line: "Cached copies of everything close to every reader (static sites already are).", icon: Network, status: "planned",
     proof: "Random probes from many residential verifiers check hash and latency.", subsidy: false },
   { id: "dns", interest: "hosting", group: "hosting", name: "DNS", line: "Authoritative answers from many nodes.", icon: Waypoints, status: "planned",
     proof: "Answers probed from many vantage points.", subsidy: false },

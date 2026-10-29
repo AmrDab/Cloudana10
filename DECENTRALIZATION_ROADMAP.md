@@ -18,7 +18,7 @@ The states are **FAIL** (the network stops), **PARTIAL** (new work stops but eve
 |---|---|---|
 | API / orchestrator | Centralized | Cloudflare Worker + D1 + KV assigns work and sets the price |
 | Assignment | Centralized, replayable | Weighted random draw seeded from a Base block hash; `eligible_hash` and `draw_seed` are stored per job but not yet published |
-| PoUW verification | Centralized | Orchestrator Freivalds-checks every result and re-runs the transcript of a random 1 in 10 (pay held 24 h, clawed on a failed check); browsers re-check public jobs with planted tasks |
+| PoUW verification | Centralized | Orchestrator Freivalds-checks every result and re-runs the transcript of a random 1 in 10 and of every job of a new node's first 10 (pay held 24 h, clawed on a failed check); browsers re-check public jobs with planted tasks |
 | Settlement | Guarded | One Merkle root per hourly epoch on Base Sepolia, posted by a keeper; guardian veto window; fee split checked by the contract on every post |
 | Mint authority | Bounded | Settlement contract is the token's only minter; `mint ≤ 98 % of fees burned + subsidy allowance`; annual ceiling on the token |
 | Claims | Permissionless | `claim` / `claimFor` with a Merkle proof once an epoch is finalized |

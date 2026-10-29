@@ -212,7 +212,7 @@ describe("the 24 h hold", () => {
 
   it("GET /v1/ledger/{address} reports the settings the console words its captions with", async () => {
     const res = await buildApp({ runtime: "node" }).request(`/v1/ledger/${payout}`, { headers: { "cf-connecting-ip": "10.66.0.2" } });
-    expect(await res.json()).toMatchObject({ verifySampleK: 10, payHoldSeconds: 86_400 });
+    expect(await res.json()).toMatchObject({ verifySampleK: 10, payHoldSeconds: 86_400, verifyWarmupJobs: 0, protocolPending: 0 });
   });
 });
 

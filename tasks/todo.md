@@ -467,3 +467,8 @@ and tests in CI. shortcut: responses hand-typed for these five calls, generate f
 - [ ] Later: `cloudana jobs`, containers, types generated from /v1/doc; publish to npm (owner: the npm account)
 - [x] B-21 static sites cached at the gateway (PR feat/gateway-static-cache)
 - [ ] Report final + PROGRESS entry + PR
+
+
+## Issues for coding agents (2026-10-29)
+The open work is filed as GitHub issues #80–#94, indexed and ordered in #95 (pinned); `AGENTS.md` holds the rules.
+B-17 step 1 is #84.

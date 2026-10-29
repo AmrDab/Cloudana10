@@ -107,7 +107,7 @@ The gateway resolves `<uuid>.cloudana.run` → `GET /v1/deployments/{id}/route` 
 allow-popups`. Containers and endpoints on the separate user-content domain: all methods, cookies kept host-only,
 `Location` rewritten so the node's loopback never leaks. Endpoints: `Authorization: Bearer cld_ek_…` checked
 against the route's key hashes, per-key rate limit, random replica with retry when nothing reached an app. Legacy
-direct nodes: proxy to the verified public endpoint with `cacheTtl 0`. Not built: custom domains, CDN cache,
+direct nodes: proxy to the verified public endpoint with `cacheTtl 0`. Relayed static sites are cached at the edge (gateway `caches.default`, keyed by deployment id and path, 5 min, PROGRESS entry 35). Not built: custom domains, a general CDN cache,
 WAF, request logs (B-15, B-21).
 
 ## 5. Provider side
@@ -126,7 +126,7 @@ reserved per container and re-read from Docker on resume.
 |---|---|---|
 | Price | orchestrator controller | anyone: `/v1/network` is signed by the instruction key |
 | Assignment | orchestrator draw | anyone, from the signed `GET /v1/draws/{id}` (seed, eligible set, draw); the set is attested, not committed before the seed — pull-based assignment (B-17) closes that |
-| Verification | orchestrator (Freivalds on every matmul job, the transcript on a sampled 1 in 10; for int8-mlp and int8-model, the drawn segments of the node's commitment); browsers re-check planted matmul tasks | the keeper re-verifies only the root; results are reproducible from stored inputs |
+| Verification | orchestrator (Freivalds on every matmul job, the transcript on a sampled 1 in 10 and on every job of a new node's first 10; for int8-mlp and int8-model, the drawn segments of the node's commitment); browsers re-check planted matmul tasks | the keeper re-verifies only the root; results are reproducible from stored inputs |
 | Billing of hosting | orchestrator probes through the node's socket | the owner (events, report-a-problem) |
 | Epoch root | orchestrator computes; keeper re-verifies and posts | guardian Safe (veto); anyone, from the signed `GET /v1/epochs/{n}` leaves (`scripts/verify/replay.ts`) |
 | Mint | contract, bounded by fees burned + allowance + annual ceiling | anyone on-chain |
@@ -159,7 +159,7 @@ nodes pin Cloudana's instruction key and users hold credits in Cloudana's D1. Th
 
 - One D1 database is the write path for everything; heartbeats dominate it (B-5).
 - ~~Verification costs the orchestrator as much CPU as the work (B-6).~~ Closed 2026-10-21: Freivalds on every job,
-  the transcript on a sampled 1 in 10 (≈ 50× cheaper unsampled at n = 256).
+  the transcript on a sampled 1 in 10, and on every job of a new node's first 10 (≈ 50× cheaper unsampled at n = 256).
 - The relay Durable Object is a single socket per node; a relay deploy drops every node socket (deploy rarely).
 - Hosting ingress and DNS are Cloudflare-operated single points; this is disclosed, not hidden.
 - Secrets are visible to the provider's Docker daemon by construction; a TEE tier is the only real fix.
