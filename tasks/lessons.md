@@ -115,3 +115,9 @@
 - Rule: before recommending a pivot, test the thesis with the real code (simulate user + provider + adversary, measure
   verify cost, false rejects, cheat P&L, mint per unit of work) and bring numbers, not opinions. Name the real gaps
   against the analogy (today: zero demand → zero mint; the API, not the network, verifies) as owner decisions.
+
+## 2026-10-29 — `git add -u` swept the local launch.json into a commit
+- This worktree always carries a modified `.claude/launch.json` (local preview configs, never committed). `git add -u`
+  staged it with the docs changes; caught by checking the commit's file list, reverted in the next commit.
+- Rule: stage named paths only (`git add <files>`), never `-u`, `-a` or `.`; read `git show --stat HEAD` after every
+  commit in this worktree.
