@@ -167,7 +167,7 @@ export function Paper() {
               <em>is the work.</em>
             </h1>
             <p className="pp-lede">
-              Send a job; the network picks the hardware and returns the result with its proof. Only checked, paid work mints CLD.
+              Send a job; the network picks the hardware and returns the result with its proof. Only checked work mints CLD.
             </p>
             <div className="pp-btns">
               <button type="button" onClick={() => openWaitlist()} className="pp-btn solid">Join the waitlist</button>
@@ -255,7 +255,7 @@ export function Paper() {
 
         <section id="security" className="pp-quote">
           <Reveal>
-            <p>Every message signed. Every proof re-checked. Secrets encrypted so only the node that runs them can read them.</p>
+            <p>Every message signed. Every result checked. Secrets encrypted so only the node that runs them can read them.</p>
             <a href="/control/docs#security">What is live, building, planned →</a>
           </Reveal>
         </section>

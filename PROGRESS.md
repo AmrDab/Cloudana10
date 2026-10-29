@@ -753,7 +753,7 @@ that remained:
   from `gateway/` after merge.
 
 ### 36 · Site and docs follow the week's changes (2026-10-29)
-- **Homepage**: the "How it pays" title is "No bidding. No emission without work." (true with protocol work off or on;
+- **Homepage** (`client/src/pages/home/paper/Paper.tsx`, the live one): "Only checked work mints CLD" (was "checked, paid": protocol jobs have no fee) and "Every result checked" (was "Every proof re-checked": transcripts are sampled). The `/lab` sections (`pays.tsx`, `faq.tsx`): the "How it pays" title is "No bidding. No emission without work." (true with protocol work off or on;
   the old "No idle emission" would be false once it is on); the FAQ states the warm-up (every job of a new node's
   first 10 is re-executed).
 - **Console**: docs page: the warm-up in the proven label, edge caching of static sites, the CLI, protocol work in
