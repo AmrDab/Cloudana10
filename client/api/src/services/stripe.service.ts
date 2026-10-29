@@ -110,11 +110,12 @@ export async function createCheckoutSession(
     mode: "payment",
     success_url: successUrl ?? `${appUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: cancelUrl ?? `${appUrl}/payment/cancel`,
+    // Caller metadata first: it must not override the server-computed keys.
     metadata: {
+      ...metadata,
       userId,
       cldAmount: String(cldAmount),
       amountUsd: String(amountUsd),
-      ...metadata,
     },
     client_reference_id: userId,
   });
@@ -257,17 +258,20 @@ export async function handleWebhook(
         return { handled: true, event: event.type };
       }
 
-      const userId = session.metadata?.userId ?? session.client_reference_id;
-      const cldAmount = Number(session.metadata?.cldAmount ?? 0);
+      // Credit what was actually paid, to whom the server created the session for —
+      // never metadata (sessions created before the ordering fix let the caller set it).
+      const userId = session.client_reference_id;
+      const paidUsd = session.currency === "usd" && session.amount_total ? session.amount_total / 100 : 0;
+      const cldAmount = paidUsd > 0 ? convertUsdToCld(paidUsd) : 0;
 
       if (!userId || !cldAmount) {
-        L.error(`[Stripe] Missing userId or cldAmount in session metadata for ${session.id}`);
+        L.error(`[Stripe] Missing client_reference_id or a paid USD amount for ${session.id}`);
         return { handled: false, event: event.type };
       }
 
       await creditUserBalance(userId, cldAmount, {
         stripeSessionId: session.id,
-        amountUsd: session.metadata?.amountUsd,
+        amountUsd: String(paidUsd),
       });
 
       return { handled: true, event: event.type, userId, cldCredited: cldAmount };
