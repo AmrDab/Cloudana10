@@ -251,7 +251,8 @@ it is shown once. A node started with the token joins your wallet immediately:
 no bind link, it logs `Joined fleet <id> — earnings go to <payout>`. Revoking
 the fleet stops new nodes joining and unbinds every node of the fleet (their
 deployments are re-queued elsewhere); `POST /v1/fleets/{id}/nodes/{address}/evict`
-does the same for one node.
+does the same for one node: the token no longer binds it, and it prints a bind
+link again. Binding it to your wallet with that link re-admits it.
 
 Docker (build from the repo root, or pull the signed image
 `ghcr.io/amrdab/cloudana-node-agent:<version>` built by

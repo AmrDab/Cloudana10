@@ -130,11 +130,16 @@ export async function revokeFleet(owner: string, id: string): Promise<number | n
 
 /**
  * Evict one node from the caller's fleet: unbound (no payout, no fleet), its live deployments re-queued.
- * null = no such fleet for this owner, or the node is not in it.
+ * The eviction is recorded first, so the shared token cannot bind the node again (bindNodeToFleet) until the owner
+ * binds it by hand (bindNode). null = no such fleet for this owner, or the node is not in it.
  */
 export async function evictFleetNode(owner: string, id: string, node: string): Promise<{ evicted: string; requeued: number } | null> {
   const row = await ownedFleet(owner, id);
   if (!row) return null;
+  await getD1()
+    .prepare("INSERT OR REPLACE INTO fleet_evictions (fleet_id, address, evicted_at) SELECT fleet_id, address, ? FROM nodes WHERE fleet_id = ? AND address = ?")
+    .bind(Date.now(), id, normalizeAddress(node))
+    .run();
   const [evicted] = await unbindFleetNodes(id, node);
   if (!evicted) return null;
   const requeued = await requeueNodeDeployments([evicted], "node evicted from its fleet");

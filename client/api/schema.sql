@@ -173,6 +173,8 @@ CREATE TABLE IF NOT EXISTS fleets (
   floor_ucld_per_mmac INTEGER, created_at INTEGER, revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_fleets_owner ON fleets(owner, created_at);
+-- Nodes the owner evicted from a fleet: its token no longer binds them, until the owner binds the node by hand again.
+CREATE TABLE IF NOT EXISTS fleet_evictions (fleet_id TEXT NOT NULL, address TEXT NOT NULL, evicted_at INTEGER, PRIMARY KEY (fleet_id, address));
 
 -- Settlement v2: mint_a/mint_b = lane totals, treasury_ucld is posted as an amount (not a leaf), root is computed at close.
 CREATE TABLE IF NOT EXISTS epochs (

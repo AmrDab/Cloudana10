@@ -153,11 +153,14 @@ nodesRouter.openapi(announceRoute, async (c) => {
   await recordNodeNetwork(node.address, trustedClientIp(c), cfAsn(c));
   if (fleet) {
     const r = await bindNodeToFleet(node.address, fleet);
-    if (!r.ok) return fail(c, r.code, r.message);
-    // On every fleet bind, not only on a detected move: work pinned to another fleet may not stay on this node (the
-    // query finds nothing when nothing is mispinned; the cron sweep requeueMispinned catches anything missed here).
-    await requeuePinnedOffFleet(node.address, fleet.id);
-    return ok(c, { bound: true, payout: fleet.owner, bindCode: null, fleetId: fleet.id });
+    // Evicted from this fleet: the token does not bind it, so it is answered as it stands (unbound: its bind code).
+    if (!r.ok && r.code !== "evicted") return fail(c, r.code, r.message);
+    if (r.ok) {
+      // On every fleet bind, not only on a detected move: work pinned to another fleet may not stay on this node (the
+      // query finds nothing when nothing is mispinned; the cron sweep requeueMispinned catches anything missed here).
+      await requeuePinnedOffFleet(node.address, fleet.id);
+      return ok(c, { bound: true, payout: fleet.owner, bindCode: null, fleetId: fleet.id });
+    }
   }
   return ok(c, {
     bound: !!node.payout,
