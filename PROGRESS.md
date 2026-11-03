@@ -770,6 +770,16 @@ that remained:
   console wording.
 - Not changed: the positioning line ("A decentralized datacenter"), an open owner decision (issue #95).
 
+### 37 · The March leak re-assessed; burned wallet refused by the deploy; secret scanning in CI (2026-11-03)
+- Owner: three old commits leak the deployer key of 0xF292…c61A plus Alchemy, Pinata and Etherscan keys; treat all as
+  stolen. Checked read-only: the wallet is empty on six mainnets (swept 2026-06-11; only spam tokens left), holds
+  admin/mint roles on the v1 **testnet** contracts and 0.249 test ETH, unused on testnet since 2026-03-10; nothing live
+  trusts v1 and production holds none of the leaked service keys. Full record: `SECURITY_AUDIT.md` F12.
+- Code: `deployV2` refuses the wallet in any role (test); `contract/scripts/v1/renounce-burned-roles.ts` (owner-run,
+  renounce only); gitleaks on every new commit (`.github/workflows/secrets.yml`, `.gitleaks.toml`).
+- Not done by Claude, by rule: no signing with the leaked key, no moving funds, no service-account changes. Owner
+  steps: runbook 1, 1b and 13.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

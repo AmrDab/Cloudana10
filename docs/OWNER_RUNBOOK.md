@@ -27,6 +27,7 @@ when the next step is ready.
 | ✔ | A. Six decisions | — | decided 2026-10-21: the recommendations | — |
 | ☐ | 0. Set up PowerShell | 5 min | — | — |
 | ☐ | 1. Kill the old Alchemy key (skip if you already did) | 5 min | Alchemy login | "Alchemy done" |
+| ☐ | 1b. The rest of the March leak: Etherscan key, WalletConnect id, push protection, v1 roles | 20 min | Etherscan, Reown and GitHub logins | "leak cleanup done" |
 | ✔ | 2. Three API secrets | — | done 2026-10-18 | — |
 | ☐ | 3. MetaMask, five accounts, test ETH, a Safe | 30 min | Browser | the Safe and Poster addresses |
 | ☐ | 4. Deploy the contracts | 15 min | Deployer key | "contracts deployed" |
@@ -178,6 +179,47 @@ Alchemy quota with it.
 **If it goes wrong:** there's no Base Sepolia app? Nothing to do; the link pointed to an app that's already gone.
 
 ✅ Tell Claude: **"Alchemy done."**
+
+---
+
+## Step 1b: The rest of the March leak (20 min)
+
+**Why:** three old commits in this public repository contain the wallet key of **0xF292…c61A** and four service keys
+(Alchemy, Etherscan, Pinata, WalletConnect). Anyone can read them, forever; deleting the commits does not help. The
+wallet is already empty on every real chain: its last coins were swept out on 11 June. It still holds admin and mint
+roles on the old (v1) **testnet** contracts, which nothing in Cloudana uses any more. Details: `SECURITY_AUDIT.md` F12.
+
+**Do — keys** (Alchemy is step 1, Pinata is step 13):
+1. **Etherscan / Basescan:** sign in at https://etherscan.io → your name → **API Keys** → delete every key that
+   existed before November 2026. Create one new key. Put it in `contract\.env` on your PC only, as
+   `BASE_SEPOLIA_ETHERSCAN_API_KEY=…` (this file is never committed). It is used once, to verify the contracts in step 4.
+2. **WalletConnect (Reown):** sign in at https://cloud.reown.com → your project → **Settings** → delete the project,
+   then create a new one. Tell Claude the new **Project ID**: it is public by design (it ships in the website) and Claude
+   sets it for the next site build.
+
+**Do — GitHub push protection** (blocks a commit that contains a key before it reaches GitHub):
+1. Open https://github.com/AmrDab/Cloudana10/settings/security_analysis.
+2. Under **Secret scanning**, turn on **Push protection**.
+
+**Optional — freeze the old contracts.** Only if you want the leaked key to lose its v1 roles. It costs nothing
+(the wallet has test ETH for gas) and cannot be undone, which is fine because v1 is retired:
+
+```powershell
+cd C:\Users\amr_d\Cloudana10-owner\contract
+$env:PRIVATE_KEY = "<the leaked key, from the old commit>"
+npx hardhat run scripts/v1/renounce-burned-roles.ts --network baseSepolia      # lists the roles
+$env:EXECUTE = "1"
+npx hardhat run scripts/v1/renounce-burned-roles.ts --network baseSepolia      # renounces them
+Remove-Item Env:PRIVATE_KEY, Env:EXECUTE
+```
+
+Do **not** move anything to the old wallet or give it any role, ever. Do **not** sweep its test ETH into a wallet you
+keep: there is nothing of value there.
+
+**You should see:** no old keys in Etherscan, a new Reown project id, push protection on; if you ran the script, a
+"renounced …" line per role and finally "done".
+
+✅ Tell Claude: **"leak cleanup done"** (and the new WalletConnect Project ID).
 
 ---
 

@@ -1,0 +1,13 @@
+# Secret scanning (.github/workflows/secrets.yml). gitleaks default rules, plus an allowlist of hardhat's published
+# local test accounts used by the testnet-in-a-box (scripts/sim/testnet): they hold value on no chain.
+# Add a value here only if it is public by design; a real secret is rotated, never allowlisted.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "hardhat default accounts (public, local chain only)"
+regexes = [
+  '''(?i)0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6''',
+  '''(?i)0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d''',
+  '''(?i)0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba''',
+]
