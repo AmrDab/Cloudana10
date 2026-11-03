@@ -184,6 +184,39 @@ Four reviews from the owner's own session (`PROGRESS.md` entry 20 has every item
 | Medium | (re-review of this round) the `bill()` backstop could strand an hour's hold on a stopped row when a concurrent heartbeat re-held it; the third secrets cycle abandoned an endpoint without the still-unsealed guard | both out-of-credits ends read the row afresh; the triggering replica is ended under the guard first (owner's `5782629`) |
 | Medium | (re-review of this round) a row waiting for secrets on a draining or suspended node was unsealable for good: the seal refuses a non-active node and only the drain route's one-shot hand-back moved it | the cron hands back every unsealed `assigned` row whose node is not active, idempotently (entry 21) |
 
+### F12 — The March leak, re-assessed (2026-11-03) — Critical (history) — code side FIXED, owner steps open
+
+**What leaked.** Three old commits in this public repository (`9e6b1f6` 2025-12-15 `contract/.env`, `87179d5`
+2026-01-06 `client/.env`, `86fa598` 2026-03-03 `client/api/.env`) contain: one private key (as `PRIVATE_KEY` and
+`ORCHESTRATOR_PRIVATE_KEY`, the same key) for **0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A**; an Alchemy key (inside two
+Base Sepolia WebSocket URLs); a Basescan/Etherscan API key; a Pinata JWT; a WalletConnect project id. Rewriting history
+does not help (clones and caches exist): every value is treated as stolen and is retired or rotated.
+
+**Checked on-chain (read-only, public RPCs and Blockscout, 2026-10-31).**
+- Native balance 0 on Ethereum, Base, Arbitrum, Optimism, Polygon and BNB. The last mainnet transaction from the wallet
+  (2026-06-11) sent out its remaining dust: the funds were already swept. On Ethereum it holds only airdropped spam
+  tokens (one named "ETH"); none has value.
+- Base Sepolia: 0.249 test ETH (no value); **DEFAULT_ADMIN** on CLDToken v1, WorkloadRegistry, RewardContract,
+  StakingManager, ChallengeManager and an unlisted contract it deployed (`0xc15c61E3…`); **MINTER** on CLDToken v1;
+  **ORCHESTRATOR** on WorkloadRegistry; it holds 387,000 of the 2,000,000 v1 CLD. Its last Base Sepolia transaction
+  is from 2026-03-10, and no role was granted to any other account: nobody has used the key on testnet since.
+- Nothing live trusts v1: the API holds no chain key and reads only public block hashes (`routes/v1/pouw.ts`); every
+  v1 address is labelled compromised (`config/contracts.ts`, `shared/addresses.baseSepolia.json`). Production holds no
+  Alchemy, Pinata or Etherscan secret (`wrangler secret list`: none of them).
+
+**Fixed in code (this pass).**
+- `contract/scripts/v2/deploy.ts`: `BURNED_WALLETS`; `deployV2` refuses the wallet as deployer, treasury, guardian,
+  admin or poster (test `deploy-roles` "refuses the burned wallet").
+- `contract/scripts/v1/renounce-burned-roles.ts` (owner-run, dry run by default): renounces every role the wallet holds
+  on the v1 contracts and never grants one. Moving the roles to a clean address would not help: whoever holds the key
+  could revoke it again. Renouncing freezes v1 for everyone.
+- `.github/workflows/secrets.yml` + `.gitleaks.toml`: gitleaks on every new commit (pull requests and pushes to main),
+  values redacted in the log; only hardhat's three published local test keys are allowlisted.
+
+**Open (owner).** Revoke the Alchemy, Etherscan and Pinata keys and roll the WalletConnect project id (runbook step
+1b); optionally run the renounce script; turn on GitHub push protection. Never fund, sign with or give a role to the
+wallet again (O1).
+
 ## 2. Findings from the October review re-checked and confirmed fixed before this pass
 
 | Review item (C.5) | State in code | Where |

@@ -40,9 +40,18 @@ export type DeployResult = {
   settlementArgs: (string | bigint | number)[];
 };
 
+/**
+ * Wallets whose private key is public (committed to this public repository in 2025–2026; SECURITY_AUDIT.md). Anyone can
+ * sign as them, so they may never deploy, receive a role, or be the treasury.
+ */
+export const BURNED_WALLETS = ["0xF29283Dc81D7Ff69AE6B592d86682Bfb998Ac61A"].map((a) => a.toLowerCase());
+
 /** Deploy both contracts from `deployer`, wire the roles, and leave the deployer with none. */
 export async function deployV2(deployer: Signer, p: DeployParams, log: (s: string) => void = () => {}): Promise<DeployResult> {
   const deployerAddr = await deployer.getAddress();
+  for (const [what, addr] of [["deployer", deployerAddr], ["treasury", p.treasury], ["guardian", p.guardian], ["admin", p.admin], ["poster", p.poster]] as const) {
+    if (BURNED_WALLETS.includes(addr.toLowerCase())) throw new Error(`${what} ${addr} is a burned wallet (its private key is public); use a fresh one`);
+  }
   const tokenArgs = [p.treasury, p.initialSupplyWei, p.maxMintBpsPerYear, deployerAddr];
   const token = await (await ethers.getContractFactory("CLDTokenV2", deployer)).deploy(
     p.treasury, p.initialSupplyWei, p.maxMintBpsPerYear, deployerAddr,

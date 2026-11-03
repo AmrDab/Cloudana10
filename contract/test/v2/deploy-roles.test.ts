@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
-import { deployV2 } from "../../scripts/v2/deploy";
+import { BURNED_WALLETS, deployV2 } from "../../scripts/v2/deploy";
 import { CLD, MINTER_ROLE } from "./helpers";
 
 describe("scripts/v2/deploy.ts deployV2", () => {
@@ -54,5 +54,18 @@ describe("scripts/v2/deploy.ts deployV2", () => {
     // constructor args returned for verification match the deployment
     expect(r.tokenArgs).to.deep.equal([treasury.address, 1_000_000n * CLD, 1000, deployer.address]);
     expect(r.settlementArgs).to.deep.equal([r.token, treasury.address, admin.address, poster.address, guardian.address, 3600, 3600, 3600, genesisTimestamp]);
+  });
+
+  it("refuses the burned wallet as treasury, guardian, admin or poster", async () => {
+    const [deployer, a, b, c] = await ethers.getSigners();
+    const burned = BURNED_WALLETS[0];
+    const base = {
+      treasury: a.address, guardian: b.address, admin: c.address, poster: a.address,
+      epochSeconds: 3600, vetoDelaySeconds: 3600, vestBSeconds: 3600, initialSupplyWei: 1n * CLD,
+      maxMintBpsPerYear: 1000, genesisTimestamp: await time.latest(),
+    };
+    for (const role of ["treasury", "guardian", "admin", "poster"] as const) {
+      await expect(deployV2(deployer, { ...base, [role]: ethers.getAddress(burned) }), role).to.be.rejectedWith(/burned wallet/);
+    }
   });
 });
