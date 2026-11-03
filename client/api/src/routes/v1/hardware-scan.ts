@@ -1,12 +1,13 @@
 /**
  * Hardware scan routes.
  *
- * POST /v1/providers/scan          — trigger a hardware scan on a provider endpoint (JWT required)
+ * POST /v1/providers/scan          — trigger a hardware scan on a provider endpoint (JWT required; the deviceId it
+ *                                    reports must be a node bound to the caller's wallet)
  * GET  /v1/providers/:deviceId/hardware — retrieve the last stored scan for a device
  */
 import { createRoute } from "@hono/zod-openapi";
 import { ok, fail, errorMessage } from "../../lib/http.js";
-import { scanProviderHardware, getHardwareScan, validateProviderEndpoint } from "../../services/hardware-scan.service.js";
+import { ScanRefused, scanProviderHardware, getHardwareScan, validateProviderEndpoint } from "../../services/hardware-scan.service.js";
 import {
   DeviceIdParamsSchema,
   ScanRequestSchema,
@@ -24,7 +25,7 @@ const scanRoute = createRoute({
   tags: ["Hardware Scan"],
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: ScanRequestSchema } } } },
-  responses: responses({ 200: json(ScanResponseSchema, "Fresh hardware scan of the provider") }, 400, 401, 429, 502),
+  responses: responses({ 200: json(ScanResponseSchema, "Fresh hardware scan of the provider") }, 400, 401, 403, 429, 502),
 });
 
 hardwareScanRouter.openapi(scanRoute, async (c) => {
@@ -34,9 +35,10 @@ hardwareScanRouter.openapi(scanRoute, async (c) => {
   if (!check.ok) return fail(c, "bad_request", check.reason);
 
   try {
-    const scan = await scanProviderHardware(check.url);
+    const scan = await scanProviderHardware(check.url, c.get("jwtPayload").sub);
     return ok(c, { scan });
   } catch (err) {
+    if (err instanceof ScanRefused) return fail(c, "forbidden", err.message);
     return fail(c, "upstream_failed", errorMessage(err));
   }
 });
