@@ -19,7 +19,7 @@
     "@hono/swagger-ui": "0.4.1",
     "@hono/zod-openapi": "0.18.4",
     "dotenv": "^16.4.5",
-    "hono": "^4.6.12",
+    "hono": "^4.13.18",
     "stripe": "^20.4.1",
     "viem": "^2.45.1",
     "zod": "3.25.76"
