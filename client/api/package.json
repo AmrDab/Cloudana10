@@ -15,7 +15,7 @@
     "templates": "tsx scripts/seed-akash-templates-to-d1.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "^2.1.6",
     "@hono/swagger-ui": "0.4.1",
     "@hono/zod-openapi": "0.18.4",
     "dotenv": "^16.4.5",
