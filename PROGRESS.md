@@ -780,6 +780,26 @@ that remained:
 - Not done by Claude, by rule: no signing with the leaked key, no moving funds, no service-account changes. Owner
   steps: runbook 1, 1b and 13.
 
+### 38 · Trust tiers in the scheduler; the abuse switch (2026-11-16)
+- What (docs/TRUST_TIERS.md §3, §4, §6; tasks/todo.md phase 1 and the API half of phase 2): containers, workstations and
+  endpoints take `spec.trust` = `verified` (default) or `community`. Verified runs only on nodes of a fleet an admin
+  verified (`fleets.verified_at`, `POST`/`DELETE /v1/admin/fleets/{id}/verified`, internal key); community only on nodes
+  advertising both `sandbox` and `egress-v2`, never with GPUs (refused at create: GPU containers are not sandboxed). The
+  rule is in `assign()`, `preemptForOnDemand()` and, for the fleet check, in `claim()`'s statement; a pin and a tier
+  combine. Un-verifying re-queues the fleet's live verified work (`requeueUnverified`, the `requeueRows` path).
+  `GET /v1/fleets` carries `verified`; deployments carry `trust`. The announce keeps `sandbox`, `egress-v2` and
+  (with the relay) `relay-streams`.
+- Abuse switch: `POST /v1/admin/deployments/{id}/abuse {reason}` stops it (a whole endpoint if a replica is named),
+  suspends the owner (`account_suspensions`, its own table: `balances` is a money table and has no row for every
+  wallet) and stops the owner's other live work, each with its reason in the events; `POST /v1/deployments` answers 403
+  with the reason (checked again after the insert, so a racing create is stopped); `DELETE
+  /v1/admin/accounts/{address}/suspend` lifts it.
+- Console: a Trust selector (Verified; Community shown, "opens later") with the §6 text on the deploy, workstation and
+  endpoint forms; the tier in the three lists; "verified" on the provider's fleet card.
+- Deploy note: from this deploy no new container, workstation or endpoint is placed until the owner verifies a fleet.
+- Tests: `tests/trust-tiers.test.ts` (13), `tests/trust-tiers-migration.test.ts` (1); existing hosting tests now bind
+  their nodes to a verified fleet. API 547; console check, client tests and build clean.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

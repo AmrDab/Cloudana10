@@ -36,6 +36,7 @@ import { nodesDeploymentsRouter } from "./routes/v1/nodes-deployments.js";
 import { nodesStorageRouter } from "./routes/v1/nodes-storage.js";
 import { adminTemplatesRouter } from "./routes/v1/admin-templates.js";
 import { adminNodesRouter } from "./routes/v1/admin-nodes.js";
+import { adminTrustRouter } from "./routes/v1/admin-trust.js";
 import { ensureSchema } from "./lib/schema.js";
 
 export const API_VERSION = "1.1.0";
@@ -137,6 +138,7 @@ export function buildApp<B extends object = Record<string, unknown>>(opts: Build
   app.route("/v1", nodesStorageRouter);
   app.route("/v1", adminTemplatesRouter);
   app.route("/v1", adminNodesRouter);
+  app.route("/v1", adminTrustRouter);
 
   app.get("/v1/doc", (c) =>
     c.json(

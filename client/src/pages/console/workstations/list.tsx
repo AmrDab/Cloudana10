@@ -19,6 +19,7 @@ import {
 import { errText, signInWithToast } from "@/components/console/actions";
 import { DeployChip } from "@/pages/console/deploy/deployments";
 import { FleetTag } from "@/pages/console/deploy/fleet";
+import { TrustTag } from "@/pages/console/deploy/trust";
 import { dur } from "./spec-picker";
 
 /** A workstation's hourly price: dollars, with the CLD it was fixed at. */
@@ -181,7 +182,7 @@ function Row({ w, open, fresh, onToggle }: { w: Workstation; open: boolean; fres
           {w.spec.tier === "interruptible" && !isTerminal(w.status) && <div className="truncate text-[12px] text-work">may be preempted by on-demand work</div>}
         </td>
         <td className="px-4 py-2.5"><WsChip w={w} /></td>
-        <td className="px-4 py-2.5 font-mono text-[12px] whitespace-nowrap text-muted-foreground">{specLine(w)}</td>
+        <td className="px-4 py-2.5 font-mono text-[12px] whitespace-nowrap text-muted-foreground">{specLine(w)}<TrustTag trust={w.trust} className="ml-2" /></td>
         <td className="px-4 py-2.5"><HoursBar w={w} compact /></td>
         <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground"><UsdH ucld={w.priceUcldPerHour} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><RelTime ms={w.createdAt} /></td>
@@ -233,6 +234,7 @@ function Detail({ w }: { w: Workstation }) {
               <dd className="text-text">{w.spec.volume ? `${w.spec.volume.sizeGb} GB · kept ${w.spec.volume.keepDays} d after stop` : "none"}</dd>
               <dt className="text-faint">Node</dt><dd><Hash value={w.node} className="text-[12px]" /><FleetTag fleet={w.nodeFleet} /></dd>
               {w.placement && (<><dt className="text-faint">Pinned</dt><dd className="break-all text-text">fleet {w.placement.fleetId}</dd></>)}
+              {w.trust && (<><dt className="text-faint">Trust</dt><dd className="text-text">{w.trust}</dd></>)}
             </dl>
           </div>
           <div>

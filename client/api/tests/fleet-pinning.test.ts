@@ -75,7 +75,10 @@ const addr = (n: PrivateKeyAccount) => n.address.toLowerCase();
 async function fleet(owner: { addr: string; jwt: string }, name: string) {
   const res = await authed(owner.jwt, "POST", "/v1/fleets", { name });
   expect(res.status).toBe(201);
-  return { id: (await res.json()).id as string, owner: owner.addr };
+  const id = (await res.json()).id as string;
+  // Verified (docs/TRUST_TIERS.md): these tests are about pins, and trust "verified" (the default) needs a verified fleet.
+  await getD1().prepare("UPDATE fleets SET verified_at = ? WHERE id = ?").bind(Date.now(), id).run();
+  return { id, owner: owner.addr };
 }
 
 /** A heartbeat (relay socket up for relay nodes); returns the instructions. */

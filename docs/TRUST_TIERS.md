@@ -51,6 +51,18 @@ Rules:
 5. **Community hosting of containers, endpoints and machines opens** only when the kernel sandbox (gVisor), the
    egress policy (§4) and relay-only access (§5) are live and tested. Until then those run on verified fleets only.
 
+As built in the scheduler (phase 1, 2026-11-16), where it is more precise than the rules above:
+- A spec with no `trust` (every deployment made before tiers) counts as verified: once re-queued for any reason it
+  waits for a verified fleet. Running ones are not moved at deploy time.
+- Community placement needs the node to advertise both `sandbox` and `egress-v2`, on any fleet. A verified fleet's
+  node without them does not take community work: "or higher" holds for the operator, not for the sandbox.
+- The sandbox covers non-GPU containers only, so **GPU work is verified-only**: `trust: "community"` with a GPU is
+  refused at create (400).
+- Un-verifying a fleet re-queues its live verified work for other verified fleets; work *pinned* to that fleet waits
+  in the queue until it is verified again (un-verifying can be undone; revoking cannot, and fails pinned work).
+- Admin routes: `POST`/`DELETE /v1/admin/fleets/{id}/verified`; the abuse switch is
+  `POST /v1/admin/deployments/{id}/abuse` (lifted with `DELETE /v1/admin/accounts/{address}/suspend`).
+
 ## 4. Protecting the provider: outbound traffic (every tier, every container)
 
 Tenant traffic to the internet leaves from the provider's connection. Sites see the provider's IP, and abuse is traced

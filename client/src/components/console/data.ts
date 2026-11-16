@@ -125,6 +125,8 @@ export type Fleet = {
   jobsDone: number;
   createdAt: number;
   revokedAt: number | null;
+  /** Verified by Cloudana (docs/TRUST_TIERS.md): its nodes take trust "verified" deployments. Absent on an older API. */
+  verified?: boolean;
 };
 export function useFleets() {
   const s = useSession();
@@ -250,9 +252,13 @@ export type Deployment = {
   spec: unknown;
   /** Pinned (spec.placement, B-9): only nodes of this fleet run it. */
   placement?: { fleetId: string };
+  /** Containers, workstations and endpoints: the lowest host tier it runs on (docs/TRUST_TIERS.md). */
+  trust?: TrustTier;
   /** Once on a node: that node's fleet (null = a node in no fleet), shown beside the node before secrets are sealed. */
   nodeFleet?: NodeFleet | null;
 };
+/** docs/TRUST_TIERS.md §3: verified = fleets Cloudana identity-checked; community = sandboxed nodes (opens later). */
+export type TrustTier = "community" | "verified";
 /** A node's fleet as a deployment's owner sees it: its id and name, never its owner. */
 /** A node's fleet: `id` is null when the fleet is neither yours nor the one you pinned to (its owner's to share). */
 export type NodeFleet = { id: string | null; name: string | null };
@@ -305,6 +311,7 @@ export type WorkstationSpec = {
   access: { web?: { port: number; path?: string }; ssh?: { publicKey: string } };
   volume?: { sizeGb: number; keepDays: number };
   placement?: { fleetId: string };
+  trust?: TrustTier;
 };
 
 /** A curated environment template (`kind: "workstation"`, §6). */
@@ -376,6 +383,7 @@ export type EndpointSpec = {
   replicas: number;
   auth: "public" | "key";
   placement?: { fleetId: string };
+  trust?: TrustTier;
 };
 export type Replica = {
   id: string;

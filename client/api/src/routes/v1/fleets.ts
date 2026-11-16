@@ -26,6 +26,7 @@ const FleetSchema = z.object({
   floorUcldPerMmac: z.number().int().nullable(),
   createdAt: z.number(),
   revokedAt: z.number().nullable(),
+  verified: z.boolean().openapi({ description: "Verified by Cloudana (docs/TRUST_TIERS.md): its nodes take trust \"verified\" deployments" }),
   nodes: z.number().int(),
   nodesOnline: z.number().int(),
   jobsDone: z.number().int(),

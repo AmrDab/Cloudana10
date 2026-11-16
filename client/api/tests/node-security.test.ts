@@ -3,7 +3,7 @@
  * capability/fleet/resource gating in placement, content-hash probe + endpoint host check, per-node rate limits,
  * minAgentVersion, the duties cron, and the agent's "cannot serve" re-queue.
  */
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
@@ -103,6 +103,7 @@ async function heartbeat(node: PrivateKeyAccount, body: unknown = {}) {
 
 beforeAll(async () => {
   await setupV1Db({ DEV_MODE: "true", INSTRUCTION_SIGNING_KEY: SIGNING_KEY, NODE_ACTIVE_SECONDS: "15" });
+  await verifiedFleet("flt_test"); // trust "verified" (the default) runs only on verified fleets
   for (const sql of HOSTING_MIGRATIONS) await getD1().prepare(sql).run().catch(() => undefined);
   app = buildApp({ runtime: "node" });
 });

@@ -2,7 +2,7 @@
  * Deployment specs and protocol price (docs/V3_CONTRACT.md §3).
  *
  *   StaticSpec    { files: { path, contentBase64 }[] }   index.html required; ≤ 2 MB decoded
- *   ContainerSpec { image, command?, env?, ports[], cpu (millicores), memMb, storageMb, placement? }   ≤ 32 KB as JSON
+ *   ContainerSpec { image, command?, env?, ports[], cpu (millicores), memMb, storageMb, placement?, trust? }   ≤ 32 KB as JSON
  *   WorkstationSpec = ContainerSpec & { gpu?, tier, maxHours, access, volume?, workdir? }   (docs/WORKSTATIONS.md §1)
  *
  * Price per hour, in US dollars (docs/PRICES_USD.md), converted to µCLD at USD_PER_CLD when the deployment is
@@ -43,6 +43,17 @@ export const StaticSpecSchema = z.object({
 /** A fleet id as routes/v1/fleets.ts issues it. */
 export const FLEET_ID = /^flt_[0-9a-f]{16}$/;
 
+/** docs/TRUST_TIERS.md §3 (confidential is not built). */
+export const TRUST_TIERS = ["community", "verified"] as const;
+export type TrustTier = (typeof TRUST_TIERS)[number];
+/** The tier a stored spec asks for: a spec from before tiers has none and counts as verified (§3 rule 2). */
+export const trustOf = (spec: { trust?: TrustTier }): TrustTier => spec.trust ?? "verified";
+/**
+ * §3 rule 5: a trust "community" deployment runs only on a node that advertises both the kernel sandbox (gVisor) and
+ * the egress policy; until agents advertise them, nothing community is placed.
+ */
+export const COMMUNITY_CAPABILITIES = ["sandbox", "egress-v2"] as const;
+
 const EnvKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/, "env keys must match [A-Za-z_][A-Za-z0-9_]*");
 
 const GpuSpec = z.object({
@@ -82,6 +93,11 @@ export const ContainerSpecSchema = z.object({
     .optional(),
   /** B-9: run only on nodes of this fleet — the owner's own or a partner's, chosen by its id; never a single node. */
   placement: z.object({ fleetId: z.string().regex(FLEET_ID, "fleetId must be a fleet id (flt_ + 16 hex)") }).optional(),
+  /**
+   * docs/TRUST_TIERS.md §3: the lowest tier of host it may run on. verified (default) = only nodes of a fleet Cloudana
+   * verified; community = nodes that advertise the sandbox and egress-v2 capabilities.
+   */
+  trust: z.enum(TRUST_TIERS).default("verified"),
 });
 
 /** GPU endpoint (docs/V4_ENDPOINTS_CONTRACT.md): a container spec with one port, replicas and visitor auth. */
@@ -168,6 +184,10 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
     if (raw && typeof raw === "object" && "placement" in raw) {
       return { ok: false, code: "validation_failed", message: "spec.placement: static sites cannot be pinned to a fleet (any hosting node serves them); remove it" };
     }
+    // Same reason: a site's files are public and any hosting node serves them, whatever tier it names.
+    if (raw && typeof raw === "object" && "trust" in raw) {
+      return { ok: false, code: "validation_failed", message: "spec.trust: static sites have no trust tier (their files are public; any hosting node serves them); remove it" };
+    }
     const parsed = StaticSpecSchema.safeParse(raw);
     if (!parsed.success) return invalid(parsed.error);
     const files = parsed.data.files;
@@ -190,6 +210,10 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
   if (!parsed.success) return invalid(parsed.error);
   // One vocabulary from here on: the stored spec (and what nodes receive) names a tier.
   if (parsed.data.gpu) parsed.data.gpu.class = requestTier(parsed.data.gpu.class);
+  // The sandbox (gVisor) covers non-GPU containers only: GPU work stays on verified fleets (docs/TRUST_TIERS.md §3).
+  if (parsed.data.trust === "community" && (parsed.data.gpu?.count ?? 0) > 0) {
+    return { ok: false, code: "validation_failed", message: 'spec.trust: GPU work runs on verified fleets only (GPU containers are not sandboxed); use trust "verified" or remove the GPU' };
+  }
   // Workstations take no sealed secrets (the node issues their access token): a start held for a seal that can never
   // land would wait a day, pin the slot and fail — refuse the flag outright.
   if (kind === "workstation" && (parsed.data as { expectsSecrets?: boolean }).expectsSecrets !== undefined) {

@@ -85,6 +85,7 @@ describe("fleet tokens", () => {
       floorUcldPerMmac: 900,
       createdAt: expect.any(Number),
       revokedAt: null,
+      verified: false,
       nodes: 0,
       nodesOnline: 0,
       jobsDone: 0,
