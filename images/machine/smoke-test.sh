@@ -33,8 +33,10 @@ sshx() {
   local port="$1" user="$2"
   shift 2
   ssh -i "$work/id" -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
-    -o ConnectTimeout=5 -o LogLevel=ERROR "$user@127.0.0.1" "$@"
+    -o ConnectTimeout=5 -o LogLevel=ERROR ${TTY:+-tt} "$user@127.0.0.1" "$@"
 }
+# An interactive login: sshd allocates a pty and hands it to the user (CHOWN, FOWNER).
+ptyok() { TTY=1 sshx "$1" "$2" 'tty | grep -q /dev/pts/' </dev/null >/dev/null 2>&1; }
 waitssh() {
   for _ in $(seq 1 40); do
     if sshx "$1" root true 2>/dev/null; then return 0; fi
@@ -53,6 +55,8 @@ docker run --name m-ok "${common[@]}" --cap-drop=ALL --security-opt=no-new-privi
   --mount "type=bind,source=$work/root,target=/root" -p 127.0.0.1:2201:22 "$image" >/dev/null
 waitssh 2201 || fail "no SSH login within 40 s"
 [ "$(sshx 2201 root id -u)" = 0 ] || fail "login is not root"
+ptyok 2201 root || fail "no pty for an interactive root login"
+ptyok 2201 cloudana || fail "no pty for an interactive cloudana login"
 sshx 2201 root 'test -f ~/.profile && touch ~/written && test "$(stat -c %u ~)" = 0' || fail "/root not set up on the mount"
 [ -e "$work/root/written" ] || fail "file written in the box is not on the bind-mounted /root"
 sshx 2201 root 'apt-get update -qq && apt-get install -y -qq --no-install-recommends jq >/dev/null && jq --version && sudo -n true' \
@@ -75,4 +79,23 @@ if waitssh 2202; then fail "sshd ran with every capability dropped (expected it 
 echo "   ok: no login, as expected. Container log:"
 docker logs m-plain 2>&1 | tail -5 | sed 's/^/     /'
 
+if [ "$runtime" = runsc ]; then
+  # Which capability is each one for? Drop one at a time (informational: the assertions above are the test).
+  echo "== 3. MACHINE_CAPS minus one ($runtime): login · pty login · apt-get install"
+  port=2210
+  for drop in "${CAPS[@]}"; do
+    port=$((port + 1))
+    args=()
+    for c in "${CAPS[@]}"; do [ "$c" = "$drop" ] || args+=("--cap-add=$c"); done
+    docker run --name "m-$drop" "${common[@]}" --cap-drop=ALL --security-opt=no-new-privileges "${args[@]}" -p "127.0.0.1:$port:22" "$image" >/dev/null
+    login=no pty=no apt=no
+    if waitssh "$port"; then
+      login=yes
+      ptyok "$port" root && pty=yes
+      sshx "$port" root 'apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1 || (apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1)' && apt=yes
+    fi
+    printf '   without %-16s login %-3s  pty %-3s  apt %s\n' "$drop" "$login" "$pty" "$apt"
+    docker rm -f "m-$drop" >/dev/null 2>&1 || true
+  done
+fi
 echo "smoke test passed ($runtime)"
