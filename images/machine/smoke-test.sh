@@ -50,6 +50,32 @@ fail() {
   exit 1
 }
 
+# One container with --cap-drop=ALL, no-new-privileges and the given capabilities: prints login · pty · apt.
+probe() {
+  local label="$1" port="$2"
+  shift 2
+  local args=()
+  for c in "$@"; do args+=("--cap-add=$c"); done
+  docker run --name "m-probe-$port" "${common[@]}" --cap-drop=ALL --security-opt=no-new-privileges "${args[@]}" -p "127.0.0.1:$port:22" "$image" >/dev/null
+  local login=no pty=no apt=no
+  if waitssh "$port"; then
+    login=yes
+    ptyok "$port" root && pty=yes
+    sshx "$port" root 'apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1 || (apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1)' && apt=yes
+  fi
+  printf '   %-28s login %-3s  pty %-3s  apt %s\n' "$label" "$login" "$pty" "$apt"
+  docker rm -f "m-probe-$port" >/dev/null 2>&1 || true
+}
+
+# Informational, before the assertions: MACHINE_CAPS alone and with each capability it leaves out.
+echo "== 0. MACHINE_CAPS and one more ($runtime): login · pty login · apt-get install"
+probe "MACHINE_CAPS" 2230 "${CAPS[@]}"
+port=2230
+for extra in FOWNER FSETID KILL AUDIT_WRITE NET_BIND_SERVICE; do
+  port=$((port + 1))
+  probe "+ $extra" "$port" "${CAPS[@]}" "$extra"
+done
+
 echo "== 1. machine flags ($runtime): --cap-drop=ALL --security-opt=no-new-privileges ${capadd[*]}"
 docker run --name m-ok "${common[@]}" --cap-drop=ALL --security-opt=no-new-privileges "${capadd[@]}" \
   --mount "type=bind,source=$work/root,target=/root" -p 127.0.0.1:2201:22 "$image" >/dev/null
@@ -86,16 +112,8 @@ if [ "$runtime" = runsc ]; then
   for drop in "${CAPS[@]}"; do
     port=$((port + 1))
     args=()
-    for c in "${CAPS[@]}"; do [ "$c" = "$drop" ] || args+=("--cap-add=$c"); done
-    docker run --name "m-$drop" "${common[@]}" --cap-drop=ALL --security-opt=no-new-privileges "${args[@]}" -p "127.0.0.1:$port:22" "$image" >/dev/null
-    login=no pty=no apt=no
-    if waitssh "$port"; then
-      login=yes
-      ptyok "$port" root && pty=yes
-      sshx "$port" root 'apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1 || (apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1)' && apt=yes
-    fi
-    printf '   without %-16s login %-3s  pty %-3s  apt %s\n' "$drop" "$login" "$pty" "$apt"
-    docker rm -f "m-$drop" >/dev/null 2>&1 || true
+    for c in "${CAPS[@]}"; do [ "$c" = "$drop" ] || args+=("$c"); done
+    probe "without $drop" "$port" "${args[@]}"
   done
 fi
 echo "smoke test passed ($runtime)"
