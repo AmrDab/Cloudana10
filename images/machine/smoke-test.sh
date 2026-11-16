@@ -57,13 +57,14 @@ probe() {
   local args=()
   for c in "$@"; do args+=("--cap-add=$c"); done
   docker run --name "m-probe-$port" "${common[@]}" --cap-drop=ALL --security-opt=no-new-privileges "${args[@]}" -p "127.0.0.1:$port:22" "$image" >/dev/null
-  local login=no pty=no apt=no
+  local login=no pty=no upty=no apt=no
   if waitssh "$port"; then
     login=yes
     ptyok "$port" root && pty=yes
+    ptyok "$port" cloudana && upty=yes
     sshx "$port" root 'apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1 || (apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends jq >/dev/null 2>&1)' && apt=yes
   fi
-  printf '   %-28s login %-3s  pty %-3s  apt %s\n' "$label" "$login" "$pty" "$apt"
+  printf '   %-28s login %-3s  root pty %-3s  cloudana pty %-3s  apt %s\n' "$label" "$login" "$pty" "$upty" "$apt"
   docker rm -f "m-probe-$port" >/dev/null 2>&1 || true
 }
 
