@@ -42,6 +42,22 @@ Today's GPU prices are 1,500–3,300× below the compute price of the same GPU-h
 At $0.10 per CLD, $0.36/h is 3.6 CLD/h. Testnet credits are 10 CLD a day, enough for about 2.7 hours of a standard GPU
 endpoint a day.
 
+## Machines (Run → Machines, docs/WORKSTATIONS.md §10)
+
+No new rates: a machine is a CPU workstation, priced by the vCPU, RAM, container-disk and volume rates above
+(`priceUsdPerHour`, kind workstation). Every machine has a 10 GB root disk (the container's own layer) and an encrypted
+home volume of 10–100 GB. Worked out with the default rates, 730 hours a month, $0.10 per CLD:
+
+| Size | vCPU + RAM + 10 GB root disk | + 20 GB volume | Per hour | Per month | CLD per hour |
+|---|---|---|---|---|---|
+| S: 1 vCPU, 2 GB | 0.010 + 0.0024 + 0.001 = $0.0134 | + $0.002 | **$0.0154** | $11.24 | 0.154 |
+| M: 2 vCPU, 4 GB | 0.020 + 0.0048 + 0.001 = $0.0258 | + $0.002 | **$0.0278** | $20.29 | 0.278 |
+| L: 4 vCPU, 8 GB | 0.040 + 0.0096 + 0.001 = $0.0506 | + $0.002 | **$0.0526** | $38.40 | 0.526 |
+
+Each further 10 GB of volume adds $0.001/h ($0.73 a month): an L with the 100 GB maximum is $0.0606/h ($44.24 a month).
+A stopped machine's volume is billed at the volume rate while it is kept (`keepDays`). During the beta machines are paid
+from the balance, which free test credits fill (10 CLD per claim: about 65 hours of an S).
+
 ## One structural change this needs
 GPUs are priced by two classes today, and "datacenter" lumps a T4 with an H100. The table uses **three tiers by the
 GPU the user asks for**: standard (under 40 GB), large (40–80 GB, pre-Hopper) and H100-class. The node's GPUs are

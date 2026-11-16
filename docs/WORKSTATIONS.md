@@ -108,3 +108,115 @@ Add to lib/services.ts group `compute`: `workstations` — "GPU workstations & r
 
 This machine has no Docker and no NVIDIA GPU, so the workstation path can be unit-tested and the UI exercised up to
 "waiting for a GPU node", not run end to end. Status stays **Early access** until a GPU node proves it.
+
+## 10. Machines (2026-11-16, phase 4 of docs/TRUST_TIERS.md)
+
+A **machine** is a CPU workstation running Cloudana's own image: a Linux box you reach over SSH, like a small VPS.
+Console: Run → **Machines** (`/run?tab=machines`); GPU boxes stay under Workstations. Template `machine-ubuntu`
+(`client/api/src/services/template-workstations.ts`); `isMachine` / `machineProblem` in `deployment-spec.ts`.
+
+### 10.1 What you get
+- **Image** `ghcr.io/amrdab/cloudana-machine:<images/machine/VERSION>` (`images/machine`): Ubuntu 24.04, openssh-server,
+  sudo, curl, ca-certificates, tini as PID 1 and sshd in the foreground. Host keys are made on the container's first
+  start. Built, smoke-tested under runc and gVisor, signed and published by `.github/workflows/machine-image.yml` (main
+  only; pull requests build and test).
+- **Login: root, by key only** (`PermitRootLogin prohibit-password`, no passwords, no PAM). Root of the box is root
+  inside the gVisor sandbox, not on the provider's kernel (TRUST_TIERS §5). `cloudana` (uid 1000) is the unprivileged
+  account, same key. The key is the workstation's `access.ssh.publicKey`, passed as `SSH_PUBLIC_KEY`/`PUBLIC_KEY` (§5).
+- **Sizes** (console): S 1 vCPU / 2 GB, M 2 / 4, L 4 / 8; a 10 GB root disk; an **encrypted volume of 10–100 GB
+  mounted at `/root`**. Only the volume is encrypted: the root filesystem (installed packages, `/tmp`, `/etc`) is the
+  container's writable layer on the provider's disk.
+- **Price**: the existing CPU, RAM, container-disk and volume rates (docs/PRICES_USD.md "Machines"). Beta: paid from the
+  balance, which free test credits fill (`POST /v1/dev/credits`, the same button as Run → Compute).
+- **Trust**: `verified` by default, as every container; community is refused while `COMMUNITY_HOSTING` is off.
+- **Connect**: `cloudana ssh <id>` through the relay (the provider's IP is never shown). That needs the relay byte
+  streams of PR #108; until it is merged a machine is a direct workstation (SSH on the node's public IP, §5).
+
+The API refuses a machine spec with GPUs, web access, no volume, a volume outside 10–100 GB, `volume.encrypted: false`,
+a `user`, or an SSH login other than root / cloudana; it stores `volume.encrypted: true` and `access.ssh.user` (root by
+default).
+
+### 10.2 Capabilities: what sshd needs under `--cap-drop=ALL`
+Every workstation runs with `--cap-drop=ALL --security-opt=no-new-privileges` (`hardeningArgs`) and, on a `sandbox`
+node, `--runtime=runsc`. With nothing added sshd cannot work: it starts and binds port 22 (Docker sets the container's
+`ip_unprivileged_port_start` to 0), then every login fails at `chroot("/run/sshd"): Operation not permitted` (privilege
+separation). So a machine — the machine image, no GPU, on a `sandbox` node, and nowhere else — gets the hardening
+unchanged, no-new-privileges included, plus `MACHINE_CAPS` (`node-agent/src/workstation.ts machineArgs`):
+
+```
+docker run -d --name cld-<id> --restart unless-stopped --runtime=runsc --cap-drop=ALL --security-opt=no-new-privileges \
+  --pids-limit=512 --memory <m> --memory-swap <m> --storage-opt size=<n>m --network cld-tenant \
+  --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=SETGID --cap-add=SETUID --cap-add=SYS_CHROOT \
+  --cpus <c> --shm-size=1g --mount type=bind,source=<volume dir>/mnt/cld-<id>/data,target=/root -p <port>:22 \
+  -e PUBLIC_KEY=… -e SSH_PUBLIC_KEY=… -e NVIDIA_VISIBLE_DEVICES=none ghcr.io/amrdab/cloudana-machine:1.0.0
+```
+
+The set is the smallest that works, found under runsc by dropping one capability at a time from Docker's default-like
+list (smoke run on PR #109):
+
+| Dropped | Key login | Interactive (pty) | root `apt-get install` | So |
+|---|---|---|---|---|
+| SETUID, SETGID or SYS_CHROOT | no | no | no | needed: sshd privilege separation and the login |
+| CHOWN | yes | no | yes | needed: sshd hands the pty to the user |
+| DAC_OVERRIDE | yes | yes | no | needed: apt/dpkg as root |
+| FOWNER, FSETID, KILL, AUDIT_WRITE, NET_BIND_SERVICE | yes | yes | yes | left out |
+
+So root of a machine cannot, for example, `kill` another user's process or `chmod` a file it does not own; those
+capabilities can be added to `MACHINE_CAPS` if tenants need them (they stay inside gVisor).
+
+These are capabilities of root inside the gVisor sandbox. `images/machine/smoke-test.sh` runs exactly these flags in CI
+(runc and runsc): root and cloudana log in (with a pty), root installs a package with apt, `/root` is the bind mount,
+`dmesg` says gVisor, passwords are refused; with the plain workstation flags nobody logs in.
+
+**Why root and not a user with passwordless sudo** (the first design): sudo is a setuid binary. no-new-privileges
+forbids raising privileges on exec, and under gVisor a setuid exec does not raise them even without no-new-privileges
+(smoke runs on PR #109: `sudo: effective uid is not 0` with SETUID in the bounding set and NoNewPrivs 0). Logging in as
+root needs no setuid binary, so no-new-privileges stays on.
+
+### 10.3 Encrypted volumes (TRUST_TIERS §6 "Disk") — design note
+Goal: a machine's volume is ciphertext on the provider's disk, its key is per deployment, delivered sealed to the node
+(the sealed-env format, `shared/sealed.ts`), held only in memory there, and destroying it (purge, or `keepDays` over)
+makes the data unrecoverable. Constraints: the agent already runs as root (iptables needs it), tenant containers run
+under gVisor, Docker volumes have no encryption of their own, and the agent's tests run without root or Docker.
+
+| Option | At rest on the provider's disk | Privileges / parts | Wipe | Verdict |
+|---|---|---|---|---|
+| **LUKS2 on a loop file** (cryptsetup, dm-crypt, ext4) | the whole volume at block level: contents, names, sizes; also caps the volume at its size | root (loop, device-mapper, mount); cryptsetup + e2fsprogs | `cryptsetup erase` destroys the keyslots (the master key is gone even if blocks survive on an SSD), then delete the file | **chosen** |
+| gocryptfs (FUSE, per file) | file contents and names; sizes, counts and tree shape visible | /dev/fuse, `allow_other` so Docker sees it, a daemon per volume that dies with the agent; no size cap | delete the cipher dir and its config | more moving parts, leaks more |
+| fscrypt (ext4/xfs native) | per directory | a filesystem with the feature, keyring handling per container | remove key + files | depends on the provider's filesystem and kernel |
+
+**How it works** (`node-agent/src/volumes.ts`, agent ≥ 1.12.0, capability `encrypted-volumes`):
+1. The operator sets `CLOUDANA_ENCRYPTED_VOLUMES=1` (and optionally `CLOUDANA_VOLUME_DIR`, default
+   `/var/lib/cloudana/volumes`). At boot, with containers on, the agent checks it is root and does a real round trip on a
+   64 MiB scratch volume (format, mount, write, close, reopen with the key, read, erase). Only then does it announce
+   `encrypted-volumes`. Nodes without it behave as before.
+2. The API places a spec with `volume.encrypted` only on nodes with `encrypted-volumes` (a machine also needs `sandbox`):
+   `requiredCapabilities` in `fits()`, shared by placement and preemption.
+3. On the first start instruction to a node, the API makes 32 random bytes, seals them to the node's public key bound to
+   the deployment (`sealV2`, aad `volumeKeyAad(id)` = `cloudana-volume-key:<id>`, so it can never be opened as env, nor
+   env as a key), stores only the sealed payload (`deployment_volume_keys`, one per deployment per node) and carries it
+   on every start to that node (`volumeKey`). The plaintext is not stored. A re-queued machine starts a new volume, with
+   a new key, on its new node. (The API keeps its own copy of the v2 seal in `client/api/src/lib/sealed.ts` because
+   `shared/sealed.ts` resolves its crypto from the repo root; one golden payload is checked by both sides.)
+4. The agent opens the key with its node key under that aad, hands it to cryptsetup **on stdin** (never argv, never a
+   file) and keeps no copy. First use: sparse file `cld-<id>.img.new` of the volume's size → `cryptsetup luksFormat`
+   (LUKS2, aes-xts-plain64 512-bit; PBKDF2 at its minimum, since the passphrase is already a random 256-bit key) → open →
+   `mkfs.ext4` → close → rename to `cld-<id>.img` (an interrupted create never leaves a half-made volume under the real
+   name). Every start: `cryptsetup open` → mount `nosuid,nodev` at `mnt/cld-<id>` → bind-mount `mnt/cld-<id>/data` into
+   the container. A wrong key fails in `cryptsetup open` and nothing is mounted. `data` exists only inside the
+   filesystem, so a container Docker restarts on its own while the volume is closed (after a reboot) fails to start
+   instead of writing to the plain disk.
+5. Stop: the container goes, then umount and `cryptsetup close` (the kernel forgets the key); the encrypted file stays
+   for `keepDays`. Purge or keep period over: close, `cryptsetup erase`, delete the file.
+
+**Limits, said plainly.** While the volume is open the kernel holds its master key: a provider with root can read the
+running box (TRUST_TIERS §6 says so for every tier). The node's private key sits on the node's disk, so the provider can
+open a key the API sends; what the design protects is the disk at rest — a stolen or decommissioned disk carries
+ciphertext, and the sealed key lives only in the API — and erasure that holds on SSDs. The file is sparse, so which
+blocks were written is visible. After a node reboot the volume is closed and the agent has no key, so the machine fails
+rather than starting unencrypted; reopening on resume needs the API to resend the key (not built). Volumes are not
+reopened after a stop either: the API has no resume, so `keepDays` only delays the erase.
+
+When the agent runs in a container (`deploy/kubernetes-daemonset.yaml`, `docker run`), it needs `--privileged` (loop and
+device-mapper devices) and the volume directory bind-mounted at the same path with `rshared` propagation, so the host's
+Docker daemon sees the mounts (node-agent/README.md "Encrypted volumes"). A native (systemd) agent needs only root.

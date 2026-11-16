@@ -5,13 +5,15 @@ import { cn } from "@/lib/utils";
 import { errText } from "@/components/console/actions";
 import { Bone, Empty, Pill, Unavailable, useDelayed } from "@/components/console/primitives";
 import { isUnavailable, isWorkstationTemplate, useTemplates, type WorkstationTemplate } from "@/components/console/data";
+import { isMachineImage } from "@/pages/console/machines/model";
 
 export function useWorkstationTemplates() {
   const q = useTemplates();
   const list = useMemo(() => {
     const seen = new Map<string, WorkstationTemplate>();
     for (const c of q.data ?? []) for (const t of c.templates ?? []) if (isWorkstationTemplate(t) && !seen.has(t.id)) seen.set(t.id, t as unknown as WorkstationTemplate);
-    return [...seen.values()];
+    // The machine template is rented on Run → Machines, not picked as a workstation environment.
+    return [...seen.values()].filter((t) => !isMachineImage(t.image));
   }, [q.data]);
   return { q, list };
 }

@@ -198,6 +198,30 @@ docker run --rm --runtime=runsc alpine dmesg       # first line: "Starting gViso
 The boot log then says `sandbox: gVisor (runsc) found` and the capabilities
 include `sandbox`.
 
+**Encrypted volumes and machines (`encrypted-volumes`, agents ≥ 1.12.0).**
+Machines (Ubuntu boxes over SSH, docs/WORKSTATIONS.md §10) keep their `/root`
+on a LUKS2-encrypted volume and run only on nodes that announce both `sandbox`
+and `encrypted-volumes`. Set `CLOUDANA_ENCRYPTED_VOLUMES=1` (volumes live in
+`CLOUDANA_VOLUME_DIR`, default `/var/lib/cloudana/volumes`); the agent must be
+root and have `cryptsetup` and `mkfs.ext4` (`apt-get install cryptsetup-bin
+e2fsprogs`; the agent image has both). At boot it formats, mounts, reopens and
+erases a 64 MiB scratch volume; only if that works does it announce the
+capability, otherwise it logs `encrypted volumes refused: <why>`. Each volume's
+key comes sealed to this node on the start instruction, goes to cryptsetup on
+stdin and is never written; stop closes the volume, purge (or the keep period)
+erases its keyslots and deletes the file.
+
+In a container the agent additionally needs `--privileged` (loop and
+device-mapper devices) and the volume directory at the same path with shared
+propagation, so the host's Docker daemon sees the mounts:
+`-v /var/lib/cloudana/volumes:/var/lib/cloudana/volumes:rshared`.
+
+A machine gets back, inside gVisor only, the capabilities its sshd and root
+need (`MACHINE_CAPS` in `src/workstation.ts`: SETUID, SETGID, SYS_CHROOT,
+CHOWN, DAC_OVERRIDE); every
+other flag above stays, no-new-privileges included. The agent refuses to start
+the machine image anywhere else.
+
 If the API refuses the node's `running` report (for example the endpoint is not
 on the host the node announced), the agent tears the deployment down and
 reports `failed` with the prefix `node cannot serve:`, so the network re-queues

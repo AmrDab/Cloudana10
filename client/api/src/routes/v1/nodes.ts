@@ -34,7 +34,8 @@ const TAGS = ["Nodes"];
 /** Capabilities a node may advertise besides registered work types (V3 §2). */
 /** "any-image": runs images outside the curated list (CLOUDANA_ANY_IMAGE=1; endpoint replicas need it). */
 /** "sandbox" (non-GPU containers under gVisor) and "egress-v2" (mail ports blocked): trust "community" needs both (docs/TRUST_TIERS.md). */
-const HOSTING_CAPABILITIES = ["hosting", "container", "gpu", "any-image", "sandbox", "egress-v2"];
+/** "encrypted-volumes" (LUKS workstation volumes, agents ≥ 1.12.0): machines need it (docs/WORKSTATIONS.md §10). */
+const HOSTING_CAPABILITIES = ["hosting", "container", "gpu", "any-image", "sandbox", "egress-v2", "encrypted-volumes"];
 const NODE_SIGNED =
   "Node-signed: X-Node, X-Node-Timestamp (ms, ±60 s), X-Nonce (16 bytes hex, single use within 120 s), " +
   "X-Node-Signature = personal_sign(\"<METHOD> <path> <timestamp> <sha256(body) hex> <nonce>\").";
@@ -219,6 +220,8 @@ const NodeDeploymentSchema = z.object({
   imageAllowed: z.boolean().optional(),
   /** "start": serve it through this node's relay socket (fixed at placement). */
   relayed: z.boolean().optional(),
+  /** "start" of a workstation with an encrypted volume: its key, sealed to this node (shared/sealed.ts volumeKeyAad). */
+  volumeKey: z.string().optional(),
 });
 
 const StorageOpSchema = z.union([

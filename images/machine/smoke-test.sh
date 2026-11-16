@@ -13,7 +13,7 @@ set -euo pipefail
 
 image="$1"
 runtime="${2:-runc}"
-CAPS=(CHOWN DAC_OVERRIDE FOWNER FSETID KILL SETGID SETUID SYS_CHROOT AUDIT_WRITE NET_BIND_SERVICE)
+CAPS=(CHOWN DAC_OVERRIDE SETGID SETUID SYS_CHROOT)
 
 work="$(mktemp -d)"
 cleanup() { docker rm -f m-ok m-plain >/dev/null 2>&1 || true; sudo rm -rf "$work" 2>/dev/null || rm -rf "$work"; }

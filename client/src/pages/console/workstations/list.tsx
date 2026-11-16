@@ -21,6 +21,7 @@ import { DeployChip } from "@/pages/console/deploy/deployments";
 import { FleetTag } from "@/pages/console/deploy/fleet";
 import { TrustTag } from "@/pages/console/deploy/trust";
 import { dur } from "./spec-picker";
+import { connectCommand, isMachine } from "@/pages/console/machines/model";
 
 /** A workstation's hourly price: dollars, with the CLD it was fixed at. */
 function UsdH({ ucld, brief }: { ucld: number; brief?: boolean }) {
@@ -79,10 +80,30 @@ function HoursBar({ w, d, compact }: { w: Workstation; d?: WorkstationDetail; co
 // ── List ────────────────────────────────────────────────────────────────────
 const COLS = ["Name", "Status", "Machine", "Hours", "Price / h", "Created", ""];
 
-export function Workstations({ focusId, onRent }: { focusId: string | null; onRent: () => void }) {
+/** The list's words: Run → Workstations, or Run → Machines (machines/index.tsx), which share this list. */
+const COPY = {
+  workstations: {
+    id: "workstations",
+    title: "Your workstations",
+    signIn: "Sign in to rent a workstation and see yours.",
+    empty: "No workstations yet. Describe one below — Jupyter, VS Code or a desktop — and the orchestrator assigns a node that fits.",
+    rent: "Rent a workstation",
+  },
+  machines: {
+    id: "machines",
+    title: "Your machines",
+    signIn: "Sign in to rent a machine and see yours.",
+    empty: "No machines yet. Pick a size below, paste your SSH public key, and the orchestrator assigns a node that fits.",
+    rent: "Rent a machine",
+  },
+} as const;
+
+export function Workstations({ focusId, onRent, variant = "workstations" }: { focusId: string | null; onRent: () => void; variant?: keyof typeof COPY }) {
   const session = useSession();
   const q = useWorkstations();
-  const list = q.data ?? [];
+  const copy = COPY[variant];
+  // Machines are workstations on the machine image: each tab lists its own.
+  const list = (q.data ?? []).filter((w) => isMachine(w) === (variant === "machines"));
   const [open, setOpen] = useState<string | null>(null);
   const fresh = useFreshIds(list.map((w) => w.id));
   const bone = useDelayed(q.isLoading);
@@ -108,19 +129,19 @@ export function Workstations({ focusId, onRent }: { focusId: string | null; onRe
   const toggle = (id: string) => setOpen(open === id ? null : id);
 
   return (
-    <Panel id="workstations" className="scroll-mt-6 overflow-hidden" aria-labelledby="ws-h">
-      <PanelHeader title={<span id="ws-h">Your workstations</span>} kicker="Rented time" right={session && <Updated at={q.dataUpdatedAt || null} offline={q.isError} />} />
+    <Panel id={copy.id} className="scroll-mt-6 overflow-hidden" aria-labelledby={`${copy.id}-h`}>
+      <PanelHeader title={<span id={`${copy.id}-h`}>{copy.title}</span>} kicker="Rented time" right={session && <Updated at={q.dataUpdatedAt || null} offline={q.isError} />} />
       {!session ? (
-        <Empty icon={Wallet} title="Sign in to rent a workstation and see yours." action={<button type="button" className={btn.primary} onClick={() => signInWithToast()}><Wallet /> Sign in</button>} />
+        <Empty icon={Wallet} title={copy.signIn} action={<button type="button" className={btn.primary} onClick={() => signInWithToast()}><Wallet /> Sign in</button>} />
       ) : q.isError && !q.data ? (
-        isUnavailable(q.error) ? <Unavailable what="Your workstations" /> : <Empty icon={X} title={errText(q.error)} />
+        isUnavailable(q.error) ? <Unavailable what={copy.title} /> : <Empty icon={X} title={errText(q.error)} />
       ) : q.isLoading ? (
         bone ? <RowBones /> : <div className="h-[140px]" />
       ) : list.length === 0 ? (
         <Empty
           icon={MonitorPlay}
-          title="No workstations yet. Describe one below — Jupyter, VS Code or a desktop — and the orchestrator assigns a node that fits."
-          action={<button type="button" className={btn.ghost} onClick={onRent}><Plus /> Rent a workstation</button>}
+          title={copy.empty}
+          action={<button type="button" className={btn.ghost} onClick={onRent}><Plus /> {copy.rent}</button>}
         />
       ) : (
         <>
@@ -212,7 +233,8 @@ function Detail({ w }: { w: Workstation }) {
   const d = q.data;
   const events = (d?.events ?? []).slice(0, 50);
   const running = w.status === "running";
-  const ssh = sshCommand(d?.connect?.ssh);
+  // A machine is reached through the relay with the CLI (docs/WORKSTATIONS.md §10), whatever the node reports.
+  const ssh = isMachine(w) ? connectCommand(w.id) : sshCommand(d?.connect?.ssh);
   const web = d?.connect?.web;
   const { copied, copy } = useCopy();
   const gpuNames = d?.gpu?.names?.length ? d.gpu.names.join(", ") : w.spec.gpu?.count ? (w.status === "queued" ? "assigned with the node" : "—") : "none (CPU)";
@@ -339,6 +361,7 @@ function StopButton({ w }: { w: Workstation }) {
     }
   }
   const vol = w.spec.volume;
+  const noun = isMachine(w) ? "machine" : "workstation";
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
@@ -350,13 +373,13 @@ function StopButton({ w }: { w: Workstation }) {
         <AlertDialogHeader>
           <AlertDialogTitle className="font-head text-text">Stop {w.name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            The workstation stops and billing ends; you pay only for the time used.{" "}
-            {vol ? `The ${vol.sizeGb} GB volume is kept on that node for ${vol.keepDays} ${vol.keepDays === 1 ? "day" : "days"}.` : "It has no volume, so its files are lost."}
+            The {noun} stops and billing ends; you pay only for the time used.{" "}
+            {vol ? `The ${vol.sizeGb} GB${vol.encrypted ? " encrypted" : ""} volume is kept on that node for ${vol.keepDays} ${vol.keepDays === 1 ? "day" : "days"}.` : "It has no volume, so its files are lost."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel className={btn.ghost}>Keep running</AlertDialogCancel>
-          <AlertDialogAction className={cn(btn.primary, "bg-burn text-white")} onClick={stop}>Stop workstation</AlertDialogAction>
+          <AlertDialogAction className={cn(btn.primary, "bg-burn text-white")} onClick={stop}>Stop {noun}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

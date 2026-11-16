@@ -62,6 +62,12 @@ As built in the scheduler (phase 1, 2026-11-16), where it is more precise than t
   refused at create (400).
 - Un-verifying a fleet re-queues its live verified work for other verified fleets; work *pinned* to that fleet waits
   in the queue until it is verified again (un-verifying can be undone; revoking cannot, and fails pinned work).
+- Machines (phase 4, docs/WORKSTATIONS.md §10): the tenant logs in as **root** of the box by key, not as a user with
+  sudo — under gVisor a setuid binary does not raise privileges, and no-new-privileges stays on. Root inside the box is
+  root inside gVisor with a short list of capabilities (`MACHINE_CAPS`), only on `sandbox` nodes.
+- Disk (§6): only a machine's volume (`/root`) is encrypted; its root filesystem (installed packages, `/tmp`) is the
+  container's writable layer, not encrypted. The API makes each volume key and keeps only a copy sealed to the node, so
+  Cloudana sees the plaintext once, at creation. Placement needs `encrypted-volumes` (and `sandbox`) on any tier.
 - Admin routes: `POST`/`DELETE /v1/admin/fleets/{id}/verified`; the abuse switch is
   `POST /v1/admin/deployments/{id}/abuse` (lifted with `DELETE /v1/admin/accounts/{address}/suspend`).
 
