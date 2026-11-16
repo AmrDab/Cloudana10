@@ -13,6 +13,7 @@
  * Hosting gateway (docs/IMPL_SPEC_2026-10.md):
  *   GET    /v1/deployments/:id/route     — public, cached 30 s: { id, state, endpoint|null, kind } for the gateway
  *   POST   /v1/admin/deployments/:id/stop — X-Internal-Key: status stopped, reason admin
+ *   (the abuse switch, POST /v1/admin/deployments/:id/abuse, is in admin-trust.ts)
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { ok, fail } from "../../lib/http.js";
@@ -112,6 +113,9 @@ const DeploymentSchema = z.object({
   auth: z.enum(["public", "key"]).optional(),
   logs: z.string().optional().openapi({ description: "GET /deployments/{id} only: the node's log tail from the last failure" }),
   placement: z.object({ fleetId: z.string() }).optional().openapi({ description: "Pinned (spec.placement): only nodes of this fleet run it" }),
+  trust: z.enum(["community", "verified"]).optional().openapi({
+    description: "Containers, workstations and endpoints: the lowest host tier it runs on (docs/TRUST_TIERS.md); verified when the spec named none",
+  }),
   nodeFleet: NodeFleetSchema,
 });
 const EventSchema = z.object({ at: z.number(), level: z.enum(["info", "warn", "error"]), message: z.string() });
@@ -125,7 +129,9 @@ const CreateSchema = z.object({
     description:
       "StaticSpec, ContainerSpec (V3 §3), WorkstationSpec (WORKSTATIONS §1) or EndpointSpec (V4_ENDPOINTS_CONTRACT), validated per kind. " +
       "Containers, workstations and endpoints take an optional placement: { fleetId } (flt_ + 16 hex): only nodes of that fleet — " +
-      "your own or a partner's, by the id they gave you — run it; never a single node. Static sites cannot be pinned.",
+      "your own or a partner's, by the id they gave you — run it; never a single node. Static sites cannot be pinned. " +
+      "They also take trust: \"verified\" (default: only nodes of fleets Cloudana has verified) or \"community\" (only nodes " +
+      "that advertise the sandbox and egress-v2 capabilities; none do yet). A pin and a tier combine. Static sites take no trust.",
   }),
 });
 
@@ -140,7 +146,8 @@ const createRouteDef = createRoute({
     "(× replicas for an endpoint). Static sites need index.html; ≤ 2 MB decoded (and ≤ 1.9 MB encoded — D1 row limit). " +
     "Container specs ≤ 32 KB. An endpoint (your image, one port, 1–8 replicas, auth key|public) is served at " +
     "https://{id}.{SITES_DOMAIN} through the relay; priceUcldPerHour in the answer is for all replicas. " +
-    "spec.placement.fleetId must name a fleet that exists and is not revoked (400 otherwise); a fleet revoked later fails what is pinned to it.",
+    "spec.placement.fleetId must name a fleet that exists and is not revoked (400 otherwise); a fleet revoked later fails what is pinned to it. " +
+    "A suspended account (abuse switch) gets 403 with the reason.",
   security: BEARER_AUTH,
   request: { body: { required: true, content: { "application/json": { schema: CreateSchema } } } },
   responses: responses(
@@ -159,6 +166,7 @@ const createRouteDef = createRoute({
     },
     400,
     401,
+    403,
     413,
     422,
     429,

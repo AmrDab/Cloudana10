@@ -2,7 +2,7 @@
  * Relay, API side (docs/V4_RELAY_CONTRACT.md): tickets, the `relay` capability, placement only while the socket is
  * fresh, running reports without an endpoint, probes through the relay, the internal route, workstation webPath.
  */
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { createHash } from "node:crypto";
@@ -74,6 +74,7 @@ async function createSite(): Promise<string> {
 
 beforeAll(async () => {
   await setupV1Db({ RELAY_TICKET_SECRET: SECRET, INTERNAL_API_KEY: INTERNAL_KEY, SITES_DOMAIN: "example.run" });
+  await verifiedFleet("fleet-1"); // trust "verified" (the default) runs only on verified fleets
   app = buildApp({ runtime: "node" });
 });
 

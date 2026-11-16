@@ -1,4 +1,4 @@
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { randomBytes } from "node:crypto";
 import { runDutiesCron } from "../src/services/deployment-duties.service.js";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
@@ -117,6 +117,7 @@ async function running(node: PrivateKeyAccount, jwt: string, spec: unknown, stat
 
 beforeAll(async () => {
   await setupV1Db({ DEV_MODE: "true" });
+  await verifiedFleet("flt_test"); // trust "verified" (the default) runs only on verified fleets
   app = buildApp({ runtime: "node" });
 });
 

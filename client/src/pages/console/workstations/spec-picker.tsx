@@ -10,11 +10,12 @@ import { useNetwork } from "@/hooks/useNetwork";
 import { Switch } from "@/components/ui/switch";
 import { btn, MonoLabel, Panel, PanelHeader, Updated } from "@/components/console/primitives";
 import {
-  useSession, type WorkstationCapacity, type WorkstationSpec, type WorkstationTemplate, type WorkstationTier,
+  useSession, type TrustTier, type WorkstationCapacity, type WorkstationSpec, type WorkstationTemplate, type WorkstationTier,
 } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { EnvironmentCards, hasSsh, hasWeb } from "./templates";
 import { FleetPin, placementOf, useFleetPin } from "@/pages/console/deploy/fleet";
+import { TrustPicker } from "@/pages/console/deploy/trust";
 
 // ── Options ─────────────────────────────────────────────────────────────────
 const GPU_COUNTS = [0, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -60,6 +61,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
   const [volumeGb, setVolumeGb] = useState(20);
   const [keepDays, setKeepDays] = useState(3);
   const pin = useFleetPin();
+  const [trust, setTrust] = useState<TrustTier>("verified");
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -113,6 +115,7 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
       access: { ...(webOn ? { web: tpl.access!.web! } : {}), ...(useSsh ? { ssh: { publicKey: key } } : {}) },
       ...(volumeOn ? { volume: { sizeGb: volumeGb, keepDays } } : {}),
       ...placementOf(pin),
+      trust,
     };
     try {
       const r = await api<{ id: string; priceUcldPerHour: number; deploymentStatus: string }>("/deployments", {
@@ -267,6 +270,10 @@ export function SpecPicker({ onDone }: { onDone: (id: string) => void }) {
               <NumberField label="Size" unit="GB" min={1} max={500} value={volumeGb} onChange={setVolumeGb} disabled={!volumeOn} />
               <NumberField label="Keep after stop" unit="days" min={0} max={30} value={keepDays} onChange={setKeepDays} disabled={!volumeOn} />
             </div>
+          </Section>
+
+          <Section label="Trust">
+            <div className="max-w-md"><TrustPicker value={trust} onChange={setTrust} /></div>
           </Section>
 
           <Section label="Run only on a fleet">

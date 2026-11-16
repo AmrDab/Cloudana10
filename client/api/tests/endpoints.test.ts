@@ -3,7 +3,7 @@
  * relay GPU nodes that run the image (any-image), anti-affinity, health-path probes with replacement, keys, the
  * gateway route, failure logs, stop.
  */
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { createHash } from "node:crypto";
@@ -122,6 +122,7 @@ async function liveEndpoint() {
 
 beforeAll(async () => {
   await setupV1Db({ DEV_MODE: "true", RELAY_TICKET_SECRET: SECRET, INTERNAL_API_KEY: INTERNAL_KEY, SITES_DOMAIN: "example.run", NODE_ACTIVE_SECONDS: "15" });
+  await verifiedFleet("flt_test"); // trust "verified" (the default) runs only on verified fleets
   app = buildApp({ runtime: "node" });
 });
 // Placement takes the oldest queued rows: keep each test's queue its own.
@@ -153,7 +154,7 @@ describe("create", () => {
       expect(k).toMatchObject({ kind: "container", workstation: 0, replicas: 0, held_ucld: perReplica, status: "queued", probe_path: "/health", owner: u.addr });
       expect(JSON.parse(k.spec_json)).toEqual({
         image: ENDPOINT.image, command: ENDPOINT.command, env: ENDPOINT.env, cpu: 4000, memMb: 16_384, storageMb: 51_200,
-        gpu: { count: 1, minVramGb: 16, class: "standard" }, ports: [{ container: 8000 }], health: { path: "/health", startupGraceSec: 900 },
+        gpu: { count: 1, minVramGb: 16, class: "standard" }, ports: [{ container: 8000 }], health: { path: "/health", startupGraceSec: 900 }, trust: "verified",
       });
     }
     expect(kids.map((k) => k.name)).toEqual(["llm #1", "llm #2"]);
@@ -165,7 +166,7 @@ describe("create", () => {
       kind: "endpoint", status: "queued", auth: "key", url: `https://${body.id}.example.run`, priceUcldPerHour: perReplica * 2,
       replicas: [expect.objectContaining({ id: kids[0].id, status: "queued" }), expect.objectContaining({ id: kids[1].id, status: "queued" })],
     });
-    expect(list[0].spec).toEqual({ ...ENDPOINT, gpu: { ...ENDPOINT.gpu, class: "standard" }, env: undefined, envKeys: ["HF_TOKEN"], auth: "key" });
+    expect(list[0].spec).toEqual({ ...ENDPOINT, gpu: { ...ENDPOINT.gpu, class: "standard" }, env: undefined, envKeys: ["HF_TOKEN"], auth: "key", trust: "verified" });
   });
 
   it("defaults health and auth, caps replicas, refuses root and short credits", async () => {

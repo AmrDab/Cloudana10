@@ -137,6 +137,8 @@ export const V1_TABLES = [
     failures INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node, day))`,
   // The artifacts cron reads only jobs it hasn't moved yet.
   `CREATE INDEX IF NOT EXISTS idx_work_jobs_unmoved ON work_jobs(completed_at) WHERE status = 'done' AND artifact IS NULL`,
+  // Abuse switch (docs/TRUST_TIERS.md §4): a suspended wallet creates no deployments; an admin lifts it (row deleted).
+  `CREATE TABLE IF NOT EXISTS account_suspensions (address TEXT PRIMARY KEY, suspended_at INTEGER NOT NULL, reason TEXT NOT NULL)`,
 ];
 
 const BALANCE_COLUMNS = [
@@ -223,6 +225,8 @@ const BALANCE_COLUMNS = [
   // Challenge-mode inputs in the artifact store (B-26 follow-up): the key (input_json is then NULL) and sha256 of the JSON.
   "ALTER TABLE work_jobs ADD COLUMN input_ref TEXT",
   "ALTER TABLE work_jobs ADD COLUMN input_hash TEXT",
+  // Trust tiers (docs/TRUST_TIERS.md §3 rule 3): set by an admin; only verified fleets take trust "verified" deployments.
+  "ALTER TABLE fleets ADD COLUMN verified_at INTEGER",
 ];
 
 // One-time move of the legacy REAL balance into integer µCLD. Zeroing `balance`

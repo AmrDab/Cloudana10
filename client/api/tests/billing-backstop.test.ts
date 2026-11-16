@@ -21,7 +21,7 @@ vi.mock("../src/services/balance.service.js", async (importOriginal) => {
   };
 });
 
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { buildApp } from "../src/app.js";
 import { getD1 } from "../src/lib/storage.js";
 import { setRelay } from "../src/lib/relay.js";
@@ -51,6 +51,7 @@ const beat = async (n: PrivateKeyAccount) => expect((await signed(n, "/v1/nodes/
 
 beforeAll(async () => {
   await setupV1Db({ DEV_MODE: "true", RELAY_TICKET_SECRET: SECRET, INTERNAL_API_KEY: "k".repeat(32), SITES_DOMAIN: "example.run" });
+  await verifiedFleet("flt_test"); // trust "verified" (the default) runs only on verified fleets
   app = buildApp({ runtime: "node" });
   setRelay(async () => new Response('{"ok":true}', { status: 200 })); // probes pass: only billing is exercised
 });

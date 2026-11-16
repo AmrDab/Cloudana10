@@ -23,6 +23,7 @@ import { KindPill } from "./templates";
 import { autoSeal, clearPendingSecrets, getSealState, hostOf, pendingSecrets, publicUrl, savePendingSecrets, setSealState, useSealVersion } from "./model";
 import { sealSecretsTo, SecretsForm } from "./secrets";
 import { FleetTag, fleetLabel } from "./fleet";
+import { TrustTag } from "./trust";
 
 // ── Status chip ─────────────────────────────────────────────────────────────
 const TONE: Record<string, "muted" | "work" | "ok" | "burn"> = {
@@ -280,7 +281,7 @@ function Row({ d, open, fresh, onToggle }: { d: Deployment; open: boolean; fresh
           {d.statusReason && !isTerminal(d.status) && d.status !== "running" && <div className="truncate text-[12px] text-faint">{d.statusReason}</div>}
           <div className="mt-1 empty:hidden"><SealLine d={d} /></div>
         </td>
-        <td className="px-4 py-2.5"><KindPill kind={d.kind as "static" | "container"} /></td>
+        <td className="px-4 py-2.5 whitespace-nowrap"><KindPill kind={d.kind as "static" | "container"} /><TrustTag trust={d.trust} className="ml-2" /></td>
         <td className="px-4 py-2.5"><DeployChip status={d.status} /></td>
         <td className="px-4 py-2.5 whitespace-nowrap"><Hash value={d.node} /><FleetTag fleet={d.nodeFleet} /></td>
         <td className="px-4 py-2.5"><Endpoint url={liveUrl(d)} /></td>
@@ -337,6 +338,7 @@ function Detail({ d }: { d: Deployment }) {
             <dt className="text-faint">Status</dt><dd className="text-text">{d.status}{d.statusReason ? <span className="text-muted-foreground"> · {d.statusReason}</span> : null}</dd>
             <dt className="text-faint">Node</dt><dd><Hash value={d.node} className="text-[12px]" /><FleetTag fleet={d.nodeFleet} /></dd>
             {d.placement && (<><dt className="text-faint">Pinned</dt><dd className="break-all text-text">fleet {d.placement.fleetId}</dd></>)}
+            {d.trust && (<><dt className="text-faint">Trust</dt><dd className="text-text">{d.trust}</dd></>)}
             <dt className="text-faint">Started</dt><dd><RelTime ms={d.startedAt} className="text-[12px]" /></dd>
             {d.stoppedAt && (<><dt className="text-faint">Stopped</dt><dd><RelTime ms={d.stoppedAt} className="text-[12px]" /></dd></>)}
             <dt className="text-faint">Probe</dt><dd><Probe d={d} /></dd>
