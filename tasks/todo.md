@@ -503,13 +503,16 @@ gated by advertised capabilities.
 - Verify: agent unit tests (argv built, check fails when the rule is missing); API tests for suspend
 
 ### Phase 3 — relay streams: SSH and WebSockets without a public IP
-- [ ] relay protocol: byte-stream messages (open / data / close with the existing window + ack); a stream class
-      `tcp` to a deployment's declared port only
-- [ ] gateway: `wss://<id>.cloudana.run/_cld/ssh` (tenant JWT or `cld_sk_` key with `deployments` scope, owner of
+- [x] relay protocol: byte-stream messages (open / data / close with the existing window + ack); a stream class
+      `tcp` to a deployment's declared port only  (port classes `ssh | web`; agent capability `relay-streams`)
+- [x] gateway: `wss://<id>.cloudana.run/_cld/ssh` (tenant JWT or `cld_sk_` key with `deployments` scope, owner of
       the deployment only) and WebSocket upgrade passthrough for web access
-- [ ] agent: stream → `127.0.0.1:<host port>`; workstations become relayed; `public_host` no longer required
-- [ ] CLI: `cloudana ssh <id>` (stdio pipe; prints the `ProxyCommand` line for plain `ssh`)
-- [ ] retire direct mode for workstations (B-13); SECURITY_AUDIT O11 closed
+- [x] agent: stream → `127.0.0.1:<host port>`; workstations become relayed; `public_host` no longer required
+      (on `relay-streams` nodes; agent 1.11.0, PROGRESS 40)
+- [x] CLI: `cloudana ssh <id>` (stdio pipe; prints the `ProxyCommand` line for plain `ssh`)
+- [ ] retire direct mode for workstations (B-13) once nodes run 1.11.0; SECURITY_AUDIT O11 closed for 1.11.0 nodes
+- [x] Durable Object `/stream` glue in workerd (`relay/test/workerd.streams.e2e.ts` against `wrangler dev`)
+- [ ] full local end-to-end: `wrangler dev` relay + gateway, a local agent, an sshd container, `cloudana ssh` gets a shell
 - Verify: relay/gateway unit tests (auth, port pinning, back-pressure); local end-to-end with `wrangler dev` relay +
   a local agent + a sshd container: `cloudana ssh` gets a shell
 

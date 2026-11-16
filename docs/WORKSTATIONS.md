@@ -104,7 +104,30 @@ Each template declares `kind: "workstation"`, `gpu` default, `access`, `workdir`
 
 Add to lib/services.ts group `compute`: `workstations` — "GPU workstations & rentals" — line "Jupyter, VS Code or a desktop on an assigned GPU." — status `early` (built; needs Docker + GPU nodes) — proof "Rented time, uptime probed; no subsidy." Add roadmap items: CLI, autoscaling, team accounts, cloud sync.
 
-## 9. Honesty
+## 9. Connecting through the relay (agents ≥ 1.11.0, 2026-11-16)
+
+A workstation placed on a node whose agent announces `relay-streams` is **relayed**: the node publishes no port at
+all (web and sshd listen on 127.0.0.1), and the API needs no public host for it. Everything reaches it through the
+node's own outbound relay socket (`docs/V4_RELAY_CONTRACT.md` "Byte streams"):
+
+- **Web** (Jupyter, code-server, desktops): `https://<id>.cloudana.run` as before; their WebSockets (kernels,
+  terminals) are passed through to the app.
+- **SSH**: with the CLI (`cli/`) and an API key with the `deployments` scope (console → Keys):
+  ```sh
+  cloudana login --key cld_sk_…
+  cloudana ssh <id>                    # runs your ssh with the CLI as ProxyCommand; -l <user>, -- <ssh options>
+  cloudana ssh <id> --print            # the plain ssh line instead:
+  ssh -o 'ProxyCommand=cloudana ssh --proxy %h' -o ServerAliveInterval=30 root@<id>.cloudana.run
+  ```
+  `connect.ssh` (console: Copy SSH command) is `cloudana ssh <id>`. SSH stays end to end: the gateway and the relay
+  carry ciphertext, and your key is still what opens the shell. The API checks, on every connect, that the caller
+  owns the workstation. An idle connection closes after 15 minutes without traffic; the `ServerAliveInterval` keeps a
+  quiet shell open.
+
+On nodes with older agents a workstation stays **direct** (public host:port, `ssh -p <port> user@host`) until they
+upgrade; direct mode then retires (B-13).
+
+## 10. Honesty
 
 This machine has no Docker and no NVIDIA GPU, so the workstation path can be unit-tested and the UI exercised up to
 "waiting for a GPU node", not run end to end. Status stays **Early access** until a GPU node proves it.

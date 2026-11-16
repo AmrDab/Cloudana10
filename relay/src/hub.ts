@@ -1,6 +1,7 @@
 // The hub side of the relay protocol (docs/V4_RELAY_CONTRACT.md): turns an HTTP request into a stream on the node's
-// socket and the node's frames back into a streaming Response. Pure logic over an injected `send`, so it runs the
-// same in the Durable Object and in Node tests.
+// socket and the node's frames back into a streaming Response, and opens byte streams (SSH, WebSockets) to a
+// deployment's declared port. Pure logic over an injected `send`, so it runs the same in the Durable Object and in
+// Node tests.
 import {
   BODY_CAP_BYTES,
   HEAD_TIMEOUT_MS,
@@ -10,6 +11,8 @@ import {
   MAX_REQUEST_HEADERS,
   MAX_STREAMS,
   MAX_STREAMS_PER_DEP,
+  MAX_TCP_STREAMS,
+  MAX_TCP_STREAMS_PER_DEP,
   PROBE_SLOTS,
   METHOD,
   WINDOW_BYTES,
@@ -20,8 +23,12 @@ import {
   parseNodeMessage,
   type ErrCode,
   type HubMessage,
+  type PortClass,
   type TrafficClass,
 } from "../../shared/relay-protocol.js";
+import { ByteStream } from "./stream.js";
+
+export { ByteStream, STREAM_BUFFER_BYTES } from "./stream.js";
 
 export type RelayError = "offline" | "busy" | "timeout" | "too_large" | ErrCode;
 
@@ -33,6 +40,7 @@ const ERROR_STATUS: Record<RelayError, number> = {
   not_serving: 502,
   upstream: 502,
   bad_request: 400,
+  refused: 403,
 };
 
 /** A relay-generated error response; `x-relay-error` tells the gateway whether another replica may be tried. */
@@ -76,13 +84,15 @@ interface Stream {
 
 export class StreamHub {
   private streams = new Map<number, Stream>();
+  private tcp = new Map<number, ByteStream>();
   private next = 1;
 
   /** `send` writes one WebSocket message to the node; it throws if the socket is gone. */
   constructor(private send: (msg: string | Uint8Array) => void, private now: () => number = Date.now) {}
 
+  /** Open streams of both kinds. */
   get open(): number {
-    return this.streams.size;
+    return this.streams.size + this.tcp.size;
   }
 
   private sendCtl(m: HubMessage) {
@@ -93,13 +103,43 @@ export class StreamHub {
     for (;;) {
       const s = this.next;
       this.next = this.next >= 0xfffffff0 ? 1 : this.next + 1;
-      if (!this.streams.has(s)) return s;
+      if (!this.streams.has(s) && !this.tcp.has(s)) return s;
     }
+  }
+
+  /**
+   * Open a byte stream to `port` of deployment `dep` ("Byte streams" in the contract). The node must announce
+   * `relay-streams` (the caller checks). `opened` settles with null once the node connected, or with the reason not.
+   */
+  openStream(dep: string, port: PortClass): ByteStream {
+    let ofDep = 0;
+    for (const t of this.tcp.values()) if (t.dep === dep) ofDep++;
+    const full = this.open >= MAX_STREAMS - PROBE_SLOTS || this.tcp.size >= MAX_TCP_STREAMS || ofDep >= MAX_TCP_STREAMS_PER_DEP;
+    const s = full ? 0 : this.id();
+    const st: ByteStream = new ByteStream(s, dep, {
+      send: (m) => this.send(m),
+      forget: () => {
+        if (this.tcp.get(s) === st) this.tcp.delete(s);
+      },
+    });
+    if (full) {
+      st.settle("busy");
+      return st;
+    }
+    this.tcp.set(s, st);
+    try {
+      this.sendCtl({ t: "open", s, dep, port });
+    } catch {
+      st.finish("offline", false);
+      return st;
+    }
+    st.armOpenTimer();
+    return st;
   }
 
   /** Send a request to the node and resolve with its response (streaming) or a relay error. */
   async proxy(req: ProxyRequest): Promise<Response> {
-    if (this.streams.size >= (req.probe ? MAX_STREAMS : MAX_STREAMS - PROBE_SLOTS)) return relayError("busy");
+    if (this.open >= (req.probe ? MAX_STREAMS : MAX_STREAMS - PROBE_SLOTS)) return relayError("busy");
     if (!req.probe) {
       let ofDep = 0;
       for (const st of this.streams.values()) if (st.dep === req.dep) ofDep++;
@@ -215,6 +255,8 @@ export class StreamHub {
     if (typeof msg !== "string") {
       const frame = decodeData(msg);
       if (!frame) return;
+      const t = this.tcp.get(frame.s);
+      if (t) return t.fromNode(frame.data);
       const st = this.streams.get(frame.s);
       if (!st || st.closed || !st.headDone) return;
       this.touch(frame.s);
@@ -230,6 +272,8 @@ export class StreamHub {
     }
     const m = parseNodeMessage(msg);
     if (!m) return;
+    const t = this.tcp.get(m.s);
+    if (t) return t.control(m);
     const st = this.streams.get(m.s);
     if (!st || st.closed) return;
     this.touch(m.s);
@@ -247,6 +291,8 @@ export class StreamHub {
         if (NULL_BODY.has(m.status)) this.finish(m.s);
         return;
       }
+      case "opened":
+        return; // only byte streams are opened
       case "end":
         st.chain = st.chain.then(() => st.writer.close()).catch(() => {});
         this.finish(m.s, false);
@@ -264,6 +310,7 @@ export class StreamHub {
   /** The socket closed: every open stream fails. */
   onClose(): void {
     for (const s of [...this.streams.keys()]) this.fail(s, "offline", false);
+    for (const t of [...this.tcp.values()]) t.finish("offline", false);
   }
 
   private touch(s: number) {

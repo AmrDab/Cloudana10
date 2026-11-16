@@ -22,6 +22,8 @@ export interface Deployment {
   url: string | null;
   createdAt?: number;
   logs?: string;
+  /** Workstations: the spec as created (`cloudana ssh` reads the SSH user from it). */
+  spec?: { access?: { ssh?: { user?: string } } };
 }
 
 export interface Created {
