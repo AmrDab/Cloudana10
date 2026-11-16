@@ -316,7 +316,10 @@ Open: the wallet-stack majors at the console root and the Hardhat toolchain (O13
 
 ## 5. What the audit did not cover
 
-Container escapes beyond the Docker flags (no kernel-level testing; gVisor is a listed option), GPU isolation under a
+Container escapes beyond the Docker flags (no kernel-level testing). The kernel-sandbox gap is now addressed on nodes
+with gVisor: from agent 1.10.0 a node whose Docker has `runsc` runs every non-GPU tenant container and workstation
+under it and announces `sandbox` (PROGRESS 38); nodes without it, and GPU containers everywhere, still share the host
+kernel behind the Docker flags only. Not covered either: GPU isolation under a
 real NVIDIA runtime, the relay under load, Cloudflare account/DNS security, the console's supply chain
 (the `ConsoleApp` bundle is 4.4 MB with wallet SDKs), and anything in production configuration (secrets, bindings,
 D1 contents), which this environment could not reach.

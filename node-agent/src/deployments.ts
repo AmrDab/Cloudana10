@@ -84,8 +84,16 @@ export interface ManagerOptions {
   /** Operator opted in AND the boot hardening self-check passed. Absent/false: container and workstation starts are refused. */
   containersReady?: boolean;
   docker?: DockerOps; // default: the real docker CLI (selftests inject a fake)
-  /** Re-checks the egress rules and tenant network before each container start (default: the real iptables/docker). */
-  hardening?: () => Promise<HardeningResult>;
+  /**
+   * This node announced `sandbox` (gVisor registered at boot): containers and workstations without GPUs run with
+   * --runtime=runsc, and their starts are refused if the runtime is gone (never a silent downgrade).
+   */
+  sandbox?: boolean;
+  /**
+   * Re-checks the egress rules and tenant network before each container start (default: the real iptables/docker);
+   * `runsc`: this start must run under gVisor, so the runtime must still be registered.
+   */
+  hardening?: (opts: { runsc: boolean }) => Promise<HardeningResult>;
   /**
    * Whether new deployments are served through the relay (the API kept this node's "relay" capability): listeners
    * bind 127.0.0.1 and `running` reports carry no endpoint. Absent/false: legacy direct serving on the public host.
@@ -351,7 +359,8 @@ export class DeploymentManager {
           throw new Error("image is not on the curated list (set CLOUDANA_IMAGE_ALLOWLIST to allow it on this node)");
         }
         // Rules can be flushed and networks recreated while the agent runs: verify again right before each start.
-        const h = await (this.o.hardening ?? preStartCheck)();
+        const runsc = this.o.sandbox === true && gpuCountOf(cmd.spec) === 0;
+        const h = await (this.o.hardening ?? ((o) => preStartCheck(undefined, o)))({ runsc });
         if (!h.ok) throw new Error(`${NODE_CANNOT_SERVE} hardening check failed: ${h.reason}`);
       }
       if (kind === "static") ports = [await this.startStatic(id, cmd.spec as StaticSpec, relayed)];
@@ -391,7 +400,7 @@ export class DeploymentManager {
       taken.add(p);
       hostPorts.push(p);
     }
-    const args = dockerRunArgs(id, spec, env, hostPorts, relayed, gpus); // validates before touching Docker
+    const args = dockerRunArgs(id, spec, env, hostPorts, relayed, gpus, this.o.sandbox === true); // validates before touching Docker
     await this.dk.remove(id); // a stale container with this name would make `docker run` fail
     await this.dk.run(args);
     if (gpus.length) this.o.log(`deployment ${id}: GPU device(s) ${gpus.join(",")}`);
@@ -457,7 +466,7 @@ export class DeploymentManager {
       taken.add(p);
       ports[k] = p;
     }
-    const args = workstationRunArgs(id, spec, env, ports, gpus, relayed); // validates before touching Docker
+    const args = workstationRunArgs(id, spec, env, ports, gpus, relayed, this.o.sandbox === true); // validates before touching Docker
     const vol = await this.dk.volumeEnsure(id);
     if (this.kept.delete(id)) this.saveVolumes(); // restarted: no longer scheduled for removal
     this.o.log(`deployment ${id}: volume cld-${id} ${vol}`);
