@@ -496,8 +496,8 @@ gated by advertised capabilities.
 - Verify: unit tests for placement (verified/unverified/community without capabilities), migration test, console build
 
 ### Phase 2 — egress policy (agent)
-- [ ] hardening: DROP tenant-bridge egress to tcp 25/465/587 alongside BLOCKED_RANGES; `preStartCheck` checks it;
-      advertise `egress-v2`
+- [x] hardening: DROP tenant-bridge egress to tcp 25/465/587 alongside BLOCKED_RANGES; `preStartCheck` checks it;
+      advertise `egress-v2` (agent 1.10.0, PROGRESS 38)
 - [ ] admin abuse switch: stop a deployment + suspend the tenant (a `suspended_at` on the account; API refuses
       new deployments); provider sees the reason
 - Verify: agent unit tests (argv built, check fails when the rule is missing); API tests for suspend
@@ -514,7 +514,8 @@ gated by advertised capabilities.
   a local agent + a sshd container: `cloudana ssh` gets a shell
 
 ### Phase 4 — machines (agent + images + console)
-- [ ] gVisor: agent detects `runsc` in `docker info`, runs tenant containers with `--runtime=runsc`, advertises `sandbox`
+- [x] gVisor: agent detects `runsc` in `docker info`, runs tenant containers with `--runtime=runsc`, advertises `sandbox`
+      (agent 1.10.0, PROGRESS 38; GPU containers/workstations stay on the default runtime and are not sandboxed)
 - [ ] Cloudana machine image `ghcr.io/amrdab/cloudana-machine` (Ubuntu 24.04 + sshd, key from env), built in CI
 - [ ] encrypted volumes: per-deployment key sealed to the node, held in memory; wipe on purge / `keepDays`
       (design note first: gocryptfs vs LUKS-on-loop under the agent's privileges)

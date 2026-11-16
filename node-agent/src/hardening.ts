@@ -15,12 +15,19 @@
  *      service (169.254.169.254) or services on this machine. Rules already present (`iptables -C`) count; missing
  *      ones are installed (`iptables -I`), which needs root / CAP_NET_ADMIN. The old INPUT rule without the
  *      conntrack match (it dropped those replies too) is deleted.
+ *      Outbound mail (tcp 25, 465, 587) from that bridge is dropped too, to any destination (docs/TRUST_TIERS.md §4):
+ *      spam is the most common abuse of rented boxes and gets the provider's IP blocklisted. With all of these in
+ *      place the node announces `egress-v2`.
  *
  * Before 1, Docker must be ≥ 28: older engines let LAN hosts reach ports published on 127.0.0.1, which is how
  * relayed containers are published.
  *
  * preStartCheck() repeats 2 and 3 as pure checks (never installs) before every container start: a flushed
  * firewall or a recreated network while the agent runs must refuse the start, not silently weaken it.
+ *
+ * gVisor (docs/TRUST_TIERS.md §5): runscAvailable() reports whether the Docker daemon has the `runsc` runtime
+ * registered. If so the node announces `sandbox` and runs every non-GPU tenant container with --runtime=runsc;
+ * preStartCheck({ runsc: true }) then refuses a non-GPU start once the runtime is gone (no silent downgrade).
  *
  * Every command is an argv array through execFile; nothing is interpolated into a shell.
  */
@@ -31,6 +38,10 @@ import { TENANT_NETWORK } from "./container.ts";
 export const BLOCKED_RANGES = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10"];
 /** Oldest Docker engine that keeps 127.0.0.1-published ports off the LAN. */
 export const MIN_DOCKER_MAJOR = 28;
+/** Outbound TCP ports a tenant container must never reach, on any destination: SMTP, SMTPS, mail submission. */
+export const BLOCKED_TCP_PORTS = [25, 465, 587];
+/** The gVisor runtime name the Docker daemon registers (`runsc install`). */
+export const SANDBOX_RUNTIME = "runsc";
 
 export type Exec = (cmd: string, args: string[], timeoutMs?: number) => Promise<string>;
 
@@ -104,6 +115,7 @@ export async function storageQuotaSupported(exec: Exec): Promise<{ ok: true; not
 export function egressRules(subnet: string): string[][] {
   return [
     ...BLOCKED_RANGES.map((dst) => ["DOCKER-USER", "-s", subnet, "-d", dst, "-j", "DROP"]),
+    ...BLOCKED_TCP_PORTS.map((port) => ["DOCKER-USER", "-s", subnet, "-p", "tcp", "--dport", String(port), "-j", "DROP"]),
     ["INPUT", "-s", subnet, "-m", "conntrack", "!", "--ctstate", "ESTABLISHED,RELATED", "-j", "DROP"],
   ];
 }
@@ -189,11 +201,28 @@ export async function hardeningSelfCheck(exec: Exec = realExec): Promise<Hardeni
 }
 
 /**
- * Before each container start: the tenant network still exists with icc off and every egress rule is still
- * present (`iptables -C` only — nothing is installed here). Refuse otherwise.
+ * Whether the Docker daemon has the gVisor runtime registered (`docker info` Runtimes has `runsc`). This is the
+ * registration only: a broken runsc makes `docker run` fail (the start is reported failed), never run unsandboxed.
  */
-export async function preStartCheck(exec: Exec = realExec): Promise<HardeningResult> {
+export async function runscAvailable(exec: Exec = realExec): Promise<boolean> {
+  try {
+    const runtimes: unknown = JSON.parse(await exec("docker", ["info", "--format", "{{json .Runtimes}}"]));
+    return !!runtimes && typeof runtimes === "object" && Object.hasOwn(runtimes, SANDBOX_RUNTIME);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Before each container start: the tenant network still exists with icc off and every egress rule is still
+ * present (`iptables -C` only — nothing is installed here). `runsc`: this start must run under gVisor (the node
+ * announced `sandbox` and it is not a GPU container), so the runtime must still be registered. Refuse otherwise.
+ */
+export async function preStartCheck(exec: Exec = realExec, opts: { runsc?: boolean } = {}): Promise<HardeningResult> {
   const notes: string[] = [];
+  if (opts.runsc && !(await runscAvailable(exec))) {
+    return { ok: false, reason: `the ${SANDBOX_RUNTIME} runtime (gVisor) is no longer registered with Docker, and this node announced \`sandbox\``, notes };
+  }
   let net: { subnets: string[]; iccOff: boolean };
   try {
     net = await inspectTenantNetwork(exec);

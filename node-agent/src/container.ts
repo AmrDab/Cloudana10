@@ -68,6 +68,14 @@ export function hardeningArgs(memMb: number, storageMb: number): string[] {
 }
 
 /**
+ * `--runtime=runsc` (gVisor) when this node announced `sandbox` and the container has no GPU. GPU containers keep
+ * Docker's default runtime: gVisor reaches GPUs only through nvproxy, configured daemon-side and limited to some
+ * drivers and CUDA calls, so they are not sandboxed — `sandbox` covers every non-GPU container (README "gVisor").
+ */
+export const sandboxArgs = (sandbox: boolean, gpuDevices: number[]): string[] =>
+  sandbox && gpuDevices.length === 0 ? ["--runtime=runsc"] : [];
+
+/**
  * Tenant env as it reaches `docker run`: NVIDIA_* / CUDA_VISIBLE_DEVICES from the spec or sealed env are dropped,
  * and NVIDIA_VISIBLE_DEVICES is set explicitly to the GPU indices allocated to this container ("none" without any),
  * so a tenant cannot ask the NVIDIA runtime for `all`.
@@ -114,16 +122,17 @@ export function userArgs(user: string | undefined, fallback: string | undefined)
  * Build the `docker run` argv for a plain container. `hostPorts[i]` maps to `spec.ports[i].container`. `relayed`:
  * served through the relay, so the ports are published on the host's 127.0.0.1 only (needs Docker ≥ 28 to stay off
  * the LAN — hardening.ts checks). `devices`: the GPU indices allocated to it (pickGpus), one per spec.gpu.count;
- * GPU containers also get 1 GB of /dev/shm (inference engines need it).
+ * GPU containers also get 1 GB of /dev/shm (inference engines need it). `sandbox`: the node announced `sandbox`
+ * (runs under gVisor unless it has GPUs — sandboxArgs).
  */
-export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<string, string>, hostPorts: number[], relayed = false, devices: number[] = []): string[] {
+export function dockerRunArgs(id: string, spec: ContainerSpec, env: Record<string, string>, hostPorts: number[], relayed = false, devices: number[] = [], sandbox = false): string[] {
   if (typeof spec.image !== "string" || !spec.image || spec.image.startsWith("-")) throw new Error("invalid image");
   if (!(spec.cpu > 0) || !(spec.memMb > 0)) throw new Error("cpu and memMb must be positive");
   // Plain containers never run as root (the API refuses it too); only workstations keep the image's user.
   if (spec.user !== undefined && /^0(:\d{1,7})?$/.test(spec.user)) throw new Error("containers cannot run as root (uid 0)");
   const wanted = Number.isInteger(spec.gpu?.count) && spec.gpu!.count > 0 ? spec.gpu!.count : 0;
   if (devices.length !== wanted || devices.some((d) => !Number.isInteger(d) || d < 0)) throw new Error("GPU devices do not match gpu.count");
-  const args = ["run", "-d", "--name", containerName(id), "--restart", "unless-stopped"];
+  const args = ["run", "-d", "--name", containerName(id), "--restart", "unless-stopped", ...sandboxArgs(sandbox, devices)];
   args.push(...hardeningArgs(spec.memMb, spec.storageMb), "--cpus", String(spec.cpu / 1000));
   args.push(...userArgs(spec.user, DEFAULT_USER));
   // Explicit indices, never count=N (Docker would hand every container GPU 0); the inner quotes keep one --gpus field.
