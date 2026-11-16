@@ -4,6 +4,12 @@ This is the consensus of a Fable review panel: token economics, payments and dem
 `CAPABILITY_MATRIX.md` for what is live, built or still waiting on an owner step (contract deploy and keeper:
 `docs/OWNER_RUNBOOK.md`; the relay secret, gateway domain and first node are done since 2026-10-18). The text below is kept as the decision record.
 
+> **Decided (2026-11-16, owner: "go") — trust tiers for every workload** (`docs/TRUST_TIERS.md`): every deployment
+> states a minimum tier (community, verified, later confidential); verified fleets are approved by the owner;
+> containers, endpoints and machines default to verified and run on community hosts only once gVisor, the egress
+> policy and relay-only access are live; outbound mail ports are blocked for tenants; SSH and WebSockets move onto the
+> relay and direct mode is retired. The disclosure in TRUST_TIERS §6 is what users are told.
+
 > **Decided (2026-10-28, owner: "go with your recommendations on D1–D4"; the simulation behind them is
 > `docs/POUW_SIMULATION_REPORT.md`):**
 > - **D1 — protocol work for idle capacity: yes, within the existing lane-B budget.** When the queue is empty, the
