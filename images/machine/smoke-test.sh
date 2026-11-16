@@ -58,7 +58,7 @@ sshx 2201 cloudana 'sudo -n apt-get update -qq && sudo -n apt-get install -y -qq
   || fail "apt-get install as root failed"
 if sshx 2201 root true 2>/dev/null; then fail "root login was accepted"; fi
 methods="$(ssh -v -p 2201 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o PubkeyAuthentication=no \
-  cloudana@127.0.0.1 true 2>&1 | grep -m1 'Authentications that can continue' || true)"
+  cloudana@127.0.0.1 true 2>&1 | tr -d '\r' | grep -m1 'Authentications that can continue' || true)"
 case "$methods" in *"continue: publickey") ;; *) fail "server offers more than publickey: $methods" ;; esac
 if [ "$runtime" = runsc ]; then
   sshx 2201 cloudana 'sudo -n dmesg | head -1' | grep -q gVisor || fail "not running under gVisor"
