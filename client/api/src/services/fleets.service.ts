@@ -13,7 +13,7 @@ import { normalizeAddress } from "../lib/eth.js";
 import { getEnv } from "../config/env.js";
 import { sha256 } from "./jobs.service.js";
 import { unbindFleetNodes } from "./nodes.service.js";
-import { failPinnedTo, requeueNodeDeployments } from "./deployment-duties.service.js";
+import { failPinnedTo, requeueNodeDeployments, requeueUnverified } from "./deployment-duties.service.js";
 
 export const MAX_ACTIVE_FLEETS = 10;
 
@@ -25,6 +25,7 @@ export interface FleetRow {
   floor_ucld_per_mmac: number | null;
   created_at: number;
   revoked_at: number | null;
+  verified_at: number | null;
 }
 
 export interface FleetSummary {
@@ -33,6 +34,8 @@ export interface FleetSummary {
   floorUcldPerMmac: number | null;
   createdAt: number;
   revokedAt: number | null;
+  /** Verified by Cloudana (docs/TRUST_TIERS.md §3 rule 3): its nodes take trust "verified" deployments. */
+  verified: boolean;
   nodes: number;
   nodesOnline: number;
   jobsDone: number;
@@ -68,7 +71,7 @@ export async function createFleet(owner: string, name: string | null, floorUcldP
 export async function listFleets(owner: string): Promise<FleetSummary[]> {
   const rows = await getD1()
     .prepare(
-      "SELECT f.id, f.name, f.floor_ucld_per_mmac, f.created_at, f.revoked_at, " +
+      "SELECT f.id, f.name, f.floor_ucld_per_mmac, f.created_at, f.revoked_at, f.verified_at, " +
         "COUNT(n.address) AS nodes, " +
         "COALESCE(SUM(CASE WHEN n.last_seen >= ? THEN 1 ELSE 0 END), 0) AS online, " +
         "COALESCE(SUM(n.jobs_done), 0) AS jobs_done " +
@@ -83,6 +86,7 @@ export async function listFleets(owner: string): Promise<FleetSummary[]> {
     floorUcldPerMmac: r.floor_ucld_per_mmac,
     createdAt: r.created_at,
     revokedAt: r.revoked_at,
+    verified: r.verified_at !== null && r.revoked_at === null,
     nodes: r.nodes,
     nodesOnline: r.online,
     jobsDone: r.jobs_done,
@@ -147,4 +151,26 @@ export async function fleetForToken(token: string): Promise<{ id: string; owner:
     .prepare("SELECT id, owner FROM fleets WHERE token_hash = ? AND revoked_at IS NULL")
     .bind(sha256(token))
     .first<{ id: string; owner: string }>();
+}
+
+/**
+ * Admin (docs/TRUST_TIERS.md §3 rule 3): mark a fleet verified (identity checked, provider agreement signed, an abuse
+ * contact) or take it back. Un-verifying re-queues the trust "verified" work live on its nodes; it is idempotent, so a
+ * retry finishes a half-failed one. A revoked fleet cannot be verified (conflict).
+ */
+export async function setFleetVerified(
+  id: string,
+  verified: boolean,
+  now = Date.now(),
+): Promise<{ ok: true; verifiedAt: number | null; requeued: number } | { ok: false; code: "not_found" | "conflict"; message: string }> {
+  const db = getD1();
+  const row = await db.prepare("SELECT * FROM fleets WHERE id = ?").bind(id).first<FleetRow>();
+  if (!row) return { ok: false, code: "not_found", message: "Fleet not found" };
+  if (verified) {
+    if (row.revoked_at) return { ok: false, code: "conflict", message: "Fleet is revoked" };
+    await db.prepare("UPDATE fleets SET verified_at = COALESCE(verified_at, ?) WHERE id = ?").bind(now, id).run();
+    return { ok: true, verifiedAt: row.verified_at ?? now, requeued: 0 };
+  }
+  await db.prepare("UPDATE fleets SET verified_at = NULL WHERE id = ?").bind(id).run();
+  return { ok: true, verifiedAt: null, requeued: await requeueUnverified(id, now) };
 }

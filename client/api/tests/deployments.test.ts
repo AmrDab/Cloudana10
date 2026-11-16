@@ -1,4 +1,4 @@
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
@@ -99,6 +99,7 @@ async function runningSite(credits = 10_000) {
 
 beforeAll(async () => {
   await setupV1Db({ DEV_MODE: "true", TREASURY_ADDRESS: TREASURY, NODE_ACTIVE_SECONDS: "15" });
+  await verifiedFleet("flt_test"); // trust "verified" (the default) runs only on verified fleets
   app = buildApp({ runtime: "node" });
 });
 
@@ -363,7 +364,7 @@ describe("owner actions", () => {
     expect((await (await authed(u.jwt, "GET", `/v1/deployments/${viaFlag}`)).json()).deployment.awaitingSecrets).toBe(false);
     const hb = await heartbeat(node);
     expect(hb.deployments).toEqual([
-      { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true }, sealedEnv: sealedV2("sealed"), imageAllowed: false, relayed: false },
+      { id: viaFlag, action: "start", kind: "container", spec: { ...spec, expectsSecrets: true, trust: "verified" }, sealedEnv: sealedV2("sealed"), imageAllowed: false, relayed: false },
     ]);
   });
 

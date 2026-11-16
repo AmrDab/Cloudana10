@@ -9,7 +9,7 @@ import { api, ApiError } from "@/lib/cld";
 import { STATIC_STARTER } from "@/lib/static-starter";
 import { Switch } from "@/components/ui/switch";
 import { btn, MonoLabel } from "@/components/console/primitives";
-import { useSession } from "@/components/console/data";
+import { useSession, type TrustTier } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import {
   bytes, containerDefaults, kindOf, MAX_STATIC, mb, priceEstimate, readFolder, savePendingSecrets, SIZES, sizeFor, textToBase64,
@@ -17,6 +17,7 @@ import {
 } from "./model";
 import type { ListedTemplate } from "./templates";
 import { FleetPin, placementOf, useFleetPin } from "./fleet";
+import { TrustPicker } from "./trust";
 
 type EnvRow = { key: string; value: string; secret: boolean };
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -45,6 +46,7 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
   ]);
   const [size, setSize] = useState<Size>(() => sizeFor(d));
   const pin = useFleetPin();
+  const [trust, setTrust] = useState<TrustTier>("verified");
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -113,6 +115,7 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
             ports: portList.map((p) => ({ container: p, protocol: "tcp" as const })),
             ...SIZES[size],
             ...placementOf(pin),
+            trust,
           };
     try {
       const r = await api<{ id: string; priceUcldPerHour: number; status: string }>("/deployments", {
@@ -249,6 +252,9 @@ export function DeployForm({ template, onDone }: { template: ListedTemplate | nu
                 Secret values never leave this browser in plain text: once a node is assigned they are sealed to its key, and the orchestrator stores only ciphertext. The node that runs your container can read them.
               </p>
             )}
+          </Field>
+          <Field label="Trust">
+            <TrustPicker value={trust} onChange={setTrust} />
           </Field>
           <Field label="Run only on a fleet" htmlFor="dep-fleet">
             <FleetPin pin={pin} id="dep-fleet" showError={touched} />

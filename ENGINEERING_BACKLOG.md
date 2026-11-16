@@ -119,7 +119,7 @@ no hostname is ever stored or probed for a direct node (the public host must equ
 endpoints must use it), so there is no DNS to rebind — the first acceptance branch holds as "no code path fetches an
 operator-chosen host". SECURITY_AUDIT O8 updated. **Product half done** (owner decision 2026-10-21, PROGRESS entry 23): while the relay
 runs, direct nodes take GPU workstations only; direct mode retires fully once the relay tunnels WebSockets.
-**Relay tunnelling built** (PROGRESS entry 38, 2026-11-16): agents ≥ 1.11.0 (`relay-streams`) get relayed
+**Relay tunnelling built** (PROGRESS entry 40, 2026-11-16): agents ≥ 1.11.0 (`relay-streams`) get relayed
 workstations with SSH and WebSockets through the relay. Remaining: stop placing workstations on direct nodes once
 the fleet's nodes run 1.11.0 (a one-line rule in `assign()`), then drop the direct-mode code.
 

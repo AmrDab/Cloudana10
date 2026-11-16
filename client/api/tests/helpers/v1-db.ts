@@ -17,7 +17,7 @@ const TEST_PRICES: Record<string, string> = {
 };
 for (const [k, v] of Object.entries(TEST_PRICES)) process.env[k] ??= v;
 
-import { initStorage } from "../../src/lib/storage.js";
+import { getD1, initStorage } from "../../src/lib/storage.js";
 import { createSqliteD1, createSqliteKV } from "../../src/lib/sqlite-d1.js";
 import { ensureSchema } from "../../src/lib/schema.js";
 import { resetEnv } from "../../src/config/env.js";
@@ -27,4 +27,15 @@ export async function setupV1Db(env: Record<string, string> = {}): Promise<void>
   resetEnv();
   initStorage(createSqliteD1(new URL("../../schema.sql", import.meta.url)), createSqliteKV());
   await ensureSchema();
+}
+
+/**
+ * A fleet row Cloudana has verified (docs/TRUST_TIERS.md): container work at trust "verified" (the default) runs only
+ * on nodes of such a fleet. For tests that bind nodes to a fixed fleet id.
+ */
+export async function verifiedFleet(id: string, owner = "0x" + "f".repeat(40)): Promise<void> {
+  await getD1()
+    .prepare("INSERT OR IGNORE INTO fleets (id, owner, token_hash, created_at, verified_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(id, owner, `test-token-${id}`, Date.now(), Date.now())
+    .run();
 }

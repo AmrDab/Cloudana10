@@ -156,6 +156,9 @@ async function main() {
   // 4. A fleet node joins by token (containers need a fleet).
   const fleet = await bearer("/fleets", { method: "POST", body: JSON.stringify({ name: "smoke" }) });
   check(fleet.status === 201 && /^cft_[0-9a-f]{32}$/.test(fleet.body.token ?? ""), "fleet created, token shown once");
+  // Containers default to trust "verified" (docs/TRUST_TIERS.md): an admin verifies the fleet.
+  const verified = await fetch(`${API}/v1/admin/fleets/${fleet.body.id}/verified`, { method: "POST", headers: { "X-Internal-Key": INTERNAL_KEY } });
+  check(verified.status === 200, "fleet verified by the admin route");
   const stateB = path.join(OUT, "node-b.json");
   run("node-b", "npx", ["tsx", "scripts/dev/fake-node.ts"], { cwd: apiDir, env: { API, STATE_FILE: stateB, CAPS: "matmul,hosting,container", FLEET_TOKEN: fleet.body.token } });
   const b = await until(() => readState(stateB)?.bound && readState(stateB), "fake node B bound through the fleet", 30_000);

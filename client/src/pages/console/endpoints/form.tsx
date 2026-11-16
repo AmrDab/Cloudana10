@@ -8,12 +8,13 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/cld";
 import { cldAmount, GPU_TIER_HINT, GPU_TIER_LABEL, GPU_TIERS, hourlyUsd, usd, usdToCld, usePrices, type GpuTier } from "@/lib/prices";
 import { btn, MonoLabel, Panel, PanelHeader, Pill, Updated } from "@/components/console/primitives";
-import { useSession } from "@/components/console/data";
+import { useSession, type TrustTier } from "@/components/console/data";
 import { errText, signInWithToast } from "@/components/console/actions";
 import { useNetwork } from "@/hooks/useNetwork";
 import { savePendingSecrets } from "@/pages/console/deploy/model";
 import { NumberField, Section, Segmented, SubLabel } from "@/pages/console/workstations/spec-picker";
 import { FleetPin, placementOf, useFleetPin } from "@/pages/console/deploy/fleet";
+import { TrustPicker } from "@/pages/console/deploy/trust";
 
 const IMAGE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
 const HEALTH = /^\/[A-Za-z0-9._~/?=&%-]*$/;
@@ -54,6 +55,7 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
   const [auth, setAuth] = useState<"key" | "public">("key");
   const [env, setEnv] = useState<[string, string][]>([["HF_TOKEN", ""]]);
   const pin = useFleetPin();
+  const [trust, setTrust] = useState<TrustTier>("verified");
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -91,6 +93,7 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
       replicas,
       auth,
       ...placementOf(pin),
+      trust,
     };
     try {
       const r = await api<{ id: string; priceUcldPerHour: number; priceUsdPerHour?: number }>("/deployments", {
@@ -179,6 +182,10 @@ export function NewEndpoint({ onDone }: { onDone: (id: string) => void }) {
                 <Segmented label="Who may call it" options={[["key", "Key"], ["public", "Public"]]} value={auth} onChange={setAuth} />
               </div>
             </div>
+          </Section>
+
+          <Section label="Trust">
+            <div className="max-w-md"><TrustPicker value={trust} onChange={setTrust} /></div>
           </Section>
 
           <Section label="Run only on a fleet">

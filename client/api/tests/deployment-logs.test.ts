@@ -3,7 +3,7 @@
  * from the node (reserved relay dep "agent"), only for the owner, only for containers on relay nodes; a deployment
  * that left its node answers with the tail its failure kept; relay failures are named, never swallowed.
  */
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { randomBytes } from "node:crypto";
@@ -90,6 +90,7 @@ function relayAnswering(body: string | null, init: ResponseInit = {}) {
 
 beforeAll(async () => {
   await setupV1Db({ DEV_MODE: "true", RELAY_TICKET_SECRET: "r".repeat(40), INTERNAL_API_KEY: "k".repeat(32), NODE_ACTIVE_SECONDS: "15" });
+  await verifiedFleet("flt_logs"); // trust "verified" (the default) runs only on verified fleets
   app = buildApp({ runtime: "node" });
 });
 // Placement takes the oldest queued rows: keep each test's queue its own.

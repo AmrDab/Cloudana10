@@ -22,6 +22,7 @@ import { DeployChip } from "@/pages/console/deploy/deployments";
 import { autoSeal, clearPendingSecrets, getSealState, pendingSecrets, savePendingSecrets, setSealState, useSealVersion } from "@/pages/console/deploy/model";
 import { sealSecretsTo, SecretsForm } from "@/pages/console/deploy/secrets";
 import { FleetTag } from "@/pages/console/deploy/fleet";
+import { TrustTag } from "@/pages/console/deploy/trust";
 import { ReportProblem } from "@/components/console/report-problem";
 import { LogsPanel } from "@/components/console/logs";
 import { EndpointKeys } from "./keys";
@@ -159,7 +160,7 @@ function Row({ e, open, fresh, onToggle }: { e: Endpoint; open: boolean; fresh: 
           <div className="flex items-center gap-2"><DeployChip status={e.status} /><ReplicaDots e={e} /></div>
           {why && <div className="mt-1 line-clamp-2 max-w-[220px] text-[12px] leading-4 [overflow-wrap:anywhere] text-faint" title={why}>{why}</div>}
         </td>
-        <td className="px-4 py-2.5 text-[13px] whitespace-nowrap text-muted-foreground">{specLine(e)}</td>
+        <td className="px-4 py-2.5 text-[13px] whitespace-nowrap text-muted-foreground">{specLine(e)}<TrustTag trust={e.trust} className="ml-2" /></td>
         <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums text-text">{running(e)} / {e.replicas.length}</td>
         <td className="px-4 py-2.5 text-right font-mono text-[13px] whitespace-nowrap tabular-nums text-muted-foreground"><Cost e={e} /></td>
         <td className="w-10 pr-4 text-right"><ChevronDown className={cn("inline size-4 text-faint transition-transform duration-250", open && "rotate-180")} aria-hidden /></td>
@@ -242,6 +243,7 @@ function Detail({ e }: { e: Endpoint }) {
             <dt className="text-faint">Health</dt><dd className="text-text">GET {d.spec.health?.path ?? "/"} on port {d.spec.port}</dd>
             <dt className="text-faint">Cost</dt><dd className="text-text"><Cost e={d} /></dd>
             {d.placement && (<><dt className="text-faint">Pinned</dt><dd className="break-all text-text">fleet {d.placement.fleetId}</dd></>)}
+            {d.trust && (<><dt className="text-faint">Trust</dt><dd className="text-text">{d.trust}</dd></>)}
             <dt className="text-faint">Check</dt><dd className="text-muted-foreground">probed every minute; a failing replica is replaced</dd>
           </dl>
           <div className="flex flex-wrap gap-2">

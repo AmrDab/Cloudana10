@@ -8,7 +8,7 @@ import { signRequest, sha256hex, learnClockOffset, clockOffset, serverNow } from
 import { solveAssignedJob } from "../../pouw/src/index.ts";
 import { publicKeyOf } from "../../shared/sealed.ts";
 import { dockerAvailable, anyImageOptIn } from "./container.ts";
-import { hardeningSelfCheck } from "./hardening.ts";
+import { hardeningSelfCheck, runscAvailable } from "./hardening.ts";
 import { STORAGE_CAPABILITY, StorageRole, storageQuotaGb, type StorageOp } from "./storage.ts";
 import { OPS_DEP, OpsServer } from "./ops.ts";
 import { dockerLogs } from "./container.ts";
@@ -177,8 +177,11 @@ async function main() {
   } else if (hasDocker) {
     log("containers: Docker found but CLOUDANA_ALLOW_CONTAINERS is not set — this node does compute + static hosting only");
   }
+  // gVisor (docs/TRUST_TIERS.md §5): with runsc registered, every non-GPU tenant container runs under it → `sandbox`.
+  const sandbox = containersReady && (await runscAvailable());
+  if (containersReady) log(sandbox ? "sandbox: gVisor (runsc) found — non-GPU containers run under it" : "sandbox: gVisor (runsc) not registered with Docker — containers use the default runtime, `sandbox` not announced");
   const manifest: Manifest = detectHardware(); // gpus come from nvidia-smi (3 s timeout; [] without it)
-  const workTypes = [...capabilities(containersReady, manifest.gpus, anyImage), ...(storageGb > 0 ? [STORAGE_CAPABILITY] : [])];
+  const workTypes = [...capabilities(containersReady, manifest.gpus, anyImage, sandbox), ...(storageGb > 0 ? [STORAGE_CAPABILITY] : [])];
   if (anyImage && !containersReady) log("CLOUDANA_ANY_IMAGE is set but containers are off — ignored");
   log(`capabilities: ${workTypes.join(", ")} · serving on ${publicHost}:${ports[0]}-${ports[1]}`);
 
@@ -188,6 +191,7 @@ async function main() {
     ports,
     privateKey,
     containersReady,
+    sandbox,
     gpuCount: workTypes.includes("gpu") ? manifest.gpus.length : 0,
     gpus: workTypes.includes("gpu") ? manifest.gpus : [],
     // Only starts read it, and they come from heartbeats, after `relay` below exists.

@@ -29,11 +29,14 @@ import {
   priceUsdPerHour,
   redactSpec,
   replicaSpec,
+  trustOf,
+  COMMUNITY_CAPABILITIES,
   type ApiKind,
   type ContainerSpec,
   type DeploymentKind,
   type EndpointSpec,
   type StaticSpec,
+  type TrustTier,
   type WorkstationSpec,
 } from "./deployment-spec.js";
 import { eligibleGpus, type Gpu } from "./workstation.js";
@@ -176,6 +179,8 @@ export interface Deployment extends Partial<WorkstationView> {
   spec: Record<string, unknown>;
   /** B-9: pinned to this fleet (spec.placement): only its nodes run it. */
   placement?: { fleetId: string };
+  /** Containers, workstations and endpoints: the lowest host tier it runs on (docs/TRUST_TIERS.md §3). */
+  trust?: TrustTier;
   /** Once on a node: that node's fleet, so the owner sees it before sealing secrets; null = a node in no fleet. */
   nodeFleet?: FleetRef | null;
 }
@@ -291,6 +296,7 @@ export function toDeployment(
     probeOk: r.last_probe_at === null ? null : r.probe_fail === 0,
     spec: redactSpec(r.kind, spec),
     ...((spec as ContainerSpec).placement && { placement: (spec as ContainerSpec).placement }),
+    ...(r.kind === "container" && { trust: trustOf(spec as ContainerSpec) }),
     ...(r.node && fleets && { nodeFleet: visibleFleet(r, fleets) }),
     ...(r.parent_id && { parentId: r.parent_id }),
     ...(endpoint && { replicas: replicas.map((x) => replicaView(x, detail, pubkeys, fleets)), auth: (spec as EndpointSpec).auth }),
@@ -359,16 +365,25 @@ export async function getOwnedRow(owner: string, id: string): Promise<Deployment
   return row && row.owner === normalizeAddress(owner) ? row : null;
 }
 
-/** Bound nodes seen within NODE_ACTIVE_SECONDS that advertise `capability` (only those of `fleetId` when given). */
-export async function capableNodesOnline(capability: string, now = Date.now(), minAgent?: string, fleetId?: string): Promise<number> {
+/**
+ * Bound nodes seen within NODE_ACTIVE_SECONDS that advertise `capability` (only those of `fleetId` when given; only
+ * those that may host `trust` work when given: a verified fleet's, or sandboxed ones — docs/TRUST_TIERS.md §3).
+ */
+export async function capableNodesOnline(capability: string, now = Date.now(), minAgent?: string, fleetId?: string, trust?: TrustTier): Promise<number> {
+  const tier =
+    trust === "verified"
+      ? " AND EXISTS (SELECT 1 FROM fleets f WHERE f.id = nodes.fleet_id AND f.verified_at IS NOT NULL AND f.revoked_at IS NULL)"
+      : trust === "community"
+        ? COMMUNITY_CAPABILITIES.map(() => " AND EXISTS (SELECT 1 FROM json_each(nodes.work_types) c WHERE c.value = ?)").join("")
+        : "";
   const rows =
     (
       await getD1()
         .prepare(
           "SELECT nodes.agent_version AS v FROM nodes, json_each(nodes.work_types) w " +
-            `WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?${fleetId ? " AND nodes.fleet_id = ?" : ""}`,
+            `WHERE nodes.payout IS NOT NULL AND nodes.last_seen >= ? AND w.value = ?${fleetId ? " AND nodes.fleet_id = ?" : ""}${tier}`,
         )
-        .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability, ...(fleetId ? [fleetId] : []))
+        .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000, capability, ...(fleetId ? [fleetId] : []), ...(trust === "community" ? COMMUNITY_CAPABILITIES : []))
         .all<{ v: string | null }>()
     ).results ?? [];
   return minAgent ? rows.filter((r) => !!r.v && compareVersions(r.v, minAgent) >= 0).length : rows.length;
@@ -380,13 +395,19 @@ export type FleetRef = { id: string | null; name: string | null };
 type FleetInfo = { id: string; name: string | null; owner: string };
 
 /**
- * The warning a new deployment gets when no online node could run it (a secret-carrying one needs a newer agent).
- * A pinned one (B-9) counts only the nodes of its fleet.
+ * The warning a new deployment gets when no online node could run it (a secret-carrying one needs a newer agent; its
+ * trust tier needs a verified fleet or a sandboxed node). A pinned one (B-9) counts only the nodes of its fleet.
  */
 async function capableWarning(kind: string, spec: unknown, now: number, fleet: FleetRef | null): Promise<string | null> {
   const cap = neededCapability(kind as never, spec as never);
   if ((await capableNodesOnline(cap, now, undefined, fleet?.id ?? undefined)) === 0) {
     return fleet ? `waiting for a node in fleet ${fleet.name ?? fleet.id}` : "waiting for a capable node";
+  }
+  const trust = kind === "static" ? undefined : trustOf(spec as ContainerSpec);
+  if (trust && (await capableNodesOnline(cap, now, undefined, fleet?.id ?? undefined, trust)) === 0) {
+    return trust === "verified"
+      ? `waiting for a node in a verified fleet${fleet ? ` (pinned to fleet ${fleet.name ?? fleet.id}, which must be verified)` : ""}: trust "verified" runs only on fleets Cloudana has verified`
+      : `waiting for a node with ${COMMUNITY_CAPABILITIES.join(" and ")}: trust "community" runs only on sandboxed nodes, and community hosting is not open yet`;
   }
   const secrets = (spec as { expectsSecrets?: boolean }).expectsSecrets === true;
   if (secrets && (await capableNodesOnline(cap, now, SEALED_V2_MIN_AGENT, fleet?.id ?? undefined)) === 0) {
@@ -438,7 +459,7 @@ function neededCapability(kind: ApiKind, spec: unknown): string {
 
 export type CreateResult =
   | { ok: true; id: string; priceUcldPerHour: number; priceUsdPerHour: number; usdPerCld: number }
-  | { ok: false; code: "validation_failed" | "payload_too_large" | "unprocessable"; message: string; details?: unknown };
+  | { ok: false; code: "validation_failed" | "payload_too_large" | "unprocessable" | "forbidden"; message: string; details?: unknown };
 
 export async function createDeployment(input: {
   owner: string;
@@ -447,6 +468,9 @@ export async function createDeployment(input: {
   kind: ApiKind;
   spec: unknown;
 }): Promise<CreateResult> {
+  // The abuse switch (docs/TRUST_TIERS.md §4): a suspended wallet creates nothing.
+  const suspension = await accountSuspension(input.owner);
+  if (suspension) return { ok: false, code: "forbidden", message: suspendedMessage(suspension.reason) };
   const checked = checkSpec(input.kind, input.spec);
   if (!checked.ok) return checked;
   // The dollar price, converted to µCLD at the reference rate now and fixed for this deployment.
@@ -499,6 +523,8 @@ export async function createDeployment(input: {
     }
     await getD1().batch(rows);
     if (pin && (await pinRevokedSince(id, pin, now))) return { ok: false, code: "validation_failed", message: "spec.placement.fleetId: no such fleet" };
+    const suspended = await suspendedSince(id, owner);
+    if (suspended) return suspended;
     await addEvent(id, "info", `queued ${replicas} replica${replicas > 1 ? "s" : ""} at ${price} µCLD/replica-hour; first hour held`, now);
     const waiting = await capableWarning(input.kind, checked.spec, now, fleet);
     if (waiting) await addEvent(id, "warn", waiting, now);
@@ -511,6 +537,8 @@ export async function createDeployment(input: {
     )
     .run();
   if (pin && (await pinRevokedSince(id, pin, now))) return { ok: false, code: "validation_failed", message: "spec.placement.fleetId: no such fleet" };
+  const suspended = await suspendedSince(id, owner);
+  if (suspended) return suspended;
   if (input.kind === "static") {
     // Separate statement so creation keeps working on a database that has not run HOSTING_MIGRATIONS yet
     // (the probe then has no hash to check, as for rows uploaded before the migration).
@@ -945,18 +973,100 @@ async function liveKeyHashes(id: string): Promise<string[]> {
 }
 
 /**
- * Admin stop (internal key): status 'stopped', reason 'admin'. Like an owner stop, the node then receives
+ * Admin stop (internal key): status 'stopped', reason 'admin' (or `reason`). Like an owner stop, the node then receives
  * action "stop" on its heartbeats until it confirms (stop_acked_at stays NULL). Idempotent once ended.
  */
-export async function adminStop(id: string): Promise<Update> {
+export async function adminStop(id: string, reason = "admin"): Promise<Update> {
   const row = await getDeploymentRow(id);
   if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
-  if (isEndpoint(row)) await endReplicas(id, "admin");
+  if (isEndpoint(row)) await endReplicas(id, reason);
   if (row.status === "stopped" || row.status === "failed") return { ok: true };
-  if (!(await endDeployment(row, "stopped", "admin", { acked: false, level: "warn" }))) {
+  if (!(await endDeployment(row, "stopped", reason, { acked: false, level: "warn" }))) {
     return { ok: false, code: "conflict", message: "deployment changed while stopping — retry" };
   }
   return { ok: true };
+}
+
+// ── Abuse switch (docs/TRUST_TIERS.md §4) ───────────────────────────────────
+export interface Suspension {
+  suspendedAt: number;
+  reason: string;
+}
+
+/** The wallet's suspension, or null. */
+export async function accountSuspension(owner: string): Promise<Suspension | null> {
+  const r = await getD1()
+    .prepare("SELECT suspended_at, reason FROM account_suspensions WHERE address = ?")
+    .bind(normalizeAddress(owner))
+    .first<{ suspended_at: number; reason: string }>();
+  return r ? { suspendedAt: r.suspended_at, reason: r.reason } : null;
+}
+
+const suspendedMessage = (reason: string) => `this account is suspended: ${reason}. It cannot create deployments until Cloudana lifts the suspension.`;
+
+/** A stop that met a concurrent change is retried once from a fresh read (adminStop re-reads the row). */
+async function adminStopRetry(id: string, reason: string): Promise<Update> {
+  const r = await adminStop(id, reason);
+  return !r.ok && r.code === "conflict" ? adminStop(id, reason) : r;
+}
+
+/**
+ * The create checked the suspension before its insert; a suspension that landed in between found no row to stop.
+ * Re-read it after the insert (one side always sees the other) and stop the new row at once, hold released.
+ */
+async function suspendedSince(id: string, owner: string): Promise<CreateResult | null> {
+  const s = await accountSuspension(owner);
+  if (!s) return null;
+  await adminStopRetry(id, `account suspended: ${s.reason}`);
+  return { ok: false, code: "forbidden", message: suspendedMessage(s.reason) };
+}
+
+export type AbuseResult =
+  | { ok: true; owner: string; suspendedAt: number; stopped: number }
+  | { ok: false; code: "not_found" | "conflict"; message: string };
+
+/**
+ * An abuse report upheld by an admin: the deployment (an endpoint as a whole, when a replica is named) stops, its owner's
+ * wallet is suspended (no new deployments) and every other live deployment of that wallet stops. Each stop's reason
+ * lands in the deployment's events, so the tenant and the provider see why. Idempotent: a retry finishes what a
+ * half-failed run left. `stopped` counts the deployments this call stopped.
+ */
+export async function stopForAbuse(id: string, reason: string, now = Date.now()): Promise<AbuseResult> {
+  const named = await getDeploymentRow(id);
+  if (!named) return { ok: false, code: "not_found", message: "deployment not found" };
+  const target = named.parent_id ?? named.id;
+  const owner = named.owner;
+  const db = getD1();
+  // Suspended first: a create racing this sees it after its insert (suspendedSince) or is listed below.
+  await db
+    .prepare("INSERT INTO account_suspensions (address, suspended_at, reason) VALUES (?, ?, ?) ON CONFLICT(address) DO NOTHING")
+    .bind(owner, now, reason)
+    .run();
+  const suspension = (await accountSuspension(owner))!;
+  const live = await db
+    .prepare("SELECT id FROM deployments WHERE owner = ? AND parent_id IS NULL AND status IN ('queued','assigned','running','unreachable') AND id <> ?")
+    .bind(owner, target)
+    .all<{ id: string }>();
+  const work: [string, string][] = [
+    [target, `stopped after an abuse report: ${reason}`],
+    ...(live.results ?? []).map((r): [string, string] => [r.id, `account suspended after an abuse report: ${reason}`]),
+  ];
+  let stopped = 0;
+  let failed = 0;
+  for (const [dep, why] of work) {
+    const before = await getDeploymentRow(dep);
+    const r = await adminStopRetry(dep, why);
+    if (!r.ok) failed++;
+    else if (before && before.status !== "stopped" && before.status !== "failed") stopped++;
+  }
+  if (failed > 0) return { ok: false, code: "conflict", message: `${failed} deployment(s) changed while stopping — retry` };
+  return { ok: true, owner, suspendedAt: suspension.suspendedAt, stopped };
+}
+
+/** Admin lifts a wallet's suspension: it may create deployments again (nothing stopped is restarted). False = none. */
+export async function liftSuspension(owner: string): Promise<boolean> {
+  const r = await getD1().prepare("DELETE FROM account_suspensions WHERE address = ?").bind(normalizeAddress(owner)).run();
+  return (r.meta?.changes ?? 0) > 0;
 }
 
 // ── Container logs through the relay (ENGINEERING_BACKLOG B-14) ─────────────

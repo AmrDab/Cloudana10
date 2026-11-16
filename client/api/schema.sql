@@ -168,9 +168,11 @@ CREATE INDEX IF NOT EXISTS idx_reward_claws_job ON reward_claws(job_id);
 
 -- Datacenter fleets. token_hash = sha256(token); the token is shown once at creation.
 -- floor_ucld_per_mmac is stored for the owner but not yet used by placement.
+-- verified_at: set by an admin (docs/TRUST_TIERS.md §3 rule 3); only verified fleets take trust "verified" deployments.
 CREATE TABLE IF NOT EXISTS fleets (
   id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT, token_hash TEXT UNIQUE NOT NULL,
-  floor_ucld_per_mmac INTEGER, created_at INTEGER, revoked_at INTEGER
+  floor_ucld_per_mmac INTEGER, created_at INTEGER, revoked_at INTEGER,
+  verified_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_fleets_owner ON fleets(owner, created_at);
 
@@ -321,3 +323,5 @@ CREATE TABLE IF NOT EXISTS storage_checks (
   failures INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node, day)
 );
 CREATE INDEX IF NOT EXISTS idx_work_jobs_unmoved ON work_jobs(completed_at) WHERE status = 'done' AND artifact IS NULL;
+-- Abuse switch (docs/TRUST_TIERS.md §4): a suspended wallet creates no deployments; an admin lifts it (row deleted).
+CREATE TABLE IF NOT EXISTS account_suspensions (address TEXT PRIMARY KEY, suspended_at INTEGER NOT NULL, reason TEXT NOT NULL);

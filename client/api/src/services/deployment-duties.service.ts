@@ -10,7 +10,7 @@
  *
  * Per-node duties run inside that node's heartbeat (runDeploymentDuties):
  *   N1. auto-stop this node's workstations past maxHours
- *   N2. assign queued deployments this node can run (capability + fleet + resource fit; GPUs for workstations)
+ *   N2. assign queued deployments this node can run (capability + fleet + trust tier + resource fit; GPUs for workstations)
  *   N3. probe this node's running/unreachable deployments that are due (content hash when the row has one)
  *   N4. bill this node's running deployments for each full hour since last_billed_at
  *   N5. return the node's instructions: "start" for assigned, "stop" for stopped-but-unconfirmed
@@ -44,7 +44,7 @@ export const opensSealedV2 = (agentVersion: string | null | undefined): boolean 
 
 /** Capability of a node that runs images outside the curated list (agent: CLOUDANA_ANY_IMAGE=1). */
 export const ANY_IMAGE_CAPABILITY = "any-image";
-import { endpointAllowed, imageAllowed, type ApiKind, type ContainerSpec, type DeploymentKind, type WorkstationSpec } from "./deployment-spec.js";
+import { COMMUNITY_CAPABILITIES, endpointAllowed, imageAllowed, trustOf, type ApiKind, type ContainerSpec, type DeploymentKind, type WorkstationSpec } from "./deployment-spec.js";
 export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { issueProtocolWork, runAssignment } from "./jobs.service.js";
@@ -346,6 +346,22 @@ export async function failPinnedTo(fleetId: string, now = Date.now()): Promise<n
   return n;
 }
 
+/**
+ * docs/TRUST_TIERS.md §3 rule 3: a fleet that is no longer verified hands back what runs on it at trust "verified" (a
+ * spec without a tier counts as verified); assign() then places it only on verified fleets. Work pinned to this fleet
+ * waits in the queue until the fleet is verified again (unlike a revocation, un-verifying can be undone). Idempotent.
+ */
+export async function requeueUnverified(fleetId: string, now = Date.now()): Promise<number> {
+  const rows = await getD1()
+    .prepare(
+      `SELECT d.* FROM deployments d JOIN nodes n ON n.address = d.node WHERE n.fleet_id = ? AND d.kind = 'container' AND d.status IN ${LIVE} ` +
+        "AND COALESCE(json_extract(d.spec_json, '$.trust'), 'verified') = 'verified'",
+    )
+    .bind(fleetId)
+    .all<DeploymentRow>();
+  return requeueRows(rows.results ?? [], `its node's fleet ${fleetId} is no longer verified (trust tier verified)`, now);
+}
+
 type Queued = Pick<DeploymentRow, "id" | "kind" | "spec_json" | "sealed_env" | "workstation" | "parent_id">;
 const QUEUED_COLS = "id, kind, spec_json, sealed_env, workstation, parent_id, status_reason";
 
@@ -407,16 +423,18 @@ async function claim(node: string, q: Queued, now: number, relayed: boolean, str
   // byte streams (`relay-streams`); elsewhere they stay direct (B-13 retires that once nodes upgrade).
   relayed = relayed && (!q.workstation || streams);
   const pin = q.kind === "container" ? specOf(q).placement?.fleetId ?? null : null;
+  const verified = q.kind === "container" && trustOf(specOf(q)) === "verified" ? 1 : 0;
   const db = getD1();
   const r = await db
     // The node's state is checked in the same statement: a suspension or drain that landed after this heartbeat's
     // snapshot of the node row cannot be raced into a placement. So is its fleet for a pinned deployment (B-9): an
-    // eviction or revocation since the snapshot cannot either.
+    // eviction or revocation since the snapshot cannot either; nor, for trust "verified", an un-verify (TRUST_TIERS §3).
     .prepare(
       "UPDATE deployments SET status = 'assigned', node = ?, assigned_at = ?, relayed = ? WHERE id = ? AND status = 'queued' " +
-        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active' AND (? IS NULL OR fleet_id = ?))",
+        "AND EXISTS (SELECT 1 FROM nodes WHERE address = ? AND COALESCE(state, 'active') = 'active' AND (? IS NULL OR fleet_id = ?) " +
+        "AND (? = 0 OR EXISTS (SELECT 1 FROM fleets f WHERE f.id = nodes.fleet_id AND f.verified_at IS NOT NULL AND f.revoked_at IS NULL)))",
     )
-    .bind(node, now, relayed ? 1 : 0, q.id, node, pin, pin)
+    .bind(node, now, relayed ? 1 : 0, q.id, node, pin, pin, verified)
     .run();
   if ((r.meta?.changes ?? 0) === 0) return false;
   // Back on the node that lost it: its "start" replaces the owed stop.
@@ -443,11 +461,28 @@ const fleetAllows = (q: Pick<Queued, "spec_json">, fleetId: string | null) => {
   const pin = specOf(q).placement?.fleetId;
   return !pin || pin === fleetId;
 };
+/**
+ * The trust-tier rule (docs/TRUST_TIERS.md §3), shared by assign() and preemptForOnDemand() (claim() checks the fleet
+ * again in its statement): verified runs only on a node of a verified, unrevoked fleet; community only on a node that
+ * advertises every COMMUNITY_CAPABILITIES, and never with GPUs (the sandbox covers non-GPU containers only; create
+ * refuses that spec, this keeps any such row off community nodes). It combines with a pin: pinned + verified = that
+ * fleet, and it is verified.
+ */
+export const tierAllows = (q: Pick<Queued, "spec_json">, fleetVerified: boolean, caps: string[]) =>
+  trustOf(specOf(q)) === "verified"
+    ? fleetVerified
+    : (specOf(q).gpu?.count ?? 0) === 0 && COMMUNITY_CAPABILITIES.every((c) => caps.includes(c));
+
+/** Whether a fleet is verified and not revoked (TRUST_TIERS §3 rule 3). */
+async function isFleetVerified(fleetId: string): Promise<boolean> {
+  return !!(await getD1().prepare("SELECT 1 FROM fleets WHERE id = ? AND verified_at IS NOT NULL AND revoked_at IS NULL").bind(fleetId).first());
+}
 
 /**
  * N2. Static sites go to any bound hosting node. Containers and workstations go only to nodes that announced
  * `container` AND belong to a fleet (testnet: home nodes do compute + static hosting only). While the relay runs, a
  * node off the relay takes workstations only. A deployment pinned to a fleet (B-9) goes only to that fleet's nodes.
+ * Trust "verified" goes only to a verified fleet's nodes; "community" only to sandboxed nodes (tierAllows).
  */
 async function assign(
   node: string,
@@ -492,6 +527,7 @@ async function assign(
   const queued = await db
     .prepare(`SELECT ${QUEUED_COLS} FROM deployments WHERE status = 'queued' AND kind = 'container' AND replicas = 0 ORDER BY created_at LIMIT 50`)
     .all<Queued & Pick<DeploymentRow, "status_reason">>();
+  const fleetVerified = (queued.results?.length ?? 0) > 0 && (await isFleetVerified(fleetId));
   for (const q of queued.results ?? []) {
     if (state.containers >= NODE_CAPACITY.container) break;
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
@@ -499,6 +535,7 @@ async function assign(
     if (q.workstation && !publicHost && !(relayed && capabilities.includes(STREAMS_CAPABILITY))) continue;
     if (!reachableFor(q, relayed)) continue; // sites and containers are served through the relay
     if (!fleetAllows(q, fleetId)) continue; // pinned to another fleet
+    if (!tierAllows(q, fleetVerified, capabilities)) continue; // its trust tier needs a verified fleet or a sandboxed node
     if (carriesSecrets(q) && !opensSealedV2(agentVersion)) continue; // its secrets are bound to the deployment; this agent cannot open them
     if (q.parent_id && !(await replicaFits(node, q, relayed, capabilities))) continue;
     if (fits(q, state) && (await claim(node, q, now, relayed, capabilities.includes(STREAMS_CAPABILITY)))) addUsage(state, q, 1);
@@ -537,10 +574,22 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
     .all<Queued>();
   if (!queued.results?.length) return 0;
   const nodes = await db
-    .prepare("SELECT address, work_types, manifest_json, public_host, agent_version, fleet_id FROM nodes WHERE payout IS NOT NULL AND fleet_id IS NOT NULL AND state = 'active' AND last_seen >= ?")
+    .prepare(
+      "SELECT n.address, n.work_types, n.manifest_json, n.public_host, n.agent_version, n.fleet_id, " +
+        "(f.verified_at IS NOT NULL AND f.revoked_at IS NULL) AS fleet_verified FROM nodes n LEFT JOIN fleets f ON f.id = n.fleet_id " +
+        "WHERE n.payout IS NOT NULL AND n.fleet_id IS NOT NULL AND n.state = 'active' AND n.last_seen >= ?",
+    )
     .bind(now - getEnv().NODE_ACTIVE_SECONDS * 1000)
-    .all<{ address: string; work_types: string | null; manifest_json: string | null; public_host: string | null; agent_version: string | null; fleet_id: string }>();
-  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean; relayed: boolean; streams: boolean; fleetId: string };
+    .all<{
+      address: string;
+      work_types: string | null;
+      manifest_json: string | null;
+      public_host: string | null;
+      agent_version: string | null;
+      fleet_id: string;
+      fleet_verified: number | null;
+    }>();
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean; relayed: boolean; streams: boolean; fleetId: string; fleetVerified: boolean };
   const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
@@ -553,13 +602,18 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
       relayed: caps.includes("relay"),
       streams: caps.includes("relay") && caps.includes(STREAMS_CAPABILITY),
       fleetId: n.fleet_id,
+      fleetVerified: !!n.fleet_verified,
     });
   }
   // Same rules as assign(): workstations only on a verified public host or a relay-streams node; secrets only on an agent that opens them;
-  // while the relay runs, a node off it serves workstations only; a pinned deployment only on its fleet's nodes (so
-  // nothing is preempted for work the node cannot take).
+  // while the relay runs, a node off it serves workstations only; a pinned deployment only on its fleet's nodes; its
+  // trust tier only on a verified fleet or a sandboxed node (so nothing is preempted for work the node cannot take).
   const canTake = (q: Queued, s: Candidate) =>
-    (!q.workstation || s.publicHost || s.streams) && (!carriesSecrets(q) || s.sealedV2) && reachableFor(q, s.relayed) && fleetAllows(q, s.fleetId);
+    (!q.workstation || s.publicHost || s.streams) &&
+    (!carriesSecrets(q) || s.sealedV2) &&
+    reachableFor(q, s.relayed) &&
+    fleetAllows(q, s.fleetId) &&
+    tierAllows(q, s.fleetVerified, s.caps);
   const live = await db.prepare(`SELECT * FROM deployments WHERE kind = 'container' AND status IN ${LIVE}`).all<DeploymentRow>();
   for (const r of live.results ?? []) {
     const s = r.node ? states.get(r.node) : undefined;

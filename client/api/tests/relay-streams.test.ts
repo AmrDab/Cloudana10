@@ -3,7 +3,7 @@
  * next to `relay`, workstations become relayed on such nodes only, the route says `streams`, the gateway's SSH lookup
  * answers the owner only, and a relayed workstation's connect.ssh is `cloudana ssh <id>`.
  */
-import { setupV1Db } from "./helpers/v1-db.js";
+import { setupV1Db, verifiedFleet } from "./helpers/v1-db.js";
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { buildApp } from "../src/app.js";
@@ -88,6 +88,7 @@ const sshLookup = (id: string, auth: string | null, internal = true) =>
 
 beforeAll(async () => {
   await setupV1Db({ RELAY_TICKET_SECRET: SECRET, INTERNAL_API_KEY: INTERNAL_KEY, SITES_DOMAIN: "example.run" });
+  await verifiedFleet("fleet-1"); // trust "verified" (the default) runs only on verified fleets
   app = buildApp({ runtime: "node" });
 });
 

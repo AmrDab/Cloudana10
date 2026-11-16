@@ -1,7 +1,7 @@
 // Cloud workstations (docs/WORKSTATIONS.md §1, §5): pure helpers — argv, env, status report, volume schedule.
 // Everything here is side-effect free so it can be tested on a machine without Docker or a GPU.
 import { randomBytes } from "node:crypto";
-import { containerName, ENV_KEY, hardeningArgs, sanitizeTenantEnv, userArgs, volumeName, type ContainerSpec } from "./container.ts";
+import { containerName, ENV_KEY, hardeningArgs, sandboxArgs, sanitizeTenantEnv, userArgs, volumeName, type ContainerSpec } from "./container.ts";
 import type { GpuInfo } from "./hardware.ts";
 import { gpuTier, requestTier } from "../../shared/gpu-tier.ts";
 
@@ -58,9 +58,12 @@ function port(p: unknown, what: string): number {
  * and `hosting` (static sites). `container` only when the operator
  * opted in (CLOUDANA_ALLOW_CONTAINERS=1), Docker answers and the hardening self-check passed (`containersReady`);
  * `gpu` additionally needs a working nvidia-smi; `any-image` (CLOUDANA_ANY_IMAGE=1) lets the network send images
- * outside its curated list — what GPU endpoints need (docs/V4_ENDPOINTS_CONTRACT.md).
+ * outside its curated list — what GPU endpoints need (docs/V4_ENDPOINTS_CONTRACT.md). With containers the node also
+ * announces `egress-v2` (the self-check installed and verified every egress rule, mail ports included) and, when
+ * Docker has the gVisor runtime registered (the `sandbox` argument), `sandbox`: every non-GPU container it starts
+ * runs under runsc (docs/TRUST_TIERS.md §4–§5).
  */
-export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = false): string[] {
+export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = false, sandbox = false): string[] {
   return [
     "matmul",
     "int8-mlp",
@@ -69,6 +72,8 @@ export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = 
     ...(containersReady ? ["container"] : []),
     ...(containersReady && gpus.length > 0 ? ["gpu"] : []),
     ...(containersReady && anyImage ? ["any-image"] : []),
+    ...(containersReady ? ["egress-v2"] : []),
+    ...(containersReady && sandbox ? ["sandbox"] : []),
   ];
 }
 
@@ -152,6 +157,7 @@ export function workstationEnv(spec: WorkstationSpec, sealed: Record<string, str
 /**
  * `docker run` argv for a workstation. An argv array for execFile — never a shell string — so image, command and
  * env values reach Docker verbatim. `devices` are the GPU indices allocated to it (pickGpus), one per gpu.count.
+ * `sandbox`: the node announced `sandbox` (CPU workstations run under gVisor; GPU ones do not — sandboxArgs).
  */
 export function workstationRunArgs(
   id: string,
@@ -160,6 +166,7 @@ export function workstationRunArgs(
   ports: WorkstationPorts,
   devices: number[],
   relayed = false, // web and SSH ports published on 127.0.0.1 only (reached through the relay)
+  sandbox = false,
 ): string[] {
   validateWorkstation(spec);
   if (typeof spec.image !== "string" || !spec.image || spec.image.startsWith("-")) throw new Error("invalid image");
@@ -167,7 +174,7 @@ export function workstationRunArgs(
   if (spec.command !== undefined && (!Array.isArray(spec.command) || spec.command.some((c) => typeof c !== "string")))
     throw new Error("command must be an array of strings");
 
-  const args = ["run", "-d", "--name", containerName(id), "--restart", "unless-stopped"];
+  const args = ["run", "-d", "--name", containerName(id), "--restart", "unless-stopped", ...sandboxArgs(sandbox, devices)];
   // Same hardening as plain containers; the user stays the image's (sshd, code-server…) unless the spec pins one.
   args.push(...hardeningArgs(spec.memMb, spec.storageMb), "--cpus", String(spec.cpu / 1000), "--shm-size=1g");
   args.push(...userArgs(spec.user, undefined));

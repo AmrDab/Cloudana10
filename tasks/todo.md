@@ -486,20 +486,20 @@ gated by advertised capabilities.
 - [ ] Owner checks the plan below → build
 
 ### Phase 1 — trust tiers in the scheduler (API + console)
-- [ ] `fleets.verified_at` (+ schema.sql/schema.ts, golden snapshot); admin `POST/DELETE /v1/admin/fleets/{id}/verified`
-- [ ] spec field `trust: "community" | "verified"` (default verified) on container, endpoint and workstation specs
-- [ ] placement: a verified deployment only on a node whose fleet is verified; un-verifying requeues them
+- [x] `fleets.verified_at` (+ schema.sql/schema.ts; the repo has no golden schema snapshot); admin `POST/DELETE /v1/admin/fleets/{id}/verified`
+- [x] spec field `trust: "community" | "verified"` (default verified) on container, endpoint and workstation specs
+- [x] placement: a verified deployment only on a node whose fleet is verified; un-verifying requeues them
       (same path as `failPinnedTo` / `requeuePinnedOffFleet`)
-- [ ] community placement additionally needs the agent capabilities `sandbox` (phase 3) and `egress-v2` (phase 2);
-      until both exist nothing community is placed for containers
-- [ ] console: tier selector + the §6 disclosure on deploy, workstation and endpoint forms; tier shown in lists
+- [x] community placement additionally needs the agent capabilities `sandbox` (phase 3) and `egress-v2` (phase 2);
+      until both exist nothing community is placed for containers; community + GPU is refused (GPU work is verified-only)
+- [x] console: tier selector + the §6 disclosure on deploy, workstation and endpoint forms; tier shown in lists
 - Verify: unit tests for placement (verified/unverified/community without capabilities), migration test, console build
 
 ### Phase 2 — egress policy (agent)
-- [ ] hardening: DROP tenant-bridge egress to tcp 25/465/587 alongside BLOCKED_RANGES; `preStartCheck` checks it;
-      advertise `egress-v2`
-- [ ] admin abuse switch: stop a deployment + suspend the tenant (a `suspended_at` on the account; API refuses
-      new deployments); provider sees the reason
+- [x] hardening: DROP tenant-bridge egress to tcp 25/465/587 alongside BLOCKED_RANGES; `preStartCheck` checks it;
+      advertise `egress-v2` (agent 1.10.0, PROGRESS 38)
+- [x] (API) admin abuse switch: stop a deployment + suspend the tenant (a `suspended_at` on the account; API refuses
+      new deployments); provider sees the reason — `account_suspensions` table, PROGRESS 39
 - Verify: agent unit tests (argv built, check fails when the rule is missing); API tests for suspend
 
 ### Phase 3 — relay streams: SSH and WebSockets without a public IP
@@ -508,7 +508,7 @@ gated by advertised capabilities.
 - [x] gateway: `wss://<id>.cloudana.run/_cld/ssh` (tenant JWT or `cld_sk_` key with `deployments` scope, owner of
       the deployment only) and WebSocket upgrade passthrough for web access
 - [x] agent: stream → `127.0.0.1:<host port>`; workstations become relayed; `public_host` no longer required
-      (on `relay-streams` nodes; agent 1.11.0)
+      (on `relay-streams` nodes; agent 1.11.0, PROGRESS 40)
 - [x] CLI: `cloudana ssh <id>` (stdio pipe; prints the `ProxyCommand` line for plain `ssh`)
 - [ ] retire direct mode for workstations (B-13) once nodes run 1.11.0; SECURITY_AUDIT O11 closed for 1.11.0 nodes
 - [x] Durable Object `/stream` glue in workerd (`relay/test/workerd.streams.e2e.ts` against `wrangler dev`)
@@ -517,7 +517,8 @@ gated by advertised capabilities.
   a local agent + a sshd container: `cloudana ssh` gets a shell
 
 ### Phase 4 — machines (agent + images + console)
-- [ ] gVisor: agent detects `runsc` in `docker info`, runs tenant containers with `--runtime=runsc`, advertises `sandbox`
+- [x] gVisor: agent detects `runsc` in `docker info`, runs tenant containers with `--runtime=runsc`, advertises `sandbox`
+      (agent 1.10.0, PROGRESS 38; GPU containers/workstations stay on the default runtime and are not sandboxed)
 - [ ] Cloudana machine image `ghcr.io/amrdab/cloudana-machine` (Ubuntu 24.04 + sshd, key from env), built in CI
 - [ ] encrypted volumes: per-deployment key sealed to the node, held in memory; wipe on purge / `keepDays`
       (design note first: gocryptfs vs LUKS-on-loop under the agent's privileges)

@@ -833,6 +833,7 @@ function FleetItem({ f, fresh }: { f: Fleet; fresh: boolean }) {
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-text">{f.name ?? "Unnamed fleet"}</span>
             {revoked ? <Pill tone="burn">revoked</Pill> : <Pill tone="ok">active</Pill>}
+            {!revoked && f.verified && <Pill tone="ok">verified</Pill>}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-[12px] text-faint">
             <Hash value={f.id} head={8} tail={4} className="text-[12px]" /> · created <RelTime ms={f.createdAt} className="text-[12px]" />

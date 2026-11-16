@@ -780,7 +780,46 @@ that remained:
 - Not done by Claude, by rule: no signing with the leaked key, no moving funds, no service-account changes. Owner
   steps: runbook 1, 1b and 13.
 
-### 38 · SSH and WebSockets through the relay (trust tiers phase 3, 2026-11-16)
+### 38 · Agent: mail ports blocked (`egress-v2`) and gVisor for tenant containers (`sandbox`) (2026-11-16)
+- Why: docs/TRUST_TIERS.md §4 (spam from a provider's IP) and §5 (an escape should need a gVisor bug plus a host bug);
+  Phase 2 egress and the first Phase 4 bullet of the trust-tiers plan in `tasks/todo.md`.
+- Egress (`node-agent/src/hardening.ts`): `DOCKER-USER -s <tenant subnet> -p tcp --dport 25|465|587 -j DROP`, next to
+  the private-range drops, installed the same way (`iptables -C`, else `-I`, argv only) and checked by
+  `preStartCheck` before every start. With containers on the node announces `egress-v2`.
+- gVisor: at boot `docker info --format '{{json .Runtimes}}'`; with `runsc` registered every non-GPU container and
+  workstation runs with `--runtime=runsc` and the node announces `sandbox`; before such a start `preStartCheck`
+  refuses (`node cannot serve:`) if `runsc` is gone — no silent downgrade. Detection is the registration only (no
+  test container). GPU containers and workstations keep the default runtime and are not sandboxed (gVisor needs
+  daemon-side nvproxy, limited to some drivers and CUDA calls); `sandbox` covers every non-GPU container.
+- Agent 1.10.0. No API change: the API keeps only capabilities it knows, so these are dropped until the scheduler
+  (Phase 1) uses them.
+- Tests (`security.selftest.ts`, `workstation.selftest.ts`): mail-port rules installed at boot (only the missing one),
+  a missing one refuses the start; runsc detection (present, absent, bad output, Docker down); argv with/without
+  `sandbox`, GPU and CPU, containers and workstations; the manager pre-checks runsc only for non-GPU starts and refuses
+  when it is gone; capabilities. `npm run type-check && npm run selftest` green.
+
+### 39 · Trust tiers in the scheduler; the abuse switch (2026-11-16)
+- What (docs/TRUST_TIERS.md §3, §4, §6; tasks/todo.md phase 1 and the API half of phase 2): containers, workstations and
+  endpoints take `spec.trust` = `verified` (default) or `community`. Verified runs only on nodes of a fleet an admin
+  verified (`fleets.verified_at`, `POST`/`DELETE /v1/admin/fleets/{id}/verified`, internal key); community only on nodes
+  advertising both `sandbox` and `egress-v2`, never with GPUs (refused at create: GPU containers are not sandboxed). The
+  rule is in `assign()`, `preemptForOnDemand()` and, for the fleet check, in `claim()`'s statement; a pin and a tier
+  combine. Un-verifying re-queues the fleet's live verified work (`requeueUnverified`, the `requeueRows` path).
+  `GET /v1/fleets` carries `verified`; deployments carry `trust`. Community stays closed (§3 rule 5, an owner decision):
+  while `COMMUNITY_HOSTING` is `off` (the default) `trust: "community"` is refused at create with a 400. The announce keeps `sandbox`, `egress-v2` and
+  (with the relay) `relay-streams`.
+- Abuse switch: `POST /v1/admin/deployments/{id}/abuse {reason}` stops it (a whole endpoint if a replica is named),
+  suspends the owner (`account_suspensions`, its own table: `balances` is a money table and has no row for every
+  wallet) and stops the owner's other live work, each with its reason in the events; `POST /v1/deployments` answers 403
+  with the reason (checked again after the insert, so a racing create is stopped); `DELETE
+  /v1/admin/accounts/{address}/suspend` lifts it.
+- Console: a Trust selector (Verified; Community shown, "opens later") with the §6 text on the deploy, workstation and
+  endpoint forms; the tier in the three lists; "verified" on the provider's fleet card.
+- Deploy note: from this deploy no new container, workstation or endpoint is placed until the owner verifies a fleet.
+- Tests: `tests/trust-tiers.test.ts` (13), `tests/trust-tiers-migration.test.ts` (1); existing hosting tests now bind
+  their nodes to a verified fleet. API 547; console check, client tests and build clean.
+
+### 40 · SSH and WebSockets through the relay (trust tiers phase 3, 2026-11-16)
 - **What.** The relay gains byte streams (`open {dep, port: ssh|web}` / `opened` / bytes / `end`, the same 512 KiB
   window and acks as HTTP; `docs/V4_RELAY_CONTRACT.md` "Byte streams"). A port is named by class, never by number, and
   the agent maps it to the deployment's own declared host port, so no frame can reach anything else on the node.

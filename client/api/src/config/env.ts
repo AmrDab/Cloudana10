@@ -79,6 +79,12 @@ export const envSchema = z.object({
    * verified units (jobs.service issueProtocolWork, ledger.service fitProtocolB). Switch on with the contract deploy.
    */
   PROTOCOL_WORK: z.enum(["on", "off"]).default("off"),
+  /**
+   * Community hosting (docs/TRUST_TIERS.md §3 rule 5, an owner decision): while off, a container, workstation or endpoint
+   * with trust "community" is refused at create. Switch on only once gVisor, the egress policy, relay-only access and
+   * encrypted volumes are live and tested.
+   */
+  COMMUNITY_HOSTING: z.enum(["on", "off"]).default("off"),
   NODE_ACTIVE_SECONDS: int(45),
   ASSIGNMENT_TTL_SECONDS: int(60),
   // Sampled verification (ENGINEERING_BACKLOG B-6): Freivalds on every matmul job; the full transcript is re-executed
