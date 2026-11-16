@@ -780,6 +780,31 @@ that remained:
 - Not done by Claude, by rule: no signing with the leaked key, no moving funds, no service-account changes. Owner
   steps: runbook 1, 1b and 13.
 
+### 38 · SSH and WebSockets through the relay (trust tiers phase 3, 2026-11-16)
+- **What.** The relay gains byte streams (`open {dep, port: ssh|web}` / `opened` / bytes / `end`, the same 512 KiB
+  window and acks as HTTP; `docs/V4_RELAY_CONTRACT.md` "Byte streams"). A port is named by class, never by number, and
+  the agent maps it to the deployment's own declared host port, so no frame can reach anything else on the node.
+  The hub builds two bridges on top: raw (SSH: the client's WebSocket is the stream, acks end to end) and WebSocket
+  passthrough (the hub does the upgrade and RFC 6455 framing toward the app). Gateway: `wss://<id>.cloudana.run/_cld/ssh`
+  (the API checks the bearer: wallet session or `cld_sk_` key with the deployments scope, owner only, every connect) and
+  upgrade passthrough for relayed containers and workstations. Agent 1.10.0 announces `relay-streams`; the API relays
+  workstations on such nodes (no public host needed) and shows `cloudana ssh <id>`; the CLI gains `cloudana ssh`
+  (ProxyCommand pipe, or runs ssh with it).
+- **Why.** TRUST_TIERS §5: a provider publishes nothing; SSH on the node's public IP (SECURITY_AUDIT O11) ends for
+  nodes that upgrade. Old agents keep the HTTP framing untouched and keep direct workstations (B-13 finishes once
+  nodes run 1.10.0).
+- **Tests.** relay: 20 new (stream lifecycle, window, limits, idle/linger, both bridges, frame codec); gateway: 9 new
+  (auth through the API, refusals passed on, upgrade passthrough, no upgrade without relay-streams); agent: relay
+  selftest port pinning (`streamPort`), e2e +20 checks through the real hub and agent (3 MiB echo through the raw
+  bridge within the window, back-pressure on a 4 MiB flood, refused/not_serving, cancel, a real WebSocket app through
+  the passthrough bridge); API: `relay-streams` test file (capability kept only with relay, placement, preemption,
+  route `streams`, the SSH lookup's auth and 404/409s, `connect.ssh`); CLI: 9 new. The Durable Object glue in
+  workerd: `relay/test/workerd.streams.e2e.ts` (7 checks against `wrangler dev`: a raw stream echoes 1 MiB with acks
+  and closes 1000, not_serving for an unknown deployment, a real WebSocket app through the passthrough), and the
+  existing `workerd.e2e.ts` still passes (14).
+- **Not verified.** The gateway returning the relay's 101 to a real client through Cloudflare, and a real
+  `ssh` session against an sshd container on a 1.10.0 node (todo Phase 3 "Verify").
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

@@ -15,9 +15,13 @@
  * GPU endpoints (docs/V4_ENDPOINTS_CONTRACT.md): the route lists one target per running replica; a key-protected
  * endpoint needs `Authorization: Bearer cld_ek_…` (checked against the route's key hashes, rate-limited per key),
  * requests start at a random replica and are retried on another only when none was reached. Errors are JSON.
+ *
+ * Byte streams (docs/V4_RELAY_CONTRACT.md "Byte streams"): `wss://<id>.<domain>/_cld/ssh` is a raw stream to a relayed
+ * workstation's sshd for its owner only (the API checks the bearer token on every connect); any other WebSocket
+ * upgrade to a relayed container or workstation whose node has `relay-streams` is passed through to the app.
  */
 import { errorPage } from "./pages.js";
-import { forwardableHeaders } from "../../shared/relay-protocol.js";
+import { TCP_SUBPROTOCOL, forwardableHeaders } from "../../shared/relay-protocol.js";
 
 /** The Workers rate-limiting binding (wrangler.toml `[[unsafe.bindings]] type = "ratelimit"`). */
 export interface RateLimiter {
@@ -80,6 +84,8 @@ export interface Route {
   /** Endpoints: who may call it; with "key", the sha256 hex of every live key. */
   auth?: "public" | "key";
   keys?: string[];
+  /** The serving node takes relay byte streams (`relay-streams`): WebSocket upgrades can be passed through. */
+  streams?: boolean;
 }
 
 export const ROUTE_TTL_SECONDS = 30;
@@ -151,6 +157,7 @@ async function lookupRoute(id: string, env: Env, deps: Deps): Promise<Route> {
     else {
       const body = (await res.json()) as {
         state: RouteState; endpoint: string | null; kind?: Route["kind"]; relayed?: boolean; targets?: Target[]; auth?: Route["auth"]; keys?: string[];
+        streams?: boolean;
       };
       route = {
         found: true,
@@ -161,6 +168,7 @@ async function lookupRoute(id: string, env: Env, deps: Deps): Promise<Route> {
         targets: Array.isArray(body.targets) ? body.targets.filter((t) => t && typeof t.node === "string" && typeof t.dep === "string") : [],
         ...(body.auth && { auth: body.auth }),
         ...(Array.isArray(body.keys) && { keys: body.keys }),
+        ...(body.streams === true && { streams: true }),
       };
     }
   } catch {
@@ -212,6 +220,7 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
   const url = new URL(request.url);
   const id = deploymentIdFromHost(request.headers.get("host") ?? url.hostname, env.SITES_DOMAIN ?? DEFAULT_DOMAIN);
   if (!id) return errorPage(404, "This site is not here", "The address does not name a Cloudana site.");
+  if (url.pathname === SSH_PATH) return ssh(request, id, env, deps);
 
   let route: Route;
   try {
@@ -276,6 +285,9 @@ export const STATIC_CACHE_MAX_BYTES = 2 * 1024 * 1024;
 async function serve(request: Request, url: URL, id: string, route: Route, endpoint: boolean, site: boolean, env: Env, deps: Deps): Promise<Response> {
   if (route.relayed) {
     if (route.state !== "running" || !route.targets?.length) return notRunning(id, route.state, endpoint);
+    // A container's or workstation's own WebSockets (Jupyter kernels, terminals, live reload) when its node takes byte
+    // streams; anywhere else an upgrade is an ordinary request, as before.
+    if (isUpgrade(request) && !site && !endpoint && route.streams) return webSocket(request, url, route.targets[0], deps, isolatedContentDomain(env));
     return viaRelay(request, url, { id, site, endpoint, keyed: route.auth === "key" }, route.targets, deps, isolatedContentDomain(env));
   }
   if (route.state !== "running" || !route.endpoint) return notRunning(id, route.state, false);
@@ -446,6 +458,124 @@ async function viaRelay(request: Request, url: URL, t: RelayedTarget, targets: T
 }
 
 const rotate = <T>(items: T[], start: number): T[] => [...items.slice(start), ...items.slice(0, start)];
+
+// ── Byte streams: SSH and WebSockets (docs/V4_RELAY_CONTRACT.md "Byte streams") ─────────────────────────────
+
+/** The SSH entry of every deployment host: `cloudana ssh <id>` (or ssh with it as ProxyCommand) connects here. */
+export const SSH_PATH = "/_cld/ssh";
+const BEARER_PROTOCOL = /^bearer\.(\S+)$/;
+
+const isUpgrade = (r: Request) => r.method === "GET" && r.headers.get("upgrade")?.toLowerCase() === "websocket";
+
+/**
+ * The bearer token of an SSH connect: `Authorization: Bearer …`, or the subprotocol `bearer.<token>` for clients
+ * that cannot set headers on a WebSocket (browsers, Node's built-in client). The rest of the offered subprotocols.
+ */
+export function sshCredential(request: Request): { token: string | null; protocols: string[] } {
+  const offered = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  const header = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
+  const fromProtocol = offered.map((p) => BEARER_PROTOCOL.exec(p)?.[1]).find((t): t is string => !!t);
+  return { token: header ?? fromProtocol ?? null, protocols: offered.filter((p) => !BEARER_PROTOCOL.test(p)) };
+}
+
+/**
+ * `wss://<id>.<domain>/_cld/ssh`: a raw byte stream to the workstation's sshd. The gateway holds no user secret: the
+ * API checks the token (wallet session, or a `cld_sk_` key with the `deployments` scope), that the caller owns the
+ * deployment, and that it is a running relayed workstation with SSH, on every connect (never cached); it answers the
+ * node to ask. The token never reaches the relay or the node. SSH itself stays end to end: only the box's sshd and the
+ * user's key can open a shell.
+ */
+async function ssh(request: Request, id: string, env: Env, deps: Deps): Promise<Response> {
+  if (!isUpgrade(request)) {
+    return jsonError(426, "upgrade_required", "This address takes a WebSocket: connect with `cloudana ssh <id>`.", {}, { upgrade: "websocket" });
+  }
+  const { token, protocols } = sshCredential(request);
+  if (!token) {
+    return jsonError(401, "unauthorized", "SSH through the relay needs your session token or an API key with the deployments scope.", {}, { "www-authenticate": 'Bearer realm="cloudana"' });
+  }
+  const api = (env.API_URL ?? DEFAULT_API).replace(/\/$/, "");
+  let res: Response;
+  try {
+    res = await deps.fetch(`${api}/v1/deployments/${id}/ssh`, {
+      method: "POST",
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      headers: { accept: "application/json", authorization: `Bearer ${token}`, ...(env.INTERNAL_API_KEY && { "x-internal-key": env.INTERNAL_API_KEY }) },
+    });
+  } catch {
+    return jsonError(503, "unavailable", "The Cloudana API did not answer. Try again shortly.", {}, { "retry-after": "15" });
+  }
+  const body = (await res.json().catch(() => null)) as { target?: Target; error?: { code?: string; message?: string } } | null;
+  const target = body?.target;
+  if (!res.ok || !target || typeof target.node !== "string" || typeof target.dep !== "string") {
+    // The API's refusal as it is (401 bad token, 403 key scope, 404 not yours, 409 not reachable this way, 429);
+    // anything else means the API could not answer.
+    const status = [401, 403, 404, 409, 429].includes(res.status) ? res.status : 503;
+    return jsonError(status, body?.error?.code ?? "unavailable", body?.error?.message ?? "The SSH target could not be looked up.", {}, status === 503 ? { "retry-after": "15" } : {});
+  }
+  const stub = deps.relay?.(target.node);
+  if (!stub) return jsonError(503, "unavailable", "No relay is bound to this gateway.");
+  const headers = new Headers({ upgrade: "websocket", "x-relay-dep": target.dep, "x-relay-port": "ssh", "x-relay-mode": "raw" });
+  if (protocols.includes(TCP_SUBPROTOCOL)) headers.set("sec-websocket-protocol", TCP_SUBPROTOCOL);
+  const out = await relayUpgrade(stub, headers);
+  if ("error" in out) {
+    const [status, message] = RELAY_UPGRADE_ERRORS[out.error] ?? RELAY_UPGRADE_ERRORS.offline;
+    return jsonError(status, out.error === "refused" ? "forbidden" : "unavailable", message, { relay: out.error }, status === 503 ? { "retry-after": "15" } : {});
+  }
+  return out.res;
+}
+
+/**
+ * A WebSocket upgrade to a relayed container or workstation: the hub speaks WebSocket to the app over a byte stream to
+ * its web port. The same headers as its HTTP (a full app on its own content domain; else no cookies), plus the
+ * visitor's subprotocols and Origin for the app's own checks.
+ */
+async function webSocket(request: Request, url: URL, target: Target, deps: Deps, isolated: boolean): Promise<Response> {
+  const stub = deps.relay?.(target.node);
+  if (!stub) return errorPage(503, "Unreachable", "The node serving this address is not connected right now.", target.dep, { "retry-after": "30" });
+  const headers = new Headers();
+  if (isolated) {
+    for (const [k, v] of forwardableHeaders(request.headers)) headers.append(k, v);
+  } else {
+    for (const h of [...FORWARD_REQUEST_API, "origin", "sec-websocket-protocol"]) {
+      const v = request.headers.get(h);
+      if (v) headers.set(h, v);
+    }
+  }
+  headers.set("upgrade", "websocket");
+  headers.set("x-forwarded-host", url.host);
+  headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+  headers.set("x-relay-dep", target.dep);
+  headers.set("x-relay-port", "web");
+  headers.set("x-relay-mode", "ws");
+  headers.set("x-relay-path", `${url.pathname}${url.search}`);
+  const out = await relayUpgrade(stub, headers);
+  if ("error" in out) {
+    const [status, message] = RELAY_UPGRADE_ERRORS[out.error] ?? RELAY_UPGRADE_ERRORS.offline;
+    return errorPage(status, status === 504 ? "Timed out" : "Unreachable", message, target.dep, status === 503 ? { "retry-after": "30" } : {});
+  }
+  return out.res;
+}
+
+const RELAY_UPGRADE_ERRORS: Record<string, [number, string]> = {
+  offline: [503, "The node serving this address is not connected right now."],
+  not_serving: [503, "The node is not serving this deployment right now."],
+  busy: [503, "Too many connections to this deployment right now."],
+  timeout: [504, "The deployment did not accept the connection in time."],
+  refused: [403, "This deployment declared no such port."],
+  upstream: [502, "The deployment refused the connection."],
+};
+
+/** Ask the node's relay object for a byte stream: its 101 (with the client's socket) as it is, or the relay error. */
+async function relayUpgrade(stub: RelayStub, headers: Headers): Promise<{ res: Response } | { error: string }> {
+  let res: Response;
+  try {
+    res = await stub.fetch("https://relay/stream", { headers });
+  } catch {
+    return { error: "offline" };
+  }
+  const err = res.headers.get("x-relay-error");
+  return err ? { error: err } : { res };
+}
 
 /** The whole body as bytes when it is at most `max` long; otherwise a stream of what was read plus the rest. */
 export async function bufferUpTo(stream: ReadableStream<Uint8Array>, max: number): Promise<ArrayBuffer | ReadableStream<Uint8Array>> {

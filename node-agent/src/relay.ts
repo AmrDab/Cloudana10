@@ -4,16 +4,22 @@
  * deployment's port on 127.0.0.1, so a relayed node needs no open ports.
  *
  * Mode: "relay" while the API runs a relay (the agent announced the "relay" capability at boot); "legacy" once the
- * ticket route answers 404 or 503 not_configured — today's direct serving on the public host, with the ticket asked
+ * ticket route answers 404 or 503 not_configured â€” today's direct serving on the public host, with the ticket asked
  * for again every 5 min. Each mode change re-announces the node first, so the API places work the way the node
  * will serve it.
  *
- * Streams (both directions at most WINDOW_BYTES unacked): `req` → http.request to 127.0.0.1:<port> (never fetch:
+ * Streams (both directions at most WINDOW_BYTES unacked): `req` â†’ http.request to 127.0.0.1:<port> (never fetch:
  * undici would decompress), request body from binary frames, acked once written upstream; the response goes back as
  * `res`, binary frames batched for up to 50 ms / 64 KiB, then `end`. The upstream response is paused while the
  * window is full. `cancel` aborts; failures are `err` with the contract's codes.
+ *
+ * Byte streams ("Byte streams" in the contract; announced as `relay-streams`): `open {dep, port}` â†’ a TCP connection
+ * to 127.0.0.1:<that deployment's declared port for the class> only (streamTarget), `opened` once connected, bytes
+ * both ways under the same window (the socket is paused while the hub's window is full), `end` per half, `cancel`
+ * destroys. The agent never parses what flows (SSH, or a WebSocket the hub speaks to the app).
  */
 import http from "node:http";
+import net from "node:net";
 import {
   BODY_CAP_BYTES,
   decodeData,
@@ -32,11 +38,13 @@ import {
   type Header,
   type HubMessage,
   type NodeMessage,
+  type PortClass,
 } from "../../shared/relay-protocol.ts";
 import type { Kind } from "./deployments.ts";
 
 /** Capability announced while this node serves through the relay. */
 export const RELAY_CAPABILITY = "relay";
+export { STREAMS_CAPABILITY } from "../../shared/relay-protocol.ts";
 export const TICKET_PATH = "/v1/nodes/relay/ticket";
 const DEFAULT_URL = "wss://relay.cloudana.io/connect";
 /** Legacy mode asks for a ticket again this often (the API may gain a relay). */
@@ -61,7 +69,26 @@ export interface RelayOptions {
   announce: (relay: boolean) => Promise<void>;
   /** Local port and kind of a deployment this node serves (DeploymentManager.localTarget); null: not here. */
   target: (dep: string) => { port: number; kind: Kind } | null;
+  /**
+   * Byte streams: the local port of `dep`'s declared `port` class (DeploymentManager.streamPort); "refused" when the
+   * deployment runs here but declared no such port (or is not relayed); null when it does not run here.
+   */
+  streamTarget?: (dep: string, port: PortClass) => number | "refused" | null;
   log: (msg: string) => void;
+}
+
+/** One byte stream: a loopback TCP connection to a deployment's declared port. */
+interface Tcp {
+  s: number;
+  sock: net.Socket;
+  opened: boolean;
+  out: Buffer[]; // bytes from the app waiting for the window
+  queued: number;
+  inflight: number; // bytes sent to the hub and not acked
+  unacked: number; // bytes from the hub written to the socket and not acked yet
+  hubEnded: boolean; // the hub's half is done
+  appEnded: boolean; // the app closed its side (FIN)
+  endSent: boolean; // our `end` went out (after every queued byte)
 }
 
 interface Stream {
@@ -94,6 +121,7 @@ export class RelayClient {
   private pingTimer?: NodeJS.Timeout;
   private pongTimer?: NodeJS.Timeout;
   private streams = new Map<number, Stream>();
+  private tcp = new Map<number, Tcp>();
 
   constructor(private o: RelayOptions) {}
 
@@ -117,7 +145,7 @@ export class RelayClient {
     this.drop("stopped");
   }
 
-  // ── Connection ─────────────────────────────────────────────────────────────────────────────────────────────
+  // â”€â”€ Connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /** Ask for a ticket (every connect uses a fresh one), switch mode if the answer says so, then connect. */
   private async cycle(): Promise<void> {
@@ -157,8 +185,8 @@ export class RelayClient {
     this.state = mode;
     this.o.log(
       mode === "relay"
-        ? `relay: on (${why}) — new deployments are served through the relay, no open ports needed`
-        : `relay: legacy mode (${why}) — new deployments listen on the public port range; asking again every 5 min`,
+        ? `relay: on (${why}) â€” new deployments are served through the relay, no open ports needed`
+        : `relay: legacy mode (${why}) â€” new deployments listen on the public port range; asking again every 5 min`,
     );
     return true;
   }
@@ -212,11 +240,12 @@ export class RelayClient {
     clearTimeout(this.pongTimer);
     this.pongTimer = undefined;
     for (const st of [...this.streams.values()]) this.close(st);
+    for (const t of [...this.tcp.values()]) this.closeTcp(t);
     if (this.stopped) return;
     const wasUp = this.openedAt > 0;
     if (wasUp && Date.now() - this.openedAt >= STABLE_MS) this.attempt = 0;
     const delay = this.backoff();
-    const msg = `relay: ${wasUp ? "disconnected" : "could not connect"} (${reason}) — retrying in ${(delay / 1000).toFixed(1)} s`;
+    const msg = `relay: ${wasUp ? "disconnected" : "could not connect"} (${reason}) â€” retrying in ${(delay / 1000).toFixed(1)} s`;
     if (wasUp) this.o.log(msg);
     else this.noise(msg);
     this.later(delay);
@@ -227,7 +256,7 @@ export class RelayClient {
     if (!this.stopped) this.retry = setTimeout(() => void this.cycle(), ms);
   }
 
-  /** 1 s → 30 s, doubling, each delay jittered down to half (never below 1 s). */
+  /** 1 s â†’ 30 s, doubling, each delay jittered down to half (never below 1 s). */
   private backoff(): number {
     const base = Math.min(BACKOFF_MAX_MS, BACKOFF_MIN_MS * 2 ** this.attempt++);
     return Math.max(BACKOFF_MIN_MS, Math.round(base * (0.5 + Math.random() / 2)));
@@ -253,7 +282,7 @@ export class RelayClient {
     this.sendJson({ t: "err", s, code, ...(message && { message: message.slice(0, 300) }) });
   }
 
-  // ── Streams ────────────────────────────────────────────────────────────────────────────────────────────────
+  // â”€â”€ Streams â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private onMessage(data: unknown) {
     if (typeof data === "string") {
@@ -270,12 +299,18 @@ export class RelayClient {
       if (s !== null && !this.streams.has(s)) this.fail(s, "bad_request", "request the node cannot parse");
     } else if (data instanceof ArrayBuffer) {
       const frame = decodeData(data);
-      if (frame) this.onBody(frame.s, frame.data);
+      if (!frame) return;
+      const t = this.tcp.get(frame.s);
+      if (t) this.onTcpData(t, frame.data);
+      else this.onBody(frame.s, frame.data);
     }
   }
 
   private onHub(m: HubMessage) {
     if (m.t === "req") return this.onReq(m);
+    if (m.t === "open") return this.onOpen(m);
+    const t = this.tcp.get(m.s);
+    if (t) return this.onTcpControl(t, m);
     const st = this.streams.get(m.s);
     if (!st) return; // finished, refused or unknown: nothing to do
     if (m.t === "end") {
@@ -292,8 +327,8 @@ export class RelayClient {
   }
 
   private onReq(m: Extract<HubMessage, { t: "req" }>) {
-    if (this.streams.has(m.s)) return; // the hub reused a live id: ignore the duplicate
-    if (this.streams.size >= MAX_STREAMS) return this.fail(m.s, "busy");
+    if (this.streams.has(m.s) || this.tcp.has(m.s)) return; // the hub reused a live id: ignore the duplicate
+    if (this.streams.size + this.tcp.size >= MAX_STREAMS) return this.fail(m.s, "busy");
     const target = this.o.target(m.dep);
     if (!target) return this.fail(m.s, "not_serving");
     // The gateway's x-relay-class hint never reaches the node: the cap follows what the deployment is.
@@ -302,7 +337,7 @@ export class RelayClient {
     if (declared > cap) return this.fail(m.s, "too_large");
     let up: http.ClientRequest;
     try {
-      // agent: false — one fresh loopback connection per stream, never a stale keep-alive socket.
+      // agent: false â€” one fresh loopback connection per stream, never a stale keep-alive socket.
       // A framed body for the app: the visitor's Content-Length when there is one (Node then refuses a mismatch),
       // else explicit chunking for methods that may carry a body (servers without chunked uploads get the length).
       const h = forwardableHeaders(m.h, { keepLength: true });
@@ -317,7 +352,7 @@ export class RelayClient {
     up.on("error", (err) => this.close(st, "upstream", err.message));
   }
 
-  /** Request body bytes: written upstream, acked once written (one ack per ≥ 64 KiB). */
+  /** Request body bytes: written upstream, acked once written (one ack per â‰¥ 64 KiB). */
   private onBody(s: number, data: Uint8Array) {
     const st = this.streams.get(s);
     if (!st || st.reqDone) return;
@@ -327,7 +362,7 @@ export class RelayClient {
     st.up.write(data, (err) => {
       if (err || this.streams.get(s) !== st) return;
       st.unacked += n;
-      // The hub stalls only with more than WINDOW − 64 KiB unacked, so a 64 KiB threshold always fires first.
+      // The hub stalls only with more than WINDOW âˆ’ 64 KiB unacked, so a 64 KiB threshold always fires first.
       if (st.unacked >= MAX_FRAME_BYTES) {
         this.sendJson({ t: "ack", s, n: st.unacked });
         st.unacked = 0;
@@ -393,6 +428,99 @@ export class RelayClient {
     }
   }
 
+  // â”€â”€ Byte streams â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  /** `open`: connect to the deployment's declared port for the class, on loopback only. */
+  private onOpen(m: Extract<HubMessage, { t: "open" }>) {
+    if (this.streams.has(m.s) || this.tcp.has(m.s)) return;
+    if (this.streams.size + this.tcp.size >= MAX_STREAMS) return this.fail(m.s, "busy");
+    const port = this.o.streamTarget?.(m.dep, m.port) ?? null;
+    if (port === null) return this.fail(m.s, "not_serving");
+    if (port === "refused") return this.fail(m.s, "refused", `no ${m.port} port declared for this deployment`);
+    const sock = net.connect({ host: "127.0.0.1", port, allowHalfOpen: true });
+    const t: Tcp = { s: m.s, sock, opened: false, out: [], queued: 0, inflight: 0, unacked: 0, hubEnded: false, appEnded: false, endSent: false };
+    this.tcp.set(m.s, t);
+    sock.setNoDelay(true);
+    sock.on("connect", () => {
+      if (this.tcp.get(t.s) !== t) return;
+      t.opened = true;
+      this.sendJson({ t: "opened", s: t.s });
+    });
+    // Bytes go out as they come (interactive), never past the window: the rest waits and the socket pauses.
+    sock.on("data", (chunk: Buffer) => {
+      if (this.tcp.get(t.s) !== t) return;
+      t.out.push(chunk);
+      t.queued += chunk.length;
+      this.pumpTcp(t);
+    });
+    sock.on("end", () => {
+      if (this.tcp.get(t.s) !== t) return;
+      t.appEnded = true;
+      this.pumpTcp(t);
+    });
+    sock.on("error", (err) => this.closeTcp(t, "upstream", err.message));
+    sock.on("close", () => {
+      // Closed without the app's FIN (a reset): tell the hub. After a FIN, pumpTcp sends what is queued, then `end`.
+      if (this.tcp.get(t.s) === t && !t.appEnded) this.closeTcp(t, "upstream", "connection closed");
+    });
+  }
+
+  /** Bytes from the hub: written to the socket, acked once written (one ack per â‰¥ 64 KiB, as for request bodies). */
+  private onTcpData(t: Tcp, data: Uint8Array) {
+    if (!t.opened || t.hubEnded || t.sock.destroyed) return;
+    const n = data.byteLength;
+    t.sock.write(data, (err) => {
+      if (err || this.tcp.get(t.s) !== t) return;
+      t.unacked += n;
+      if (t.unacked >= MAX_FRAME_BYTES) {
+        this.sendJson({ t: "ack", s: t.s, n: t.unacked });
+        t.unacked = 0;
+      }
+    });
+  }
+
+  private onTcpControl(t: Tcp, m: HubMessage) {
+    if (m.t === "ack") {
+      t.inflight = Math.max(0, t.inflight - m.n);
+      this.pumpTcp(t);
+    } else if (m.t === "end") {
+      if (t.hubEnded) return;
+      t.hubEnded = true;
+      t.sock.end(); // FIN after what was written
+      if (t.endSent) this.closeTcp(t);
+    } else if (m.t === "cancel" || m.t === "err") {
+      this.closeTcp(t);
+    }
+  }
+
+  /** Send what the window allows; pause the socket while bytes wait; `end` once the app ended and all is out. */
+  private pumpTcp(t: Tcp) {
+    if (this.tcp.get(t.s) !== t) return;
+    while (t.queued > 0) {
+      const n = Math.min(MAX_FRAME_BYTES, t.queued);
+      if (t.inflight + n > WINDOW_BYTES) break;
+      this.send(encodeData(t.s, take(t, n)));
+      t.inflight += n;
+    }
+    if (t.queued > 0) t.sock.pause();
+    else if (t.sock.isPaused()) t.sock.resume();
+    if (t.appEnded && t.queued === 0 && !t.endSent) {
+      t.endSent = true;
+      this.sendJson({ t: "end", s: t.s });
+      if (t.hubEnded) this.closeTcp(t);
+    }
+  }
+
+  /** Forget the byte stream and destroy the socket; with `code`, tell the hub. */
+  private closeTcp(t: Tcp, code?: ErrCode, message?: string) {
+    if (this.tcp.get(t.s) !== t) return;
+    this.tcp.delete(t.s);
+    if (code) this.fail(t.s, code, message);
+    // After a clean end both ways the FIN is already queued: let it drain before the socket goes.
+    if (t.endSent && t.hubEnded) t.sock.end();
+    else t.sock.destroy();
+  }
+
   /** Forget the stream and abort upstream; with `code`, tell the hub. */
   private close(st: Stream, code?: ErrCode, message?: string) {
     if (this.streams.get(st.s) !== st) return;
@@ -430,7 +558,7 @@ function pairs(raw: string[]): Header[] {
 }
 
 /** The next `n` queued response bytes as one buffer. */
-function take(st: Stream, n: number): Buffer {
+function take(st: { out: Buffer[]; queued: number }, n: number): Buffer {
   const out = Buffer.allocUnsafe(n);
   let off = 0;
   while (off < n) {

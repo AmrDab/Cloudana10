@@ -12,6 +12,7 @@
  *
  * Hosting gateway (docs/IMPL_SPEC_2026-10.md):
  *   GET    /v1/deployments/:id/route     — public, cached 30 s: { id, state, endpoint|null, kind } for the gateway
+ *   POST   /v1/deployments/:id/ssh       — X-Internal-Key + the visitor's bearer: SSH byte-stream target (owner only)
  *   POST   /v1/admin/deployments/:id/stop — X-Internal-Key: status stopped, reason admin
  */
 import { createRoute, z } from "@hono/zod-openapi";
@@ -36,6 +37,7 @@ import {
   replicasOf,
   revokeKey,
   setSealedEnv,
+  sshTarget,
   stopDeployment,
   type DeploymentRow,
   type DeploymentEvent,
@@ -473,6 +475,7 @@ const routeRoute = createRoute({
           endpoint: z.string().nullable(),
           auth: z.enum(["public", "key"]).optional(),
           keys: z.array(z.string()).optional(),
+          streams: z.boolean().optional().openapi({ description: "Running, relayed, and the node carries byte streams (relay-streams): WebSocket upgrades pass through" }),
         }),
         "Route",
       ),
@@ -489,6 +492,37 @@ deploymentsRouter.openapi(routeRoute, async (c) => {
   const r = await publicRoute(c.req.valid("param").id);
   if (!r) return fail(c, "not_found", "deployment not found");
   return ok(c, { ...r });
+});
+
+const sshRoute = createRoute({
+  method: "post",
+  path: "/deployments/{id}/ssh",
+  tags: TAGS,
+  description:
+    "Internal (X-Internal-Key; the gateway, for `wss://{id}.{SITES_DOMAIN}/_cld/ssh`) with the visitor's own bearer " +
+    "credential (wallet session, or an API key with the deployments scope): the node to open an SSH byte stream on, " +
+    "for the caller's running relayed workstation with SSH. Another owner's deployment is 404; one that is not " +
+    "reachable this way is 409. Asked on every connect, never cached (docs/V4_RELAY_CONTRACT.md \"Byte streams\").",
+  security: BEARER_AUTH,
+  middleware: [requireInternalKey] as const,
+  request: { params: IdParam },
+  responses: responses(
+    { 200: json(z.object({ status: z.literal("success"), target: z.object({ node: z.string(), dep: z.string() }) }), "SSH target") },
+    400,
+    401,
+    403,
+    404,
+    409,
+    429,
+  ),
+});
+
+deploymentsRouter.openapi(sshRoute, async (c) => {
+  c.header("Cache-Control", "no-store");
+  // requireAuth (middleware/security.ts) ran before the route's internal-key check, so the caller is set.
+  const { sub } = c.get("jwtPayload") as { sub: string };
+  const r = await sshTarget(sub, c.req.valid("param").id);
+  return r.ok ? ok(c, { target: r.target }) : fail(c, r.code, r.message);
 });
 
 const adminStopRoute = createRoute({

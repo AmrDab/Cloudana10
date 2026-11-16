@@ -197,7 +197,7 @@ function Row({ w, open, fresh, onToggle }: { w: Workstation; open: boolean; fres
 }
 
 // ── Detail ──────────────────────────────────────────────────────────────────
-/** connect.ssh is "ssh -p <port> user@host"; tolerate a bare "host:port" too. */
+/** connect.ssh is "ssh -p <port> user@host" (direct) or "cloudana ssh <id>" (through the relay); tolerate a bare "host:port" too. */
 function sshCommand(s?: string) {
   if (!s) return null;
   if (/^ssh\s/.test(s)) return s;
@@ -271,7 +271,12 @@ function Detail({ w }: { w: Workstation }) {
           </button>
           <p className="text-[12px] leading-4 text-faint">
             {running
-              ? ssh ? <span className="break-all font-mono">{ssh}</span> : !w.spec.access.ssh ? "No SSH key was added; web access only." : "The SSH endpoint appears when the node reports it."
+              ? ssh ? (
+                <>
+                  <span className="break-all font-mono">{ssh}</span>
+                  {ssh.startsWith("cloudana ") && " · through the relay, with the Cloudana CLI and an API key (scope deployments)"}
+                </>
+              ) : !w.spec.access.ssh ? "No SSH key was added; web access only." : "The SSH endpoint appears when the node reports it."
               : isTerminal(w.status) ? "It has stopped." : "Available once it is running."}
           </p>
           {!isTerminal(w.status) && (

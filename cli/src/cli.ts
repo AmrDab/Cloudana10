@@ -7,15 +7,21 @@
  *   cloudana list
  *   cloudana get <id>
  *   cloudana stop <id>
+ *   cloudana ssh <id> [-l user] [--print] [-- ssh options]
+ *   cloudana ssh --proxy <id>.cloudana.run       (ssh's ProxyCommand: stdin/stdout ↔ the workstation's sshd)
  *
  * The key comes from the console (Keys → New key, scope "deployments"); it is stored in ~/.cloudana/config.json or
  * read from CLOUDANA_API_KEY. Exit codes: 0 ok, 1 the API or the site refused, 2 usage.
  */
 import { parseArgs } from "node:util";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import type { Readable, Writable } from "node:stream";
 import { ApiError, client, type Client, type Deployment } from "./api.js";
 import { resolve, saveConfig } from "./config.js";
 import { readSite } from "./site.js";
+import { pipe, platformSocket, proxyCommand, sshProtocols, sshUrl, type SocketFactory } from "./ssh.js";
 
 export interface Io {
   log: (line: string) => void;
@@ -23,6 +29,11 @@ export interface Io {
   sleep?: (ms: number) => Promise<void>;
   fetch?: typeof fetch;
   env?: NodeJS.ProcessEnv;
+  /** `ssh`: the WebSocket client (default: Node's own), the ssh binary runner, and the proxy's stdin/stdout. */
+  webSocket?: SocketFactory | null;
+  runSsh?: (args: string[]) => Promise<number>;
+  stdin?: Readable;
+  stdout?: Writable;
 }
 
 const USAGE = `usage: cloudana <command>
@@ -30,7 +41,11 @@ const USAGE = `usage: cloudana <command>
   deploy <dir> [--name <name>] [--no-wait] deploy a folder as a static site (index.html required, ≤ 2 MB)
   list                                     your deployments
   get <id>                                 one deployment and its latest events
-  stop <id>                                stop and remove a deployment`;
+  stop <id>                                stop and remove a deployment
+  ssh <id> [-l <user>] [--print] [-- <ssh options>]
+                                           SSH to a workstation through the relay (runs ssh with this CLI as ProxyCommand;
+                                           --print shows that command instead)
+  ssh --proxy <id>.cloudana.run            the ProxyCommand itself: pipes stdin/stdout to the workstation's sshd`;
 
 /** Server text goes to a terminal: no control characters but newline and tab (escape sequences could rewrite the screen). */
 const clean = (s: string) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
@@ -41,7 +56,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
-    options: { key: { type: "string" }, api: { type: "string" }, name: { type: "string" }, "no-wait": { type: "boolean" } },
+    options: {
+      key: { type: "string" }, api: { type: "string" }, name: { type: "string" }, "no-wait": { type: "boolean" },
+      proxy: { type: "boolean" }, user: { type: "string", short: "l" }, print: { type: "boolean" },
+    },
   });
   const [cmd, arg] = positionals;
   const env = io.env ?? process.env;
@@ -52,7 +70,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     io.log(`saved to ${file}`);
     return 0;
   }
-  if (!cmd || !["deploy", "list", "get", "stop"].includes(cmd)) return usage(io);
+  if (!cmd || !["deploy", "list", "get", "stop", "ssh"].includes(cmd)) return usage(io);
 
   const { api, apiKey } = await resolve(env);
   if (!apiKey) {
@@ -83,6 +101,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
         await c.stop(arg);
         io.log(`stopped ${arg}`);
         return 0;
+      case "ssh":
+        if (!arg) return usage(io, "ssh needs a workstation id");
+        return await ssh(c, arg, positionals.slice(2), { proxy: !!values.proxy, user: values.user, print: !!values.print, api: values.api }, apiKey, io);
     }
   } catch (err) {
     if (err instanceof ApiError) io.error(clean(`${err.code}: ${err.message}`));
@@ -113,6 +134,68 @@ async function deploy(c: Client, dir: string, name: string | undefined, wait: bo
   }
   io.log(`still ${(await c.get(created.id)).deployment.status}; check later with: cloudana get ${created.id}`);
   return 0;
+}
+
+/**
+ * `cloudana ssh`. Proxy mode pipes stdin/stdout through `wss://<host>/_cld/ssh` (stdout is the SSH channel: messages
+ * go to stderr only). Otherwise it looks the workstation up, then runs `ssh` with this CLI as its ProxyCommand.
+ */
+async function ssh(
+  c: Client,
+  target: string,
+  extra: string[],
+  o: { proxy: boolean; user?: string; print: boolean; api?: string },
+  apiKey: string,
+  io: Io,
+): Promise<number> {
+  if (o.proxy) {
+    const ws = io.webSocket === undefined ? platformSocket() : io.webSocket;
+    if (!ws) {
+      io.error("cloudana ssh needs Node 22 or newer (its built-in WebSocket client)");
+      return 1;
+    }
+    // ssh passes the host name (%h); a bare id is looked up for its address.
+    const host = target.includes(".") ? target : hostOf((await c.get(target)).deployment);
+    const socket = ws(sshUrl(host), sshProtocols(apiKey));
+    return pipe(socket, io.stdin ?? process.stdin, io.stdout ?? process.stdout, io.error);
+  }
+  const { deployment: d } = await c.get(target);
+  if (d.kind !== "workstation") {
+    io.error(clean(`${d.id} is a ${d.kind}, not a workstation`));
+    return 1;
+  }
+  if (d.status !== "running") {
+    io.error(clean(`workstation ${d.id} is ${d.status}; SSH works once it is running`));
+    return 1;
+  }
+  const host = hostOf(d);
+  const user = o.user ?? d.spec?.access?.ssh?.user ?? "root";
+  const cli = process.argv[1] ? path.resolve(process.argv[1]) : fileURLToPath(import.meta.url);
+  const proxy = proxyCommand(process.execPath, cli, o.api);
+  const args = ["-o", `ProxyCommand=${proxy}`, "-o", "ServerAliveInterval=30", ...extra, `${user}@${host}`];
+  if (o.print) {
+    io.log(`ssh -o 'ProxyCommand=cloudana ssh --proxy %h' -o ServerAliveInterval=30 ${user}@${host}`);
+    return 0;
+  }
+  return (io.runSsh ?? runSsh)(args);
+}
+
+/** The workstation's host name under the user-content domain, from its gateway URL. */
+function hostOf(d: Deployment): string {
+  if (!d.url) throw new Error(`deployment ${d.id} has no address through the relay (a direct workstation: use the SSH command the console shows)`);
+  return new URL(d.url).host;
+}
+
+/** Runs the local ssh with the terminal attached; its exit code is ours. */
+function runSsh(args: string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn("ssh", args, { stdio: "inherit" });
+    child.on("error", () => {
+      console.error("could not run ssh: is an OpenSSH client installed and on PATH?");
+      resolve(1);
+    });
+    child.on("exit", (code) => resolve(code ?? 1));
+  });
 }
 
 function usage(io: Io, why?: string): number {
