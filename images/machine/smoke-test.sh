@@ -51,7 +51,10 @@ docker run --name m-ok "${common[@]}" --cap-drop=ALL "${capadd[@]}" \
   --mount "type=bind,source=$work/home,target=/home/cloudana" -p 127.0.0.1:2201:22 "$image" >/dev/null
 waitssh 2201 || fail "no SSH login within 40 s"
 [ "$(sshx 2201 cloudana whoami)" = cloudana ] || fail "login user is not cloudana"
-[ "$(sshx 2201 cloudana sudo -n id -u)" = 0 ] || fail "passwordless sudo does not give root"
+if [ "$(sshx 2201 cloudana sudo -n id -u)" != 0 ]; then
+  sshx 2201 cloudana 'stat -c "%A %U %n" /usr/bin/sudo; grep -E "NoNewPrivs|Cap(Inh|Prm|Eff|Bnd)" /proc/self/status; grep -E " / |/usr" /proc/mounts' >&2 || true
+  fail "passwordless sudo does not give root"
+fi
 sshx 2201 cloudana 'test -f ~/.profile && touch ~/written && test "$(stat -c %U ~)" = cloudana' || fail "home directory not handed to the user"
 [ -e "$work/home/written" ] || fail "file written in the box is not on the bind-mounted home"
 sshx 2201 cloudana 'sudo -n apt-get update -qq && sudo -n apt-get install -y -qq --no-install-recommends jq >/dev/null && jq --version' \
