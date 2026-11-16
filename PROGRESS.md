@@ -854,7 +854,7 @@ that remained:
   no-new-privileges and, under gVisor, even without it (a setuid exec does not raise privileges there).
 - sshd under the agent's flags (`--cap-drop=ALL --security-opt=no-new-privileges`): binds, then fails every login at its
   privsep chroot. A machine (that image, no GPU, relayed, `sandbox` node only) keeps every flag and gets `MACHINE_CAPS` back
-  (SETUID, SETGID, SYS_CHROOT, CHOWN, DAC_OVERRIDE, AUDIT_WRITE: `node-agent/src/workstation.ts machineArgs`); elsewhere the agent refuses it (`node cannot serve:`).
+  (SETUID, SETGID, SYS_CHROOT, CHOWN, FOWNER, DAC_OVERRIDE, AUDIT_WRITE: `node-agent/src/workstation.ts machineArgs`); elsewhere the agent refuses it (`node cannot serve:`).
 - Encrypted volumes (agent 1.12.0, `node-agent/src/volumes.ts`, capability `encrypted-volumes`): LUKS2 on a sparse loop
   file, ext4, bind-mounted at the workdir (`/root` for machines). Opt-in `CLOUDANA_ENCRYPTED_VOLUMES=1` plus a real
   format/mount/reopen/erase round trip at boot. The API makes a 32-byte key per deployment per node on its first start

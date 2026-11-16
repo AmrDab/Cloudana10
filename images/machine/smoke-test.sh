@@ -13,7 +13,7 @@ set -euo pipefail
 
 image="$1"
 runtime="${2:-runc}"
-CAPS=(CHOWN DAC_OVERRIDE SETGID SETUID SYS_CHROOT AUDIT_WRITE)
+CAPS=(CHOWN DAC_OVERRIDE FOWNER SETGID SETUID SYS_CHROOT AUDIT_WRITE)
 
 work="$(mktemp -d)"
 cleanup() { docker rm -f m-ok m-plain >/dev/null 2>&1 || true; sudo rm -rf "$work" 2>/dev/null || rm -rf "$work"; }
@@ -72,7 +72,7 @@ probe() {
 echo "== 0. MACHINE_CAPS and one more ($runtime): login · pty login · apt-get install"
 probe "MACHINE_CAPS" 2230 "${CAPS[@]}"
 port=2230
-for extra in FOWNER FSETID KILL NET_BIND_SERVICE; do
+for extra in FSETID KILL NET_BIND_SERVICE; do
   port=$((port + 1))
   probe "+ $extra" "$port" "${CAPS[@]}" "$extra"
 done

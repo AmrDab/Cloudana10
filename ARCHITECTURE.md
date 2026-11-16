@@ -122,7 +122,7 @@ reserved per container and re-read from Docker on resume.
 
 Machines (docs/WORKSTATIONS.md §11) are CPU workstations on Cloudana's Ubuntu image. They run only on a node that
 announces `sandbox` (gVisor), `encrypted-volumes` (agent ≥ 1.12.0, `CLOUDANA_ENCRYPTED_VOLUMES=1` and a LUKS round trip
-at boot) and `relay-streams`. The tenant is root inside gVisor with no-new-privileges and six capabilities. `/root` is
+at boot) and `relay-streams`. The tenant is root inside gVisor with no-new-privileges and seven capabilities. `/root` is
 a LUKS volume whose key the API seals to the node, and which the node erases on purge. SSH reaches the box only through
 the relay (`cloudana ssh <id>`), with sshd on the node's 127.0.0.1.
 

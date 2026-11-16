@@ -144,8 +144,8 @@ Console: Run → **Machines** (`/run?tab=machines`); GPU boxes stay under Workst
   start. Built, smoke-tested under runc and gVisor, signed and published by `.github/workflows/machine-image.yml` (main
   only; pull requests build and test).
 - **Login: root, by key only** (`PermitRootLogin prohibit-password`, no passwords, no PAM). Root of the box is root
-  inside the gVisor sandbox, not on the provider's kernel (TRUST_TIERS §5), with no-new-privileges on and six
-  capabilities added back (SETUID, SETGID, SYS_CHROOT, CHOWN, DAC_OVERRIDE, AUDIT_WRITE; §11.2). `cloudana` (uid 1000)
+  inside the gVisor sandbox, not on the provider's kernel (TRUST_TIERS §5), with no-new-privileges on and seven
+  capabilities added back (SETUID, SETGID, SYS_CHROOT, CHOWN, FOWNER, DAC_OVERRIDE, AUDIT_WRITE; §11.2). `cloudana` (uid 1000)
   is the unprivileged account, same key. The key is the workstation's `access.ssh.publicKey`, passed as
   `SSH_PUBLIC_KEY`/`PUBLIC_KEY` (§5). **Decision** (owner, accepted 2026-11-16): root login by key instead of a user
   with passwordless sudo, which cannot work under gVisor (§11.2).
@@ -174,24 +174,28 @@ hardening unchanged, no-new-privileges included, plus `MACHINE_CAPS` (`node-agen
 ```
 docker run -d --name cld-<id> --restart unless-stopped --runtime=runsc --cap-drop=ALL --security-opt=no-new-privileges \
   --pids-limit=512 --memory <m> --memory-swap <m> --storage-opt size=<n>m --network cld-tenant \
-  --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=SETGID --cap-add=SETUID --cap-add=SYS_CHROOT --cap-add=AUDIT_WRITE \
+  --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER --cap-add=SETGID --cap-add=SETUID --cap-add=SYS_CHROOT \
+  --cap-add=AUDIT_WRITE \
   --cpus <c> --shm-size=1g --mount type=bind,source=<volume dir>/mnt/cld-<id>/data,target=/root -p 127.0.0.1:<port>:22 \
   -e PUBLIC_KEY=… -e SSH_PUBLIC_KEY=… -e NVIDIA_VISIBLE_DEVICES=none ghcr.io/amrdab/cloudana-machine:1.0.0
 ```
 
-The set is the smallest that works on both runtimes, found by dropping one capability at a time from Docker's
-default-like list under runsc, and adding each left-out one under runc (smoke runs on PR #109):
+The set is the smallest that works on both runtimes: CI drops one capability at a time from Docker's default-like list
+under runsc, and adds each left-out one to the set under runc and runsc, checking a key login, an interactive (pty)
+login as root and as cloudana, and root's `apt-get install` (smoke runs on PR #109):
 
 | Capability | Without it | So |
 |---|---|---|
 | SETUID, SETGID, SYS_CHROOT | nobody logs in | needed: sshd privilege separation and the login |
 | CHOWN | key login works, an interactive login gets no pty | needed: sshd hands the pty to the user |
-| DAC_OVERRIDE | root's `apt-get install` fails | needed: apt/dpkg as root |
+| FOWNER | under runsc, cloudana's interactive login gets no pty (sshd sets the mode of a pty it has given away) | needed |
 | AUDIT_WRITE | under runc, an interactive login gets no pty (sshd's audit record); under runsc no difference (gVisor has no audit subsystem) | kept, so the set does not depend on gVisor's audit gap |
-| FOWNER, FSETID, KILL, NET_BIND_SERVICE | everything above still works | left out |
+| DAC_OVERRIDE | root's `apt-get install` fails | needed: apt/dpkg as root |
+| FSETID, KILL, NET_BIND_SERVICE | everything above still works | left out |
 
-So root of a machine cannot, for example, `kill` another user's process or `chmod` a file it does not own; those
-capabilities can be added to `MACHINE_CAPS` if tenants need them (they stay inside gVisor).
+So root of a machine cannot, for example, `kill` another user's process; those capabilities can be added to
+`MACHINE_CAPS` if tenants need them (they stay inside gVisor). Review asked for five capabilities; FOWNER and
+AUDIT_WRITE are the two the tests showed sshd needs beyond them.
 
 These are capabilities of root inside the gVisor sandbox. `images/machine/smoke-test.sh` runs exactly these flags in CI
 (runc and runsc): root and cloudana log in (with a pty), root installs a package with apt, `/root` is the bind mount,

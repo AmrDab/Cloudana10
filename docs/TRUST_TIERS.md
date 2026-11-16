@@ -64,8 +64,10 @@ As built in the scheduler (phase 1, 2026-11-16), where it is more precise than t
   in the queue until it is verified again (un-verifying can be undone; revoking cannot, and fails pinned work).
 - Machines (phase 4, docs/WORKSTATIONS.md §11; decision accepted 2026-11-16): the tenant logs in as **root by key**;
   `cloudana` (uid 1000) is the unprivileged account. Root is root inside the gVisor sandbox, with no-new-privileges on
-  and only six capabilities added back: SETUID, SETGID, SYS_CHROOT, CHOWN, DAC_OVERRIDE, AUDIT_WRITE (`MACHINE_CAPS`). A user with
-  sudo cannot work: under gVisor a setuid binary does not raise privileges. Machines run only on nodes with `sandbox`,
+  and only seven capabilities added back: SETUID, SETGID, SYS_CHROOT, CHOWN, FOWNER, DAC_OVERRIDE, AUDIT_WRITE
+  (`MACHINE_CAPS`). A user with sudo cannot work: under gVisor a setuid binary does not raise privileges. (Review asked
+  for five; sshd needs FOWNER for a non-root user's pty under gVisor and AUDIT_WRITE for a pty under runc — smoke test.)
+  Machines run only on nodes with `sandbox`,
   `encrypted-volumes` and `relay-streams`, and are reached only with `cloudana ssh <id>` through the relay.
 - Disk (§6): only a machine's volume (its home directory, `/root`) is encrypted; the rest of its system disk (installed
   packages, `/tmp`) is the container's writable layer and is not. The API makes each volume key and keeps only a copy
