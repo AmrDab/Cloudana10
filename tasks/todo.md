@@ -472,3 +472,63 @@ and tests in CI. shortcut: responses hand-typed for these five calls, generate f
 ## Issues for coding agents (2026-10-29)
 The open work is filed as GitHub issues #80–#94, indexed and ordered in #95 (pinned); `AGENTS.md` holds the rules.
 B-17 step 1 is #84.
+
+## Trust tiers and machines (2026-11-16, owner: "go") · decision: docs/TRUST_TIERS.md
+
+Goal: rent remote Linux machines (SSH, root inside a sandbox) on contributed hardware, paid off-chain from the
+existing balance (free beta credits first), with the provider's IP and the tenant's data protected as TRUST_TIERS
+says. Built on what exists: workstations (`docs/WORKSTATIONS.md`), the relay, fleets, deployments billing.
+Agent version constants (`CURRENT_AGENT_VERSION`, `MIN_AGENT_VERSION`) are not touched: new agent features are
+gated by advertised capabilities.
+
+### Phase 0 — decision record  [this PR]
+- [x] `docs/TRUST_TIERS.md`; top note in `docs/DECISIONS_CONSENSUS.md`
+- [ ] Owner checks the plan below → build
+
+### Phase 1 — trust tiers in the scheduler (API + console)
+- [ ] `fleets.verified_at` (+ schema.sql/schema.ts, golden snapshot); admin `POST/DELETE /v1/admin/fleets/{id}/verified`
+- [ ] spec field `trust: "community" | "verified"` (default verified) on container, endpoint and workstation specs
+- [ ] placement: a verified deployment only on a node whose fleet is verified; un-verifying requeues them
+      (same path as `failPinnedTo` / `requeuePinnedOffFleet`)
+- [ ] community placement additionally needs the agent capabilities `sandbox` (phase 3) and `egress-v2` (phase 2);
+      until both exist nothing community is placed for containers
+- [ ] console: tier selector + the §6 disclosure on deploy, workstation and endpoint forms; tier shown in lists
+- Verify: unit tests for placement (verified/unverified/community without capabilities), migration test, console build
+
+### Phase 2 — egress policy (agent)
+- [ ] hardening: DROP tenant-bridge egress to tcp 25/465/587 alongside BLOCKED_RANGES; `preStartCheck` checks it;
+      advertise `egress-v2`
+- [ ] admin abuse switch: stop a deployment + suspend the tenant (a `suspended_at` on the account; API refuses
+      new deployments); provider sees the reason
+- Verify: agent unit tests (argv built, check fails when the rule is missing); API tests for suspend
+
+### Phase 3 — relay streams: SSH and WebSockets without a public IP
+- [ ] relay protocol: byte-stream messages (open / data / close with the existing window + ack); a stream class
+      `tcp` to a deployment's declared port only
+- [ ] gateway: `wss://<id>.cloudana.run/_cld/ssh` (tenant JWT or `cld_sk_` key with `deployments` scope, owner of
+      the deployment only) and WebSocket upgrade passthrough for web access
+- [ ] agent: stream → `127.0.0.1:<host port>`; workstations become relayed; `public_host` no longer required
+- [ ] CLI: `cloudana ssh <id>` (stdio pipe; prints the `ProxyCommand` line for plain `ssh`)
+- [ ] retire direct mode for workstations (B-13); SECURITY_AUDIT O11 closed
+- Verify: relay/gateway unit tests (auth, port pinning, back-pressure); local end-to-end with `wrangler dev` relay +
+  a local agent + a sshd container: `cloudana ssh` gets a shell
+
+### Phase 4 — machines (agent + images + console)
+- [ ] gVisor: agent detects `runsc` in `docker info`, runs tenant containers with `--runtime=runsc`, advertises `sandbox`
+- [ ] Cloudana machine image `ghcr.io/amrdab/cloudana-machine` (Ubuntu 24.04 + sshd, key from env), built in CI
+- [ ] encrypted volumes: per-deployment key sealed to the node, held in memory; wipe on purge / `keepDays`
+      (design note first: gocryptfs vs LUKS-on-loop under the agent's privileges)
+- [ ] console: "Machines" (CPU sizes; GPU stays under workstations), free beta credits label, `cloudana ssh` command
+- [ ] docs: WORKSTATIONS.md, CAPABILITY_MATRIX, ARCHITECTURE §5, PRICES_USD (machine prices = existing CPU/RAM/volume rates)
+- Verify: agent tests; a real machine on node #1 (below)
+
+### Phase 5 — node #1 hosts machines; Fable end-to-end test
+- [ ] Azure node: Docker 28 + xfs (pquota) data disk + gVisor; `CLOUDANA_ALLOW_CONTAINERS=1`; owner's fleet; owner
+      verifies it (admin flag). Data disk ≈ $5/month of student credit; owner OK needed before attaching it.
+- [ ] Fable agent: rent a machine from the console, `cloudana ssh`, apt install, write to the volume, check the
+      sandbox (`dmesg` shows gVisor), check egress (25 blocked, LAN blocked), stop, see the bill; report
+- Verify: the Fable report; API bills match the hours
+
+### Later (not in this plan)
+Firecracker VM tier · exit relays · confidential tier · Stripe live (owner activates the account; Terms + AUP first) ·
+provider USD payouts · community hosting opens (owner decision, TRUST_TIERS §3 rule 5) · browser desktops.
