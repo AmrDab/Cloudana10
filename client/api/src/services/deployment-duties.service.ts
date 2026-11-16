@@ -312,16 +312,21 @@ export async function requeueMispinned(now = Date.now()): Promise<number> {
   return requeueRows(rows.results ?? [], "its node is no longer in the fleet it is pinned to", now);
 }
 
-/** B-9: a node that moved into another fleet hands back what is pinned to a different one (the pin is the fleet). */
+/**
+ * B-9: a node that moved into another fleet hands back what is pinned to a different one (the pin is the fleet), and
+ * (docs/TRUST_TIERS.md §3) its trust "verified" work when the fleet it joined is not verified.
+ */
 export async function requeuePinnedOffFleet(node: string, fleetId: string, now = Date.now()): Promise<number> {
   const rows = await getD1()
     .prepare(
-      `SELECT * FROM deployments WHERE node = ? AND status IN ${LIVE} ` +
-        "AND json_extract(spec_json, '$.placement.fleetId') IS NOT NULL AND json_extract(spec_json, '$.placement.fleetId') <> ?",
+      `SELECT * FROM deployments WHERE node = ? AND status IN ${LIVE} AND (` +
+        "(json_extract(spec_json, '$.placement.fleetId') IS NOT NULL AND json_extract(spec_json, '$.placement.fleetId') <> ?) " +
+        "OR (kind = 'container' AND COALESCE(json_extract(spec_json, '$.trust'), 'verified') = 'verified' " +
+        "AND NOT EXISTS (SELECT 1 FROM fleets f WHERE f.id = ? AND f.verified_at IS NOT NULL AND f.revoked_at IS NULL)))",
     )
-    .bind(normalizeAddress(node), fleetId)
+    .bind(normalizeAddress(node), fleetId, fleetId)
     .all<DeploymentRow>();
-  return requeueRows(rows.results ?? [], "its node moved to another fleet; the deployment is pinned to its own", now);
+  return requeueRows(rows.results ?? [], "its node moved to another fleet that is pinned elsewhere or not verified", now);
 }
 
 /**

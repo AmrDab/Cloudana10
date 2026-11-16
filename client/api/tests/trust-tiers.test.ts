@@ -340,6 +340,24 @@ describe("admin: verified fleets", () => {
   });
 });
 
+describe("fleet move", () => {
+  it("a node that joins an unverified fleet hands back its verified work, and keeps community work", async () => {
+    const vetted = await fleet(op, "vetted-move", true);
+    const bob = await user();
+    const n = await node(SANDBOX_NODE, vetted);
+    const verified = await createId(bob.jwt, "container", CONTAINER());
+    const community = await createId(bob.jwt, "container", CONTAINER({ trust: "community" }));
+    await beat(n);
+    expect(await row(verified)).toMatchObject({ status: "assigned", node: addr(n) });
+
+    const res = await authed(op.jwt, "POST", "/v1/fleets", { name: "unvetted-move" });
+    const token = (await res.json()).token as string;
+    expect((await signed(n, "/v1/nodes/announce", { ...announceBody(n, SANDBOX_NODE), fleetToken: token })).status).toBe(200);
+    expect(await row(verified)).toMatchObject({ status: "queued", node: null });
+    expect(await row(community)).toMatchObject({ status: "assigned", node: addr(n) });
+  });
+});
+
 describe("abuse switch", () => {
   it("stops the reported deployment and the owner's other work, records why, and refuses new deployments until lifted", async () => {
     const vetted = await fleet(op, "vetted", true);
