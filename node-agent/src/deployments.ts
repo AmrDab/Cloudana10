@@ -64,7 +64,7 @@ export interface DeploymentRecord {
   keepDays?: number; // workstation: days to keep the volume after stop
   gpus?: number[]; // workstation / GPU container: GPU device indices handed to it
   report?: StatusBody; // workstation: the running report (endpoint with token, sshEndpoint), re-sent on resume
-  sshPort?: number; // workstation with ssh access: the host port of its sshd (relay byte streams reach it; agents ≥ 1.10.0)
+  sshPort?: number; // workstation with ssh access: the host port of its sshd (relay byte streams reach it; agents ≥ 1.11.0)
 }
 
 /**

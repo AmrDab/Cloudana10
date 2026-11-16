@@ -508,9 +508,9 @@ gated by advertised capabilities.
 - [x] gateway: `wss://<id>.cloudana.run/_cld/ssh` (tenant JWT or `cld_sk_` key with `deployments` scope, owner of
       the deployment only) and WebSocket upgrade passthrough for web access
 - [x] agent: stream → `127.0.0.1:<host port>`; workstations become relayed; `public_host` no longer required
-      (on `relay-streams` nodes; agent 1.10.0)
+      (on `relay-streams` nodes; agent 1.11.0)
 - [x] CLI: `cloudana ssh <id>` (stdio pipe; prints the `ProxyCommand` line for plain `ssh`)
-- [ ] retire direct mode for workstations (B-13) once nodes run 1.10.0; SECURITY_AUDIT O11 closed for 1.10.0 nodes
+- [ ] retire direct mode for workstations (B-13) once nodes run 1.11.0; SECURITY_AUDIT O11 closed for 1.11.0 nodes
 - [x] Durable Object `/stream` glue in workerd (`relay/test/workerd.streams.e2e.ts` against `wrangler dev`)
 - [ ] full local end-to-end: `wrangler dev` relay + gateway, a local agent, an sshd container, `cloudana ssh` gets a shell
 - Verify: relay/gateway unit tests (auth, port pinning, back-pressure); local end-to-end with `wrangler dev` relay +

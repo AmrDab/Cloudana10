@@ -21,7 +21,7 @@ import type { Readable, Writable } from "node:stream";
 import { ApiError, client, type Client, type Deployment } from "./api.js";
 import { resolve, saveConfig } from "./config.js";
 import { readSite } from "./site.js";
-import { pipe, platformSocket, proxyCommand, sshProtocols, sshUrl, type SocketFactory } from "./ssh.js";
+import { DEFAULT_SITES_DOMAIN, hostFromUrl, pipe, platformSocket, proxyCommand, sshProtocols, sshUrl, trustedHost, type SocketFactory } from "./ssh.js";
 
 export interface Io {
   log: (line: string) => void;
@@ -72,7 +72,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   if (!cmd || !["deploy", "list", "get", "stop", "ssh"].includes(cmd)) return usage(io);
 
-  const { api, apiKey } = await resolve(env);
+  const { api, apiKey, sitesDomain } = await resolve(env);
   if (!apiKey) {
     io.error("no API key: run `cloudana login --key cld_sk_…` (console → Keys) or set CLOUDANA_API_KEY");
     return 1;
@@ -103,7 +103,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
         return 0;
       case "ssh":
         if (!arg) return usage(io, "ssh needs a workstation id");
-        return await ssh(c, arg, positionals.slice(2), { proxy: !!values.proxy, user: values.user, print: !!values.print, api: values.api }, apiKey, io);
+        return await ssh(
+          c, arg, positionals.slice(2),
+          { proxy: !!values.proxy, user: values.user, print: !!values.print, api: values.api, sitesDomain: sitesDomain ?? DEFAULT_SITES_DOMAIN },
+          apiKey, io,
+        );
     }
   } catch (err) {
     if (err instanceof ApiError) io.error(clean(`${err.code}: ${err.message}`));
@@ -144,7 +148,7 @@ async function ssh(
   c: Client,
   target: string,
   extra: string[],
-  o: { proxy: boolean; user?: string; print: boolean; api?: string },
+  o: { proxy: boolean; user?: string; print: boolean; api?: string; sitesDomain: string },
   apiKey: string,
   io: Io,
 ): Promise<number> {
@@ -154,8 +158,9 @@ async function ssh(
       io.error("cloudana ssh needs Node 22 or newer (its built-in WebSocket client)");
       return 1;
     }
-    // ssh passes the host name (%h); a bare id is looked up for its address.
-    const host = target.includes(".") ? target : hostOf((await c.get(target)).deployment);
+    // ssh passes the host name (%h): the key goes only to <uuid>.<sites domain>. A bare id is looked up, and its
+    // own URL from the API names the host. Checked before anything is opened or sent.
+    const host = target.includes(".") ? trustedHost(target, o.sitesDomain) : hostOf((await c.get(target)).deployment);
     const socket = ws(sshUrl(host), sshProtocols(apiKey));
     return pipe(socket, io.stdin ?? process.stdin, io.stdout ?? process.stdout, io.error);
   }
@@ -171,7 +176,8 @@ async function ssh(
   const host = hostOf(d);
   const user = o.user ?? d.spec?.access?.ssh?.user ?? "root";
   const cli = process.argv[1] ? path.resolve(process.argv[1]) : fileURLToPath(import.meta.url);
-  const proxy = proxyCommand(process.execPath, cli, o.api);
+  // The id, not %h: proxy mode then takes the host from the API, whatever sites domain this API serves.
+  const proxy = proxyCommand(process.execPath, cli, o.api, d.id);
   const args = ["-o", `ProxyCommand=${proxy}`, "-o", "ServerAliveInterval=30", ...extra, `${user}@${host}`];
   if (o.print) {
     io.log(`ssh -o 'ProxyCommand=cloudana ssh --proxy %h' -o ServerAliveInterval=30 ${user}@${host}`);
@@ -180,10 +186,10 @@ async function ssh(
   return (io.runSsh ?? runSsh)(args);
 }
 
-/** The workstation's host name under the user-content domain, from its gateway URL. */
+/** The workstation's host name under the user-content domain, from its gateway URL (its own id, https, no port). */
 function hostOf(d: Deployment): string {
   if (!d.url) throw new Error(`deployment ${d.id} has no address through the relay (a direct workstation: use the SSH command the console shows)`);
-  return new URL(d.url).host;
+  return hostFromUrl(d.id, d.url);
 }
 
 /** Runs the local ssh with the terminal attached; its exit code is ours. */

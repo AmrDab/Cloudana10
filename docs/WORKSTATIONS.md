@@ -104,7 +104,7 @@ Each template declares `kind: "workstation"`, `gpu` default, `access`, `workdir`
 
 Add to lib/services.ts group `compute`: `workstations` — "GPU workstations & rentals" — line "Jupyter, VS Code or a desktop on an assigned GPU." — status `early` (built; needs Docker + GPU nodes) — proof "Rented time, uptime probed; no subsidy." Add roadmap items: CLI, autoscaling, team accounts, cloud sync.
 
-## 9. Connecting through the relay (agents ≥ 1.10.0, 2026-11-16)
+## 9. Connecting through the relay (agents ≥ 1.11.0, 2026-11-16)
 
 A workstation placed on a node whose agent announces `relay-streams` is **relayed**: the node publishes no port at
 all (web and sshd listen on 127.0.0.1), and the API needs no public host for it. Everything reaches it through the

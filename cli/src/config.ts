@@ -11,6 +11,8 @@ export const DEFAULT_API = "https://api.cloudana.io";
 export interface Config {
   apiKey?: string;
   api?: string;
+  /** Where deployments live (`<id>.<sitesDomain>`): the only domain `cloudana ssh` sends the key to. */
+  sitesDomain?: string;
 }
 
 export function configPath(home = process.env.CLOUDANA_HOME ?? homedir()): string {
@@ -33,7 +35,11 @@ export async function saveConfig(c: Config): Promise<string> {
   return file;
 }
 
-export async function resolve(env: NodeJS.ProcessEnv = process.env): Promise<{ api: string; apiKey: string | null }> {
+export async function resolve(env: NodeJS.ProcessEnv = process.env): Promise<{ api: string; apiKey: string | null; sitesDomain: string | null }> {
   const c = await loadConfig();
-  return { api: (env.CLOUDANA_API ?? c.api ?? DEFAULT_API).replace(/\/$/, ""), apiKey: env.CLOUDANA_API_KEY ?? c.apiKey ?? null };
+  return {
+    api: (env.CLOUDANA_API ?? c.api ?? DEFAULT_API).replace(/\/$/, ""),
+    apiKey: env.CLOUDANA_API_KEY ?? c.apiKey ?? null,
+    sitesDomain: env.CLOUDANA_SITES_DOMAIN ?? c.sitesDomain ?? null,
+  };
 }

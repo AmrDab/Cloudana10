@@ -2,9 +2,11 @@
 import { describe, it, expect } from "vitest";
 import { PassThrough, Writable } from "node:stream";
 import { run } from "../src/cli.js";
-import { ACK_EVERY, WINDOW_BYTES, pipe, proxyCommand, sshProtocols, sshUrl, type SocketLike } from "../src/ssh.js";
+import { ACK_EVERY, WINDOW_BYTES, hostFromUrl, pipe, proxyCommand, sshProtocols, sshUrl, trustedHost, type SocketLike } from "../src/ssh.js";
 
 const KEY = "cld_sk_" + "a".repeat(40);
+const ID = "6f1c2a3e-1111-4222-8333-444455556666";
+const HOST = `${ID}.cloudana.run`;
 
 /** A scripted WebSocket: records what the CLI sends; the test drives open/message/close. */
 function fakeSocket() {
@@ -116,46 +118,60 @@ describe("helpers", () => {
     expect(() => sshProtocols("a b")).toThrow();
     expect(proxyCommand("C:\\Program Files\\nodejs\\node.exe", "/opt/cli.js")).toBe('"C:\\Program Files\\nodejs\\node.exe" "/opt/cli.js" ssh --proxy %h');
     expect(() => proxyCommand('a"b', "c")).toThrow();
+    expect(proxyCommand("node", "cli", undefined, ID)).toBe(`"node" "cli" ssh --proxy ${ID}`);
+    expect(() => proxyCommand("node", "cli", undefined, "x; rm -rf ~")).toThrow();
+  });
+
+  it("sends the key only to <uuid>.<sites domain>, and takes a host from the API only under the deployment's own id", () => {
+    expect(trustedHost(HOST.toUpperCase(), "cloudana.run")).toBe(HOST);
+    expect(trustedHost(`${ID}.sites.example.test`, "sites.example.test")).toBe(`${ID}.sites.example.test`);
+    for (const bad of ["evil.com", `${ID}.cloudana.run.evil.com`, `${ID}.evil.run`, "ws-1.cloudana.run", `x.${ID}.cloudana.run`, `${HOST}:8443`, "cloudana.run"]) {
+      expect(() => trustedHost(bad, "cloudana.run"), bad).toThrow(/refusing to send your API key/);
+    }
+    expect(hostFromUrl(ID, `https://${HOST}`)).toBe(HOST);
+    for (const bad of [`http://${HOST}`, `https://${HOST}:444`, "https://6f1c2a3e-0000-4222-8333-444455556666.cloudana.run", "https://evil.com"]) {
+      expect(() => hostFromUrl(ID, bad), bad).toThrow(/refusing/);
+    }
   });
 });
 
 describe("cloudana ssh", () => {
-  const ws = (status: string, kind = "workstation", url: string | null = "https://ws-1.cloudana.run") => ({
+  const ws = (status: string, kind = "workstation", url: string | null = `https://${HOST}`) => ({
     status: "success",
-    deployment: { id: "ws-1", name: "box", kind, status, url, spec: { access: { ssh: { user: "ubuntu" } } } },
+    deployment: { id: ID, name: "box", kind, status, url, spec: { access: { ssh: { user: "ubuntu" } } } },
     events: [],
   });
   const fakeFetch = (body: unknown) =>
     (async (url: string, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${KEY}`);
-      expect(String(url)).toBe("https://api.example.test/v1/deployments/ws-1");
+      expect(String(url)).toBe(`https://api.example.test/v1/deployments/${ID}`);
       return new Response(JSON.stringify(body), { status: 200 });
     }) as unknown as typeof fetch;
   const env = { CLOUDANA_API_KEY: KEY, CLOUDANA_API: "https://api.example.test" };
 
   it("runs ssh with this CLI as ProxyCommand and the workstation's user and host", async () => {
     let args: string[] = [];
-    const code = await run(["ssh", "ws-1", "--", "-L", "8888:localhost:8888"], {
+    const code = await run(["ssh", ID, "--", "-L", "8888:localhost:8888"], {
       log: () => {}, error: () => {}, env, fetch: fakeFetch(ws("running")), runSsh: async (a) => ((args = a), 7),
     });
     expect(code).toBe(7);
     expect(args[0]).toBe("-o");
-    expect(args[1]).toMatch(/^ProxyCommand=".+" ".+" ssh --proxy %h$/);
-    expect(args.slice(2)).toEqual(["-o", "ServerAliveInterval=30", "-L", "8888:localhost:8888", "ubuntu@ws-1.cloudana.run"]);
+    expect(args[1]).toMatch(new RegExp(`^ProxyCommand=".+" ".+" ssh --proxy ${ID}$`));
+    expect(args.slice(2)).toEqual(["-o", "ServerAliveInterval=30", "-L", "8888:localhost:8888", `ubuntu@${HOST}`]);
   });
 
   it("--print shows the plain ssh line; -l picks the user", async () => {
     const lines: string[] = [];
-    await run(["ssh", "ws-1", "--print", "-l", "root"], { log: (l) => lines.push(l), error: () => {}, env, fetch: fakeFetch(ws("running")) });
-    expect(lines).toEqual(["ssh -o 'ProxyCommand=cloudana ssh --proxy %h' -o ServerAliveInterval=30 root@ws-1.cloudana.run"]);
+    await run(["ssh", ID, "--print", "-l", "root"], { log: (l) => lines.push(l), error: () => {}, env, fetch: fakeFetch(ws("running")) });
+    expect(lines).toEqual([`ssh -o 'ProxyCommand=cloudana ssh --proxy %h' -o ServerAliveInterval=30 root@${HOST}`]);
   });
 
   it("refuses what is not a running relayed workstation", async () => {
     const errors: string[] = [];
     const io = (body: unknown) => ({ log: () => {}, error: (l: string) => errors.push(l), env, fetch: fakeFetch(body), runSsh: async () => 0 });
-    expect(await run(["ssh", "ws-1"], io(ws("queued")))).toBe(1);
-    expect(await run(["ssh", "ws-1"], io(ws("running", "container")))).toBe(1);
-    expect(await run(["ssh", "ws-1"], io(ws("running", "workstation", null)))).toBe(1);
+    expect(await run(["ssh", ID], io(ws("queued")))).toBe(1);
+    expect(await run(["ssh", ID], io(ws("running", "container")))).toBe(1);
+    expect(await run(["ssh", ID], io(ws("running", "workstation", null)))).toBe(1);
     expect(errors.join("\n")).toMatch(/queued[\s\S]*not a workstation[\s\S]*direct workstation/);
   });
 
@@ -163,7 +179,7 @@ describe("cloudana ssh", () => {
     const f = fakeSocket();
     let opened: { url: string; protocols: string[] } | null = null;
     const out = sink();
-    const p = run(["ssh", "--proxy", "ws-1.cloudana.run"], {
+    const p = run(["ssh", "--proxy", HOST], {
       log: () => { throw new Error("stdout is the SSH channel: nothing may be logged there"); },
       error: () => {},
       env,
@@ -172,7 +188,7 @@ describe("cloudana ssh", () => {
       stdout: out.out,
     });
     await tick();
-    expect(opened).toEqual({ url: "wss://ws-1.cloudana.run/_cld/ssh", protocols: ["cloudana-tcp.v1", `bearer.${KEY}`] });
+    expect(opened).toEqual({ url: `wss://${HOST}/_cld/ssh`, protocols: ["cloudana-tcp.v1", `bearer.${KEY}`] });
     f.ws.onopen!({});
     f.ws.onmessage!({ data: new TextEncoder().encode("banner").buffer });
     await tick();
@@ -183,7 +199,51 @@ describe("cloudana ssh", () => {
 
   it("--proxy says so on Node without a WebSocket client", async () => {
     const errors: string[] = [];
-    expect(await run(["ssh", "--proxy", "ws-1.cloudana.run"], { log: () => {}, error: (l) => errors.push(l), env, webSocket: null })).toBe(1);
+    expect(await run(["ssh", "--proxy", HOST], { log: () => {}, error: (l) => errors.push(l), env, webSocket: null })).toBe(1);
     expect(errors[0]).toMatch(/Node 22/);
+  });
+
+  it("--proxy refuses a foreign host and sends nothing: no socket, no API call", async () => {
+    for (const host of ["evil.com", `${ID}.cloudana.run.evil.com`, `${ID}.evil.run`]) {
+      const errors: string[] = [];
+      let sockets = 0;
+      let calls = 0;
+      const code = await run(["ssh", "--proxy", host], {
+        log: () => {},
+        error: (l) => errors.push(l),
+        env,
+        fetch: (async () => ((calls++), new Response("{}"))) as unknown as typeof fetch,
+        webSocket: () => ((sockets++), fakeSocket().ws),
+      });
+      expect(code, host).toBe(1);
+      expect([sockets, calls], host).toEqual([0, 0]);
+      expect(errors.join(" "), host).toMatch(/refusing to send your API key/);
+    }
+  });
+
+  it("--proxy honours a configured sites domain, and with an id takes the host from the API's URL for it", async () => {
+    const opened: string[] = [];
+    const io = (extraEnv: Record<string, string>, fetchBody?: unknown) => ({
+      log: () => {},
+      error: () => {},
+      env: { ...env, ...extraEnv },
+      fetch: fetchBody ? fakeFetch(fetchBody) : undefined,
+      webSocket: (url: string) => {
+        opened.push(url);
+        const f = fakeSocket();
+        queueMicrotask(() => f.ws.onclose!({ code: 1000, reason: "" }));
+        return f.ws;
+      },
+      stdin: new PassThrough(),
+      stdout: sink().out,
+    });
+    await run(["ssh", "--proxy", `${ID}.sites.example.test`], io({ CLOUDANA_SITES_DOMAIN: "sites.example.test" }));
+    await run(["ssh", "--proxy", ID], io({}, ws("running")));
+    expect(opened).toEqual([`wss://${ID}.sites.example.test/_cld/ssh`, `wss://${HOST}/_cld/ssh`]);
+    // The API's answer is checked too: a URL that is not the deployment's own address is refused.
+    const errors: string[] = [];
+    const evil = { ...io({}, { ...ws("running"), deployment: { ...ws("running").deployment, url: "https://evil.com" } }), error: (l: string) => errors.push(l) };
+    expect(await run(["ssh", "--proxy", ID], evil)).toBe(1);
+    expect(opened).toHaveLength(2);
   });
 });

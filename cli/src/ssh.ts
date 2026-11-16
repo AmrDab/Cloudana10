@@ -37,6 +37,36 @@ export function platformSocket(): SocketFactory | null {
 }
 
 const HOST = /^[A-Za-z0-9.-]{1,253}(:\d{1,5})?$/;
+/** The sites domain the CLI sends its key to when none is configured (CLOUDANA_SITES_DOMAIN / config sitesDomain). */
+export const DEFAULT_SITES_DOMAIN = "cloudana.run";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The only hosts the API key is ever sent to: exactly `<deployment uuid>.<sites domain>`, no port. Anything else
+ * (a typo, a look-alike, a host an attacker put in an ssh config) is refused before a connection is opened.
+ */
+export function trustedHost(host: string, domain: string): string {
+  const h = host.toLowerCase();
+  const d = domain.toLowerCase().replace(/^\.+|\.+$/g, "");
+  const suffix = `.${d}`;
+  if (!d || !h.endsWith(suffix) || !UUID.test(h.slice(0, -suffix.length))) {
+    throw new Error(`refusing to send your API key to ${host}: SSH goes only to <deployment id>.${d || DEFAULT_SITES_DOMAIN} (CLOUDANA_SITES_DOMAIN sets another sites domain)`);
+  }
+  return h;
+}
+
+/** A workstation's host from the URL the API gave it: https://<its own id>.<sites domain>, checked like trustedHost. */
+export function hostFromUrl(id: string, url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error(`deployment ${id} has an unusable URL`);
+  }
+  const label = u.hostname.split(".")[0];
+  if (u.protocol !== "https:" || u.port || label !== id.toLowerCase()) throw new Error(`refusing to send your API key to ${u.host}: it is not ${id}'s own address`);
+  return trustedHost(u.hostname, u.hostname.slice(label.length + 1));
+}
 
 /** The SSH socket URL of a deployment host (`<id>.cloudana.run`). */
 export function sshUrl(host: string): string {
@@ -130,10 +160,11 @@ function ackOf(text: string): number | null {
  * The ProxyCommand that runs this CLI in proxy mode. Each part is double-quoted (paths with spaces, Windows paths
  * with backslashes kept as they are); a part that itself holds a quote is refused rather than escaped wrongly.
  */
-export function proxyCommand(node: string, cli: string, api?: string): string {
+export function proxyCommand(node: string, cli: string, api?: string, target = "%h"): string {
   const q = (s: string) => {
     if (/["\r\n]/.test(s)) throw new Error(`cannot quote ${JSON.stringify(s)} for ProxyCommand`);
     return `"${s}"`;
   };
-  return [q(node), q(cli), "ssh", "--proxy", ...(api ? ["--api", q(api)] : []), "%h"].join(" ");
+  if (!/^(%h|[A-Za-z0-9-]{1,64})$/.test(target)) throw new Error(`not a deployment id: ${target}`);
+  return [q(node), q(cli), "ssh", "--proxy", ...(api ? ["--api", q(api)] : []), target].join(" ");
 }

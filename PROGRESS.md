@@ -787,12 +787,12 @@ that remained:
   The hub builds two bridges on top: raw (SSH: the client's WebSocket is the stream, acks end to end) and WebSocket
   passthrough (the hub does the upgrade and RFC 6455 framing toward the app). Gateway: `wss://<id>.cloudana.run/_cld/ssh`
   (the API checks the bearer: wallet session or `cld_sk_` key with the deployments scope, owner only, every connect) and
-  upgrade passthrough for relayed containers and workstations. Agent 1.10.0 announces `relay-streams`; the API relays
+  upgrade passthrough for relayed containers and workstations. Agent 1.11.0 announces `relay-streams`; the API relays
   workstations on such nodes (no public host needed) and shows `cloudana ssh <id>`; the CLI gains `cloudana ssh`
   (ProxyCommand pipe, or runs ssh with it).
 - **Why.** TRUST_TIERS §5: a provider publishes nothing; SSH on the node's public IP (SECURITY_AUDIT O11) ends for
   nodes that upgrade. Old agents keep the HTTP framing untouched and keep direct workstations (B-13 finishes once
-  nodes run 1.10.0).
+  nodes run 1.11.0).
 - **Tests.** relay: 20 new (stream lifecycle, window, limits, idle/linger, both bridges, frame codec); gateway: 9 new
   (auth through the API, refusals passed on, upgrade passthrough, no upgrade without relay-streams); agent: relay
   selftest port pinning (`streamPort`), e2e +20 checks through the real hub and agent (3 MiB echo through the raw
@@ -803,7 +803,7 @@ that remained:
   and closes 1000, not_serving for an unknown deployment, a real WebSocket app through the passthrough), and the
   existing `workerd.e2e.ts` still passes (14).
 - **Not verified.** The gateway returning the relay's 101 to a real client through Cloudflare, and a real
-  `ssh` session against an sshd container on a 1.10.0 node (todo Phase 3 "Verify").
+  `ssh` session against an sshd container on a 1.11.0 node (todo Phase 3 "Verify").
 
 ## Evidence summary
 

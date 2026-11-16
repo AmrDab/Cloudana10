@@ -4,7 +4,7 @@
  * answers the owner only, and a relayed workstation's connect.ssh is `cloudana ssh <id>`.
  */
 import { setupV1Db } from "./helpers/v1-db.js";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { buildApp } from "../src/app.js";
 import { getD1 } from "../src/lib/storage.js";
@@ -178,6 +178,22 @@ describe("POST /v1/deployments/{id}/ssh (the gateway's SSH lookup)", () => {
     expect((await sshLookup(id, await generateToken(OTHER))).status).toBe(404);
     expect((await sshLookup(id, null)).status).toBe(401);
     expect((await sshLookup(id, await generateToken(OWNER), false)).status).toBe(401);
+  });
+
+  it("is limited per caller: another wallet exhausting its own bucket does not refuse the owner", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Math.ceil(Date.now() / 60_000) * 60_000 + 1_000); // well inside one rate-limit window
+      const id = await runningWorkstation(await fleetNode(true));
+      const attacker = await generateToken(OTHER);
+      const answers: number[] = [];
+      for (let i = 0; i < 61; i++) answers.push((await sshLookup(id, attacker)).status);
+      expect(answers.slice(0, 60).every((s) => s === 404)).toBe(true);
+      expect(answers[60]).toBe(429);
+      expect((await sshLookup(id, await generateToken(OWNER))).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is 409 for a direct workstation, a node without relay-streams, or one not running", async () => {

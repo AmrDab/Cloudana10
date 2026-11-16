@@ -16,6 +16,8 @@ node dist/cli.js ssh <id>                    # SSH to a relayed workstation (Nod
   `--print` prints the plain line instead: `ssh -o 'ProxyCommand=cloudana ssh --proxy %h' root@<id>.cloudana.run`.
   `ssh --proxy <host>` is that ProxyCommand: it pipes stdin/stdout through `wss://<host>/_cld/ssh` and the relay to the
   workstation's sshd (docs/WORKSTATIONS.md §9). SSH stays end to end; the key needs the `deployments` scope.
+  The key is only ever sent to `<deployment id>.<sites domain>` (`cloudana.run`, or `CLOUDANA_SITES_DOMAIN` /
+  `sitesDomain` in the config for another stack); any other host is refused before a connection opens.
 
 - A static site is every file in the folder (paths relative, forward slashes), `index.html` at the root required,
   2 MB decoded at most (the API's cap). `deploy` waits for the node to serve it and prints the `https://<id>.cloudana.run`
