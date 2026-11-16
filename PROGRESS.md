@@ -844,6 +844,38 @@ that remained:
 - **Not verified.** The gateway returning the relay's 101 to a real client through Cloudflare, and a real
   `ssh` session against an sshd container on a 1.11.0 node (todo Phase 3 "Verify").
 
+### 41 · Machines: rentable Ubuntu boxes over SSH, with encrypted volumes (2026-11-16)
+- Why: phase 4 of the trust-tiers plan (`tasks/todo.md`, docs/TRUST_TIERS.md §5–§6): rent a Linux machine on contributed
+  hardware, root only inside gVisor, its home volume (/root) encrypted at rest. Design and limits: docs/WORKSTATIONS.md §11.
+- Image `images/machine` (Ubuntu 24.04, openssh-server, sudo, curl, tini; key from `SSH_PUBLIC_KEY`/`PUBLIC_KEY`; host
+  keys at first start; keys only, no PAM) and `.github/workflows/machine-image.yml` (build + smoke test under runc and
+  runsc on PRs; publish, sign and SBOM on main by `images/machine/VERSION`, never overwriting a version). The login is
+  **root by key**: a user with passwordless sudo was the plan, and the smoke test showed sudo refused under
+  no-new-privileges and, under gVisor, even without it (a setuid exec does not raise privileges there).
+- sshd under the agent's flags (`--cap-drop=ALL --security-opt=no-new-privileges`): binds, then fails every login at its
+  privsep chroot. A machine (that image, no GPU, relayed, `sandbox` node only) keeps every flag and gets `MACHINE_CAPS` back
+  (SETUID, SETGID, SYS_CHROOT, CHOWN, FOWNER, DAC_OVERRIDE, AUDIT_WRITE: `node-agent/src/workstation.ts machineArgs`); elsewhere the agent refuses it (`node cannot serve:`).
+- Encrypted volumes (agent 1.12.0, `node-agent/src/volumes.ts`, capability `encrypted-volumes`): LUKS2 on a sparse loop
+  file, ext4, bind-mounted at the workdir (`/root` for machines). Opt-in `CLOUDANA_ENCRYPTED_VOLUMES=1` plus a real
+  format/mount/reopen/erase round trip at boot. The API makes a 32-byte key per deployment per node on its first start
+  instruction, seals it to the node (`client/api/src/lib/sealed.ts`, the v2 format with aad `cloudana-volume-key:<id>`;
+  `shared/sealed.ts volumeKeyAad`), stores only the sealed copy (`deployment_volume_keys`) and sends it as `volumeKey`;
+  the agent passes it to cryptsetup on stdin. Stop closes; purge or `keepDays` erases the keyslots and deletes the file.
+- API: template `machine-ubuntu` (its image joins the curated list); `checkSpec` holds machines to CPU, SSH, a 10–100 GB
+  volume, login root or cloudana, and marks the volume encrypted; `fits()` requires `encrypted-volumes` for an encrypted
+  volume and `sandbox`, `relay` and `relay-streams` for a machine (relayed SSH only, placement and preemption); the announce keeps `encrypted-volumes`. Declared the
+  @noble packages the API already had through viem.
+- Console: Run → Machines (`?tab=machines`): S/M/L sizes, SSH key, duration, encrypted volume size and keep days, the
+  Trust selector, a free-beta-credits note with the credits button, price per hour; the list (shared with workstations,
+  each tab its own) shows `cloudana ssh <id>`. Machine prices are the existing rates (docs/PRICES_USD.md "Machines").
+- Tests: agent `volumes.selftest.ts` (60: argv and order against a fake cryptsetup, key only on stdin and never logged,
+  wrong key, failed format/mount, wipe, self-check, machine flags, the manager from start to purge, relayed SSH on 127.0.0.1, refusals (no key, wrong key, no sandbox, not relayed), the API's
+  golden sealed key opens); API `tests/machines.test.ts` (8: template and allowlist, spec rules, announce, placement gate (encrypted-volumes, sandbox, relay, relay-streams each required; relayed)
+  and the sealed key opening with the node's key, the golden payload); console `machines/model.test.ts` (3). Image:
+  smoke test in CI. Agent selftests, API (568 after the merge with #108/#110; the int8-model timing flake passes alone), console check/test/build green.
+- Not built: a real node run (phase 5); reopening a volume after a node reboot (the machine fails instead of running
+  unencrypted). Merged with #108: machines are relayed workstations, reached with `cloudana ssh <id>`.
+
 ## Evidence summary
 
 | Suite | Baseline | Now |

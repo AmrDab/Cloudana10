@@ -14,6 +14,7 @@ import { z } from "@hono/zod-openapi";
 import { getEnv } from "../config/env.js";
 import { WORKSTATION_TEMPLATES } from "./template-workstations.js";
 import { GPU_TIERS, requestTier, type GpuTier } from "../../../../shared/gpu-tier.js";
+import { STREAMS_CAPABILITY } from "../../../../shared/relay-protocol.js";
 
 export const STATIC_MAX_BYTES = 2 * 1024 * 1024;
 export const CONTAINER_SPEC_MAX_BYTES = 32 * 1024;
@@ -53,6 +54,55 @@ export const trustOf = (spec: { trust?: TrustTier }): TrustTier => spec.trust ??
  * the egress policy; until agents advertise them, nothing community is placed.
  */
 export const COMMUNITY_CAPABILITIES = ["sandbox", "egress-v2"] as const;
+
+/**
+ * Machines (docs/WORKSTATIONS.md §11): a workstation running the Cloudana machine image (images/machine; this tag is
+ * images/machine/VERSION). CPU only, SSH only, login root by key (root of the box, inside gVisor), /root on an encrypted
+ * volume of MACHINE_VOLUME_GB. The template (template-workstations.ts MACHINE_IMAGE) pins one published version.
+ */
+const MACHINE_IMAGE_RE = /^ghcr\.io\/amrdab\/cloudana-machine:\d+\.\d+\.\d+$/;
+export const isMachine = (spec: { image?: unknown }) => typeof spec.image === "string" && MACHINE_IMAGE_RE.test(spec.image);
+export const MACHINE_VOLUME_GB = { min: 10, max: 100 } as const;
+/** The login the connect command uses; `cloudana` (uid 1000, same key) is the unprivileged account. */
+export const MACHINE_USER = "root";
+const MACHINE_LOGINS = ["root", "cloudana"];
+/** Agent capability: workstation volumes encrypted at rest (node-agent/src/volumes.ts). */
+export const ENCRYPTED_VOLUMES_CAPABILITY = "encrypted-volumes";
+/** Agent capability: non-GPU containers under gVisor. */
+export const SANDBOX_CAPABILITY = "sandbox";
+
+/**
+ * What a machine is reached through: the relay with byte streams, so its SSH is published on the node's 127.0.0.1 only
+ * and the tenant connects with `cloudana ssh <id>` — never on the provider's public IP (docs/TRUST_TIERS.md §5).
+ */
+export const MACHINE_RELAY_CAPABILITIES = ["relay", STREAMS_CAPABILITY] as const;
+
+/**
+ * Capabilities a container spec needs beyond `container`/`gpu`: an encrypted volume needs `encrypted-volumes`; a
+ * machine also needs `sandbox` (the agent grants its root only under gVisor and refuses it elsewhere) and the relay with
+ * streams (MACHINE_RELAY_CAPABILITIES: relayed SSH only).
+ */
+export function requiredCapabilities(spec: { image?: unknown; volume?: { encrypted?: boolean } }): string[] {
+  return [
+    ...(spec.volume?.encrypted === true ? [ENCRYPTED_VOLUMES_CAPABILITY] : []),
+    ...(isMachine(spec) ? [SANDBOX_CAPABILITY, ...MACHINE_RELAY_CAPABILITIES] : []),
+  ];
+}
+
+/** Why a machine spec is not one (null = fine). Machines are CPU-only and SSH-only, with an encrypted home volume. */
+function machineProblem(w: WorkstationSpec): string | null {
+  if ((w.gpu?.count ?? 0) > 0) return "spec.gpu: machines are CPU-only (GPU boxes are workstations)";
+  if (!w.access.ssh) return "spec.access.ssh: a machine is reached over SSH; add your public key";
+  if (w.access.web) return "spec.access.web: machines have no web access (SSH only)";
+  if (!w.volume) return `spec.volume: a machine needs a volume of ${MACHINE_VOLUME_GB.min}–${MACHINE_VOLUME_GB.max} GB for its home directory`;
+  if (w.volume.sizeGb < MACHINE_VOLUME_GB.min || w.volume.sizeGb > MACHINE_VOLUME_GB.max) {
+    return `spec.volume.sizeGb: a machine's volume is ${MACHINE_VOLUME_GB.min}–${MACHINE_VOLUME_GB.max} GB`;
+  }
+  if (w.volume.encrypted === false) return "spec.volume.encrypted: a machine's volume is always encrypted";
+  if (w.user !== undefined) return "spec.user: a machine starts as the image's user (sshd runs as root and logs you in)";
+  if (w.access.ssh.user !== undefined && !MACHINE_LOGINS.includes(w.access.ssh.user)) return "spec.access.ssh.user: a machine's logins are root and cloudana";
+  return null;
+}
 
 const EnvKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/, "env keys must match [A-Za-z_][A-Za-z0-9_]*");
 
@@ -129,7 +179,14 @@ const WorkstationFields = z.object({
       })
       .optional(),
   }),
-  volume: z.object({ sizeGb: z.number().int().min(1).max(500), keepDays: z.number().int().min(0).max(30) }).optional(),
+  volume: z
+    .object({
+      sizeGb: z.number().int().min(1).max(500),
+      keepDays: z.number().int().min(0).max(30),
+      /** LUKS-encrypted on the node with a key sealed to it (docs/WORKSTATIONS.md §11.3); needs `encrypted-volumes`. Always on for machines. */
+      encrypted: z.boolean().optional(),
+    })
+    .optional(),
   // Template run fields for the node agent (§5/§6); copied from the template at create when absent.
   /** Where the volume is mounted. Agent default /workspace. */
   workdir: z.string().max(200).regex(/^\/[A-Za-z0-9._\-/]*$/, "workdir must be an absolute path").optional(),
@@ -225,6 +282,16 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
       return { ok: false, code: "validation_failed", message: "spec.expectsSecrets: workstations take no sealed secrets (the node issues the access token); remove it" };
     }
     delete (parsed.data as { expectsSecrets?: boolean }).expectsSecrets;
+  }
+  // Only workstations have volumes; a machine image anywhere else is just an image (the curated list decides).
+  if (kind === "workstation") {
+    const w = parsed.data as WorkstationSpec;
+    if (isMachine(w)) {
+      const why = machineProblem(w);
+      if (why) return { ok: false, code: "validation_failed", message: why };
+      w.volume!.encrypted = true;
+      w.access.ssh!.user ??= MACHINE_USER;
+    }
   }
   // Plain containers never run as root (the node refuses it too); workstations keep the image's user model.
   if (kind !== "workstation" && parsed.data.user && /^0(:|$)/.test(parsed.data.user)) {

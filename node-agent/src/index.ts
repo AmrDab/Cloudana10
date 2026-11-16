@@ -9,6 +9,7 @@ import { solveAssignedJob } from "../../pouw/src/index.ts";
 import { publicKeyOf } from "../../shared/sealed.ts";
 import { dockerAvailable, anyImageOptIn } from "./container.ts";
 import { hardeningSelfCheck, runscAvailable } from "./hardening.ts";
+import { DEFAULT_VOLUME_DIR, EncryptedVolumes, encryptedVolumesSelfCheck, realExecIn } from "./volumes.ts";
 import { STORAGE_CAPABILITY, StorageRole, storageQuotaGb, type StorageOp } from "./storage.ts";
 import { OPS_DEP, OpsServer } from "./ops.ts";
 import { dockerLogs } from "./container.ts";
@@ -90,6 +91,8 @@ const { api, name, site, publicHost: publicHostArg, ports } = parseArgs();
 /** Datacenter fleet token: binds this node to the fleet owner's wallet on announce, no bind link. */
 const fleetToken = process.env.CLOUDANA_FLEET_TOKEN?.trim() || undefined;
 const allowContainers = /^(1|true|yes)$/i.test(process.env.CLOUDANA_ALLOW_CONTAINERS ?? "");
+/** CLOUDANA_ENCRYPTED_VOLUMES=1: try LUKS volumes (root, cryptsetup, e2fsprogs; CLOUDANA_VOLUME_DIR, default /var/lib/cloudana/volumes). */
+const encryptedVolumesOptIn = /^(1|true|yes)$/i.test(process.env.CLOUDANA_ENCRYPTED_VOLUMES ?? "");
 /** Run images outside the curated list (announced as `any-image`; GPU endpoints need it). */
 const anyImage = anyImageOptIn();
 const instructionSigner = (process.env.CLOUDANA_INSTRUCTION_SIGNER?.trim() || DEFAULT_INSTRUCTION_SIGNER) ?? null;
@@ -180,8 +183,16 @@ async function main() {
   // gVisor (docs/TRUST_TIERS.md §5): with runsc registered, every non-GPU tenant container runs under it → `sandbox`.
   const sandbox = containersReady && (await runscAvailable());
   if (containersReady) log(sandbox ? "sandbox: gVisor (runsc) found — non-GPU containers run under it" : "sandbox: gVisor (runsc) not registered with Docker — containers use the default runtime, `sandbox` not announced");
+  // Encrypted workstation volumes (docs/WORKSTATIONS.md §11.3): opt-in, then a real LUKS round trip → `encrypted-volumes`.
+  let volumes: EncryptedVolumes | undefined;
+  if (encryptedVolumesOptIn && containersReady) {
+    const v = new EncryptedVolumes(process.env.CLOUDANA_VOLUME_DIR?.trim() || DEFAULT_VOLUME_DIR, realExecIn, log);
+    const check = await encryptedVolumesSelfCheck(v, process.getuid?.() === 0);
+    if (check.ok) volumes = v;
+    log(check.ok ? `encrypted volumes: LUKS round trip passed in ${v.dir}` : `encrypted volumes refused: ${check.reason}`);
+  } else if (encryptedVolumesOptIn) log("CLOUDANA_ENCRYPTED_VOLUMES is set but containers are off — ignored");
   const manifest: Manifest = detectHardware(); // gpus come from nvidia-smi (3 s timeout; [] without it)
-  const workTypes = [...capabilities(containersReady, manifest.gpus, anyImage, sandbox), ...(storageGb > 0 ? [STORAGE_CAPABILITY] : [])];
+  const workTypes = [...capabilities(containersReady, manifest.gpus, anyImage, sandbox, !!volumes), ...(storageGb > 0 ? [STORAGE_CAPABILITY] : [])];
   if (anyImage && !containersReady) log("CLOUDANA_ANY_IMAGE is set but containers are off — ignored");
   log(`capabilities: ${workTypes.join(", ")} · serving on ${publicHost}:${ports[0]}-${ports[1]}`);
 
@@ -192,6 +203,7 @@ async function main() {
     privateKey,
     containersReady,
     sandbox,
+    volumes,
     gpuCount: workTypes.includes("gpu") ? manifest.gpus.length : 0,
     gpus: workTypes.includes("gpu") ? manifest.gpus : [],
     // Only starts read it, and they come from heartbeats, after `relay` below exists.

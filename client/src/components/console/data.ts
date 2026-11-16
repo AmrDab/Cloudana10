@@ -308,8 +308,11 @@ export type WorkstationSpec = {
   gpu?: { count: number; minVramGb?: number; class?: GpuClass };
   tier: WorkstationTier;
   maxHours: number;
-  access: { web?: { port: number; path?: string }; ssh?: { publicKey: string } };
-  volume?: { sizeGb: number; keepDays: number };
+  access: { web?: { port: number; path?: string }; ssh?: { publicKey: string; user?: string } };
+  /** encrypted: LUKS on the node, key sealed to it (machines always; docs/WORKSTATIONS.md §11). */
+  volume?: { sizeGb: number; keepDays: number; encrypted?: boolean };
+  workdir?: string;
+  sshPort?: number;
   placement?: { fleetId: string };
   trust?: TrustTier;
 };

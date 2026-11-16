@@ -519,11 +519,14 @@ gated by advertised capabilities.
 ### Phase 4 — machines (agent + images + console)
 - [x] gVisor: agent detects `runsc` in `docker info`, runs tenant containers with `--runtime=runsc`, advertises `sandbox`
       (agent 1.10.0, PROGRESS 38; GPU containers/workstations stay on the default runtime and are not sandboxed)
-- [ ] Cloudana machine image `ghcr.io/amrdab/cloudana-machine` (Ubuntu 24.04 + sshd, key from env), built in CI
-- [ ] encrypted volumes: per-deployment key sealed to the node, held in memory; wipe on purge / `keepDays`
-      (design note first: gocryptfs vs LUKS-on-loop under the agent's privileges)
-- [ ] console: "Machines" (CPU sizes; GPU stays under workstations), free beta credits label, `cloudana ssh` command
-- [ ] docs: WORKSTATIONS.md, CAPABILITY_MATRIX, ARCHITECTURE §5, PRICES_USD (machine prices = existing CPU/RAM/volume rates)
+- [x] Cloudana machine image `ghcr.io/amrdab/cloudana-machine` (Ubuntu 24.04 + sshd, key from env), built and
+      smoke-tested in CI under runc and gVisor; login root by key (sudo cannot work under gVisor) (PROGRESS 41)
+- [x] encrypted volumes: LUKS2 on a loop file (design note: docs/WORKSTATIONS.md §11.3); per-deployment key made and
+      sealed to the node by the API, opened into cryptsetup's stdin only; wipe on purge / `keepDays`; agent 1.12.0
+      capability `encrypted-volumes`; machines placed only with it, `sandbox` and `relay-streams` (PROGRESS 41)
+- [x] console: "Machines" (CPU sizes; GPU stays under workstations), free beta credits label, `cloudana ssh` command
+- [x] docs: WORKSTATIONS.md §11, CAPABILITY_MATRIX, PRICES_USD (machine prices = existing CPU/RAM/volume rates),
+      TRUST_TIERS as-built and §6 disclosure (only the volume is encrypted), ARCHITECTURE §5 (machines)
 - Verify: agent tests; a real machine on node #1 (below)
 
 ### Phase 5 — node #1 hosts machines; Fable end-to-end test

@@ -7,7 +7,7 @@ import type { TrustTier } from "@/components/console/data";
 /** docs/TRUST_TIERS.md §6, verbatim (after the tier's name). */
 export const TRUST_DISCLOSURE: Record<TrustTier, string> = {
   community:
-    "runs on a stranger's computer. Your traffic is encrypted, and your disk is encrypted at rest and wiped when you're done, but the person who owns the machine could read what it's doing while it runs. Use it for code and data you'd put on a public server.",
+    "runs on a stranger's computer. Your traffic is encrypted, and your volume (your home directory, /root) is encrypted at rest and wiped when you're done; the rest of the system disk is not encrypted. The person who owns the machine could read what it's doing while it runs. Use it for code and data you'd put on a public server.",
   verified:
     "runs only on providers Cloudana has identity-checked who signed our provider agreement. Fit for business data that is not regulated. It is a contractual guarantee, not a technical one.",
 };

@@ -40,6 +40,16 @@ export function sealedEnvAad(deploymentId: string): string {
   return `cloudana-deployment:${deploymentId}`;
 }
 
+/**
+ * The associated data of a deployment's volume key (encrypted workstation volumes, docs/WORKSTATIONS.md §11). The API
+ * seals the key with it; the agent opens it with it. Distinct from sealedEnvAad, so a volume key can never be opened as
+ * environment, nor environment as a volume key.
+ */
+export function volumeKeyAad(deploymentId: string): string {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(deploymentId)) throw new Error("invalid deployment id");
+  return `cloudana-volume-key:${deploymentId}`;
+}
+
 /** 2 for a bound payload, 1 for a legacy one, null for anything that is not a sealed payload at all. */
 export function sealedVersion(sealedBase64: string): 1 | 2 | null {
   let buf: Uint8Array;

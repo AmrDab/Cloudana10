@@ -14,7 +14,8 @@ export type WorkstationSpec = ContainerSpec & {
   tier?: "on-demand" | "interruptible";
   maxHours?: number;
   access: { web?: { port: number; path?: string }; ssh?: { publicKey: string } };
-  volume?: { sizeGb: number; keepDays: number };
+  /** encrypted: LUKS on the node, key sealed on the start instruction (volumes.ts); needs `encrypted-volumes`. */
+  volume?: { sizeGb: number; keepDays: number; encrypted?: boolean };
   workdir?: string; // volume mount point, default /workspace
   sshPort?: number; // container port of sshd, default 22
   tokenEnv?: string; // env var the app reads its web token / password from (JUPYTER_TOKEN, PASSWORD…)
@@ -61,9 +62,10 @@ function port(p: unknown, what: string): number {
  * outside its curated list — what GPU endpoints need (docs/V4_ENDPOINTS_CONTRACT.md). With containers the node also
  * announces `egress-v2` (the self-check installed and verified every egress rule, mail ports included) and, when
  * Docker has the gVisor runtime registered (the `sandbox` argument), `sandbox`: every non-GPU container it starts
- * runs under runsc (docs/TRUST_TIERS.md §4–§5).
+ * runs under runsc (docs/TRUST_TIERS.md §4–§5). `encrypted-volumes` when the operator opted in and the LUKS round trip
+ * passed at boot (volumes.ts encryptedVolumesSelfCheck): workstation volumes that ask for it are encrypted at rest.
  */
-export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = false, sandbox = false): string[] {
+export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = false, sandbox = false, encryptedVolumes = false): string[] {
   return [
     "matmul",
     "int8-mlp",
@@ -74,8 +76,41 @@ export function workTypes(containersReady: boolean, gpus: GpuInfo[], anyImage = 
     ...(containersReady && anyImage ? ["any-image"] : []),
     ...(containersReady ? ["egress-v2"] : []),
     ...(containersReady && sandbox ? ["sandbox"] : []),
+    ...(containersReady && encryptedVolumes ? ["encrypted-volumes"] : []),
   ];
 }
+
+/**
+ * The Cloudana machine image (images/machine): Ubuntu with sshd, login root by key (root inside gVisor). The API pins
+ * one version (client/api template-workstations.ts MACHINE_IMAGE); any published version is recognised here.
+ */
+export const MACHINE_IMAGE = /^ghcr\.io\/amrdab\/cloudana-machine:\d+\.\d+\.\d+$/;
+export const isMachineImage = (image: unknown) => typeof image === "string" && MACHINE_IMAGE.test(image);
+
+/**
+ * Capabilities a machine gets back after --cap-drop=ALL, only under gVisor — the smallest set that works, found by
+ * images/machine/smoke-test.sh dropping and adding one at a time: without SETUID, SETGID or SYS_CHROOT nobody logs in
+ * (sshd's privilege separation and the login itself); without CHOWN an interactive login gets no pty; without FOWNER a
+ * non-root user's interactive login gets no pty under gVisor (sshd sets the mode of a pty it has just given away);
+ * without AUDIT_WRITE sshd refuses a pty under runc (gVisor has no audit subsystem, but the set must not depend on
+ * that); without DAC_OVERRIDE root cannot apt-get install. FSETID, KILL and NET_BIND_SERVICE were not needed (Docker
+ * lets a container bind ports below 1024). These are capabilities of root inside the gVisor sandbox, not on the host
+ * kernel. With --cap-drop=ALL alone sshd starts but every login fails at its privsep chroot.
+ */
+export const MACHINE_CAPS = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID", "SYS_CHROOT", "AUDIT_WRITE"];
+
+/**
+ * A machine (the machine image, no GPU, on a sandbox node) gets MACHINE_CAPS back on top of the full workstation
+ * hardening, no-new-privileges included: the tenant logs in as root (by key), so nothing needs a setuid binary — and
+ * under gVisor a setuid exec does not raise privileges anyway. Anywhere else (no gVisor, or a GPU) the box gets the
+ * plain workstation flags, and the agent refuses to start a machine there at all (deployments.ts).
+ */
+export function machineArgs(hardening: string[]): string[] {
+  return [...hardening, ...MACHINE_CAPS.map((c) => `--cap-add=${c}`)];
+}
+
+/** `--mount` for an encrypted volume's directory (a bind mount: Docker fails the start when the directory is missing). */
+const BIND_SOURCE = /^\/[A-Za-z0-9._/-]+$/;
 
 /** GPUs a workstation asks for (0 = CPU workstation). */
 export const gpuCountOf = (spec: unknown) => {
@@ -157,7 +192,9 @@ export function workstationEnv(spec: WorkstationSpec, sealed: Record<string, str
 /**
  * `docker run` argv for a workstation. An argv array for execFile — never a shell string — so image, command and
  * env values reach Docker verbatim. `devices` are the GPU indices allocated to it (pickGpus), one per gpu.count.
- * `sandbox`: the node announced `sandbox` (CPU workstations run under gVisor; GPU ones do not — sandboxArgs).
+ * `sandbox`: the node announced `sandbox` (CPU workstations run under gVisor; GPU ones do not — sandboxArgs); a machine
+ * there gets machineArgs. `volumeSource`: an encrypted volume's open directory (volumes.ts), bind-mounted instead of
+ * the Docker volume cld-<id>.
  */
 export function workstationRunArgs(
   id: string,
@@ -167,16 +204,20 @@ export function workstationRunArgs(
   devices: number[],
   relayed = false, // web and SSH ports published on 127.0.0.1 only (reached through the relay)
   sandbox = false,
+  volumeSource?: string,
 ): string[] {
   validateWorkstation(spec);
   if (typeof spec.image !== "string" || !spec.image || spec.image.startsWith("-")) throw new Error("invalid image");
   if (!(spec.cpu > 0) || !(spec.memMb > 0)) throw new Error("cpu and memMb must be positive");
   if (spec.command !== undefined && (!Array.isArray(spec.command) || spec.command.some((c) => typeof c !== "string")))
     throw new Error("command must be an array of strings");
+  if (volumeSource !== undefined && (!BIND_SOURCE.test(volumeSource) || volumeSource.split("/").includes(".."))) throw new Error("invalid volume source");
 
   const args = ["run", "-d", "--name", containerName(id), "--restart", "unless-stopped", ...sandboxArgs(sandbox, devices)];
   // Same hardening as plain containers; the user stays the image's (sshd, code-server…) unless the spec pins one.
-  args.push(...hardeningArgs(spec.memMb, spec.storageMb), "--cpus", String(spec.cpu / 1000), "--shm-size=1g");
+  const hardening = hardeningArgs(spec.memMb, spec.storageMb);
+  const machine = sandbox && devices.length === 0 && isMachineImage(spec.image);
+  args.push(...(machine ? machineArgs(hardening) : hardening), "--cpus", String(spec.cpu / 1000), "--shm-size=1g");
   args.push(...userArgs(spec.user, undefined));
 
   if (devices.length !== gpuCountOf(spec) || devices.some((d) => !Number.isInteger(d) || d < 0))
@@ -185,7 +226,8 @@ export function workstationRunArgs(
   // comma inside one --gpus field for Docker's CSV parser.
   if (devices.length) args.push("--gpus", `"device=${devices.join(",")}"`);
 
-  args.push("-v", `${volumeName(id)}:${workdirOf(spec)}`);
+  if (volumeSource !== undefined) args.push("--mount", `type=bind,source=${volumeSource},target=${workdirOf(spec)}`);
+  else args.push("-v", `${volumeName(id)}:${workdirOf(spec)}`);
   if (spec.access.web) {
     if (ports.web === undefined) throw new Error("no host port for web access");
     args.push("-p", `${relayed ? "127.0.0.1:" : ""}${port(ports.web, "host port")}:${spec.access.web.port}`);

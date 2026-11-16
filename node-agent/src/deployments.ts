@@ -2,14 +2,16 @@ import http from "node:http";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { open, sealedEnvAad } from "../../shared/sealed.ts";
+import { open, sealedEnvAad, volumeKeyAad } from "../../shared/sealed.ts";
 import { findFreePort, serveSite, writeSite, type StaticSpec } from "./hosting.ts";
 import { dockerRunArgs, imageAllowed, realDocker, type ContainerSpec, type DockerOps } from "./container.ts";
 import { preStartCheck, type HardeningResult } from "./hardening.ts";
 import type { GpuInfo } from "./hardware.ts";
+import { isVolumeKey, type EncryptedVolumes } from "./volumes.ts";
 import {
   dueVolumes,
   gpuCountOf,
+  isMachineImage,
   keepDaysOf,
   keepUntil,
   newWebToken,
@@ -35,6 +37,8 @@ export interface DeploymentCommand {
   imageAllowed?: boolean;
   /** API: serve this deployment through the relay (decided at placement). Absent (older API): this node's relay mode. */
   relayed?: boolean;
+  /** Workstation with volume.encrypted: its volume key, sealed to this node with volumeKeyAad(id) (volumes.ts). */
+  volumeKey?: string;
 }
 
 /** Prefix of the `failed` message when this node cannot serve a deployment at all (the API re-queues it elsewhere). */
@@ -90,6 +94,11 @@ export interface ManagerOptions {
    * --runtime=runsc, and their starts are refused if the runtime is gone (never a silent downgrade).
    */
   sandbox?: boolean;
+  /**
+   * This node announced `encrypted-volumes` (boot self-check passed): workstation volumes with `encrypted` are LUKS
+   * volumes from here. Absent: such starts are refused as unservable, never run on a plain volume.
+   */
+  volumes?: EncryptedVolumes;
   /**
    * Re-checks the egress rules and tenant network before each container start (default: the real iptables/docker);
    * `runsc`: this start must run under gVisor, so the runtime must still be registered.
@@ -379,7 +388,7 @@ export class DeploymentManager {
       }
       if (kind === "static") ports = [await this.startStatic(id, cmd.spec as StaticSpec, relayed)];
       else if (kind === "container") ({ ports, ...extra } = await this.startContainer(id, cmd.spec as ContainerSpec, cmd.sealedEnv, relayed));
-      else if (kind === "workstation") ({ ports, ...extra } = await this.startWorkstation(id, cmd.spec as WorkstationSpec, cmd.sealedEnv, relayed));
+      else if (kind === "workstation") ({ ports, ...extra } = await this.startWorkstation(id, cmd.spec as WorkstationSpec, cmd.sealedEnv, relayed, cmd.volumeKey));
       else throw new Error(`unknown kind ${JSON.stringify(kind)}`);
     } catch (err) {
       await this.cleanup(id, kind, keepDaysOf(cmd.spec));
@@ -458,14 +467,43 @@ export class DeploymentManager {
     return secret as Record<string, string>;
   }
 
-  /** Volume first (reused when it exists), then `docker run`. Tokens and keys never reach the log. */
+  /**
+   * The volume key of an encrypted workstation volume, opened under the aad of the deployment about to start: a key
+   * sealed for another deployment fails its tag. Never logged, never written; cryptsetup gets it on stdin.
+   */
+  private openVolumeKey(id: string, sealed: string | undefined): string {
+    if (!sealed) throw new Error("the start carries no volume key for its encrypted volume");
+    let key: string;
+    try {
+      key = open(this.o.privateKey, sealed, volumeKeyAad(id));
+    } catch {
+      throw new Error("could not open the volume key (wrong node key, wrong deployment or tampered)");
+    }
+    if (!isVolumeKey(key)) throw new Error("the volume key is not 64 hex characters");
+    return key;
+  }
+
+  /**
+   * Volume first (reused when it exists), then `docker run`. Tokens and keys never reach the log. An encrypted volume
+   * is opened (made on first use) once the old container is gone, and bind-mounted instead of the Docker volume.
+   */
   private async startWorkstation(
     id: string,
     spec: WorkstationSpec,
     sealedEnv: string | undefined,
     relayed: boolean,
+    volumeKey?: string,
   ): Promise<{ ports: number[]; keepDays: number; report: StatusBody; gpus: number[]; sshPort?: number }> {
     validateWorkstation(spec);
+    const encrypted = spec.volume?.encrypted === true;
+    const volumes = this.o.volumes;
+    if (encrypted && !volumes) throw new Error(`${NODE_CANNOT_SERVE} this node has no encrypted volumes`);
+    // A machine gets root inside gVisor (workstation.ts machineArgs): nowhere else, and never with a GPU.
+    if (isMachineImage(spec.image) && (this.o.sandbox !== true || gpuCountOf(spec) > 0)) {
+      throw new Error(`${NODE_CANNOT_SERVE} machines run only under gVisor (this node has no sandbox)`);
+    }
+    // …and are reached only through the relay: their sshd is never published on the provider's public IP.
+    if (isMachineImage(spec.image) && !relayed) throw new Error(`${NODE_CANNOT_SERVE} machines are reached only through the relay (relayed SSH)`);
     // Reserve GPUs before the first await so concurrent starts cannot pick the same device.
     const used = new Set([...this.gpuAlloc.values()].flat());
     const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb, spec.gpu?.class);
@@ -480,11 +518,19 @@ export class DeploymentManager {
       taken.add(p);
       ports[k] = p;
     }
-    const args = workstationRunArgs(id, spec, env, ports, gpus, relayed, this.o.sandbox === true); // validates before touching Docker
-    const vol = await this.dk.volumeEnsure(id);
+    const source = encrypted ? volumes!.dataDir(id) : undefined;
+    const args = workstationRunArgs(id, spec, env, ports, gpus, relayed, this.o.sandbox === true, source); // validates before touching Docker
+    if (encrypted) {
+      const key = this.openVolumeKey(id, volumeKey);
+      await this.dk.remove(id); // nothing may hold the volume while it is (re)opened
+      await volumes!.prepare(id, spec.volume!.sizeGb * 1024, key);
+      this.o.log(`deployment ${id}: encrypted volume cld-${id} open`);
+    } else {
+      const vol = await this.dk.volumeEnsure(id);
+      this.o.log(`deployment ${id}: volume cld-${id} ${vol}`);
+      await this.dk.remove(id); // a stale container with this name would make `docker run` fail
+    }
     if (this.kept.delete(id)) this.saveVolumes(); // restarted: no longer scheduled for removal
-    this.o.log(`deployment ${id}: volume cld-${id} ${vol}`);
-    await this.dk.remove(id); // a stale container with this name would make `docker run` fail
     await this.dk.run(args);
     if (gpus.length) this.o.log(`deployment ${id}: GPU device(s) ${gpus.join(",")}`);
     return {
@@ -496,9 +542,15 @@ export class DeploymentManager {
     };
   }
 
+  /** Remove a workstation's volume: an encrypted one is erased and deleted, and the Docker volume (if any) goes. */
+  private async removeVolume(id: string): Promise<boolean> {
+    const wiped = this.o.volumes ? await this.o.volumes.wipe(id) : true;
+    return (await this.dk.volumeRemove(id)) && wiped;
+  }
+
   /** Keep a stopped workstation's volume until now + keepDays (0: remove now; housekeeping retries if that fails). */
   private async retainVolume(id: string, keepDays: number) {
-    if (keepDays <= 0 && (await this.dk.volumeRemove(id))) {
+    if (keepDays <= 0 && (await this.removeVolume(id))) {
       if (this.kept.delete(id)) this.saveVolumes();
       return;
     }
@@ -514,7 +566,7 @@ export class DeploymentManager {
       if (this.busy.has(id) || this.records.has(id)) continue; // a start arrived meanwhile
       this.busy.add(id);
       try {
-        if (await this.dk.volumeRemove(id)) {
+        if (await this.removeVolume(id)) {
           this.kept.delete(id);
           this.saveVolumes();
           this.o.log(`deployment ${id}: volume cld-${id} removed (keep period over)`);
@@ -567,6 +619,7 @@ export class DeploymentManager {
     if (kind === "workstation") {
       await this.dk.remove(id);
       this.gpuAlloc.delete(id);
+      await this.o.volumes?.close(id); // an encrypted volume is unmounted and closed: the kernel forgets its key
       await this.retainVolume(id, keepDays ?? keepDaysOf(undefined));
     }
     rmSync(this.siteDir(id), { recursive: true, force: true });

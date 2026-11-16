@@ -62,6 +62,16 @@ As built in the scheduler (phase 1, 2026-11-16), where it is more precise than t
   refused at create (400).
 - Un-verifying a fleet re-queues its live verified work for other verified fleets; work *pinned* to that fleet waits
   in the queue until it is verified again (un-verifying can be undone; revoking cannot, and fails pinned work).
+- Machines (phase 4, docs/WORKSTATIONS.md §11; decision accepted 2026-11-16): the tenant logs in as **root by key**;
+  `cloudana` (uid 1000) is the unprivileged account. Root is root inside the gVisor sandbox, with no-new-privileges on
+  and only seven capabilities added back: SETUID, SETGID, SYS_CHROOT, CHOWN, FOWNER, DAC_OVERRIDE, AUDIT_WRITE
+  (`MACHINE_CAPS`). A user with sudo cannot work: under gVisor a setuid binary does not raise privileges. (Review asked
+  for five; sshd needs FOWNER for a non-root user's pty under gVisor and AUDIT_WRITE for a pty under runc — smoke test.)
+  Machines run only on nodes with `sandbox`,
+  `encrypted-volumes` and `relay-streams`, and are reached only with `cloudana ssh <id>` through the relay.
+- Disk (§6): only a machine's volume (its home directory, `/root`) is encrypted; the rest of its system disk (installed
+  packages, `/tmp`) is the container's writable layer and is not. The API makes each volume key and keeps only a copy
+  sealed to the node, so Cloudana sees the plaintext once, at creation.
 - Admin routes: `POST`/`DELETE /v1/admin/fleets/{id}/verified`; the abuse switch is
   `POST /v1/admin/deployments/{id}/abuse` (lifted with `DELETE /v1/admin/accounts/{address}/suspend`).
 
@@ -97,14 +107,14 @@ The provider is told plainly when they enable containers: tenants' traffic leave
 | In transit, SSH | end to end between the tenant and the box's sshd; the relay and Cloudflare carry ciphertext | all |
 | In transit, web | TLS to Cloudflare's edge; the gateway and relay carry it inside Cloudana's infrastructure to the node | all (Cloudana's edge sees the plaintext, as with any CDN) |
 | Secrets (env) | sealed to the assigned node; never stored in the clear | all |
-| Disk (volumes) | **new:** encrypted per deployment with a key held in the agent's memory only; wiped on purge, or after `keepDays` | all; a deliberate provider can still read it while the box runs |
+| Disk (volumes) | **new:** a machine's volume (its home directory, `/root`) is encrypted per deployment with a key the node holds in memory only; wiped on purge, or after `keepDays`. The rest of the system disk (installed packages, `/tmp`) is not encrypted | all; a deliberate provider can still read it while the box runs |
 | Memory, while running | nothing in software; only hardware memory encryption | confidential only |
 | Other tenants | separate sandboxes, no inter-container network, separate volumes | all |
 
 **Disclosure** (console, at deploy time; docs; Terms):
-> **Community:** runs on a stranger's computer. Your traffic is encrypted, and your disk is encrypted at rest and
-> wiped when you're done, but the person who owns the machine could read what it's doing while it runs. Use it for
-> code and data you'd put on a public server.
+> **Community:** runs on a stranger's computer. Your traffic is encrypted, and your volume (your home directory,
+> /root) is encrypted at rest and wiped when you're done; the rest of the system disk is not encrypted. The person who
+> owns the machine could read what it's doing while it runs. Use it for code and data you'd put on a public server.
 > **Verified:** runs only on providers Cloudana has identity-checked who signed our provider agreement. Fit for
 > business data that is not regulated. It is a contractual guarantee, not a technical one.
 > **Confidential** (coming later): hardware-encrypted memory that even the machine's owner can't read. For private

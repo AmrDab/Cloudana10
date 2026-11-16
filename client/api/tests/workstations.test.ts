@@ -534,12 +534,13 @@ describe("network and templates", () => {
     expect(after.workstationsRunning - before.workstationsRunning).toBe(1);
   });
 
-  it("serves the 8 workstation templates right after Static sites; create fills run fields from the template", async () => {
+  it("serves the 8 workstation templates and the machine right after Static sites; create fills run fields from the template", async () => {
     const body = await (await call("/v1/templates")).json();
     expect(body.data.map((c: { title: string }) => c.title).slice(0, 2)).toEqual(["Static sites", "Workstations"]);
     const ws = body.data[1].templates as Record<string, any>[];
     expect(ws.map((t) => t.id)).toEqual([
       "ws-jupyter-cuda", "ws-code-server", "ws-linux-desktop", "ws-pytorch-ssh", "ws-comfyui", "ws-sd-webui", "ws-ollama-webui", "ws-blender",
+      "machine-ubuntu",
     ]);
     for (const t of ws) {
       expect(t, t.id).toMatchObject({ kind: "workstation", curated: true, image: expect.any(String), gpu: expect.any(Object), workdir: expect.any(String) });

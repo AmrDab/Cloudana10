@@ -44,7 +44,8 @@ export const opensSealedV2 = (agentVersion: string | null | undefined): boolean 
 
 /** Capability of a node that runs images outside the curated list (agent: CLOUDANA_ANY_IMAGE=1). */
 export const ANY_IMAGE_CAPABILITY = "any-image";
-import { COMMUNITY_CAPABILITIES, endpointAllowed, imageAllowed, trustOf, type ApiKind, type ContainerSpec, type DeploymentKind, type WorkstationSpec } from "./deployment-spec.js";
+import { volumeKeyFor } from "./volume-keys.service.js";
+import { COMMUNITY_CAPABILITIES, endpointAllowed, imageAllowed, requiredCapabilities, trustOf, type ApiKind, type ContainerSpec, type DeploymentKind, type WorkstationSpec } from "./deployment-spec.js";
 export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { issueProtocolWork, runAssignment } from "./jobs.service.js";
@@ -80,6 +81,8 @@ export interface NodeInstruction {
   imageAllowed?: boolean;
   /** "start": serve it through the node's relay socket (fixed at placement; docs/V4_RELAY_CONTRACT.md). */
   relayed?: boolean;
+  /** "start" of a workstation with an encrypted volume: its key, sealed to this node (volume-keys.service.ts). */
+  volumeKey?: string;
 }
 
 const LIVE = "('assigned','running','unreachable')";
@@ -411,6 +414,7 @@ function fits(q: Pick<DeploymentRow, "workstation" | "spec_json">, n: NodeState)
   const req = gpuRequest(q);
   if (req && req.count > 0 && !n.caps.includes("gpu")) return false;
   const spec = specOf(q);
+  if (!requiredCapabilities(spec).every((c) => n.caps.includes(c))) return false; // machines: encrypted-volumes, sandbox, relay + relay-streams
   if (n.cpuUsed + (spec.cpu ?? 0) > n.cpuCapacity || n.memUsedMb + (spec.memMb ?? 0) > n.memCapacityMb) return false;
   return gpusFit(n.gpus, n.gpusUsed, req);
 }
@@ -1029,6 +1033,8 @@ async function instructions(node: string): Promise<NodeInstruction[]> {
       relayed: !!r.relayed,
     };
   });
+  // An encrypted workstation volume's start carries its key, sealed to this node (volume-keys.service.ts).
+  for (const i of own) if (i.action === "start" && (i.spec?.volume as { encrypted?: boolean } | undefined)?.encrypted === true) i.volumeKey = (await volumeKeyFor(i.id, node)) ?? undefined;
   const all = [...own, ...(stale.results ?? []).map((r): NodeInstruction => ({ id: r.id, action: "stop", kind: kindOf(r), spec: null }))];
   // Stops first, so a preempted workstation frees its GPUs before the work that preempted it starts.
   return [...all.filter((i) => i.action !== "start"), ...all.filter((i) => i.action === "start")];

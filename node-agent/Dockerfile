@@ -23,8 +23,9 @@ WORKDIR /app
 
 # Fleet nodes that run tenant containers need the docker CLI (talks to the host daemon over the mounted socket)
 # and iptables (installs the cld-tenant egress DROP rules). Both are unused on compute + static-hosting nodes.
+# cryptsetup + e2fsprogs: encrypted workstation volumes (CLOUDANA_ENCRYPTED_VOLUMES=1; README "Encrypted volumes").
 COPY --from=docker:27.3.1-cli /usr/local/bin/docker /usr/local/bin/docker
-RUN apt-get update && apt-get install -y --no-install-recommends iptables && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends iptables cryptsetup-bin e2fsprogs && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/node-agent/node_modules node-agent/node_modules
 COPY --from=build /app/node-agent/dist dist

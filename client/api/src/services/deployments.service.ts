@@ -31,6 +31,7 @@ import {
   replicaSpec,
   trustOf,
   COMMUNITY_CAPABILITIES,
+  ENCRYPTED_VOLUMES_CAPABILITY,
   type ApiKind,
   type ContainerSpec,
   type DeploymentKind,
@@ -448,12 +449,13 @@ export function isSealedV2(sealedEnv: string): boolean {
 
 export const capabilityFor = (kind: DeploymentKind) => (kind === "static" ? "hosting" : "container");
 
-/** The capability a new deployment waits for: "any-image" / "gpu" when its image or GPUs need it. */
+/** The capability a new deployment waits for: "any-image" / "gpu" / "encrypted-volumes" when its image, GPUs or volume need it. */
 function neededCapability(kind: ApiKind, spec: unknown): string {
   if (kind === "static") return "hosting";
   const c = spec as ContainerSpec;
   if (kind === "endpoint" && !imageAllowed(c.image)) return "any-image";
   if ((c.gpu?.count ?? 0) > 0) return "gpu";
+  if ((c as Partial<WorkstationSpec>).volume?.encrypted === true) return ENCRYPTED_VOLUMES_CAPABILITY;
   return "container";
 }
 

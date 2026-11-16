@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { BrainCircuit, Check, ChevronDown, ChevronsUpDown, Coins, Cpu, Download, FlaskConical, Inbox, Loader2, MonitorPlay, Play, Rocket, ShieldCheck, Wallet, X } from "lucide-react";
+import { BrainCircuit, Check, ChevronDown, ChevronsUpDown, Coins, Cpu, Download, FlaskConical, Inbox, Loader2, MonitorPlay, Play, Rocket, Server, ShieldCheck, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError, cld, int, jobPriceUcld } from "@/lib/cld";
 import { useNetwork } from "@/hooks/useNetwork";
@@ -20,19 +20,20 @@ import { errText, signInWithToast } from "@/components/console/actions";
 import { downloadJson, freivalds, loadInputs, randMatrix, saveInputs } from "@/components/console/matmul";
 import DeployTab from "@/pages/console/deploy";
 import WorkstationsTab from "@/pages/console/workstations";
+import MachinesTab from "@/pages/console/machines";
 import EndpointsTab from "@/pages/console/endpoints";
 import { cldAmount, ucldToUsd, usd, usePrices } from "@/lib/prices";
 
 const SIZES = [16, 32, 64, 128] as const;
 
-type Tab = "compute" | "deploy" | "workstations" | "endpoints";
-const TABS: Tab[] = ["compute", "deploy", "workstations", "endpoints"];
+type Tab = "compute" | "deploy" | "workstations" | "machines" | "endpoints";
+const TABS: Tab[] = ["compute", "deploy", "workstations", "machines", "endpoints"];
 
 export default function RunPage() {
   const search = useSearch();
   const [, navigate] = useLocation();
   const q = new URLSearchParams(search).get("tab");
-  const tab: Tab = q === "deploy" || q === "workstations" || q === "endpoints" ? q : "compute";
+  const tab: Tab = q === "deploy" || q === "workstations" || q === "machines" || q === "endpoints" ? q : "compute";
   const setTab = (t: Tab) => navigate(t === "compute" ? "/run" : `/run?tab=${t}`, { replace: true });
 
   return (
@@ -45,6 +46,8 @@ export default function RunPage() {
             ? "Multiply two matrices on the network. The orchestrator assigns the hardware and sets the price; you get the answer with its proof."
             : tab === "workstations"
             ? "Rent a workstation — Jupyter, VS Code or a desktop — by describing what it needs. The orchestrator assigns a node that fits and sets the price."
+            : tab === "machines"
+            ? "Rent a Linux machine over SSH: Ubuntu 24.04, root inside a gVisor sandbox, an encrypted home volume. Pick a size; the orchestrator assigns a node that fits and bills by the hour."
             : tab === "endpoints"
             ? "Serve your own model from GPUs on the network. Bring the image; the orchestrator places the replicas, gives the endpoint an address, checks it every minute and bills by the replica-hour."
             : "Deploy a static site or a container. The orchestrator places it on a capable node, sets the price, and probes it every minute."
@@ -55,6 +58,7 @@ export default function RunPage() {
           ["compute", "Compute job", Cpu],
           ["deploy", "Deploy", Rocket],
           ["workstations", "Workstations", MonitorPlay],
+          ["machines", "Machines", Server],
           ["endpoints", "Endpoints", BrainCircuit],
         ] as const).map(([id, label, Icon]) => (
           <button
@@ -84,7 +88,7 @@ export default function RunPage() {
         ))}
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {tab === "compute" ? <ComputeTab /> : tab === "deploy" ? <DeployTab /> : tab === "workstations" ? <WorkstationsTab /> : <EndpointsTab />}
+        {tab === "compute" ? <ComputeTab /> : tab === "deploy" ? <DeployTab /> : tab === "workstations" ? <WorkstationsTab /> : tab === "machines" ? <MachinesTab /> : <EndpointsTab />}
       </div>
     </>
   );
