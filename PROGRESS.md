@@ -787,7 +787,8 @@ that remained:
   advertising both `sandbox` and `egress-v2`, never with GPUs (refused at create: GPU containers are not sandboxed). The
   rule is in `assign()`, `preemptForOnDemand()` and, for the fleet check, in `claim()`'s statement; a pin and a tier
   combine. Un-verifying re-queues the fleet's live verified work (`requeueUnverified`, the `requeueRows` path).
-  `GET /v1/fleets` carries `verified`; deployments carry `trust`. The announce keeps `sandbox`, `egress-v2` and
+  `GET /v1/fleets` carries `verified`; deployments carry `trust`. Community stays closed (§3 rule 5, an owner decision):
+  while `COMMUNITY_HOSTING` is `off` (the default) `trust: "community"` is refused at create with a 400. The announce keeps `sandbox`, `egress-v2` and
   (with the relay) `relay-streams`.
 - Abuse switch: `POST /v1/admin/deployments/{id}/abuse {reason}` stops it (a whole endpoint if a replica is named),
   suspends the owner (`account_suspensions`, its own table: `balances` is a money table and has no row for every

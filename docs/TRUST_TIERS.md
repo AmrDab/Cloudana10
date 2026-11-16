@@ -52,6 +52,8 @@ Rules:
    egress policy (§4) and relay-only access (§5) are live and tested. Until then those run on verified fleets only.
 
 As built in the scheduler (phase 1, 2026-11-16), where it is more precise than the rules above:
+- Rule 5 is a switch: while the API's `COMMUNITY_HOSTING` is `off` (the default), `trust: "community"` is refused at
+  create (400). The owner turns it `on` when community hosting opens.
 - A spec with no `trust` (every deployment made before tiers) counts as verified: once re-queued for any reason it
   waits for a verified fleet. Running ones are not moved at deploy time.
 - Community placement needs the node to advertise both `sandbox` and `egress-v2`, on any fleet. A verified fleet's

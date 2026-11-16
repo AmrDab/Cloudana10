@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey, type PrivateKeyAccount } from "viem/accounts";
 import { buildApp } from "../src/app.js";
 import { getD1 } from "../src/lib/storage.js";
+import { resetEnv } from "../src/config/env.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage } from "../src/middleware/node-auth.js";
 import { creditUcld, getBalanceUcld } from "../src/services/balance.service.js";
@@ -126,7 +127,8 @@ const events = async (jwt: string, id: string) => ((await detail(jwt, id)).event
 let op: { addr: string; jwt: string };
 
 beforeAll(async () => {
-  await setupV1Db({ DEV_MODE: "true", INTERNAL_API_KEY: INTERNAL_KEY, RELAY_TICKET_SECRET: "r".repeat(40) });
+  // Community hosting is switched on here so its placement can be tested; "community hosting is closed" turns it off.
+  await setupV1Db({ DEV_MODE: "true", INTERNAL_API_KEY: INTERNAL_KEY, RELAY_TICKET_SECRET: "r".repeat(40), COMMUNITY_HOSTING: "on" });
   app = buildApp({ runtime: "node" });
   op = await user(0);
 });
@@ -139,6 +141,35 @@ beforeEach(async () => {
   await getD1().prepare("UPDATE nodes SET last_seen = 0").run();
   // An owner may hold at most 10 live fleets.
   await getD1().prepare("UPDATE fleets SET revoked_at = 1 WHERE revoked_at IS NULL").run();
+});
+
+describe("community hosting is closed", () => {
+  it("while COMMUNITY_HOSTING is off (the default) trust community is refused at create; on, it is accepted", async () => {
+    const bob = await user(10_000);
+    const ruleFive = "spec.trust: community hosting is not open yet — docs/TRUST_TIERS.md §3 rule 5";
+    try {
+      for (const setting of [undefined, "off"]) {
+        if (setting === undefined) delete process.env.COMMUNITY_HOSTING;
+        else process.env.COMMUNITY_HOSTING = setting;
+        resetEnv();
+        for (const [kind, spec] of [
+          ["container", CONTAINER({ trust: "community" })],
+          ["endpoint", { image: "vllm/vllm-openai:v0.6.3", port: 8000, cpu: 1000, memMb: 1024, storageMb: 1024, trust: "community" }],
+          ["workstation", WS({ trust: "community", gpu: { count: 0 } })],
+        ] as const) {
+          const res = await create(bob.jwt, kind, spec);
+          expect(res.status).toBe(400);
+          expect((await res.json()).error).toEqual({ code: "validation_failed", message: ruleFive });
+        }
+      }
+      expect(await getBalanceUcld(bob.addr)).toEqual({ balanceUcld: 10_000, heldUcld: 0 }); // nothing was held
+      await createId(bob.jwt, "container", CONTAINER()); // verified is unaffected
+    } finally {
+      process.env.COMMUNITY_HOSTING = "on";
+      resetEnv();
+    }
+    await createId(bob.jwt, "container", CONTAINER({ trust: "community" }));
+  });
 });
 
 describe("placement", () => {

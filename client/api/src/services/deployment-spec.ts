@@ -210,6 +210,10 @@ export function checkSpec(kind: ApiKind, raw: unknown): SpecCheck {
   if (!parsed.success) return invalid(parsed.error);
   // One vocabulary from here on: the stored spec (and what nodes receive) names a tier.
   if (parsed.data.gpu) parsed.data.gpu.class = requestTier(parsed.data.gpu.class);
+  // An owner decision: community placement exists in the scheduler, but nothing asks for it until it opens.
+  if (parsed.data.trust === "community" && getEnv().COMMUNITY_HOSTING !== "on") {
+    return { ok: false, code: "validation_failed", message: "spec.trust: community hosting is not open yet — docs/TRUST_TIERS.md §3 rule 5" };
+  }
   // The sandbox (gVisor) covers non-GPU containers only: GPU work stays on verified fleets (docs/TRUST_TIERS.md §3).
   if (parsed.data.trust === "community" && (parsed.data.gpu?.count ?? 0) > 0) {
     return { ok: false, code: "validation_failed", message: 'spec.trust: GPU work runs on verified fleets only (GPU containers are not sandboxed); use trust "verified" or remove the GPU' };
