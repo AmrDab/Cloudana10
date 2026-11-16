@@ -31,7 +31,7 @@ export const HardwareScanResultSchema = z
     computeScore: z.number(),
     tier: z.string(),
     signature: z.string(),
-    verifiedAt: z.number(),
+    verifiedAt: z.number().nullable(),
     endpoint: z.string(),
   })
   .openapi("HardwareScanResult");
