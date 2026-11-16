@@ -104,50 +104,78 @@ Each template declares `kind: "workstation"`, `gpu` default, `access`, `workdir`
 
 Add to lib/services.ts group `compute`: `workstations` — "GPU workstations & rentals" — line "Jupyter, VS Code or a desktop on an assigned GPU." — status `early` (built; needs Docker + GPU nodes) — proof "Rented time, uptime probed; no subsidy." Add roadmap items: CLI, autoscaling, team accounts, cloud sync.
 
-## 9. Honesty
+## 9. Connecting through the relay (agents ≥ 1.11.0, 2026-11-16)
+
+A workstation placed on a node whose agent announces `relay-streams` is **relayed**: the node publishes no port at
+all (web and sshd listen on 127.0.0.1), and the API needs no public host for it. Everything reaches it through the
+node's own outbound relay socket (`docs/V4_RELAY_CONTRACT.md` "Byte streams"):
+
+- **Web** (Jupyter, code-server, desktops): `https://<id>.cloudana.run` as before; their WebSockets (kernels,
+  terminals) are passed through to the app.
+- **SSH**: with the CLI (`cli/`) and an API key with the `deployments` scope (console → Keys):
+  ```sh
+  cloudana login --key cld_sk_…
+  cloudana ssh <id>                    # runs your ssh with the CLI as ProxyCommand; -l <user>, -- <ssh options>
+  cloudana ssh <id> --print            # the plain ssh line instead:
+  ssh -o 'ProxyCommand=cloudana ssh --proxy %h' -o ServerAliveInterval=30 root@<id>.cloudana.run
+  ```
+  `connect.ssh` (console: Copy SSH command) is `cloudana ssh <id>`. SSH stays end to end: the gateway and the relay
+  carry ciphertext, and your key is still what opens the shell. The API checks, on every connect, that the caller
+  owns the workstation. An idle connection closes after 15 minutes without traffic; the `ServerAliveInterval` keeps a
+  quiet shell open.
+
+On nodes with older agents a workstation stays **direct** (public host:port, `ssh -p <port> user@host`) until they
+upgrade; direct mode then retires (B-13).
+
+## 10. Honesty
 
 This machine has no Docker and no NVIDIA GPU, so the workstation path can be unit-tested and the UI exercised up to
 "waiting for a GPU node", not run end to end. Status stays **Early access** until a GPU node proves it.
 
-## 10. Machines (2026-11-16, phase 4 of docs/TRUST_TIERS.md)
+## 11. Machines (2026-11-16, phase 4 of docs/TRUST_TIERS.md)
 
 A **machine** is a CPU workstation running Cloudana's own image: a Linux box you reach over SSH, like a small VPS.
 Console: Run → **Machines** (`/run?tab=machines`); GPU boxes stay under Workstations. Template `machine-ubuntu`
 (`client/api/src/services/template-workstations.ts`); `isMachine` / `machineProblem` in `deployment-spec.ts`.
 
-### 10.1 What you get
+### 11.1 What you get
 - **Image** `ghcr.io/amrdab/cloudana-machine:<images/machine/VERSION>` (`images/machine`): Ubuntu 24.04, openssh-server,
   sudo, curl, ca-certificates, tini as PID 1 and sshd in the foreground. Host keys are made on the container's first
   start. Built, smoke-tested under runc and gVisor, signed and published by `.github/workflows/machine-image.yml` (main
   only; pull requests build and test).
 - **Login: root, by key only** (`PermitRootLogin prohibit-password`, no passwords, no PAM). Root of the box is root
-  inside the gVisor sandbox, not on the provider's kernel (TRUST_TIERS §5). `cloudana` (uid 1000) is the unprivileged
-  account, same key. The key is the workstation's `access.ssh.publicKey`, passed as `SSH_PUBLIC_KEY`/`PUBLIC_KEY` (§5).
+  inside the gVisor sandbox, not on the provider's kernel (TRUST_TIERS §5), with no-new-privileges on and five
+  capabilities added back (SETUID, SETGID, SYS_CHROOT, CHOWN, DAC_OVERRIDE; §11.2). `cloudana` (uid 1000) is the
+  unprivileged account, same key. The key is the workstation's `access.ssh.publicKey`, passed as
+  `SSH_PUBLIC_KEY`/`PUBLIC_KEY` (§5). **Decision** (owner, accepted 2026-11-16): root login by key instead of a user
+  with passwordless sudo, which cannot work under gVisor (§11.2).
 - **Sizes** (console): S 1 vCPU / 2 GB, M 2 / 4, L 4 / 8; a 10 GB root disk; an **encrypted volume of 10–100 GB
   mounted at `/root`**. Only the volume is encrypted: the root filesystem (installed packages, `/tmp`, `/etc`) is the
   container's writable layer on the provider's disk.
 - **Price**: the existing CPU, RAM, container-disk and volume rates (docs/PRICES_USD.md "Machines"). Beta: paid from the
   balance, which free test credits fill (`POST /v1/dev/credits`, the same button as Run → Compute).
 - **Trust**: `verified` by default, as every container; community is refused while `COMMUNITY_HOSTING` is off.
-- **Connect**: `cloudana ssh <id>` through the relay (the provider's IP is never shown). That needs the relay byte
-  streams of PR #108; until it is merged a machine is a direct workstation (SSH on the node's public IP, §5).
+- **Connect**: only `cloudana ssh <id>` through the relay (§9): sshd is published on the node's 127.0.0.1, never on
+  the provider's public IP. A machine is placed only on a node with `sandbox`, `encrypted-volumes`, `relay` and
+  `relay-streams` (`requiredCapabilities` in `fits()`, placement and preemption), so it is always relayed; the agent
+  also refuses a machine start that is not relayed.
 
 The API refuses a machine spec with GPUs, web access, no volume, a volume outside 10–100 GB, `volume.encrypted: false`,
 a `user`, or an SSH login other than root / cloudana; it stores `volume.encrypted: true` and `access.ssh.user` (root by
-default).
+default, the user `cloudana ssh` logs in as).
 
-### 10.2 Capabilities: what sshd needs under `--cap-drop=ALL`
+### 11.2 Capabilities: what sshd needs under `--cap-drop=ALL`
 Every workstation runs with `--cap-drop=ALL --security-opt=no-new-privileges` (`hardeningArgs`) and, on a `sandbox`
 node, `--runtime=runsc`. With nothing added sshd cannot work: it starts and binds port 22 (Docker sets the container's
 `ip_unprivileged_port_start` to 0), then every login fails at `chroot("/run/sshd"): Operation not permitted` (privilege
-separation). So a machine — the machine image, no GPU, on a `sandbox` node, and nowhere else — gets the hardening
-unchanged, no-new-privileges included, plus `MACHINE_CAPS` (`node-agent/src/workstation.ts machineArgs`):
+separation). So a machine — the machine image, no GPU, relayed, on a `sandbox` node, and nowhere else — gets the
+hardening unchanged, no-new-privileges included, plus `MACHINE_CAPS` (`node-agent/src/workstation.ts machineArgs`):
 
 ```
 docker run -d --name cld-<id> --restart unless-stopped --runtime=runsc --cap-drop=ALL --security-opt=no-new-privileges \
   --pids-limit=512 --memory <m> --memory-swap <m> --storage-opt size=<n>m --network cld-tenant \
   --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=SETGID --cap-add=SETUID --cap-add=SYS_CHROOT \
-  --cpus <c> --shm-size=1g --mount type=bind,source=<volume dir>/mnt/cld-<id>/data,target=/root -p <port>:22 \
+  --cpus <c> --shm-size=1g --mount type=bind,source=<volume dir>/mnt/cld-<id>/data,target=/root -p 127.0.0.1:<port>:22 \
   -e PUBLIC_KEY=… -e SSH_PUBLIC_KEY=… -e NVIDIA_VISIBLE_DEVICES=none ghcr.io/amrdab/cloudana-machine:1.0.0
 ```
 
@@ -173,7 +201,7 @@ forbids raising privileges on exec, and under gVisor a setuid exec does not rais
 (smoke runs on PR #109: `sudo: effective uid is not 0` with SETUID in the bounding set and NoNewPrivs 0). Logging in as
 root needs no setuid binary, so no-new-privileges stays on.
 
-### 10.3 Encrypted volumes (TRUST_TIERS §6 "Disk") — design note
+### 11.3 Encrypted volumes (TRUST_TIERS §6 "Disk") — design note
 Goal: a machine's volume is ciphertext on the provider's disk, its key is per deployment, delivered sealed to the node
 (the sealed-env format, `shared/sealed.ts`), held only in memory there, and destroying it (purge, or `keepDays` over)
 makes the data unrecoverable. Constraints: the agent already runs as root (iptables needs it), tenant containers run
@@ -190,8 +218,8 @@ under gVisor, Docker volumes have no encryption of their own, and the agent's te
    `/var/lib/cloudana/volumes`). At boot, with containers on, the agent checks it is root and does a real round trip on a
    64 MiB scratch volume (format, mount, write, close, reopen with the key, read, erase). Only then does it announce
    `encrypted-volumes`. Nodes without it behave as before.
-2. The API places a spec with `volume.encrypted` only on nodes with `encrypted-volumes` (a machine also needs `sandbox`):
-   `requiredCapabilities` in `fits()`, shared by placement and preemption.
+2. The API places a spec with `volume.encrypted` only on nodes with `encrypted-volumes` (a machine also needs `sandbox`,
+   `relay` and `relay-streams`): `requiredCapabilities` in `fits()`, shared by placement and preemption.
 3. On the first start instruction to a node, the API makes 32 random bytes, seals them to the node's public key bound to
    the deployment (`sealV2`, aad `volumeKeyAad(id)` = `cloudana-volume-key:<id>`, so it can never be opened as env, nor
    env as a key), stores only the sealed payload (`deployment_volume_keys`, one per deployment per node) and carries it
@@ -209,14 +237,22 @@ under gVisor, Docker volumes have no encryption of their own, and the agent's te
 5. Stop: the container goes, then umount and `cryptsetup close` (the kernel forgets the key); the encrypted file stays
    for `keepDays`. Purge or keep period over: close, `cryptsetup erase`, delete the file.
 
-**Limits, said plainly.** While the volume is open the kernel holds its master key: a provider with root can read the
-running box (TRUST_TIERS §6 says so for every tier). The node's private key sits on the node's disk, so the provider can
-open a key the API sends; what the design protects is the disk at rest — a stolen or decommissioned disk carries
-ciphertext, and the sealed key lives only in the API — and erasure that holds on SSDs. The file is sparse, so which
-blocks were written is visible. After a node reboot the volume is closed and the agent has no key, so the machine fails
-rather than starting unencrypted; reopening on resume needs the API to resend the key (not built). Volumes are not
-reopened after a stop either: the API has no resume, so `keepDays` only delays the erase.
+What the design protects is the disk at rest — a stolen or decommissioned disk carries ciphertext, and the sealed key
+lives only in the API — and erasure that holds on SSDs. While the volume is open the kernel holds its master key: a
+provider with root can read the running box (TRUST_TIERS §6 says so for every tier); the node's private key sits on the
+node's disk, so the provider can also open a key the API sends. The file is sparse, so which blocks were written is
+visible.
 
-When the agent runs in a container (`deploy/kubernetes-daemonset.yaml`, `docker run`), it needs `--privileged` (loop and
-device-mapper devices) and the volume directory bind-mounted at the same path with `rshared` propagation, so the host's
-Docker daemon sees the mounts (node-agent/README.md "Encrypted volumes"). A native (systemd) agent needs only root.
+### 11.4 Known limitations
+- **Node reboot → the machine fails.** After a reboot the volume is closed and the agent holds no key (none is ever
+  written on the node), so the machine fails rather than starting on an unencrypted disk. Reopening it needs the API to
+  resend the key on resume; not built. Volumes are not reopened after a stop either (there is no resume), so `keepDays`
+  only delays the erase.
+- **The root filesystem is not encrypted.** Only the volume (`/root`) is; installed packages, `/tmp` and `/etc` are the
+  container's writable layer on the provider's disk.
+- **The API sees each key once, at creation.** It makes the key, seals it to the node and keeps only the sealed copy;
+  the plaintext is not stored, but Cloudana could have kept it.
+- **A containerized agent needs more privilege.** In a container (`docker run`, `deploy/kubernetes-daemonset.yaml`) the
+  agent needs `--privileged` (loop and device-mapper devices) and the volume directory bind-mounted at the same path with
+  `rshared` propagation, so the host's Docker daemon sees the mounts (node-agent/README.md "Encrypted volumes"). The
+  daemonset is not changed in this PR. A native (systemd) agent needs only root.

@@ -42,7 +42,7 @@ Today's GPU prices are 1,500–3,300× below the compute price of the same GPU-h
 At $0.10 per CLD, $0.36/h is 3.6 CLD/h. Testnet credits are 10 CLD a day, enough for about 2.7 hours of a standard GPU
 endpoint a day.
 
-## Machines (Run → Machines, docs/WORKSTATIONS.md §10)
+## Machines (Run → Machines, docs/WORKSTATIONS.md §11)
 
 No new rates: a machine is a CPU workstation, priced by the vCPU, RAM, container-disk and volume rates above
 (`priceUsdPerHour`, kind workstation). Every machine has a 10 GB root disk (the container's own layer) and an encrypted

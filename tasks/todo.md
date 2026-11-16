@@ -503,13 +503,16 @@ gated by advertised capabilities.
 - Verify: agent unit tests (argv built, check fails when the rule is missing); API tests for suspend
 
 ### Phase 3 — relay streams: SSH and WebSockets without a public IP
-- [ ] relay protocol: byte-stream messages (open / data / close with the existing window + ack); a stream class
-      `tcp` to a deployment's declared port only
-- [ ] gateway: `wss://<id>.cloudana.run/_cld/ssh` (tenant JWT or `cld_sk_` key with `deployments` scope, owner of
+- [x] relay protocol: byte-stream messages (open / data / close with the existing window + ack); a stream class
+      `tcp` to a deployment's declared port only  (port classes `ssh | web`; agent capability `relay-streams`)
+- [x] gateway: `wss://<id>.cloudana.run/_cld/ssh` (tenant JWT or `cld_sk_` key with `deployments` scope, owner of
       the deployment only) and WebSocket upgrade passthrough for web access
-- [ ] agent: stream → `127.0.0.1:<host port>`; workstations become relayed; `public_host` no longer required
-- [ ] CLI: `cloudana ssh <id>` (stdio pipe; prints the `ProxyCommand` line for plain `ssh`)
-- [ ] retire direct mode for workstations (B-13); SECURITY_AUDIT O11 closed
+- [x] agent: stream → `127.0.0.1:<host port>`; workstations become relayed; `public_host` no longer required
+      (on `relay-streams` nodes; agent 1.11.0, PROGRESS 40)
+- [x] CLI: `cloudana ssh <id>` (stdio pipe; prints the `ProxyCommand` line for plain `ssh`)
+- [ ] retire direct mode for workstations (B-13) once nodes run 1.11.0; SECURITY_AUDIT O11 closed for 1.11.0 nodes
+- [x] Durable Object `/stream` glue in workerd (`relay/test/workerd.streams.e2e.ts` against `wrangler dev`)
+- [ ] full local end-to-end: `wrangler dev` relay + gateway, a local agent, an sshd container, `cloudana ssh` gets a shell
 - Verify: relay/gateway unit tests (auth, port pinning, back-pressure); local end-to-end with `wrangler dev` relay +
   a local agent + a sshd container: `cloudana ssh` gets a shell
 
@@ -518,12 +521,12 @@ gated by advertised capabilities.
       (agent 1.10.0, PROGRESS 38; GPU containers/workstations stay on the default runtime and are not sandboxed)
 - [x] Cloudana machine image `ghcr.io/amrdab/cloudana-machine` (Ubuntu 24.04 + sshd, key from env), built and
       smoke-tested in CI under runc and gVisor; login root by key (sudo cannot work under gVisor) (PROGRESS 41)
-- [x] encrypted volumes: LUKS2 on a loop file (design note: docs/WORKSTATIONS.md §10.3); per-deployment key made and
+- [x] encrypted volumes: LUKS2 on a loop file (design note: docs/WORKSTATIONS.md §11.3); per-deployment key made and
       sealed to the node by the API, opened into cryptsetup's stdin only; wipe on purge / `keepDays`; agent 1.12.0
-      capability `encrypted-volumes`, machines placed only with it and `sandbox` (PROGRESS 41)
+      capability `encrypted-volumes`; machines placed only with it, `sandbox` and `relay-streams` (PROGRESS 41)
 - [x] console: "Machines" (CPU sizes; GPU stays under workstations), free beta credits label, `cloudana ssh` command
-- [x] docs: WORKSTATIONS.md §10, CAPABILITY_MATRIX, PRICES_USD (machine prices = existing CPU/RAM/volume rates),
-      TRUST_TIERS as-built; ARCHITECTURE §5 left for the relay-streams PR (#108), which changes how machines are reached
+- [x] docs: WORKSTATIONS.md §11, CAPABILITY_MATRIX, PRICES_USD (machine prices = existing CPU/RAM/volume rates),
+      TRUST_TIERS as-built and §6 disclosure (only the volume is encrypted), ARCHITECTURE §5 (machines)
 - Verify: agent tests; a real machine on node #1 (below)
 
 ### Phase 5 — node #1 hosts machines; Fable end-to-end test

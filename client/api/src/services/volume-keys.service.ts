@@ -1,5 +1,5 @@
 /**
- * Volume keys of encrypted workstation volumes (docs/WORKSTATIONS.md §10.3, docs/TRUST_TIERS.md §6 "Disk").
+ * Volume keys of encrypted workstation volumes (docs/WORKSTATIONS.md §11.3, docs/TRUST_TIERS.md §6 "Disk").
  *
  * One key per deployment per node — a volume lives on one node, and a re-queued machine starts a new volume on its new
  * node. The first start instruction to a node makes 32 random bytes, seals them to that node's public key bound to the

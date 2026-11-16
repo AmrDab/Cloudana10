@@ -41,7 +41,7 @@ export function sealedEnvAad(deploymentId: string): string {
 }
 
 /**
- * The associated data of a deployment's volume key (encrypted workstation volumes, docs/WORKSTATIONS.md §10). The API
+ * The associated data of a deployment's volume key (encrypted workstation volumes, docs/WORKSTATIONS.md §11). The API
  * seals the key with it; the agent opens it with it. Distinct from sealedEnvAad, so a volume key can never be opened as
  * environment, nor environment as a volume key.
  */

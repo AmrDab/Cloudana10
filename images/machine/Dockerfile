@@ -1,4 +1,4 @@
-# Cloudana machine: a rentable Ubuntu 24.04 box reached over SSH (docs/WORKSTATIONS.md §10 "Machines").
+# Cloudana machine: a rentable Ubuntu 24.04 box reached over SSH (docs/WORKSTATIONS.md §11 "Machines").
 #
 # Build (context = this directory):  docker build -t cloudana-machine images/machine
 # Published by .github/workflows/machine-image.yml as ghcr.io/<owner>/cloudana-machine:<images/machine/VERSION>.

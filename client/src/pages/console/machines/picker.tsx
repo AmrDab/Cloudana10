@@ -1,4 +1,4 @@
-// Machines — rent one (docs/WORKSTATIONS.md §10): a size, your SSH key, how long, the trust tier. The orchestrator
+// Machines — rent one (docs/WORKSTATIONS.md §11): a size, your SSH key, how long, the trust tier. The orchestrator
 // assigns a node with gVisor and encrypted volumes; you connect with `cloudana ssh <id>`.
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";

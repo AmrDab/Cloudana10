@@ -24,6 +24,7 @@ import { agentVersionAllowed, instructionSignerAddress, minAgentVersion, signIns
 import { STORAGE_CAPABILITY, recordNodeNetwork, storageCapable, storageInstructions } from "../../services/storage.service.js";
 import { getEnv } from "../../config/env.js";
 import { issueTicket } from "../../../../../shared/relay-ticket.js";
+import { STREAMS_CAPABILITY } from "../../../../../shared/relay-protocol.js";
 import { pubkeyMatchesAddress } from "../../lib/eth.js";
 import { log } from "../../lib/logger.js";
 import { getD1 } from "../../lib/storage.js";
@@ -34,7 +35,7 @@ const TAGS = ["Nodes"];
 /** Capabilities a node may advertise besides registered work types (V3 §2). */
 /** "any-image": runs images outside the curated list (CLOUDANA_ANY_IMAGE=1; endpoint replicas need it). */
 /** "sandbox" (non-GPU containers under gVisor) and "egress-v2" (mail ports blocked): trust "community" needs both (docs/TRUST_TIERS.md). */
-/** "encrypted-volumes" (LUKS workstation volumes, agents ≥ 1.12.0): machines need it (docs/WORKSTATIONS.md §10). */
+/** "encrypted-volumes" (LUKS workstation volumes, agents ≥ 1.12.0): machines need it (docs/WORKSTATIONS.md §11). */
 const HOSTING_CAPABILITIES = ["hosting", "container", "gpu", "any-image", "sandbox", "egress-v2", "encrypted-volumes"];
 const NODE_SIGNED =
   "Node-signed: X-Node, X-Node-Timestamp (ms, ±60 s), X-Nonce (16 bytes hex, single use within 120 s), " +
@@ -113,7 +114,12 @@ nodesRouter.openapi(announceRoute, async (c) => {
   const body = c.req.valid("json");
   const relayOn = !!getEnv().RELAY_TICKET_SECRET;
   const storage = storageCapable(body.agentVersion, body.storageGb, relayOn && body.workTypes.includes(RELAY_CAPABILITY));
-  const known = [...workTypeIds(), ...HOSTING_CAPABILITIES, ...(relayOn ? [RELAY_CAPABILITY, RELAY_STREAMS_CAPABILITY] : []), ...(storage ? [STORAGE_CAPABILITY] : [])];
+  // relay-streams (SSH and WebSockets through the relay) means something only next to a relay this API runs.
+  const streams = relayOn && body.workTypes.includes(RELAY_CAPABILITY);
+  const known = [
+    ...workTypeIds(), ...HOSTING_CAPABILITIES, ...(relayOn ? [RELAY_CAPABILITY] : []), ...(storage ? [STORAGE_CAPABILITY] : []),
+    ...(streams ? [STREAMS_CAPABILITY] : []),
+  ];
   let workTypes = body.workTypes.filter((w) => known.includes(w));
   if (workTypes.length === 0) return fail(c, "validation_failed", `workTypes must include one of: ${known.join(", ")}`);
   // A relay node serves through its outbound socket, so hosting needs no public IP (docs/V4_RELAY_CONTRACT.md).
@@ -126,7 +132,7 @@ nodesRouter.openapi(announceRoute, async (c) => {
   const publicHost = body.publicHost ? normalizeHost(body.publicHost) : undefined;
   const hostPublic = !!publicHost && endpointAllowed(`http://${body.publicHost}/`, dev) && (dev || publicHost === normalizeHost(trustedClientIp(c)));
   if (!hostPublic && !relay) workTypes = workTypes.filter((w) => !HOSTING_CAPABILITIES.includes(w));
-  if (workTypes.every((w) => w === RELAY_CAPABILITY || w === RELAY_STREAMS_CAPABILITY || w === STORAGE_CAPABILITY)) {
+  if (workTypes.every((w) => w === RELAY_CAPABILITY || w === STORAGE_CAPABILITY || w === STREAMS_CAPABILITY)) {
     return fail(c, "validation_failed", "hosting capabilities need the relay or a public publicHost equal to the node's own IP");
   }
   // Only a verified public host is stored: endpoints (legacy direct nodes, workstation SSH) are checked against it.

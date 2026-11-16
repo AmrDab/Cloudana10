@@ -68,6 +68,7 @@ export interface DeploymentRecord {
   keepDays?: number; // workstation: days to keep the volume after stop
   gpus?: number[]; // workstation / GPU container: GPU device indices handed to it
   report?: StatusBody; // workstation: the running report (endpoint with token, sshEndpoint), re-sent on resume
+  sshPort?: number; // workstation with ssh access: the host port of its sshd (relay byte streams reach it; agents ≥ 1.11.0)
 }
 
 /**
@@ -186,6 +187,19 @@ export class DeploymentManager {
   localTarget(id: string): { port: number; kind: Kind } | null {
     const r = this.records.get(id);
     return r && r.port !== null ? { port: r.port, kind: r.kind } : null;
+  }
+
+  /**
+   * Where a relay byte stream for `id` may connect (docs/V4_RELAY_CONTRACT.md "Byte streams"): only a port the
+   * deployment declared, and only when it is relayed. `ssh` = a workstation's sshd; `web` = a container's first port or
+   * a workstation's web port. "refused": it runs here but has no such port; null: not here.
+   */
+  streamPort(id: string, cls: "ssh" | "web"): number | "refused" | null {
+    const r = this.records.get(id);
+    if (!r) return null;
+    if (!r.relayed || r.kind === "static") return "refused";
+    if (cls === "ssh") return r.kind === "workstation" && r.sshPort !== undefined ? r.sshPort : "refused";
+    return r.port !== null ? r.port : "refused";
   }
 
   /** Whether this agent runs, or is starting, the deployment (the ops server answers logs only for these). */
@@ -354,11 +368,11 @@ export class DeploymentManager {
       await this.send(id, existing.report ?? { status: "running", endpoint: this.endpoint(existing.port, existing.relayed) });
       return;
     }
-    // The API decided at placement (workstations stay direct until the relay carries WebSockets); older APIs don't say.
+    // The API decided at placement (workstations are relayed only on nodes with relay-streams); older APIs don't say.
     const relayed = typeof cmd.relayed === "boolean" ? cmd.relayed : this.o.relay?.() === true;
     const specHash = createHash("sha256").update(JSON.stringify(cmd.spec)).digest("hex");
     let ports: number[];
-    let extra: Pick<DeploymentRecord, "keepDays" | "report" | "gpus"> = {};
+    let extra: Pick<DeploymentRecord, "keepDays" | "report" | "gpus" | "sshPort"> = {};
     try {
       if (kind === "container" || kind === "workstation") {
         // Not opted in / hardening failed at boot: the API should not have sent this; hand it back for re-placement.
@@ -479,7 +493,7 @@ export class DeploymentManager {
     sealedEnv: string | undefined,
     relayed: boolean,
     volumeKey?: string,
-  ): Promise<{ ports: number[]; keepDays: number; report: StatusBody; gpus: number[] }> {
+  ): Promise<{ ports: number[]; keepDays: number; report: StatusBody; gpus: number[]; sshPort?: number }> {
     validateWorkstation(spec);
     const encrypted = spec.volume?.encrypted === true;
     const volumes = this.o.volumes;
@@ -488,6 +502,8 @@ export class DeploymentManager {
     if (isMachineImage(spec.image) && (this.o.sandbox !== true || gpuCountOf(spec) > 0)) {
       throw new Error(`${NODE_CANNOT_SERVE} machines run only under gVisor (this node has no sandbox)`);
     }
+    // …and are reached only through the relay: their sshd is never published on the provider's public IP.
+    if (isMachineImage(spec.image) && !relayed) throw new Error(`${NODE_CANNOT_SERVE} machines are reached only through the relay (relayed SSH)`);
     // Reserve GPUs before the first await so concurrent starts cannot pick the same device.
     const used = new Set([...this.gpuAlloc.values()].flat());
     const gpus = pickGpus(gpuCountOf(spec), this.o.gpus ?? this.o.gpuCount ?? 0, used, spec.gpu?.minVramGb, spec.gpu?.class);
@@ -521,6 +537,7 @@ export class DeploymentManager {
       gpus,
       ports: [ports.web, ports.ssh].filter((p): p is number => p !== undefined),
       keepDays: keepDaysOf(spec),
+      ...(ports.ssh !== undefined && { sshPort: ports.ssh }),
       report: workstationReport(this.o.publicHost, spec, ports, token, relayed),
     };
   }

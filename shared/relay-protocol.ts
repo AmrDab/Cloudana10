@@ -44,12 +44,38 @@ export const IDLE_TIMEOUT_MS = 300_000;
 /** Largest request body forwarded. */
 export const BODY_CAP_BYTES: Record<TrafficClass, number> = { site: 1024 * 1024, endpoint: 16 * 1024 * 1024, storage: 1024 * 1024 };
 
-export type ErrCode = "not_serving" | "upstream" | "too_large" | "timeout" | "busy" | "bad_request";
+export type ErrCode = "not_serving" | "upstream" | "too_large" | "timeout" | "busy" | "bad_request" | "refused";
 export type Header = [string, string];
+
+// ── Byte streams (docs/V4_RELAY_CONTRACT.md "Byte streams") ─────────────────────────────────────────────────────
+/** Announced next to "relay" by agents that take byte streams; the hub never opens one to a node without it. */
+export const STREAMS_CAPABILITY = "relay-streams";
+/**
+ * Which declared port of a deployment a byte stream reaches: a class, never a number, so no frame can name an
+ * arbitrary port. The agent maps it to the deployment's own host port: `ssh` = a relayed workstation's sshd,
+ * `web` = a relayed container's (first) port or a workstation's web port.
+ */
+export type PortClass = "ssh" | "web";
+export const PORT_CLASSES: readonly PortClass[] = ["ssh", "web"];
+/** Byte streams per node (they count against MAX_STREAMS too) and per deployment. */
+export const MAX_TCP_STREAMS = 16;
+export const MAX_TCP_STREAMS_PER_DEP = 8;
+/** The node must answer `opened` (its loopback connect succeeded) within this long. */
+export const OPEN_TIMEOUT_MS = 15_000;
+/** A byte stream with no frame or ack either way for this long is closed (an idle shell: use ServerAliveInterval). */
+export const TCP_IDLE_TIMEOUT_MS = 15 * 60_000;
+/** After the hub's `end`, the node's own `end` must follow within this long, or the stream is cancelled. */
+export const LINGER_MS = 10_000;
+/**
+ * The subprotocol of a raw byte stream between a client (the CLI) and the hub: binary messages are the bytes, text
+ * messages `{"t":"ack","n":N}` acknowledge consumed bytes both ways (the window is end to end).
+ */
+export const TCP_SUBPROTOCOL = "cloudana-tcp.v1";
 
 /** Hub → node. */
 export type HubMessage =
   | { t: "req"; s: number; dep: string; m: string; path: string; h: Header[] }
+  | { t: "open"; s: number; dep: string; port: PortClass }
   | { t: "end"; s: number }
   | { t: "err"; s: number; code: ErrCode }
   | { t: "cancel"; s: number }
@@ -58,11 +84,12 @@ export type HubMessage =
 /** Node → hub. */
 export type NodeMessage =
   | { t: "res"; s: number; status: number; h: Header[] }
+  | { t: "opened"; s: number }
   | { t: "end"; s: number }
   | { t: "err"; s: number; code: ErrCode; message?: string }
   | { t: "ack"; s: number; n: number };
 
-const ERR_CODES = new Set<ErrCode>(["not_serving", "upstream", "too_large", "timeout", "busy", "bad_request"]);
+const ERR_CODES = new Set<ErrCode>(["not_serving", "upstream", "too_large", "timeout", "busy", "bad_request", "refused"]);
 const DEP = /^[A-Za-z0-9_-]{1,64}$/;
 
 const isStream = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0 && (v as number) <= 0xffffffff;
@@ -79,6 +106,10 @@ export function parseHubMessage(text: string): HubMessage | null {
       return typeof m.dep === "string" && DEP.test(m.dep) && typeof m.m === "string" && METHOD.test(m.m) &&
         typeof m.path === "string" && m.path.startsWith("/") && m.path.length <= MAX_PATH_CHARS && isHeaders(m.h)
         ? { t: "req", s: m.s, dep: m.dep, m: m.m, path: m.path, h: m.h }
+        : null;
+    case "open":
+      return typeof m.dep === "string" && DEP.test(m.dep) && PORT_CLASSES.includes(m.port as PortClass)
+        ? { t: "open", s: m.s, dep: m.dep, port: m.port as PortClass }
         : null;
     case "end":
     case "cancel":
@@ -101,8 +132,9 @@ export function parseNodeMessage(text: string): NodeMessage | null {
       return Number.isInteger(m.status) && (m.status as number) >= 100 && (m.status as number) <= 599 && isHeaders(m.h)
         ? { t: "res", s: m.s, status: m.status as number, h: m.h }
         : null;
+    case "opened":
     case "end":
-      return { t: "end", s: m.s };
+      return { t: m.t, s: m.s };
     case "err":
       return ERR_CODES.has(m.code as ErrCode)
         ? { t: "err", s: m.s, code: m.code as ErrCode, ...(typeof m.message === "string" && { message: m.message.slice(0, 300) }) }

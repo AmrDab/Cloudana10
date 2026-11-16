@@ -1,4 +1,4 @@
-// Run → Machines tab (docs/WORKSTATIONS.md §10): your machines (the workstations list, filtered), then the form to rent one.
+// Run → Machines tab (docs/WORKSTATIONS.md §11): your machines (the workstations list, filtered), then the form to rent one.
 import { useState } from "react";
 import { Workstations } from "@/pages/console/workstations/list";
 import { MachinePicker } from "./picker";

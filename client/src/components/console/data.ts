@@ -309,7 +309,7 @@ export type WorkstationSpec = {
   tier: WorkstationTier;
   maxHours: number;
   access: { web?: { port: number; path?: string }; ssh?: { publicKey: string; user?: string } };
-  /** encrypted: LUKS on the node, key sealed to it (machines always; docs/WORKSTATIONS.md §10). */
+  /** encrypted: LUKS on the node, key sealed to it (machines always; docs/WORKSTATIONS.md §11). */
   volume?: { sizeGb: number; keepDays: number; encrypted?: boolean };
   workdir?: string;
   sshPort?: number;

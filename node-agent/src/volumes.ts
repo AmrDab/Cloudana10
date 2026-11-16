@@ -1,5 +1,5 @@
 /**
- * Encrypted workstation volumes (docs/WORKSTATIONS.md §10.3, docs/TRUST_TIERS.md §6 "Disk"): LUKS2 on a file.
+ * Encrypted workstation volumes (docs/WORKSTATIONS.md §11.3, docs/TRUST_TIERS.md §6 "Disk"): LUKS2 on a file.
  *
  * A volume is `<dir>/cld-<id>.img`, a sparse file of the volume's size, formatted LUKS2 (aes-xts-plain64, 512-bit) with
  * the deployment's key as its passphrase, opened as /dev/mapper/cld-<id> (cryptsetup attaches a loop device itself),

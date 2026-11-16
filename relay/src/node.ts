@@ -2,8 +2,9 @@
 // (docs/V4_RELAY_CONTRACT.md). Hibernation keeps idle sockets free; the in-memory StreamHub only lives while
 // requests are in flight, which also keeps the object awake.
 import { DurableObject } from "cloudflare:workers";
-import { PING, PONG, TRAFFIC_CLASSES, type TrafficClass } from "../../shared/relay-protocol.js";
+import { PING, PONG, PORT_CLASSES, TCP_SUBPROTOCOL, TRAFFIC_CLASSES, type PortClass, type TrafficClass } from "../../shared/relay-protocol.js";
 import { StreamHub, relayError } from "./hub.js";
+import { RawBridge, WsBridge, type Peer } from "./bridge.js";
 
 export interface Env {
   RELAY: DurableObjectNamespace<RelayNode>;
@@ -71,6 +72,8 @@ export class RelayNode extends DurableObject<Env> {
         return this.acceptNode(request);
       case "/proxy":
         return this.proxy(request);
+      case "/stream":
+        return this.stream(request);
       case "/status": {
         const ws = this.socket();
         const since = ws ? (ws.deserializeAttachment() as { since?: number } | null)?.since ?? null : null;
@@ -126,6 +129,52 @@ export class RelayNode extends DurableObject<Env> {
     });
   }
 
+  /**
+   * Gateway → node byte stream ("Byte streams" in the contract), a WebSocket upgrade: x-relay-dep, x-relay-port
+   * (ssh|web), x-relay-mode (raw: the client's socket is the stream; ws: passthrough to the app's WebSocket, with
+   * x-relay-path and the visitor's headers). Answers 101 once the node connected (and the app accepted), else a relay
+   * error. The client's socket is a plain (non-hibernating) one: it keeps the object awake while it is open.
+   */
+  private async stream(request: Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("expected websocket", { status: 426 });
+    const ws = this.socket();
+    if (!ws) return relayError("offline");
+    const dep = request.headers.get("x-relay-dep") ?? "";
+    const port = request.headers.get("x-relay-port") as PortClass | null;
+    const mode = request.headers.get("x-relay-mode");
+    const path = request.headers.get("x-relay-path") ?? "/";
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(dep) || !port || !PORT_CLASSES.includes(port) || (mode !== "raw" && mode !== "ws")) {
+      return relayError("bad_request");
+    }
+    const stream = this.hubFor(ws).openStream(dep, port);
+    const err = await stream.opened;
+    if (err) return relayError(err);
+
+    if (mode === "raw") {
+      const offered = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((p) => p.trim());
+      const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+      server.accept();
+      const bridge = new RawBridge(stream, peerOf(server));
+      server.addEventListener("message", (e) => bridge.message(e.data as string | ArrayBuffer));
+      server.addEventListener("close", () => bridge.closed());
+      server.addEventListener("error", () => bridge.closed());
+      const headers = offered.includes(TCP_SUBPROTOCOL) ? { "sec-websocket-protocol": TCP_SUBPROTOCOL } : undefined;
+      return new Response(null, { status: 101, webSocket: client, headers });
+    }
+
+    const bridge = new WsBridge(stream);
+    const head = await bridge.handshake({ path, host: request.headers.get("x-forwarded-host"), headers: request.headers });
+    if (head.status !== 101) return new Response(null, { status: head.status >= 200 && head.status <= 599 ? head.status : 502, headers: { "x-relay-app-status": String(head.status) } });
+    const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+    server.accept();
+    bridge.attach(peerOf(server));
+    server.addEventListener("message", (e) => bridge.message(e.data as string | ArrayBuffer));
+    server.addEventListener("close", (e) => bridge.closed(e.code, e.reason));
+    server.addEventListener("error", () => bridge.closed(1011, "error"));
+    const protocol = "protocol" in head ? head.protocol : null;
+    return new Response(null, { status: 101, webSocket: client, headers: protocol ? { "sec-websocket-protocol": protocol } : undefined });
+  }
+
   private closeAll(code: number, reason: string) {
     for (const ws of this.ctx.getWebSockets()) {
       try {
@@ -158,4 +207,9 @@ export class RelayNode extends DurableObject<Env> {
   async webSocketError(ws: WebSocket): Promise<void> {
     this.dropHub(ws);
   }
+}
+
+/** A client socket as the bridges use it. */
+function peerOf(ws: WebSocket): Peer {
+  return { send: (d) => ws.send(d), close: (code, reason) => ws.close(code, reason) };
 }

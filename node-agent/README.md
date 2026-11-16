@@ -199,7 +199,7 @@ The boot log then says `sandbox: gVisor (runsc) found` and the capabilities
 include `sandbox`.
 
 **Encrypted volumes and machines (`encrypted-volumes`, agents ≥ 1.12.0).**
-Machines (Ubuntu boxes over SSH, docs/WORKSTATIONS.md §10) keep their `/root`
+Machines (Ubuntu boxes over SSH, docs/WORKSTATIONS.md §11) keep their `/root`
 on a LUKS2-encrypted volume and run only on nodes that announce both `sandbox`
 and `encrypted-volumes`. Set `CLOUDANA_ENCRYPTED_VOLUMES=1` (volumes live in
 `CLOUDANA_VOLUME_DIR`, default `/var/lib/cloudana/volumes`); the agent must be

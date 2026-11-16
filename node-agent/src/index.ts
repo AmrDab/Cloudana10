@@ -17,7 +17,7 @@ import { detectPublicIp } from "./public-ip.ts";
 import { DeploymentManager, type DeploymentCommand, type ReportOutcome } from "./deployments.ts";
 import { workTypes as capabilities } from "./workstation.ts";
 import { DEFAULT_INSTRUCTION_SIGNER, NonceLru, verifyInstruction } from "./instructions.ts";
-import { RELAY_CAPABILITY, RelayClient } from "./relay.ts";
+import { RELAY_CAPABILITY, RelayClient, STREAMS_CAPABILITY } from "./relay.ts";
 import { CHALLENGE_TYPES, assignmentInput, runChallengeJob } from "./work.ts";
 
 interface Args {
@@ -183,7 +183,7 @@ async function main() {
   // gVisor (docs/TRUST_TIERS.md §5): with runsc registered, every non-GPU tenant container runs under it → `sandbox`.
   const sandbox = containersReady && (await runscAvailable());
   if (containersReady) log(sandbox ? "sandbox: gVisor (runsc) found — non-GPU containers run under it" : "sandbox: gVisor (runsc) not registered with Docker — containers use the default runtime, `sandbox` not announced");
-  // Encrypted workstation volumes (docs/WORKSTATIONS.md §10.3): opt-in, then a real LUKS round trip → `encrypted-volumes`.
+  // Encrypted workstation volumes (docs/WORKSTATIONS.md §11.3): opt-in, then a real LUKS round trip → `encrypted-volumes`.
   let volumes: EncryptedVolumes | undefined;
   if (encryptedVolumesOptIn && containersReady) {
     const v = new EncryptedVolumes(process.env.CLOUDANA_VOLUME_DIR?.trim() || DEFAULT_VOLUME_DIR, realExecIn, log);
@@ -268,7 +268,8 @@ async function main() {
     const res = await request(account, "POST", "/v1/nodes/announce", {
       manifest,
       benchmarkMmacPerSec: mmacPerSec,
-      workTypes: withRelay ? [...workTypes, RELAY_CAPABILITY] : workTypes,
+      // relay-streams: SSH and WebSockets through the relay (byte streams); meaningful only next to "relay".
+      workTypes: withRelay ? [...workTypes, RELAY_CAPABILITY, STREAMS_CAPABILITY] : workTypes,
       pubkey: publicKeyOf(privateKey),
       publicHost,
       agentVersion: VERSION,
@@ -338,6 +339,8 @@ async function main() {
     // dep "storage" is a check of the copies this node holds, dep "agent" the agent's own surface (both served
     // in-process); everything else is a deployment.
     target: (id) => (id === "storage" ? storage?.target() ?? null : id === OPS_DEP ? ops.target() : deployments.localTarget(id)),
+    // Byte streams reach only a port the deployment declared (never the reserved deps: they are not deployments).
+    streamTarget: (id, port) => deployments.streamPort(id, port),
     log,
   });
 

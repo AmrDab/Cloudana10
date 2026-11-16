@@ -1,6 +1,6 @@
 /**
  * The API's half of shared/sealed.ts v2 — sealing only. The API seals one thing itself: an encrypted workstation volume's
- * key, to the node that holds the volume (docs/WORKSTATIONS.md §10.3). Everything else sealed is sealed by the browser.
+ * key, to the node that holds the volume (docs/WORKSTATIONS.md §11.3). Everything else sealed is sealed by the browser.
  *
  * shared/sealed.ts is not imported here because its @noble imports resolve from the repo root, which an install of
  * client/api alone does not have. The format is the same byte for byte: tests/machines.test.ts seals a golden payload

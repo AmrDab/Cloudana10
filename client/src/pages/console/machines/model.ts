@@ -1,4 +1,4 @@
-// Machines (docs/WORKSTATIONS.md §10): sizes, the spec a machine is rented with, and how to connect. Pure, so it is
+// Machines (docs/WORKSTATIONS.md §11): sizes, the spec a machine is rented with, and how to connect. Pure, so it is
 // unit-tested (model.test.ts); the form and the list live beside it.
 import type { TrustTier, WorkstationSpec } from "@/components/console/data";
 

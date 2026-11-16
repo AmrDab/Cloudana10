@@ -14,6 +14,7 @@ import { getD1 } from "../lib/storage.js";
 import { getRelay } from "../lib/relay.js";
 import { readCapped } from "../lib/read-capped.js";
 import { getNode } from "./nodes.service.js";
+import { STREAMS_CAPABILITY } from "../../../../shared/relay-protocol.js";
 import { compareVersions } from "./instruction-signing.service.js";
 import { createHash, randomBytes } from "node:crypto";
 import { normalizeAddress } from "../lib/eth.js";
@@ -213,7 +214,9 @@ function workstationView(r: DeploymentRow, spec: WorkstationSpec, nodeGpus: Gpu[
       ? {
           // Relayed: the gateway URL plus the app's path (token included); direct: the endpoint as reported.
           ...(spec.access.web && r.endpoint && { web: r.relayed ? `https://${r.id}.${sitesDomain()}${r.endpoint}` : r.endpoint }),
-          ...(spec.access.ssh && r.ssh_endpoint && { ssh: sshCommand(r.ssh_endpoint, spec.access.ssh.user) }),
+          // Relayed: SSH goes through the relay (the CLI is the transport); direct: the reported host:port.
+          ...(spec.access.ssh && r.relayed && { ssh: `cloudana ssh ${r.id}` }),
+          ...(spec.access.ssh && !r.relayed && r.ssh_endpoint && { ssh: sshCommand(r.ssh_endpoint, spec.access.ssh.user) }),
           ...(detail && r.web_token && { webToken: r.web_token }),
         }
       : {},
@@ -837,6 +840,37 @@ export interface PublicRoute {
   /** Endpoints: who may call it, and (auth "key") the sha256 of every live key. */
   auth?: EndpointSpec["auth"];
   keys?: string[];
+  /** Running and relayed on a node with `relay-streams`: the gateway may pass WebSocket upgrades through. */
+  streams?: boolean;
+}
+
+/** Whether `node` announced relay byte streams (it keeps them only next to `relay`; routes/v1/nodes.ts announce). */
+async function nodeStreams(node: string): Promise<boolean> {
+  const n = await getD1().prepare("SELECT work_types FROM nodes WHERE address = ?").bind(node).first<{ work_types: string | null }>();
+  const caps = JSON.parse(n?.work_types ?? "[]") as string[];
+  return caps.includes("relay") && caps.includes(STREAMS_CAPABILITY);
+}
+
+export type SshTargetResult =
+  | { ok: true; target: { node: string; dep: string } }
+  | { ok: false; code: "not_found" | "conflict"; message: string };
+
+/**
+ * The gateway's SSH lookup (docs/V4_RELAY_CONTRACT.md "Byte streams"), for an authenticated caller: the node to open
+ * a raw stream on, only for the caller's own running relayed workstation with SSH on a `relay-streams` node. Another
+ * owner's deployment is not_found, as everywhere.
+ */
+export async function sshTarget(owner: string, id: string): Promise<SshTargetResult> {
+  const row = await getOwnedRow(owner, id);
+  if (!row) return { ok: false, code: "not_found", message: "deployment not found" };
+  const spec = JSON.parse(row.spec_json) as Partial<WorkstationSpec>;
+  if (!row.workstation || !spec.access?.ssh) return { ok: false, code: "conflict", message: "this deployment has no SSH access" };
+  if (!row.relayed) return { ok: false, code: "conflict", message: "this workstation's SSH is direct: use the command in connect.ssh" };
+  if ((row.status !== "running" && row.status !== "unreachable") || !row.node) {
+    return { ok: false, code: "conflict", message: `the workstation is not running (${row.status})` };
+  }
+  if (!(await nodeStreams(row.node))) return { ok: false, code: "conflict", message: "the node's agent does not carry SSH through the relay" };
+  return { ok: true, target: { node: row.node, dep: row.id } };
 }
 
 /**
@@ -872,6 +906,7 @@ export async function publicRoute(id: string): Promise<PublicRoute | null> {
     relayed: !!row.relayed,
     targets: running && row.node ? [{ node: row.node, dep: row.id }] : [],
     endpoint: running && !row.relayed ? row.endpoint : null,
+    ...(running && row.relayed && row.node && (await nodeStreams(row.node)) && { streams: true }),
   };
 }
 

@@ -819,17 +819,42 @@ that remained:
 - Tests: `tests/trust-tiers.test.ts` (13), `tests/trust-tiers-migration.test.ts` (1); existing hosting tests now bind
   their nodes to a verified fleet. API 547; console check, client tests and build clean.
 
+### 40 · SSH and WebSockets through the relay (trust tiers phase 3, 2026-11-16)
+- **What.** The relay gains byte streams (`open {dep, port: ssh|web}` / `opened` / bytes / `end`, the same 512 KiB
+  window and acks as HTTP; `docs/V4_RELAY_CONTRACT.md` "Byte streams"). A port is named by class, never by number, and
+  the agent maps it to the deployment's own declared host port, so no frame can reach anything else on the node.
+  The hub builds two bridges on top: raw (SSH: the client's WebSocket is the stream, acks end to end) and WebSocket
+  passthrough (the hub does the upgrade and RFC 6455 framing toward the app). Gateway: `wss://<id>.cloudana.run/_cld/ssh`
+  (the API checks the bearer: wallet session or `cld_sk_` key with the deployments scope, owner only, every connect) and
+  upgrade passthrough for relayed containers and workstations. Agent 1.11.0 announces `relay-streams`; the API relays
+  workstations on such nodes (no public host needed) and shows `cloudana ssh <id>`; the CLI gains `cloudana ssh`
+  (ProxyCommand pipe, or runs ssh with it).
+- **Why.** TRUST_TIERS §5: a provider publishes nothing; SSH on the node's public IP (SECURITY_AUDIT O11) ends for
+  nodes that upgrade. Old agents keep the HTTP framing untouched and keep direct workstations (B-13 finishes once
+  nodes run 1.11.0).
+- **Tests.** relay: 20 new (stream lifecycle, window, limits, idle/linger, both bridges, frame codec); gateway: 9 new
+  (auth through the API, refusals passed on, upgrade passthrough, no upgrade without relay-streams); agent: relay
+  selftest port pinning (`streamPort`), e2e +20 checks through the real hub and agent (3 MiB echo through the raw
+  bridge within the window, back-pressure on a 4 MiB flood, refused/not_serving, cancel, a real WebSocket app through
+  the passthrough bridge); API: `relay-streams` test file (capability kept only with relay, placement, preemption,
+  route `streams`, the SSH lookup's auth and 404/409s, `connect.ssh`); CLI: 9 new. The Durable Object glue in
+  workerd: `relay/test/workerd.streams.e2e.ts` (7 checks against `wrangler dev`: a raw stream echoes 1 MiB with acks
+  and closes 1000, not_serving for an unknown deployment, a real WebSocket app through the passthrough), and the
+  existing `workerd.e2e.ts` still passes (14).
+- **Not verified.** The gateway returning the relay's 101 to a real client through Cloudflare, and a real
+  `ssh` session against an sshd container on a 1.11.0 node (todo Phase 3 "Verify").
+
 ### 41 · Machines: rentable Ubuntu boxes over SSH, with encrypted volumes (2026-11-16)
 - Why: phase 4 of the trust-tiers plan (`tasks/todo.md`, docs/TRUST_TIERS.md §5–§6): rent a Linux machine on contributed
-  hardware, root only inside gVisor, its disk encrypted at rest. Design and limits: docs/WORKSTATIONS.md §10.
+  hardware, root only inside gVisor, its home volume (/root) encrypted at rest. Design and limits: docs/WORKSTATIONS.md §11.
 - Image `images/machine` (Ubuntu 24.04, openssh-server, sudo, curl, tini; key from `SSH_PUBLIC_KEY`/`PUBLIC_KEY`; host
   keys at first start; keys only, no PAM) and `.github/workflows/machine-image.yml` (build + smoke test under runc and
   runsc on PRs; publish, sign and SBOM on main by `images/machine/VERSION`, never overwriting a version). The login is
   **root by key**: a user with passwordless sudo was the plan, and the smoke test showed sudo refused under
   no-new-privileges and, under gVisor, even without it (a setuid exec does not raise privileges there).
 - sshd under the agent's flags (`--cap-drop=ALL --security-opt=no-new-privileges`): binds, then fails every login at its
-  privsep chroot. A machine (that image, no GPU, `sandbox` node only) keeps every flag and gets `MACHINE_CAPS` back
-  (`node-agent/src/workstation.ts machineArgs`); elsewhere the agent refuses it (`node cannot serve:`).
+  privsep chroot. A machine (that image, no GPU, relayed, `sandbox` node only) keeps every flag and gets `MACHINE_CAPS` back
+  (SETUID, SETGID, SYS_CHROOT, CHOWN, DAC_OVERRIDE: `node-agent/src/workstation.ts machineArgs`); elsewhere the agent refuses it (`node cannot serve:`).
 - Encrypted volumes (agent 1.12.0, `node-agent/src/volumes.ts`, capability `encrypted-volumes`): LUKS2 on a sparse loop
   file, ext4, bind-mounted at the workdir (`/root` for machines). Opt-in `CLOUDANA_ENCRYPTED_VOLUMES=1` plus a real
   format/mount/reopen/erase round trip at boot. The API makes a 32-byte key per deployment per node on its first start
@@ -838,18 +863,18 @@ that remained:
   the agent passes it to cryptsetup on stdin. Stop closes; purge or `keepDays` erases the keyslots and deletes the file.
 - API: template `machine-ubuntu` (its image joins the curated list); `checkSpec` holds machines to CPU, SSH, a 10–100 GB
   volume, login root or cloudana, and marks the volume encrypted; `fits()` requires `encrypted-volumes` for an encrypted
-  volume and `sandbox` for a machine (placement and preemption); the announce keeps `encrypted-volumes`. Declared the
+  volume and `sandbox`, `relay` and `relay-streams` for a machine (relayed SSH only, placement and preemption); the announce keeps `encrypted-volumes`. Declared the
   @noble packages the API already had through viem.
 - Console: Run → Machines (`?tab=machines`): S/M/L sizes, SSH key, duration, encrypted volume size and keep days, the
   Trust selector, a free-beta-credits note with the credits button, price per hour; the list (shared with workstations,
   each tab its own) shows `cloudana ssh <id>`. Machine prices are the existing rates (docs/PRICES_USD.md "Machines").
-- Tests: agent `volumes.selftest.ts` (58: argv and order against a fake cryptsetup, key only on stdin and never logged,
-  wrong key, failed format/mount, wipe, self-check, machine flags, the manager from start to purge, refusals, the API's
-  golden sealed key opens); API `tests/machines.test.ts` (8: template and allowlist, spec rules, announce, placement gate
+- Tests: agent `volumes.selftest.ts` (60: argv and order against a fake cryptsetup, key only on stdin and never logged,
+  wrong key, failed format/mount, wipe, self-check, machine flags, the manager from start to purge, relayed SSH on 127.0.0.1, refusals (no key, wrong key, no sandbox, not relayed), the API's
+  golden sealed key opens); API `tests/machines.test.ts` (8: template and allowlist, spec rules, announce, placement gate (encrypted-volumes, sandbox, relay, relay-streams each required; relayed)
   and the sealed key opening with the node's key, the golden payload); console `machines/model.test.ts` (3). Image:
-  smoke test in CI. Agent selftests, API (556; the int8-model timing flake passes alone), console check/test/build green.
+  smoke test in CI. Agent selftests, API (568 after the merge with #108/#110; the int8-model timing flake passes alone), console check/test/build green.
 - Not built: a real node run (phase 5); reopening a volume after a node reboot (the machine fails instead of running
-  unencrypted); `cloudana ssh` itself and relayed SSH are PR #108.
+  unencrypted). Merged with #108: machines are relayed workstations, reached with `cloudana ssh <id>`.
 
 ## Evidence summary
 

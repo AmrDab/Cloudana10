@@ -1,5 +1,5 @@
 /**
- * Machines (docs/WORKSTATIONS.md §10): the `machine-ubuntu` template, its spec rules (CPU only, SSH only, an encrypted
+ * Machines (docs/WORKSTATIONS.md §11): the `machine-ubuntu` template, its spec rules (CPU only, SSH only, an encrypted
  * /root volume of 10–100 GB, login root by key), the curated allowlist, the `encrypted-volumes` capability at announce, and
  * placement — a machine goes only to a node with both `encrypted-volumes` and `sandbox`, and its start carries a volume
  * key sealed to that node (one per deployment per node, stable across heartbeats). The API's sealing is the agent's
@@ -78,7 +78,7 @@ async function node(workTypes: string[], fleet: { id: string; owner: string }) {
     .run();
   return { n, priv };
 }
-const MACHINE_NODE = ["matmul", "container", "egress-v2", "sandbox", "encrypted-volumes"];
+const MACHINE_NODE = ["matmul", "container", "egress-v2", "sandbox", "encrypted-volumes", "relay", "relay-streams"];
 
 async function verifiedFleet(owner: { addr: string; jwt: string }) {
   const res = await authed(owner.jwt, "POST", "/v1/fleets", { name: `f${seq}` });
@@ -88,9 +88,9 @@ async function verifiedFleet(owner: { addr: string; jwt: string }) {
   return { id, owner: owner.addr };
 }
 
-type Instruction = { id: string; action: string; spec: Record<string, any> | null; volumeKey?: string };
+type Instruction = { id: string; action: string; spec: Record<string, any> | null; volumeKey?: string; relayed?: boolean };
 async function beat(n: PrivateKeyAccount) {
-  const res = await signed(n, "/v1/nodes/heartbeat", { relay: false, agentVersion: "1.12.0" });
+  const res = await signed(n, "/v1/nodes/heartbeat", { relay: true, agentVersion: "1.12.0" });
   expect(res.status).toBe(200);
   return (await res.json()).deployments as Instruction[];
 }
@@ -158,8 +158,8 @@ describe("the machine template", () => {
     expect(served).toMatchObject({ id: "machine-ubuntu", image: MACHINE_IMAGE });
   });
 
-  it("needs encrypted-volumes and sandbox; an encrypted volume alone needs encrypted-volumes", () => {
-    expect(requiredCapabilities({ image: MACHINE_IMAGE, volume: { encrypted: true } })).toEqual(["encrypted-volumes", "sandbox"]);
+  it("needs encrypted-volumes, sandbox and the relay with streams; an encrypted volume alone needs encrypted-volumes", () => {
+    expect(requiredCapabilities({ image: MACHINE_IMAGE, volume: { encrypted: true } })).toEqual(["encrypted-volumes", "sandbox", "relay", "relay-streams"]);
     expect(requiredCapabilities({ image: "codercom/code-server:latest", volume: { encrypted: true } })).toEqual(["encrypted-volumes"]);
     expect(requiredCapabilities({ image: "codercom/code-server:latest" })).toEqual([]);
   });
@@ -212,23 +212,25 @@ describe("announce", () => {
 });
 
 describe("placement", () => {
-  it("a machine waits for a node with encrypted-volumes and sandbox; its start carries a volume key sealed to that node", async () => {
+  it("a machine waits for a relay-streams node with encrypted-volumes and sandbox; it is relayed and its start carries a volume key sealed to that node", async () => {
     const fleet = await verifiedFleet(op);
     const bob = await user();
     const id = await createId(bob.jwt, MACHINE());
     const evs = ((await (await authed(bob.jwt, "GET", `/v1/deployments/${id}`)).json()).events as { message: string }[]).map((e) => e.message);
     expect(evs).toContain("waiting for a capable node");
 
-    const noVolumes = await node(["matmul", "container", "egress-v2", "sandbox"], fleet);
-    expect((await beat(noVolumes.n)).map((d) => d.id)).not.toContain(id);
-    const noSandbox = await node(["matmul", "container", "egress-v2", "encrypted-volumes"], fleet);
-    expect((await beat(noSandbox.n)).map((d) => d.id)).not.toContain(id);
+    const without = (c: string) => MACHINE_NODE.filter((x) => x !== c);
+    // Each of these has a verified public host, so a plain workstation could be placed on it with SSH on that IP.
+    for (const missing of ["encrypted-volumes", "sandbox", "relay-streams", "relay"]) {
+      const n = await node(without(missing), fleet);
+      expect((await beat(n.n)).map((d) => d.id), `without ${missing}`).not.toContain(id);
+    }
     expect(await row(id)).toMatchObject({ status: "queued", node: null });
 
     const good = await node(MACHINE_NODE, fleet);
     const start = (await beat(good.n)).find((d) => d.id === id)!;
-    expect(start).toMatchObject({ action: "start", spec: { volume: { encrypted: true } } });
-    expect(await row(id)).toMatchObject({ status: "assigned", node: good.n.address.toLowerCase() });
+    expect(start).toMatchObject({ action: "start", relayed: true, spec: { volume: { encrypted: true } } });
+    expect(await row(id)).toMatchObject({ status: "assigned", node: good.n.address.toLowerCase(), relayed: 1 });
     // The key opens with the node's private key under this deployment's volume aad, and is 32 random bytes in hex.
     const key = openV2(good.priv, start.volumeKey!, volumeKeyAad(id));
     expect(key).toMatch(/^[0-9a-f]{64}$/);

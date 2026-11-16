@@ -14,6 +14,7 @@ import { z } from "@hono/zod-openapi";
 import { getEnv } from "../config/env.js";
 import { WORKSTATION_TEMPLATES } from "./template-workstations.js";
 import { GPU_TIERS, requestTier, type GpuTier } from "../../../../shared/gpu-tier.js";
+import { STREAMS_CAPABILITY } from "../../../../shared/relay-protocol.js";
 
 export const STATIC_MAX_BYTES = 2 * 1024 * 1024;
 export const CONTAINER_SPEC_MAX_BYTES = 32 * 1024;
@@ -55,7 +56,7 @@ export const trustOf = (spec: { trust?: TrustTier }): TrustTier => spec.trust ??
 export const COMMUNITY_CAPABILITIES = ["sandbox", "egress-v2"] as const;
 
 /**
- * Machines (docs/WORKSTATIONS.md §10): a workstation running the Cloudana machine image (images/machine; this tag is
+ * Machines (docs/WORKSTATIONS.md §11): a workstation running the Cloudana machine image (images/machine; this tag is
  * images/machine/VERSION). CPU only, SSH only, login root by key (root of the box, inside gVisor), /root on an encrypted
  * volume of MACHINE_VOLUME_GB. The template (template-workstations.ts MACHINE_IMAGE) pins one published version.
  */
@@ -71,11 +72,21 @@ export const ENCRYPTED_VOLUMES_CAPABILITY = "encrypted-volumes";
 export const SANDBOX_CAPABILITY = "sandbox";
 
 /**
+ * What a machine is reached through: the relay with byte streams, so its SSH is published on the node's 127.0.0.1 only
+ * and the tenant connects with `cloudana ssh <id>` — never on the provider's public IP (docs/TRUST_TIERS.md §5).
+ */
+export const MACHINE_RELAY_CAPABILITIES = ["relay", STREAMS_CAPABILITY] as const;
+
+/**
  * Capabilities a container spec needs beyond `container`/`gpu`: an encrypted volume needs `encrypted-volumes`; a
- * machine also needs `sandbox` (the agent grants its root only under gVisor and refuses it elsewhere).
+ * machine also needs `sandbox` (the agent grants its root only under gVisor and refuses it elsewhere) and the relay with
+ * streams (MACHINE_RELAY_CAPABILITIES: relayed SSH only).
  */
 export function requiredCapabilities(spec: { image?: unknown; volume?: { encrypted?: boolean } }): string[] {
-  return [...(spec.volume?.encrypted === true ? [ENCRYPTED_VOLUMES_CAPABILITY] : []), ...(isMachine(spec) ? [SANDBOX_CAPABILITY] : [])];
+  return [
+    ...(spec.volume?.encrypted === true ? [ENCRYPTED_VOLUMES_CAPABILITY] : []),
+    ...(isMachine(spec) ? [SANDBOX_CAPABILITY, ...MACHINE_RELAY_CAPABILITIES] : []),
+  ];
 }
 
 /** Why a machine spec is not one (null = fine). Machines are CPU-only and SSH-only, with an encrypted home volume. */
@@ -172,7 +183,7 @@ const WorkstationFields = z.object({
     .object({
       sizeGb: z.number().int().min(1).max(500),
       keepDays: z.number().int().min(0).max(30),
-      /** LUKS-encrypted on the node with a key sealed to it (docs/WORKSTATIONS.md §10.3); needs `encrypted-volumes`. Always on for machines. */
+      /** LUKS-encrypted on the node with a key sealed to it (docs/WORKSTATIONS.md §11.3); needs `encrypted-volumes`. Always on for machines. */
       encrypted: z.boolean().optional(),
     })
     .optional(),

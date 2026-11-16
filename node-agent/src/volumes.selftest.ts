@@ -245,11 +245,13 @@ async function main() {
     try {
       const k1 = newVolumeKey();
       const sealed = seal(PUB, k1, volumeKeyAad("mach1"));
-      await m.handle({ id: "mach1", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, volumeKey: sealed });
+      await m.handle({ id: "mach1", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, relayed: true, volumeKey: sealed });
       check(last().id === "mach1" && last().body.status === "running", `encrypted machine runs (${JSON.stringify(last().body)})`);
       const run = runs.at(-1)!;
       check(run.includes(`type=bind,source=${vol.dataDir("mach1")},target=/root`) && run.includes("--cap-add=SYS_CHROOT"), "manager: bind-mounted encrypted volume, machine capabilities");
       check(!ensured.includes("mach1"), "no Docker volume made for an encrypted volume");
+      const sshPublish = run[run.findIndex((a, i) => a === "-p" && /:22$/.test(run[i + 1] ?? "")) + 1];
+      check(/^127\.0\.0\.1:\d+:22$/.test(sshPublish) && !last().body.sshEndpoint, `relayed machine: sshd published on 127.0.0.1 only, no public SSH endpoint (${sshPublish})`);
       check(f.luks.get(vol.paths("mach1").img) === k1, "the volume is keyed with the key the API sealed");
       check(!mlogs.join("\n").includes(k1) && !run.join(" ").includes(k1), "the opened key is in neither the log nor the docker argv");
 
@@ -263,13 +265,15 @@ async function main() {
 
       // No key, a key sealed for another deployment, a key sealed as env: refused, nothing run.
       const before = runs.length;
-      await m.handle({ id: "mach2", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true });
+      await m.handle({ id: "mach2", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, relayed: true });
       check(last().id === "mach2" && last().body.status === "failed" && /no volume key/.test(last().body.message!), "start without a volume key fails");
-      await m.handle({ id: "mach3", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, volumeKey: seal(PUB, newVolumeKey(), volumeKeyAad("other")) });
+      await m.handle({ id: "mach3", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, relayed: true, volumeKey: seal(PUB, newVolumeKey(), volumeKeyAad("other")) });
       check(last().id === "mach3" && /could not open the volume key/.test(last().body.message!), "a key sealed for another deployment does not open");
-      await m.handle({ id: "mach4", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, volumeKey: seal(PUB, newVolumeKey(), sealedEnvAad("mach4")) });
+      await m.handle({ id: "mach4", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, relayed: true, volumeKey: seal(PUB, newVolumeKey(), sealedEnvAad("mach4")) });
       check(last().id === "mach4" && /could not open the volume key/.test(last().body.message!), "a payload sealed as env is not a volume key");
-      check(runs.length === before, "docker run never called without a usable key");
+      await m.handle({ id: "mach7", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, relayed: false, volumeKey: seal(PUB, newVolumeKey(), volumeKeyAad("mach7")) });
+      check(last().id === "mach7" && last().body.message!.startsWith(NODE_CANNOT_SERVE) && /only through the relay/.test(last().body.message!), "a machine started direct (public-IP SSH) is refused as unservable");
+      check(runs.length === before, "docker run never called without a usable key or the relay");
 
       // A plain workstation on the same node: Docker volume as before, cryptsetup untouched.
       f.calls.length = 0;
@@ -281,10 +285,10 @@ async function main() {
 
       // A node without encrypted volumes, or without the sandbox: cannot serve (the API re-places it).
       const noVol = new DeploymentManager({ ...base, sandbox: true });
-      await noVol.handle({ id: "mach5", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, volumeKey: sealed });
+      await noVol.handle({ id: "mach5", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, relayed: true, volumeKey: sealed });
       check(last().id === "mach5" && last().body.message!.startsWith(NODE_CANNOT_SERVE) && /encrypted volumes/.test(last().body.message!), "no encrypted volumes → cannot serve");
       const noSandbox = new DeploymentManager({ ...base, volumes: vol });
-      await noSandbox.handle({ id: "mach6", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, volumeKey: seal(PUB, newVolumeKey(), volumeKeyAad("mach6")) });
+      await noSandbox.handle({ id: "mach6", action: "start", kind: "workstation", spec: machineSpec, imageAllowed: true, relayed: true, volumeKey: seal(PUB, newVolumeKey(), volumeKeyAad("mach6")) });
       check(last().id === "mach6" && last().body.message!.startsWith(NODE_CANNOT_SERVE) && /gVisor/.test(last().body.message!), "no sandbox → a machine cannot be served");
       check(runs.length === before + 1, "docker run only for the plain workstation");
       await noVol.closeAll();

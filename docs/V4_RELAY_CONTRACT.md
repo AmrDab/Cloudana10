@@ -83,3 +83,61 @@ Only the API and the gateway hold the `RelayNode` binding, and the gateway sets 
 lookup (a real deployment id) after stripping every `x-relay-*` header a visitor sent — a visitor cannot address
 either reserved id. Both ride on the probe slots (`x-relay-probe: 1`), so visitor load never starves them. Nothing is
 stored on the relay or the API: a logs answer is read from Docker when asked and forgotten.
+
+## Byte streams: SSH and WebSockets (trust tiers phase 3, agents with `relay-streams`)
+
+Decision record: [TRUST_TIERS.md](TRUST_TIERS.md) §5. The node publishes nothing; SSH and WebSocket traffic ride the
+same socket as HTTP. One new primitive on the wire, a **byte stream** to one declared port of one deployment; the hub
+builds SSH and WebSocket passthrough on top of it, so the agent never parses either.
+
+**Gating.** Agents that take byte streams announce `relay-streams` next to `relay`; the API keeps it only with `relay`.
+The API reports it per deployment in the route (`streams`), and nothing below is ever sent to a node without it: old
+agents keep exactly today's HTTP framing. The HTTP messages, limits and codes above are unchanged.
+
+**Wire.** Same stream id space, binary frame encoding, `WINDOW_BYTES` window and `ack {s, n}` as HTTP streams.
+- Hub → node `open {s, dep, port}`, `port` ∈ `ssh | web`: a port **class**, never a number, so no frame can name an
+  arbitrary port. The agent maps it to the deployment's own host port: `ssh` = a relayed workstation's sshd, `web` = a
+  relayed container's first port or a relayed workstation's web port. Anything else (a class the deployment did not
+  declare, a static site, a direct deployment, a reserved dep) → `err refused`; a deployment it does not run →
+  `err not_serving`.
+- Node → hub `opened {s}` once `127.0.0.1:<port>` accepted the TCP connection; connect failure → `err upstream`.
+- Bytes both ways as binary frames, sent as they come (no batching: interactive). The agent acks bytes once written
+  to the socket and pauses the socket while the hub's window is full; the hub acks once its client consumed them.
+- `end {s}` either way: the sender's half is done (TCP FIN). The stream is over once both sides sent `end`; after the
+  hub's `end` the node's must follow within `LINGER_MS` (10 s) or the hub cancels. `cancel {s}` (hub) or
+  `err {s, code}` (node): abort both ways.
+- Limits: `MAX_TCP_STREAMS` (16) per node and `MAX_TCP_STREAMS_PER_DEP` (8) per deployment, both inside
+  `MAX_STREAMS − PROBE_SLOTS` (hub refuses `busy`; the agent answers `busy` past `MAX_STREAMS`); `opened` within
+  `OPEN_TIMEOUT_MS` (15 s); no frame or ack either way for `TCP_IDLE_TIMEOUT_MS` (15 min) closes the stream; at most
+  2 MiB buffered in the hub per stream for the node (`STREAM_BUFFER_BYTES`).
+
+**Hub surface.** `GET https://relay/stream` (binding only, a WebSocket upgrade): headers `x-relay-node`, `x-relay-dep`,
+`x-relay-port` (`ssh|web`), `x-relay-mode` (`raw|ws`). Answers 101 with the client's WebSocket once the node said
+`opened` (and, for `ws`, the app accepted the upgrade), or a relay error as for `/proxy` (`refused` is 403).
+- `raw` (SSH): the client's WebSocket is the byte stream. Binary messages are bytes; text messages are
+  `{"t":"ack","n":N}` both ways; subprotocol `cloudana-tcp.v1`. The window is end to end: the client may have
+  `WINDOW_BYTES` unacked, and the hub passes acks through (the node's to the client, the client's to the node), so
+  the hub buffers at most one window per direction. Close: 1000 after a clean end, 1011 with the relay code as
+  reason after an error, 1008 when the client overruns the window.
+- `ws` (web passthrough): the hub is the app's WebSocket client over the byte stream. It writes the HTTP/1.1 upgrade
+  (`GET x-relay-path`, `Host` = the public host from `x-forwarded-host` so an app's Origin check passes, the
+  client's headers minus hop-by-hop and `sec-websocket-key/-version/-extensions`, a fresh key, no extensions), checks
+  the `101` and `Sec-WebSocket-Accept`, then answers the visitor 101 with the app's chosen subprotocol. Messages map
+  to single frames (client frames masked), pings are answered, closes are relayed, a message is at most 1 MiB (1009).
+  A non-101 answer from the app becomes that status with no body. Workers WebSockets expose no back-pressure, so
+  app → visitor bytes are acked once handed to the runtime; visitor → app bytes wait in the 2 MiB buffer (1009 past it).
+
+**Gateway.** `wss://<id>.<SITES_DOMAIN>/_cld/ssh`: a bearer token (`Authorization: Bearer …`, or the subprotocol
+`bearer.<token>` next to `cloudana-tcp.v1` for clients that cannot set headers; it is never forwarded) is checked by
+the API, not the gateway: `POST {API}/v1/deployments/{id}/ssh` with `X-Internal-Key` and the visitor's
+`Authorization`. The API authenticates it as for any route (wallet JWT, or `cld_sk_` key with the `deployments`
+scope), answers 404 unless the caller owns the deployment, 409 unless it is a running relayed workstation with SSH on
+a `relay-streams` node, and otherwise the target `{ node, dep }`. Never cached: a revoked key or a stopped workstation
+stops new sessions at once. The gateway then opens `RELAY /stream` with mode `raw`, port `ssh`. No new secret.
+Any other path with `Upgrade: websocket` on a running relayed container or workstation whose route says `streams`:
+mode `ws`, port `web`, with the same headers (and so the same auth) as that deployment's HTTP. Sites and GPU
+endpoints never upgrade; a node without `relay-streams` gets today's HTTP request.
+
+**API.** A workstation is relayed (`relayed = 1`, no `public_host` needed) when its node keeps `relay` and
+`relay-streams`; on other nodes it stays direct as before (B-13 retires that once nodes upgrade). Its SSH is then
+`cloudana ssh <id>` (`connect.ssh`), and the agent publishes sshd on `127.0.0.1` only and reports no `sshEndpoint`.

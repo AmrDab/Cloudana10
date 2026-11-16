@@ -15,7 +15,7 @@ import { RelayClient, TICKET_PATH } from "./relay.ts";
 import { DeploymentManager, type StatusBody } from "./deployments.ts";
 import { serveSite } from "./hosting.ts";
 import { dockerRunArgs, type DockerOps } from "./container.ts";
-import { isPublicIp, SSH_NEEDS_PUBLIC_IP, workstationReport, type WorkstationSpec } from "./workstation.ts";
+import { workstationReport, type WorkstationSpec } from "./workstation.ts";
 
 let passed = 0;
 function check(cond: unknown, msg: string) {
@@ -421,25 +421,25 @@ async function main() {
     await mgr.handle({ id: "rw", action: "start", kind: "workstation", spec: ws, imageAllowed: true });
     const rw = after(runs.at(-1)!, "-p");
     const rwr = last("rw");
-    check(rw.length === 2 && rw[0] === `127.0.0.1:${mgr.localTarget("rw")?.port}:8888` && /^\d+:22$/.test(rw[1]), `relayed workstation: web on 127.0.0.1, SSH stays public (${rw})`);
+    check(rw.length === 2 && rw[0] === `127.0.0.1:${mgr.localTarget("rw")?.port}:8888` && /^127\.0\.0\.1:\d+:22$/.test(rw[1]), `relayed workstation: web and SSH on 127.0.0.1 only (${rw})`);
     check(/^\/\?token=[A-Za-z0-9_-]{32}$/.test(rwr?.webPath ?? "") && !("endpoint" in rwr) && !("webToken" in rwr), `relayed Jupyter: webPath carries the token, no endpoint (${rwr?.webPath?.slice(0, 8)}…)`);
-    check(!("sshEndpoint" in rwr) && rwr.message === SSH_NEEDS_PUBLIC_IP, "127.0.0.1 public host → no sshEndpoint, message says why");
+    check(!("sshEndpoint" in rwr) && !rwr.message, "relayed SSH: no sshEndpoint (the relay carries it), no message");
+    // Byte streams reach only a declared port of a relayed deployment (port pinning).
+    const sshHostPort = Number(rw[1].split(":")[1]);
+    check(mgr.streamPort("rw", "ssh") === sshHostPort && mgr.streamPort("rw", "web") === mgr.localTarget("rw")?.port, "streamPort: a relayed workstation's sshd and web ports");
+    check(mgr.streamPort("rc", "web") === mgr.localTarget("rc")?.port && mgr.streamPort("rc", "ssh") === "refused", "streamPort: a container has a web port, no ssh");
+    check(mgr.streamPort("rs", "web") === "refused" && mgr.streamPort("nope", "ssh") === null, "streamPort: a static site is refused, an unknown deployment is not here");
     await mgr.handle({ id: "rx", action: "start", kind: "workstation", spec: { ...ws, access: { ssh: { publicKey: KEY } }, tokenEnv: undefined }, imageAllowed: true });
     check(mgr.localTarget("rx") === null && last("rx")?.status === "running", "SSH-only workstation: nothing for the relay to serve");
 
     const tok = "T".repeat(32);
     const code: WorkstationSpec = { ...ws, tokenEnv: "PASSWORD", access: { web: { port: 8080 }, ssh: { publicKey: KEY } } };
     let r = workstationReport("203.0.113.5", code, { web: 1, ssh: 2 }, tok, true);
-    check(r.webPath === "/" && r.webToken === tok && r.sshEndpoint === "203.0.113.5:2" && !r.endpoint && !r.message, "code-server relayed: webPath /, webToken, SSH on a public IP");
+    check(r.webPath === "/" && r.webToken === tok && !r.sshEndpoint && !r.endpoint && !r.message, "code-server relayed: webPath /, webToken, SSH through the relay");
     r = workstationReport("h", { ...code, tokenQuery: "tkn", access: { web: { port: 1, path: "/lab" } } }, { web: 9 }, tok, true);
     check(r.webPath === `/lab?tkn=${tok}` && !r.webToken, "path + tokenQuery → webPath");
     r = workstationReport("192.168.1.20", code, { web: 1, ssh: 2 }, tok, false);
     check(r.endpoint === "http://192.168.1.20:1" && r.sshEndpoint === "192.168.1.20:2" && !r.webPath && !r.message, "legacy report unchanged");
-    for (const [h, pub] of [
-      ["203.0.113.5", true], ["8.8.8.8", true], ["172.32.0.1", true], ["2606:4700::1111", true], ["[2001:db8::1]", true],
-      ["127.0.0.1", false], ["10.1.2.3", false], ["172.16.0.1", false], ["192.168.1.1", false], ["100.64.0.1", false],
-      ["169.254.169.254", false], ["0.0.0.0", false], ["::1", false], ["fd00::1", false], ["fe80::1", false], ["::ffff:10.0.0.1", false], ["node.example.com", false],
-    ] as [string, boolean][]) check(isPublicIp(h) === pub, `isPublicIp(${h}) = ${pub}`);
 
     // Legacy-mode start on the same manager: public publish + endpoint, as before the relay.
     relayOn = false;
@@ -449,6 +449,7 @@ async function main() {
     await mgr.handle({ id: "lc", action: "start", kind: "container", spec: cspec, imageAllowed: true });
     const lport = mgr.localTarget("lc")!.port;
     check(after(runs.at(-1)!, "-p")[0] === `${lport}:80` && last("lc")?.endpoint === `http://127.0.0.1:${lport}`, "legacy start: 0.0.0.0 publish, endpoint reported");
+    check(mgr.streamPort("lc", "web") === "refused", "streamPort: a direct deployment is never streamed (its port is public anyway)");
 
     // Restart: each deployment keeps the mode it started with, whatever the node's mode is now.
     await mgr.closeAll();

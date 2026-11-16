@@ -325,7 +325,7 @@ CREATE TABLE IF NOT EXISTS storage_checks (
 CREATE INDEX IF NOT EXISTS idx_work_jobs_unmoved ON work_jobs(completed_at) WHERE status = 'done' AND artifact IS NULL;
 -- Abuse switch (docs/TRUST_TIERS.md §4): a suspended wallet creates no deployments; an admin lifts it (row deleted).
 CREATE TABLE IF NOT EXISTS account_suspensions (address TEXT PRIMARY KEY, suspended_at INTEGER NOT NULL, reason TEXT NOT NULL);
--- Encrypted workstation volumes (docs/WORKSTATIONS.md §10.3): the volume key, sealed to the node that holds the volume.
+-- Encrypted workstation volumes (docs/WORKSTATIONS.md §11.3): the volume key, sealed to the node that holds the volume.
 CREATE TABLE IF NOT EXISTS deployment_volume_keys (
   deployment_id TEXT NOT NULL, node TEXT NOT NULL, sealed TEXT NOT NULL, created_at INTEGER NOT NULL,
   PRIMARY KEY (deployment_id, node)

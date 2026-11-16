@@ -50,6 +50,7 @@ export { imageAllowed };
 import { gpusFit, type Gpu, type GpuRequest } from "./workstation.js";
 import { issueProtocolWork, runAssignment } from "./jobs.service.js";
 import { getRelay } from "../lib/relay.js";
+import { STREAMS_CAPABILITY } from "../../../../shared/relay-protocol.js";
 import { readCapped } from "../lib/read-capped.js";
 /** Hosting probes in flight per node at once (the hub reserves PROBE_SLOTS for all of the API's checks). */
 const HOSTING_PROBES_AT_ONCE = 2;
@@ -314,16 +315,21 @@ export async function requeueMispinned(now = Date.now()): Promise<number> {
   return requeueRows(rows.results ?? [], "its node is no longer in the fleet it is pinned to", now);
 }
 
-/** B-9: a node that moved into another fleet hands back what is pinned to a different one (the pin is the fleet). */
+/**
+ * B-9: a node that moved into another fleet hands back what is pinned to a different one (the pin is the fleet), and
+ * (docs/TRUST_TIERS.md §3) its trust "verified" work when the fleet it joined is not verified.
+ */
 export async function requeuePinnedOffFleet(node: string, fleetId: string, now = Date.now()): Promise<number> {
   const rows = await getD1()
     .prepare(
-      `SELECT * FROM deployments WHERE node = ? AND status IN ${LIVE} ` +
-        "AND json_extract(spec_json, '$.placement.fleetId') IS NOT NULL AND json_extract(spec_json, '$.placement.fleetId') <> ?",
+      `SELECT * FROM deployments WHERE node = ? AND status IN ${LIVE} AND (` +
+        "(json_extract(spec_json, '$.placement.fleetId') IS NOT NULL AND json_extract(spec_json, '$.placement.fleetId') <> ?) " +
+        "OR (kind = 'container' AND COALESCE(json_extract(spec_json, '$.trust'), 'verified') = 'verified' " +
+        "AND NOT EXISTS (SELECT 1 FROM fleets f WHERE f.id = ? AND f.verified_at IS NOT NULL AND f.revoked_at IS NULL)))",
     )
-    .bind(normalizeAddress(node), fleetId)
+    .bind(normalizeAddress(node), fleetId, fleetId)
     .all<DeploymentRow>();
-  return requeueRows(rows.results ?? [], "its node moved to another fleet; the deployment is pinned to its own", now);
+  return requeueRows(rows.results ?? [], "its node moved to another fleet that is pinned elsewhere or not verified", now);
 }
 
 /**
@@ -408,7 +414,7 @@ function fits(q: Pick<DeploymentRow, "workstation" | "spec_json">, n: NodeState)
   const req = gpuRequest(q);
   if (req && req.count > 0 && !n.caps.includes("gpu")) return false;
   const spec = specOf(q);
-  if (!requiredCapabilities(spec).every((c) => n.caps.includes(c))) return false; // machines: encrypted-volumes + sandbox
+  if (!requiredCapabilities(spec).every((c) => n.caps.includes(c))) return false; // machines: encrypted-volumes, sandbox, relay + relay-streams
   if (n.cpuUsed + (spec.cpu ?? 0) > n.cpuCapacity || n.memUsedMb + (spec.memMb ?? 0) > n.memCapacityMb) return false;
   return gpusFit(n.gpus, n.gpusUsed, req);
 }
@@ -421,9 +427,10 @@ function addUsage(n: NodeState, r: Pick<DeploymentRow, "workstation" | "spec_jso
   n.memUsedMb += sign * (spec.memMb ?? 0);
 }
 
-async function claim(node: string, q: Queued, now: number, relayed: boolean): Promise<boolean> {
-  // Workstations need WebSockets (Jupyter kernels, terminals), which the relay does not carry yet: they stay direct.
-  relayed = relayed && !q.workstation;
+async function claim(node: string, q: Queued, now: number, relayed: boolean, streams = false): Promise<boolean> {
+  // Workstations need SSH and WebSockets (Jupyter kernels, terminals): relayed only on a node whose agent carries
+  // byte streams (`relay-streams`); elsewhere they stay direct (B-13 retires that once nodes upgrade).
+  relayed = relayed && (!q.workstation || streams);
   const pin = q.kind === "container" ? specOf(q).placement?.fleetId ?? null : null;
   const verified = q.kind === "container" && trustOf(specOf(q)) === "verified" ? 1 : 0;
   const db = getD1();
@@ -533,13 +540,14 @@ async function assign(
   for (const q of queued.results ?? []) {
     if (state.containers >= NODE_CAPACITY.container) break;
     if (q.status_reason === gpuRefusalReason(node) || q.status_reason?.startsWith(nodeRefusalPrefix(node))) continue; // this node just refused it
-    if (q.workstation && !publicHost) continue; // workstations stay direct (WebSockets, SSH): a verified public host only
+    // A workstation needs a verified public host, unless the relay carries its SSH and WebSockets (relay-streams).
+    if (q.workstation && !publicHost && !(relayed && capabilities.includes(STREAMS_CAPABILITY))) continue;
     if (!reachableFor(q, relayed)) continue; // sites and containers are served through the relay
     if (!fleetAllows(q, fleetId)) continue; // pinned to another fleet
     if (!tierAllows(q, fleetVerified, capabilities)) continue; // its trust tier needs a verified fleet or a sandboxed node
     if (carriesSecrets(q) && !opensSealedV2(agentVersion)) continue; // its secrets are bound to the deployment; this agent cannot open them
     if (q.parent_id && !(await replicaFits(node, q, relayed, capabilities))) continue;
-    if (fits(q, state) && (await claim(node, q, now, relayed))) addUsage(state, q, 1);
+    if (fits(q, state) && (await claim(node, q, now, relayed, capabilities.includes(STREAMS_CAPABILITY)))) addUsage(state, q, 1);
   }
 }
 
@@ -590,7 +598,7 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
       fleet_id: string;
       fleet_verified: number | null;
     }>();
-  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean; relayed: boolean; fleetId: string; fleetVerified: boolean };
+  type Candidate = NodeState & { victims: DeploymentRow[]; publicHost: boolean; sealedV2: boolean; relayed: boolean; streams: boolean; fleetId: string; fleetVerified: boolean };
   const states = new Map<string, Candidate>();
   for (const n of nodes.results ?? []) {
     const caps = JSON.parse(n.work_types ?? "[]") as string[];
@@ -601,15 +609,16 @@ export async function preemptForOnDemand(now = Date.now()): Promise<number> {
       publicHost: !!n.public_host,
       sealedV2: opensSealedV2(n.agent_version),
       relayed: caps.includes("relay"),
+      streams: caps.includes("relay") && caps.includes(STREAMS_CAPABILITY),
       fleetId: n.fleet_id,
       fleetVerified: !!n.fleet_verified,
     });
   }
-  // Same rules as assign(): workstations only on a verified public host; secrets only on an agent that opens them;
+  // Same rules as assign(): workstations only on a verified public host or a relay-streams node; secrets only on an agent that opens them;
   // while the relay runs, a node off it serves workstations only; a pinned deployment only on its fleet's nodes; its
   // trust tier only on a verified fleet or a sandboxed node (so nothing is preempted for work the node cannot take).
   const canTake = (q: Queued, s: Candidate) =>
-    (!q.workstation || s.publicHost) &&
+    (!q.workstation || s.publicHost || s.streams) &&
     (!carriesSecrets(q) || s.sealedV2) &&
     reachableFor(q, s.relayed) &&
     fleetAllows(q, s.fleetId) &&
@@ -754,7 +763,7 @@ async function probe(node: string, now: number): Promise<void> {
   const db = getD1();
   const due = await db
     .prepare(
-      "SELECT * FROM deployments WHERE node = ? AND status IN ('running','unreachable') AND (endpoint IS NOT NULL OR relayed = 1) " +
+      "SELECT * FROM deployments WHERE node = ? AND status IN ('running','unreachable') AND (endpoint IS NOT NULL OR (relayed = 1 AND workstation = 0)) " +
         "AND (last_probe_at IS NULL OR last_probe_at <= ?)",
     )
     .bind(node, now - env.DEPLOY_PROBE_SECONDS * 1000)
@@ -874,7 +883,7 @@ export async function reportProblem(owner: string, id: string, note: string | un
         ? [row]
         : [];
   // Only what the scheduled probes can reach: on a node, through the relay or at a reported endpoint.
-  const targets = live.filter((t) => t.node && (t.relayed || t.endpoint));
+  const targets = live.filter((t) => t.node && ((t.relayed && !t.workstation) || t.endpoint));
   if (targets.length === 0) return { ok: false, code: "conflict", message: `nothing is running to check (status ${row.status})` };
   const reportId = crypto.randomUUID();
   const claimed = await db
@@ -1076,7 +1085,7 @@ export async function nodeActivity(node: string, now = Date.now()): Promise<Node
         (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status IN ${LIVE}) AS live,
         (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND workstation = 1 AND status IN ('running','unreachable') AND started_at IS NOT NULL) AS workstations,
         (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status = 'running' AND last_billed_at IS NOT NULL AND last_billed_at <= ?2) AS billable,
-        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status IN ('running','unreachable') AND (endpoint IS NOT NULL OR relayed = 1) AND (last_probe_at IS NULL OR last_probe_at <= ?3)) AS probeDue,
+        (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND status IN ('running','unreachable') AND (endpoint IS NOT NULL OR (relayed = 1 AND workstation = 0)) AND (last_probe_at IS NULL OR last_probe_at <= ?3)) AS probeDue,
         (SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND kind = 'static') AS queuedStatic,
         (SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND kind = 'container' AND replicas = 0) AS queuedContainer,
         (SELECT COUNT(*) FROM deployments WHERE node = ?1 AND (status = 'assigned' OR (status IN ('stopped','failed') AND stop_acked_at IS NULL))) AS owed,

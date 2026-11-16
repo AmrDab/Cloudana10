@@ -97,7 +97,7 @@ const ITEMS: W[] = [
   },
   {
     // Cloudana's own image (images/machine, built and smoke-tested in CI). The console offers it on Run → Machines, not
-    // among the workstations; checkSpec makes its volume encrypted and its login root (docs/WORKSTATIONS.md §10).
+    // among the workstations; checkSpec makes its volume encrypted and its login root (docs/WORKSTATIONS.md §11).
     id: "machine-ubuntu", name: "Ubuntu 24.04 machine", summary: "A Linux box over SSH: root inside a gVisor sandbox, with /root on an encrypted volume.",
     image: MACHINE_IMAGE, ports: [22], cpu: 1000, memMb: 2048, storageMb: 10240,
     gpu: { count: 0 }, access: { ssh: true },
