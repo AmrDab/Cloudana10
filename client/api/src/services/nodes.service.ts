@@ -115,22 +115,27 @@ export async function announceNode(
  * Bind an announced node to a fleet owner's payout (a live fleet token was
  * presented, so no wallet signature or bind code is needed). First binding
  * still wins: a node bound to another wallet is refused; one bound to the same
- * wallet just moves into this fleet.
+ * wallet just moves into this fleet. A node the owner evicted from this fleet
+ * is not bound ("evicted") until the owner binds it by hand again (bindNode).
  */
-export async function bindNodeToFleet(node: string, fleet: { id: string; owner: string }): Promise<BindResult> {
+export async function bindNodeToFleet(
+  node: string,
+  fleet: { id: string; owner: string },
+): Promise<BindResult | { ok: false; code: "evicted"; message: string }> {
   const key = normalizeAddress(node);
+  const evicted = "SELECT 1 AS x FROM fleet_evictions WHERE fleet_id = ? AND address = ?";
   await getD1()
     .prepare(
       "UPDATE nodes SET payout = ?, fleet_id = ?, bound_at = COALESCE(bound_at, ?), bind_code = NULL " +
-        "WHERE address = ? AND (payout IS NULL OR payout = ?)",
+        `WHERE address = ? AND (payout IS NULL OR payout = ?) AND NOT EXISTS (${evicted})`,
     )
-    .bind(fleet.owner, fleet.id, Date.now(), key, fleet.owner)
+    .bind(fleet.owner, fleet.id, Date.now(), key, fleet.owner, fleet.id, key)
     .run();
   const after = await getNode(key);
   if (!after) return { ok: false, code: "not_found", message: "unknown node" };
-  return after.payout === fleet.owner && after.fleet_id === fleet.id
-    ? { ok: true }
-    : { ok: false, code: "conflict", message: "node is already bound to another payout wallet" };
+  if (after.payout === fleet.owner && after.fleet_id === fleet.id) return { ok: true };
+  if (await getD1().prepare(evicted).bind(fleet.id, key).first()) return { ok: false, code: "evicted", message: "node was evicted from this fleet" };
+  return { ok: false, code: "conflict", message: "node is already bound to another payout wallet" };
 }
 
 export type BindResult = { ok: true } | { ok: false; code: "bad_request" | "unauthorized" | "not_found" | "conflict"; message: string };
@@ -189,9 +194,13 @@ export async function bindNode(node: string, payout: string, message: string, si
     .bind(payoutKey, Date.now(), nodeKey, code)
     .run();
   const after = await getNode(nodeKey);
-  return after?.payout === payoutKey
-    ? { ok: true }
-    : { ok: false, code: "conflict", message: "node is already bound to another payout wallet" };
+  if (after?.payout !== payoutKey) return { ok: false, code: "conflict", message: "node is already bound to another payout wallet" };
+  // Bound by hand by a fleet owner: re-admitted, so the tokens of that owner's fleets bind it again.
+  await getD1()
+    .prepare("DELETE FROM fleet_evictions WHERE address = ? AND fleet_id IN (SELECT id FROM fleets WHERE owner = ?)")
+    .bind(nodeKey, payoutKey)
+    .run();
+  return { ok: true };
 }
 
 export interface MyNode {

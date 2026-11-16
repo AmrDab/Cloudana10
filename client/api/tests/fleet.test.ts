@@ -6,7 +6,7 @@ import { buildApp } from "../src/app.js";
 import { getD1 } from "../src/lib/storage.js";
 import { generateToken } from "../src/middleware/auth.js";
 import { nodeSigningMessage, sha256Hex } from "../src/middleware/node-auth.js";
-import { getNode } from "../src/services/nodes.service.js";
+import { bindNode, bindingMessage, getNode } from "../src/services/nodes.service.js";
 
 let app: ReturnType<typeof buildApp>;
 let ipSeq = 0;
@@ -159,6 +159,30 @@ describe("fleet tokens", () => {
     expect((await authed(aliceJwt, "POST", `/v1/fleets/${f.id}/nodes/${out.address}/evict`)).status).toBe(404);
     const again = await (await announce(out)).json();
     expect(again).toMatchObject({ bound: false, bindCode: expect.stringMatching(/^[0-9a-f]{16}$/) });
+  });
+
+  it("an evicted node stays out: its fleet token no longer binds it, until the owner binds it again by hand", async () => {
+    const owner = privateKeyToAccount(generatePrivateKey());
+    const ownerJwt = await generateToken(owner.address);
+    const f = await createFleet(ownerJwt);
+    const node = privateKeyToAccount(generatePrivateKey());
+    await announce(node, { fleetToken: f.token });
+    expect((await authed(ownerJwt, "POST", `/v1/fleets/${f.id}/nodes/${node.address}/evict`)).status).toBe(200);
+
+    // The stock agent re-announces with its token on the next heartbeat: answered as an unbound node, with a bind code.
+    const res = await announce(node, { fleetToken: f.token });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ bound: false, payout: null, fleetId: null, bindCode: expect.stringMatching(/^[0-9a-f]{16}$/) });
+    expect(await getNode(node.address)).toMatchObject({ payout: null, fleet_id: null });
+    // The token still onboards every other node.
+    expect(await (await announce(privateKeyToAccount(generatePrivateKey()), { fleetToken: f.token })).json()).toMatchObject({ bound: true, fleetId: f.id });
+
+    // Re-admission: the owner binds it with its bind link; the token then moves it back into the fleet.
+    const message = bindingMessage(node.address, owner.address, new Date().toISOString());
+    expect(await bindNode(node.address, owner.address, message, await owner.signMessage({ message }), body.bindCode)).toEqual({ ok: true });
+    expect(await (await announce(node, { fleetToken: f.token })).json()).toMatchObject({ bound: true, fleetId: f.id });
+    expect(await getNode(node.address)).toMatchObject({ payout: owner.address.toLowerCase(), fleet_id: f.id });
   });
 
   it("refuses a fleet token for a node already bound to another wallet (409)", async () => {
