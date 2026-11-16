@@ -218,7 +218,7 @@ propagation, so the host's Docker daemon sees the mounts:
 
 A machine gets back, inside gVisor only, the capabilities its sshd and root
 need (`MACHINE_CAPS` in `src/workstation.ts`: SETUID, SETGID, SYS_CHROOT,
-CHOWN, DAC_OVERRIDE); every
+CHOWN, DAC_OVERRIDE, AUDIT_WRITE); every
 other flag above stays, no-new-privileges included. The agent refuses to start
 the machine image anywhere else.
 

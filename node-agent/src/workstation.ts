@@ -89,13 +89,14 @@ export const isMachineImage = (image: unknown) => typeof image === "string" && M
 
 /**
  * Capabilities a machine gets back after --cap-drop=ALL, only under gVisor — the smallest set that works, found by
- * images/machine/smoke-test.sh dropping one at a time under runsc: without SETUID, SETGID or SYS_CHROOT nobody logs in
+ * images/machine/smoke-test.sh dropping and adding one at a time: without SETUID, SETGID or SYS_CHROOT nobody logs in
  * (sshd's privilege separation and the login itself); without CHOWN an interactive login gets no pty; without
- * DAC_OVERRIDE root cannot apt-get install. FOWNER, FSETID, KILL, AUDIT_WRITE and NET_BIND_SERVICE were not needed
- * (Docker lets a container bind ports below 1024). These are capabilities of root inside the gVisor sandbox, not on the
- * host kernel. With --cap-drop=ALL alone sshd starts but every login fails at its privsep chroot.
+ * DAC_OVERRIDE root cannot apt-get install; without AUDIT_WRITE sshd refuses a pty under runc (gVisor has no audit
+ * subsystem and does not need it, but the set must not depend on that). FOWNER, FSETID, KILL and NET_BIND_SERVICE were
+ * not needed (Docker lets a container bind ports below 1024). These are capabilities of root inside the gVisor sandbox,
+ * not on the host kernel. With --cap-drop=ALL alone sshd starts but every login fails at its privsep chroot.
  */
-export const MACHINE_CAPS = ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID", "SYS_CHROOT"];
+export const MACHINE_CAPS = ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID", "SYS_CHROOT", "AUDIT_WRITE"];
 
 /**
  * A machine (the machine image, no GPU, on a sandbox node) gets MACHINE_CAPS back on top of the full workstation
