@@ -780,7 +780,25 @@ that remained:
 - Not done by Claude, by rule: no signing with the leaked key, no moving funds, no service-account changes. Owner
   steps: runbook 1, 1b and 13.
 
-### 38 · Trust tiers in the scheduler; the abuse switch (2026-11-16)
+### 38 · Agent: mail ports blocked (`egress-v2`) and gVisor for tenant containers (`sandbox`) (2026-11-16)
+- Why: docs/TRUST_TIERS.md §4 (spam from a provider's IP) and §5 (an escape should need a gVisor bug plus a host bug);
+  Phase 2 egress and the first Phase 4 bullet of the trust-tiers plan in `tasks/todo.md`.
+- Egress (`node-agent/src/hardening.ts`): `DOCKER-USER -s <tenant subnet> -p tcp --dport 25|465|587 -j DROP`, next to
+  the private-range drops, installed the same way (`iptables -C`, else `-I`, argv only) and checked by
+  `preStartCheck` before every start. With containers on the node announces `egress-v2`.
+- gVisor: at boot `docker info --format '{{json .Runtimes}}'`; with `runsc` registered every non-GPU container and
+  workstation runs with `--runtime=runsc` and the node announces `sandbox`; before such a start `preStartCheck`
+  refuses (`node cannot serve:`) if `runsc` is gone — no silent downgrade. Detection is the registration only (no
+  test container). GPU containers and workstations keep the default runtime and are not sandboxed (gVisor needs
+  daemon-side nvproxy, limited to some drivers and CUDA calls); `sandbox` covers every non-GPU container.
+- Agent 1.10.0. No API change: the API keeps only capabilities it knows, so these are dropped until the scheduler
+  (Phase 1) uses them.
+- Tests (`security.selftest.ts`, `workstation.selftest.ts`): mail-port rules installed at boot (only the missing one),
+  a missing one refuses the start; runsc detection (present, absent, bad output, Docker down); argv with/without
+  `sandbox`, GPU and CPU, containers and workstations; the manager pre-checks runsc only for non-GPU starts and refuses
+  when it is gone; capabilities. `npm run type-check && npm run selftest` green.
+
+### 39 · Trust tiers in the scheduler; the abuse switch (2026-11-16)
 - What (docs/TRUST_TIERS.md §3, §4, §6; tasks/todo.md phase 1 and the API half of phase 2): containers, workstations and
   endpoints take `spec.trust` = `verified` (default) or `community`. Verified runs only on nodes of a fleet an admin
   verified (`fleets.verified_at`, `POST`/`DELETE /v1/admin/fleets/{id}/verified`, internal key); community only on nodes

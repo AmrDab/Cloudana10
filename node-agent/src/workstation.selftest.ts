@@ -61,11 +61,14 @@ async function main() {
   check(gpus[1].vramGB === 80, "parse vram GB");
   check(parseNvidiaSmi("Tesla T4, [N/A]")[0].vramGB === 0, "unparseable vram → 0");
   check(workTypes(false, []).join() === "matmul,int8-mlp,int8-model,hosting", "no docker, no gpu");
-  check(workTypes(true, []).join() === "matmul,int8-mlp,int8-model,hosting,container", "docker, no gpu");
+  check(workTypes(true, []).join() === "matmul,int8-mlp,int8-model,hosting,container,egress-v2", "docker, no gpu (egress rules verified → egress-v2)");
   check(workTypes(false, gpus).join() === "matmul,int8-mlp,int8-model,hosting", "gpu without docker is not advertised");
-  check(workTypes(true, gpus).join() === "matmul,int8-mlp,int8-model,hosting,container,gpu", "docker + gpu");
-  check(workTypes(true, gpus, true).join() === "matmul,int8-mlp,int8-model,hosting,container,gpu,any-image", "any-image opt-in");
+  check(workTypes(true, gpus).join() === "matmul,int8-mlp,int8-model,hosting,container,gpu,egress-v2", "docker + gpu");
+  check(workTypes(true, gpus, true).join() === "matmul,int8-mlp,int8-model,hosting,container,gpu,any-image,egress-v2", "any-image opt-in");
   check(workTypes(false, gpus, true).join() === "matmul,int8-mlp,int8-model,hosting", "any-image needs containers");
+  check(workTypes(true, [], false, true).join() === "matmul,int8-mlp,int8-model,hosting,container,egress-v2,sandbox", "runsc registered → sandbox");
+  check(workTypes(true, gpus, false, true).join() === "matmul,int8-mlp,int8-model,hosting,container,gpu,egress-v2,sandbox", "GPU node with runsc still announces sandbox (covers its non-GPU containers)");
+  check(workTypes(false, [], false, true).join() === "matmul,int8-mlp,int8-model,hosting", "sandbox and egress-v2 need containers");
 
   // Token
   const token = newWebToken();

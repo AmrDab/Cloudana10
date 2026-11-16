@@ -6,7 +6,7 @@ import path from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { canonicalJSON, instructionDigest, NonceLru, verifyInstruction } from "./instructions.ts";
-import { BLOCKED_RANGES, egressRules, hardeningSelfCheck, preStartCheck, storageQuotaSupported, type Exec } from "./hardening.ts";
+import { BLOCKED_RANGES, BLOCKED_TCP_PORTS, egressRules, hardeningSelfCheck, preStartCheck, runscAvailable, storageQuotaSupported, type Exec } from "./hardening.ts";
 import { DEFAULT_USER, dockerRunArgs, imageAllowed, imageAllowedLocally, PIDS_LIMIT, sanitizeTenantEnv, TENANT_NETWORK, type DockerOps } from "./container.ts";
 import { workstationRunArgs, type WorkstationSpec } from "./workstation.ts";
 import { DeploymentManager, NODE_CANNOT_SERVE, type StatusBody } from "./deployments.ts";
@@ -93,11 +93,14 @@ async function main() {
   const calls: string[] = [];
   const OLD_INPUT = "INPUT -s 172.31.0.0/16 -j DROP";
   const NEW_INPUT = "INPUT -s 172.31.0.0/16 -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP";
-  const fake = (opts: { network: boolean; rulesPresent: boolean; iptablesOk: boolean; icc?: string; info?: string; mount?: string; version?: string; oldRule?: boolean }): Exec => {
+  const RUNTIMES = '{"io.containerd.runc.v2":{"path":"runc"},"runc":{"path":"runc"}}';
+  const RUNTIMES_RUNSC = '{"io.containerd.runc.v2":{"path":"runc"},"runc":{"path":"runc"},"runsc":{"path":"/usr/bin/runsc"}}';
+  const fake = (opts: { network: boolean; rulesPresent: boolean; iptablesOk: boolean; icc?: string; info?: string; mount?: string; version?: string; oldRule?: boolean; missing?: RegExp; runtimes?: string }): Exec => {
     let created = opts.network;
     let oldPresent = opts.oldRule ?? false;
     return async (cmd, args) => {
       calls.push([cmd, ...args].join(" "));
+      if (cmd === "docker" && args[0] === "info" && args[2] === "{{json .Runtimes}}") return opts.runtimes ?? RUNTIMES;
       if (cmd === "docker" && args[0] === "info" && args[1] === "--format") return opts.info ?? "overlay2|/var/lib/docker|Backing Filesystem=xfs;Supports d_type=true;";
       if (cmd === "docker" && args[0] === "info") return "ok";
       if (cmd === "docker" && args[0] === "version") return opts.version ?? "28.0.1";
@@ -117,7 +120,7 @@ async function main() {
           if (args[0] === "-D") oldPresent = false;
           return "";
         }
-        if (args[0] === "-C" && !opts.rulesPresent) throw new Error("Bad rule");
+        if (args[0] === "-C" && (!opts.rulesPresent || opts.missing?.test(args.slice(1).join(" ")))) throw new Error("Bad rule");
         return "";
       }
       throw new Error(`unexpected ${cmd} ${args.join(" ")}`);
@@ -129,7 +132,10 @@ async function main() {
   for (const dst of BLOCKED_RANGES) check(calls.includes(`iptables -I DOCKER-USER -s 172.31.0.0/16 -d ${dst} -j DROP`), `DROP to ${dst} installed`);
   check(calls.includes(`iptables -I ${NEW_INPUT}`), "DROP of new connections to the host itself installed (replies pass: B1)");
   check(!calls.some((c) => c.startsWith("iptables -D")), "no old INPUT rule → nothing deleted");
-  check(egressRules("10.9.0.0/16").length === BLOCKED_RANGES.length + 1, "one rule per range + host");
+  for (const port of [25, 465, 587]) check(calls.includes(`iptables -I DOCKER-USER -s 172.31.0.0/16 -p tcp --dport ${port} -j DROP`), `outbound tcp ${port} DROP installed (any destination)`);
+  check(BLOCKED_TCP_PORTS.join() === "25,465,587", "mail ports blocked: 25, 465, 587");
+  check(egressRules("10.9.0.0/16").length === BLOCKED_RANGES.length + BLOCKED_TCP_PORTS.length + 1, "one rule per range + per mail port + host");
+  check(calls.filter((c) => c.startsWith("iptables -I")).every((c) => calls.indexOf(c.replace("-I", "-C")) >= 0 && calls.indexOf(c.replace("-I", "-C")) < calls.indexOf(c)), "every rule checked (-C) before it is installed");
   // B1 upgrade: the old INPUT rule (it dropped container replies to the host) goes, after the new one is in place.
   calls.length = 0;
   res = await hardeningSelfCheck(fake({ network: true, rulesPresent: false, iptablesOk: true, oldRule: true }));
@@ -171,6 +177,31 @@ async function main() {
   calls.length = 0;
   res = await preStartCheck(fake({ network: true, rulesPresent: false, iptablesOk: true }));
   check(!res.ok && /egress rule missing/.test(res.reason ?? "") && !calls.some((c) => c.includes(" -I ")), "pre-start: a flushed rule refuses the start and installs nothing");
+  // Phase 2 egress: a single missing mail-port rule refuses the start (and nothing is installed).
+  for (const port of BLOCKED_TCP_PORTS) {
+    calls.length = 0;
+    res = await preStartCheck(fake({ network: true, rulesPresent: true, iptablesOk: true, missing: new RegExp(`--dport ${port} `) }));
+    check(!res.ok && res.reason === `egress rule missing: iptables -C DOCKER-USER -s 172.31.0.0/16 -p tcp --dport ${port} -j DROP` && !calls.some((c) => c.includes(" -I ")), `pre-start: missing tcp ${port} rule → refused (${res.reason})`);
+  }
+  // A missing mail-port rule at boot is installed like the range rules (only that one).
+  calls.length = 0;
+  res = await hardeningSelfCheck(fake({ network: true, rulesPresent: true, iptablesOk: true, missing: /--dport 465 / }));
+  check(res.ok && calls.filter((c) => c.startsWith("iptables -I")).join() === "iptables -I DOCKER-USER -s 172.31.0.0/16 -p tcp --dport 465 -j DROP", "boot: only the missing mail-port rule installed");
+  // gVisor: the runtime registration, and the pre-start check when this node announced `sandbox`.
+  check(await runscAvailable(fake({ network: true, rulesPresent: true, iptablesOk: true, runtimes: RUNTIMES_RUNSC })), "runsc registered → available");
+  check(!(await runscAvailable(fake({ network: true, rulesPresent: true, iptablesOk: true }))), "no runsc → unavailable");
+  for (const out of ["", "null", "not json", '"runsc"', '["runsc"]', '{"runsc-x":{}}'])
+    check(!(await runscAvailable(async () => out)), `runtimes ${JSON.stringify(out)} → unavailable`);
+  check(!(await runscAvailable(async () => { throw new Error("Cannot connect to the Docker daemon"); })), "docker error → unavailable");
+  calls.length = 0;
+  check(await runscAvailable(fake({ network: true, rulesPresent: true, iptablesOk: true, runtimes: RUNTIMES_RUNSC })) && calls.join() === "docker info --format {{json .Runtimes}}", "detection is one argv-only docker info call");
+  res = await preStartCheck(fake({ network: true, rulesPresent: true, iptablesOk: true, runtimes: RUNTIMES_RUNSC }), { runsc: true });
+  check(res.ok, `pre-start: runsc required and registered → ok (${res.reason})`);
+  res = await preStartCheck(fake({ network: true, rulesPresent: true, iptablesOk: true }), { runsc: true });
+  check(!res.ok && /runsc runtime \(gVisor\) is no longer registered/.test(res.reason ?? ""), "pre-start: runsc required but gone → refused");
+  calls.length = 0;
+  res = await preStartCheck(fake({ network: true, rulesPresent: true, iptablesOk: true }), { runsc: false });
+  check(res.ok && !calls.some((c) => c.includes(".Runtimes")), "pre-start: runsc not required (no sandbox, or a GPU start) → not checked");
   res = await preStartCheck(fake({ network: true, rulesPresent: true, iptablesOk: true, icc: "" }));
   check(!res.ok && /inter-container/.test(res.reason ?? ""), "pre-start: icc not off → refused");
   res = await preStartCheck(fake({ network: false, rulesPresent: true, iptablesOk: true }));
@@ -197,6 +228,13 @@ async function main() {
   for (const u of ["0", "0:0", "0:1000"]) throws(() => dockerRunArgs("c1", { ...spec, user: u }, {}, [1, 2]), /cannot run as root/, `uid 0 refused (${u})`);
   throws(() => dockerRunArgs("c1", { ...spec, storageMb: 0 }, {}, [1, 2]), /storageMb/, "missing storage cap refused");
   check(sanitizeTenantEnv({ NVIDIA_VISIBLE_DEVICES: "all" }, [1, 3]).NVIDIA_VISIBLE_DEVICES === "1,3", "workstation devices listed explicitly");
+  // gVisor: `sandbox` → --runtime=runsc on every non-GPU container; never on GPU ones; nothing without `sandbox`.
+  check(!dockerRunArgs("c1", spec, {}, [1, 2]).some((x) => x.startsWith("--runtime")), "no sandbox → default runtime");
+  a = dockerRunArgs("c1", spec, {}, [1, 2], false, [], true);
+  check(a.filter((x) => x.startsWith("--runtime")).join() === "--runtime=runsc" && a.indexOf("--runtime=runsc") < a.indexOf(spec.image), "sandbox → --runtime=runsc (before the image)");
+  for (const f of ["--cap-drop=ALL", "--security-opt=no-new-privileges", `--pids-limit=${PIDS_LIMIT}`, "--storage-opt", "--network"]) check(a.includes(f), `sandboxed container keeps ${f}`);
+  a = dockerRunArgs("c1", { ...spec, gpu: { count: 1 } }, {}, [1, 2], true, [0], true);
+  check(!a.some((x) => x.startsWith("--runtime")) && after(a, "--gpus") === '"device=0"', "GPU container on a sandbox node → default runtime (not sandboxed)");
 
   const ws: WorkstationSpec = { ...spec, image: "quay.io/jupyter/pytorch-notebook:cuda12-latest", ports: [], gpu: { count: 1 }, access: { web: { port: 8888 } }, tokenEnv: "JUPYTER_TOKEN" };
   a = workstationRunArgs("w1", ws, { NVIDIA_VISIBLE_DEVICES: "all", JUPYTER_TOKEN: "t" }, { web: 42002 }, [2]);
@@ -208,6 +246,12 @@ async function main() {
   check(env.NVIDIA_VISIBLE_DEVICES === "2" && env.JUPYTER_TOKEN === "t" && after(a, "--gpus") === '"device=2"', "workstation: tenant NVIDIA_VISIBLE_DEVICES=all replaced by the allocated device");
   a = workstationRunArgs("w1", { ...ws, user: "1000" }, {}, { web: 42002 }, [0]);
   check(after(a, "--user") === "1000", "workstation spec user honoured");
+  a = workstationRunArgs("w1", ws, {}, { web: 42002 }, [2], true, true);
+  check(!a.some((x) => x.startsWith("--runtime")), "GPU workstation on a sandbox node → default runtime");
+  const cpuWs: WorkstationSpec = { ...ws, gpu: undefined };
+  a = workstationRunArgs("w2", cpuWs, {}, { web: 42002 }, [], true, true);
+  check(a.filter((x) => x.startsWith("--runtime")).join() === "--runtime=runsc" && after(a, "--storage-opt") === "size=1024m", "CPU workstation on a sandbox node → --runtime=runsc, hardening kept");
+  check(!workstationRunArgs("w2", cpuWs, {}, { web: 42002 }, [], true).some((x) => x.startsWith("--runtime")), "CPU workstation without sandbox → default runtime");
 
   // ── Image allowlist ───────────────────────────────────────────────────────────────────────────────────
   check(imageAllowedLocally("nginx:alpine", undefined) === null && imageAllowedLocally("nginx:alpine", " , ") === null, "unset allowlist → null");
@@ -274,6 +318,35 @@ async function main() {
     await off.handle({ id: "st", action: "start", kind: "static", spec: { files: [{ path: "index.html", contentBase64: "PGgxPnk8L2gxPg==" }] } });
     check(reports.at(-1)?.id === "st" && reports.at(-1)?.body.status === "running", "static sites still run without containersReady");
     await off.closeAll();
+    check(!runs.some((r) => r.some((x) => x.startsWith("--runtime"))), "manager without sandbox → no --runtime flag");
+    // A sandbox node: non-GPU starts require runsc (pre-start) and run under it; GPU ones do neither.
+    const asked: boolean[] = [];
+    let runscGone = false;
+    const sb = new DeploymentManager({
+      dataDir,
+      publicHost: "127.0.0.1",
+      ports: [43040, 43050],
+      privateKey: "0x" + "11".repeat(32),
+      containersReady: true,
+      sandbox: true,
+      gpuCount: 1,
+      hardening: async ({ runsc }) => (asked.push(runsc), runsc && runscGone ? { ok: false, reason: "the runsc runtime (gVisor) is no longer registered", notes: [] } : { ok: true, notes: [] }),
+      docker: dk,
+      log: () => {},
+      report: async (id, body) => (reports.push({ id, body }), true),
+    });
+    await sb.handle({ id: "sb1", action: "start", kind: "container", spec, imageAllowed: true });
+    check(reports.at(-1)?.body.status === "running" && asked.at(-1) === true && runs.at(-1)!.includes("--runtime=runsc"), "sandbox node: container pre-checked for runsc and run with --runtime=runsc");
+    await sb.handle({ id: "sbw", action: "start", kind: "workstation", spec: { ...ws, gpu: undefined }, imageAllowed: true });
+    check(reports.at(-1)?.body.status === "running" && asked.at(-1) === true && runs.at(-1)!.includes("--runtime=runsc"), "sandbox node: CPU workstation runs under runsc");
+    await sb.handle({ id: "sbg", action: "start", kind: "container", spec: { ...spec, gpu: { count: 1 } }, imageAllowed: true });
+    check(reports.at(-1)?.body.status === "running" && asked.at(-1) === false && !runs.at(-1)!.some((x) => x.startsWith("--runtime")), "sandbox node: GPU container → no runsc check, default runtime");
+    runscGone = true;
+    const n = runs.length;
+    await sb.handle({ id: "sb2", action: "start", kind: "container", spec, imageAllowed: true });
+    const gone = reports.at(-1);
+    check(gone?.id === "sb2" && gone.body.status === "failed" && gone.body.message!.startsWith(NODE_CANNOT_SERVE) && /runsc/.test(gone.body.message!) && runs.length === n, "sandbox node, runsc gone → non-GPU start refused (cannot-serve), never run unsandboxed");
+    await sb.closeAll();
     // Rejected running report → deployment released, failed report queued with the cannot-serve prefix.
     reject = "endpoint host must be the node's announced public host";
     await m.handle({ id: "site", action: "start", kind: "static", spec: { files: [{ path: "index.html", contentBase64: Buffer.from("<h1>x</h1>").toString("base64") }] } });

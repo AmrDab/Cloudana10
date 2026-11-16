@@ -483,6 +483,9 @@ Node #1 (Azure) runs compute jobs, static sites and storage. Containers, GPU end
 machine with:
 - Linux (on Windows: WSL2 Ubuntu, not Docker Desktop), **Docker 28 or newer**;
 - a dedicated disk area with project quotas (xfs `pquota`), so a customer's container can't fill your disk;
+- **gVisor** (`runsc`), so customers' containers run on a sandboxed kernel instead of yours: install it from gVisor's
+  apt repository, run `sudo runsc install`, restart Docker (exact commands: `node-agent/README.md`, "gVisor sandbox").
+  The agent finds it by itself and says `sandbox` in its capabilities. GPU work does not run under gVisor;
 - for GPU work, an NVIDIA GPU with current drivers and the NVIDIA container toolkit.
 
 Tell Claude **"GPU node ready"**, with its operating system, the GPU model and whether it should take GPU endpoints

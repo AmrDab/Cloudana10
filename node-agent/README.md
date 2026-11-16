@@ -109,7 +109,8 @@ hosting. Deployments arrive on the heartbeat:
   --memory <memMb>m --memory-swap <memMb>m --storage-opt size=<storageMb>m
   --network cld-tenant --cpus <cpu/1000>
   --user <spec.user|1000:1000> -p <hostport>:<port> -e … <image> [command…]`
-  (a `user` of uid 0 is refused — plain containers never run as root),
+  (a `user` of uid 0 is refused — plain containers never run as root;
+  on a `sandbox` node `--runtime=runsc` is added, see "gVisor sandbox" below),
   one free host port per container port (every port is tracked, so two
   containers never collide). Stop is `docker rm -f cld-<id>`.
   A spec with `gpu.count` gets `--gpus "device=<i>,…" --shm-size=1g` (explicit
@@ -134,7 +135,9 @@ creates the user-defined bridge `cld-tenant` (inter-container communication
 off — an existing network with icc on is refused) and installs iptables `DROP`
 rules from its subnet to `10.0.0.0/8`,
 `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` (cloud metadata) and
-`100.64.0.0/10`, in `DOCKER-USER` (forwarded traffic), plus a `DROP` of new
+`100.64.0.0/10`, and from its subnet to TCP ports **25, 465 and 587** on any
+destination (`-p tcp --dport <port>`: outbound mail, so tenants cannot send spam
+from your IP), in `DOCKER-USER` (forwarded traffic), plus a `DROP` of new
 connections from its subnet to this host (`INPUT -s <subnet> -m conntrack !
 --ctstate ESTABLISHED,RELATED -j DROP`: replies to connections the host opened,
 such as the relay forwarding to a container, still pass; the older rule without
@@ -150,6 +153,50 @@ keys `NVIDIA_*` and `CUDA_VISIBLE_DEVICES` are always stripped and
 a tenant cannot ask for `all`. Images must be on the network's curated list
 (the API sends `imageAllowed`) or match `CLOUDANA_IMAGE_ALLOWLIST`; anything
 else fails before Docker is called.
+
+With containers on, the node also announces **`egress-v2`**: every egress rule
+above, the mail ports included, was installed or found at boot, and each is
+checked again before every start (docs/TRUST_TIERS.md §4).
+
+**gVisor sandbox (`sandbox`, agents ≥ 1.10.0).** gVisor (`runsc`) puts a
+user-space kernel between a tenant and your kernel, so an escape needs a gVisor
+bug *and* a host bug (docs/TRUST_TIERS.md §5). At boot the agent asks Docker
+which runtimes it has (`docker info --format '{{json .Runtimes}}'`). If `runsc`
+is registered, every non-GPU container and workstation runs with
+`--runtime=runsc` (all the flags above still apply) and the node announces
+`sandbox`; before each such start it checks that `runsc` is still registered and
+refuses the start (`node cannot serve:`) if not — it never falls back to the
+default runtime. Without `runsc` nothing changes: containers run as before and
+`sandbox` is not announced. The check is the registration only (no test
+container is started, the agent has no image of its own to use); a broken
+`runsc` makes the start fail, it never runs unsandboxed.
+
+**GPU containers and GPU workstations are not sandboxed**, also on a `sandbox`
+node: they keep Docker's default (NVIDIA) runtime. gVisor reaches GPUs only
+through `nvproxy`, which must be configured in the Docker daemon's runtime
+arguments and supports a subset of driver versions and CUDA calls, so
+inference images would fail in ways the agent cannot check. `sandbox` therefore
+means exactly: every container this agent starts that has no GPU runs under
+gVisor. The network must not treat a GPU deployment on a `sandbox` node as
+sandboxed.
+
+Install gVisor on Ubuntu (gvisor.dev's apt repository), then register it with
+Docker and restart the agent:
+
+```
+sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+  | sudo tee /etc/apt/sources.list.d/gvisor.list > /dev/null
+sudo apt-get update && sudo apt-get install -y runsc
+sudo runsc install                # adds "runsc" to /etc/docker/daemon.json
+sudo systemctl restart docker
+docker info --format '{{json .Runtimes}}'          # lists "runsc"
+docker run --rm --runtime=runsc alpine dmesg       # first line: "Starting gVisor..."
+```
+
+The boot log then says `sandbox: gVisor (runsc) found` and the capabilities
+include `sandbox`.
 
 If the API refuses the node's `running` report (for example the endpoint is not
 on the host the node announced), the agent tears the deployment down and
@@ -286,7 +333,10 @@ opens a secret (and checks tampering / a wrong key fail); serves a sample static
 site on a free port, checks MIME, headers and path-traversal blocking, restarts
 and resumes it, then stops it; builds workstation `docker run` argv (GPU/no-GPU,
 SSH mapping, token env, env-key validation, hostile image/command/env kept as
-single argv elements) and checks volume keep/purge bookkeeping; drives the relay
+single argv elements, `--runtime=runsc` on non-GPU starts of a `sandbox` node
+only) and checks volume keep/purge bookkeeping; runs the hardening self-check
+and pre-start check against a fake docker/iptables (range and mail-port rules,
+`runsc` detection, refusals when a rule or the runtime is missing); drives the relay
 client against a local hub (the `ws` package viem installs) and a local upstream:
 ticket/legacy handling, forwarding, flow control, batching, cancel, every error
 code and reconnect, plus relay-mode listeners and reports — no Docker or GPU
