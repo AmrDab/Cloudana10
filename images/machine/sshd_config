@@ -1,0 +1,16 @@
+# Cloudana machine: keys only, no root, no passwords. Ubuntu's sshd_config includes this file first, and the first
+# value sshd reads for a keyword wins, so these override the distribution defaults below the Include.
+Port 22
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+AllowUsers cloudana
+# Root-owned key file written by the entrypoint from SSH_PUBLIC_KEY; ~/.ssh/authorized_keys still works too.
+AuthorizedKeysFile /etc/ssh/authorized_keys/%u .ssh/authorized_keys
+# No PAM: nothing to authenticate with but the key, and pam_loginuid needs a capability the box does not get.
+UsePAM no
+PermitUserEnvironment no
+X11Forwarding no
+PrintMotd no
