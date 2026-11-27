@@ -62,6 +62,9 @@ export const V1_TABLES = [
     id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT, token_hash TEXT UNIQUE NOT NULL,
     floor_ucld_per_mmac INTEGER, created_at INTEGER, revoked_at INTEGER)`,
   `CREATE INDEX IF NOT EXISTS idx_fleets_owner ON fleets(owner, created_at)`,
+  // Nodes the owner evicted from a fleet: its token no longer binds them, until the owner binds the node by hand again.
+  `CREATE TABLE IF NOT EXISTS fleet_evictions (
+    fleet_id TEXT NOT NULL, address TEXT NOT NULL, evicted_at INTEGER, PRIMARY KEY (fleet_id, address))`,
   // V3 hosting (docs/V3_CONTRACT.md §2). held_ucld = µCLD currently held for the running hour;
   // stop_acked_at = when the node confirmed a stop (NULL while a stop is still owed to the node).
   `CREATE TABLE IF NOT EXISTS deployments (
